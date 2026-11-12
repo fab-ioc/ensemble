@@ -112,7 +112,7 @@ class Cdp {
   constructor(url) { this.url = url; this.id = 0; this.waits = new Map(); this.errors = []; }
   open() { return new Promise((res, rej) => { this.ws = new WebSocket(this.url); this.ws.onopen = () => res(); this.ws.onerror = e => rej(e);
     this.ws.onmessage = ev => { const m = JSON.parse(ev.data);
-      if (m.method === 'Runtime.exceptionThrown') this.errors.push(JSON.stringify(m.params.exceptionDetails).slice(0, 600));
+      if (m.method === 'Runtime.exceptionThrown') { const d = m.params.exceptionDetails || {}; this.errors.push(((d.exception && d.exception.description) || d.text || '').slice(0, 900) + ' :: ' + JSON.stringify(d).slice(0, 300)); }
       if (m.id && this.waits.has(m.id)) { const w = this.waits.get(m.id); this.waits.delete(m.id); m.error ? w.rej(new Error(m.error.message)) : w.res(m.result); } }; }); }
   send(method, params = {}, sessionId) { const id = ++this.id; return new Promise((res, rej) => { this.waits.set(id, { res, rej }); this.ws.send(JSON.stringify({ id, method, params, sessionId })); }); }
 }
@@ -123,7 +123,7 @@ const GEOM = `(() => {
   const strip = s => [...document.querySelectorAll('#list-dock .dk-strip-' + s + ' .dk-strip-btn[data-dk-auto]')].map(b => b.dataset.dkAuto);
   const sb = id => document.querySelector('#list-dock .dk-strip-btn[data-dk-auto="' + id + '"]');
   const leftHead = document.querySelector('#list-dock .dk-head:has([data-dk-tab="inbox"])');
-  const ico = b => { const s = b.querySelector('svg'); if (!s) return null; const r = s.getBoundingClientRect(); return { k: s.getAttribute('aria-label') || 'swatch', w: Math.round(r.width), h: Math.round(r.height), fill: getComputedStyle(s.querySelector('rect, path')).fill }; };
+  const ico = b => { const s = b.querySelector('svg'); if (!s) return null; const r = s.getBoundingClientRect(); return { k: s.getAttribute('aria-label') || 'swatch', w: Math.round(r.width), h: Math.round(r.height), fill: getComputedStyle(s.querySelector('rect, path')).fill, parts: [...s.querySelectorAll('rect, path, circle')].map(e => e.tagName).join(','), rx: (s.querySelector('rect') || { getAttribute: () => '' }).getAttribute('rx') || '' }; };
   const tb = document.querySelector('#list-dock .dk-tab[data-dk-tab="inbox"] .dk-badge');
   const sp = document.getElementById('ld-split');
   const wideEls = [...document.querySelectorAll('body *')].filter(e => { const r = e.getBoundingClientRect(); return r.width > 0 && r.right > document.documentElement.clientWidth + 1 && getComputedStyle(e).position !== 'fixed' && !e.closest('[hidden], .dk-off') && !(e.closest('#detail-panel') && !document.body.classList.contains('detail-open')); });
@@ -282,11 +282,60 @@ async function main() {
     await front(p, 'inbox'); await p.click(LDP(`.ldp-row[data-ldp-room="${A.loose}"]`)); await sleep(900);
     out.loose = await G(p);
     // its ⋯ and its right click: Open and Make PO
-    const MENU = `(() => { const m = document.querySelector('body > .dcm'); return m ? { items: [...m.querySelectorAll('.dcm-item')].map(b => ({ t: b.textContent.trim(), makepo: b.classList.contains('makepo-btn'), room: b.dataset.room || '', disabled: b.disabled })), expanded: !!document.querySelector('#ld-projs [data-ldp-menu][aria-expanded="true"]') } : null; })()`;
+    const MENU = `(() => { const m = document.querySelector('body > .dcm'); return m ? { items: [...m.querySelectorAll('.dcm-item')].map(b => ({ t: b.textContent.trim(), makepo: b.textContent.trim().startsWith('Make PO'), disabled: b.disabled })), expanded: !!document.querySelector('#ld-projs [data-ldp-menu][aria-expanded="true"]') } : null; })()`;
     await p.evalIn(`(() => { const b = ${LDP(`[data-ldp-menu][data-ldp-room="${A.loose}"]`)}; b.click(); return 0; })()`); await sleep(300);
     out.dotsMenu = await p.evalIn(MENU);
     await p.key('Escape'); await sleep(200);
     out.dotsClosed = await p.evalIn(MENU);
+    // ED-334: an action picked in the ⋯ menu (Agents and models…) runs the page's own handler for the row
+    await p.evalIn(`(() => { const b = ${LDP(`[data-ldp-menu][data-ldp-room="${A.loose}"]`)}; b.click(); return 0; })()`); await sleep(300);
+    out.actRun = await p.evalIn(`(async () => { const was = showAgentsModal; let got = null;
+      showAgentsModal = (room) => { got = room || ''; };
+      try { const it = [...document.querySelectorAll('body > .dcm .dcm-item')].find(e => e.textContent.trim().startsWith('Agents and models'));
+        if (!it) return { found: false }; it.click(); await new Promise(r => setTimeout(r, 300));
+        return { found: true, room: got, closed: !document.querySelector('body > .dcm') }; } finally { showAgentsModal = was; } })()`);
+    // ED-334 review 2: the terminals item of a live loose task acts on that task,
+    // not on the one open in the middle: its chat panel's frame when it has one,
+    // else the task itself (showCapturedTerminal with its room)
+    // (one task, no await: no repaint sees the faked live row or open task)
+    out.termsRun = await p.evalIn(`(() => {
+      const row = ALL_ROWS.find(x => x.roomId === ${JSON.stringify(A.loose)}), wasLive = row.isLive, wasSel = SELECTED_SID;
+      const was = { s: showCapturedTerminal, t: toggleCapturedTerms, f: pdChatFrameOf };
+      const calls = [];
+      showCapturedTerminal = async (id) => { calls.push('show:' + id); };
+      toggleCapturedTerms = (fr) => { calls.push('toggle:' + (fr && fr.dataset ? fr.dataset.room : '')); };
+      const pick = (frame) => {
+        pdChatFrameOf = (id) => frame && id === row.roomId ? frame : null;
+        // (a repaint may have given the row a new object: live again, the open task another)
+        ALL_ROWS.find(x => x.roomId === row.roomId).isLive = true; SELECTED_SID = 'some-other-task';
+        LDP.sig = ''; ldpPaint();
+        ${LDP(`[data-ldp-menu][data-ldp-room="${A.loose}"]`)}.click();
+        const it = [...document.querySelectorAll('body > .dcm .dcm-item')].find(e => /^(Show terminals|Terminal)$/.test(e.textContent.trim()));
+        if (!it) return 'no item';
+        it.click();
+        return 'ok';
+      };
+      try {
+        row.isLive = true; SELECTED_SID = 'some-other-task';
+        // a: not open in the middle (its frame there, if any, set aside for the pick)
+        const aside = [...document.querySelectorAll('#detail-panel iframe.dp-session')].filter(f => f.dataset.room === row.roomId);
+        aside.forEach(f => { f.dataset.room = 'aside'; });
+        let a;
+        try { a = pick(null); } finally { aside.forEach(f => { f.dataset.room = row.roomId; }); }
+        const fake = document.createElement('iframe'); fake.dataset.room = row.roomId;
+        const b = pick(fake);
+        // on the hub, the task open in the middle (no panel of its own): its
+        // terminals are toggled there, so a second pick hides them
+        // (the test page is on the hub's loopback address: onHubMachine() is true)
+        let c = 'not the hub';
+        if (onHubMachine()) {
+          const dp = document.getElementById('detail-panel'), mid = document.createElement('iframe');
+          mid.className = 'dp-session'; mid.dataset.room = row.roomId; mid.hidden = true; dp.appendChild(mid);
+          try { c = pick(null); } finally { mid.remove(); }
+        }
+        return { a, b, c, calls, closed: !document.querySelector('body > .dcm') };
+      } finally { (ALL_ROWS.find(x => x.roomId === row.roomId) || row).isLive = wasLive; SELECTED_SID = wasSel; showCapturedTerminal = was.s; toggleCapturedTerms = was.t; pdChatFrameOf = was.f; }
+    })()`);
     const [cx, cy] = await p.evalIn(`(() => { const r = ${LDP(`.ldp-row[data-ldp-room="${A.loose}"]`)}.getBoundingClientRect(); return [r.left + 30, r.top + r.height / 2]; })()`);
     await c.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: cx, y: cy, button: 'right', clickCount: 1 }, p.sessionId);
     await c.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: cx, y: cy, button: 'right', clickCount: 1 }, p.sessionId);
@@ -305,9 +354,12 @@ async function main() {
       LDP.sig = ''; ldpPaint();
       const b = document.querySelector('#ld-projs .ldp-row[data-ldp-sid="sess-loose-1"]');
       const t = b ? b.textContent.trim() : null;
+      const sv = b && b.querySelector('svg');
+      const parts = sv ? [...sv.querySelectorAll('rect, path, circle')].map(e => e.tagName).join(',') : '';
+      const sz = sv ? [Math.round(sv.getBoundingClientRect().width), Math.round(sv.getBoundingClientRect().height)] : null;
       if (b) b.click();
       openDetail = od;
-      return { un: !!un, row: t, opened: seen };
+      return { un: !!un, row: t, opened: seen, parts, sz };
     })()`);
     // back to Motors' PO from its row
     await front(p, 'inbox'); await p.click(LDP(`[data-ldp-proj="${P.Motors}"]`));
@@ -560,12 +612,133 @@ async function main() {
     out.nounAll = await sm.evalIn(`(document.querySelector('#ld-projs [data-ldp="all"]') || {}).title || ''`);
     await sm.evalIn(`(() => { setNoun(null); window.dispatchEvent(new CustomEvent('cd-noun')); return 0; })()`);
     await sm.close();
+    // ---- ED-334: a loose row's ⋯ opens its menu, with a real mouse and the keys,
+    // once the Files panel's document listeners are on (they closed every .dcm)
+    {
+      const q = await page(1440, 900, false);
+      await toPo(q, P.Motors);
+      await q.until('!!document.querySelector("#ld-projs .ldp-row")', 15000).catch(() => null);
+      await q.evalIn('docsDocListen(); 0');
+      const SESS = `(() => { if (!ALL_ROWS.some(r => r.sessionId === 'sess-loose-334')) { const un = projectById(UNASSIGNED_ID);
+        ALL_ROWS.push({ sessionId: 'sess-loose-334', label: 'Notes on the trip', headless: false, updatedAt: Date.now() / 1000, isLive: false, agent: 'claude' });
+        if (un && !(un.sessions || []).some(x => x.sessionId === 'sess-loose-334')) un.sessions = (un.sessions || []).concat([{ sessionId: 'sess-loose-334' }]);
+        LDP.sig = ''; ldpPaint(); } return 0; })()`;
+      // spies: the row opening (its own click path), counted, not done
+      await q.evalIn(`(() => { window.__opened = []; window.__ldpOpenLoose = ldpOpenLoose; ldpOpenLoose = b => { window.__opened.push('ldp'); }; window.__openDetail = openDetail; openDetail = sid => { window.__opened.push('detail:' + sid); }; return 0; })()`);
+      const ST = `(() => { const m = [...document.querySelectorAll('body > .dcm')].find(e => !e.hidden && e.getBoundingClientRect().width > 0);
+        const b = document.activeElement;
+        if (!m) return { open: false, items: [], expanded: !!document.querySelector('#ld-projs [data-ldp-menu][aria-expanded="true"]'), opened: window.__opened.slice(), focusDots: !!(b && b.matches && b.matches('[data-ldp-menu]')) };
+        const r = m.getBoundingClientRect();
+        return { open: true, items: [...m.querySelectorAll('.dcm-item')].map(e => e.textContent.trim()), rect: { x: r.left, y: r.top, r: r.right, b: r.bottom },
+          inside: r.left >= 0 && r.top >= 0 && r.right <= innerWidth && r.bottom <= innerHeight, W: innerWidth, H: innerHeight,
+          expanded: !!document.querySelector('#ld-projs [data-ldp-menu][aria-expanded="true"]'), opened: window.__opened.slice() };
+      })()`;
+      const key = async (k, code, vk, text) => {
+        await c.send('Input.dispatchKeyEvent', { type: 'keyDown', key: k, code, windowsVirtualKeyCode: vk, text }, q.sessionId);
+        await c.send('Input.dispatchKeyEvent', { type: 'keyUp', key: k, code, windowsVirtualKeyCode: vk }, q.sessionId);
+      };
+      out.dots334 = {};
+      for (const [kind, sel] of [['task', `[data-ldp-menu][data-ldp-room="${A.loose}"]`], ['session', `[data-ldp-menu][data-ldp-sid="sess-loose-334"]`]]) {
+        const o = {};
+        await q.evalIn(SESS); await sleep(50);
+        const [x, y] = await q.evalIn(`(() => { const b = ${LDP(sel)}; b.scrollIntoView({ block: 'nearest' }); const r = b.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; })()`);
+        await c.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y }, q.sessionId);
+        await q.clickAt(x, y); await sleep(300);
+        o.click = await q.evalIn(ST);
+        await q.shot(`ldp-menu-${kind}-1440x900`);
+        await q.key('Escape'); await sleep(200);
+        o.esc = await q.evalIn(ST);
+        // again, then a click outside (on the Inbox's body) closes it
+        await q.evalIn(SESS);
+        await q.clickAt(x, y); await sleep(250);
+        o.again = await q.evalIn(ST);
+        // a click outside: on the Inbox's body, below (or above) the menu, never on it
+        const [ox, oy] = await q.evalIn(`(() => { const b = document.getElementById('ld-ibx-body').getBoundingClientRect();
+          const m = document.querySelector('body > .dcm:not([hidden])'), r = m ? m.getBoundingClientRect() : { top: b.top, bottom: b.top };
+          const y = r.bottom + 12 < b.bottom ? (r.bottom + b.bottom) / 2 : r.top - 12 > b.top ? (b.top + r.top) / 2 : b.top + 4;
+          return [b.left + 8, y]; })()`);
+        await q.clickAt(ox, oy); await sleep(250);
+        o.outside = await q.evalIn(ST);
+        // keyboard: focus ⋯, Enter opens; Escape; Space opens
+        await q.evalIn(SESS);
+        await q.evalIn(`(() => { ${LDP(sel)}.focus(); return 0; })()`);
+        await key('Enter', 'Enter', 13, '\r'); await sleep(250);
+        o.enter = await q.evalIn(ST);
+        await q.key('Escape'); await sleep(200);
+        o.enterEsc = await q.evalIn(ST);
+        await q.evalIn(SESS);
+        await q.evalIn(`(() => { ${LDP(sel)}.focus(); return 0; })()`);
+        await key(' ', 'Space', 32, ' '); await sleep(250);
+        o.space = await q.evalIn(ST);
+        await q.key('Escape'); await sleep(200);
+        out.dots334[kind] = o;
+      }
+      await q.evalIn('(() => { ldpOpenLoose = window.__ldpOpenLoose; openDetail = window.__openDetail; return 0; })()');
+      await q.close();
+      // a phone (390x844): no left panel, so no ⋯ to open there
+      const qp = await page(390, 844, true);
+      await toPo(qp, P.Motors).catch(() => null); await sleep(600);
+      out.dots334.phone = await qp.evalIn(`({ ld: !!LD.dock, dots: document.querySelectorAll('.ldp-dots').length, shown: [...document.querySelectorAll('.ldp-dots')].filter(b => b.getBoundingClientRect().width > 0).length })`);
+      await qp.close();
+    }
+    // ---- ED-334 (from #330): a project's page with no PO and no open task starts beside the left panel
+    {
+      const MAINGEO = `(() => { const m = document.querySelector('main'), v = document.getElementById('view'), ib = document.getElementById('ld-inbox');
+        const vr = v.getBoundingClientRect(), ir = ib && ib.getBoundingClientRect();
+        return { po: document.body.classList.contains('po-dock'), detail: document.body.classList.contains('detail-open'), sel: SELECTED_PROJECT || '',
+          viewL: Math.round(vr.left), viewR: Math.round(vr.right), viewW: Math.round(vr.width), panelR: ir && ir.width > 0 ? Math.round(ir.right) : null,
+          W: document.documentElement.clientWidth, scrollW: document.documentElement.scrollWidth, ld: !!(window.LD && LD.dock) }; })()`;
+      // (only once the page has loaded its projects, its rows and its Inbox: a
+      // renderRows before that paints an Inbox the page has not set up yet)
+      // (PROJECTS, ALL_ROWS and IBX are top-level let/const: not on window)
+      const READY = `typeof PROJECTS !== 'undefined' && !!PROJECTS && !!PROJECTS.projects && ALL_ROWS.length > 0 && typeof IBX !== 'undefined' && !!IBX.data && window.ensBooted === true && document.readyState === 'complete'`;
+      const q = await page(1440, 900, false);
+      const ready = await q.until(READY, 15000).then(() => true, () => false);
+      await q.evalIn(`(() => { SELECTED_PROJECT = ${JSON.stringify(P.Alpha)}; PROJECT_TAB = 'tasks'; renderRows(); return 0; })()`);
+      await sleep(1200);
+      out.inset334 = { ready, wide: await q.evalIn(MAINGEO) };
+      await q.shot('ed334-alpha-1440x900');
+      await q.close();
+      const qp = await page(390, 844, true);
+      const readyP = await qp.until(READY, 15000).then(() => true, () => false);
+      await qp.evalIn(`(() => { SELECTED_PROJECT = ${JSON.stringify(P.Alpha)}; PROJECT_TAB = 'tasks'; renderRows(); return 0; })()`);
+      await sleep(1200);
+      out.inset334.phone = await qp.evalIn(MAINGEO); out.inset334.readyP = readyP;
+      await qp.shot('ed334-alpha-390x844');
+      await qp.close();
+    }
     // ---- a phone: no list dock, the PO dock keeps its Inbox tab
     const ph = await page(390, 844, true);
     await toPo(ph, P.Motors).catch(() => null);
     await sleep(600);
     out.phone = await ph.evalIn(`(() => ({ ld: !!LD.dock, narrow: !!PD.dock && PD.dock.narrow(), pdInbox: !!PD.dock && PD.dock.title('inbox') != null, W: document.documentElement.clientWidth, scrollW: document.documentElement.scrollWidth }))()`);
     await ph.shot('left-strip-phone');
+    // #335: the phone's list wears the same task and session icons (set B) on its rows in no project
+    out.phoneList = await ph.evalIn(`(() => {
+      const un = projectById(UNASSIGNED_ID);
+      const now = Date.now() / 1000;
+      const rs = [{ sessionId: 'ph-sess-1', label: 'Fix my printer driver', headless: false, updatedAt: now, isLive: false, agent: 'claude' },
+                  { sessionId: 'ph-task-1', roomId: 'room-phtask1', label: 'Old parts inventory', headless: true, updatedAt: now + 1, isLive: false, agent: 'claude' }];
+      for (const r of rs) ALL_ROWS.push(r);
+      if (un) un.sessions = (un.sessions || []).concat(rs.map(r => ({ sessionId: r.sessionId })));
+      phPane('list'); swSetView('status');
+      for (const d of document.querySelectorAll('details.sw-group[data-group="unassigned"]')) d.open = true;
+      // each seeded row by its own id, scrolled to as a person would, its icon inside the screen
+      const W = document.documentElement.clientWidth, H = document.documentElement.clientHeight;
+      return rs.map(x => {
+        const row = document.querySelector('[data-group="unassigned"] [data-sid="' + x.sessionId + '"]');
+        const s = row && row.querySelector('.sw-kind-ico');
+        if (!s) return { sid: x.sessionId, k: null };
+        s.scrollIntoView({ block: 'center' });
+        const r = s.getBoundingClientRect();
+        return { sid: x.sessionId, k: s.getAttribute('aria-label'), w: Math.round(r.width), h: Math.round(r.height),
+                 inView: r.left >= 0 && r.top >= 0 && r.right <= W && r.bottom <= H,
+                 parts: [...s.querySelectorAll('rect, path, circle')].map(e => e.tagName).join(',') };
+      });
+    })()`);
+    out.phoneListW = await ph.evalIn(`[document.documentElement.clientWidth, document.documentElement.scrollWidth]`);
+    await ph.shot('left-strip-phone-list');
+    await ph.evalIn(`(swSetView('recent'), phPane(''), 0)`);
     // ---- the same page made a computer's: the Inbox leaves the PO dock, onto the list dock's strip
     const RS = `({ tabs: [...document.querySelectorAll('#po-dock .dk-tab')].map(t => t.dataset.dkTab), narrow: PD.dock.narrow(), pdInbox: PD.dock.title('inbox') != null, lay: JSON.stringify(PD.dock.layout()), left: LD.dock ? [...document.querySelectorAll('#list-dock .dk-strip-left .dk-strip-btn[data-dk-auto]')].map(b => b.dataset.dkAuto) : [] })`;
     await c.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false }, ph.sessionId);
@@ -767,6 +940,31 @@ class LeftStripInChrome(unittest.TestCase):
         self.assertEqual(len(set(fills)), len(fills), "three projects, three colours: %s" % fills)
         self.assertEqual(next(r for r in rows if r["room"] == self.loose)["ico"]["k"], "task")
 
+    def test_the_task_icon_is_a_clipboard(self):
+        # #335 (CEO's pick, set B): a task a clipboard with a check (its body, its clip, the check),
+        # never the projects' rounded square
+        ico = next(r for r in self.g("fresh")["ldp"] if r["room"] == self.loose)["ico"]
+        self.assertEqual(ico["parts"], "rect,rect,path")
+        self.assertNotEqual(ico["rx"], "3", "not the swatch's square")
+        self.assertEqual((ico["w"], ico["h"]), (12, 12))
+
+    def test_the_session_icon_is_a_terminal(self):
+        # #335: a session the terminal window it runs in (its frame, the prompt >_)
+        s = self.g("session")
+        self.assertEqual(s["parts"], "rect,path")
+        self.assertEqual(s["sz"], [12, 12])
+
+    def test_the_phone_list_wears_the_same_icons(self):
+        by = {i["sid"]: i for i in self.got["phoneList"]}
+        want = {"ph-task-1": ("task", "rect,rect,path"), "ph-sess-1": ("session", "rect,path")}
+        for sid, (k, parts) in want.items():
+            with self.subTest(sid=sid):
+                i = by[sid]
+                self.assertEqual((i["k"], i["parts"], i["w"], i["h"]), (k, parts, 12, 12), i)
+                self.assertTrue(i["inView"], "its icon on the screen: %s" % i)
+        w, sw = self.got["phoneListW"]
+        self.assertEqual((w, sw), (390, 390), "no sideways scroll on a phone")
+
     def test_the_divider(self):
         g = self.got
         a, b, c = g["split0"], g["split1"], g["split2"]
@@ -874,8 +1072,12 @@ class LeftStripInChrome(unittest.TestCase):
                 self.assertEqual(m["items"][0]["t"], "Open")
                 mp = [i for i in m["items"] if i["makepo"]]
                 self.assertEqual(len(mp), 1)
-                self.assertEqual(mp[0]["room"], self.loose)
                 self.assertTrue(mp[0]["t"].startswith("Make PO of a new"))
+        t = self.g("termsRun")
+        self.assertEqual(t, {"a": "ok", "b": "ok", "c": "ok", "calls": ["show:" + self.loose, "toggle:" + self.loose, "toggle:" + self.loose], "closed": True},
+                         "the terminals item acts on the row's own task (its panel's frame, else the task), never the open one")
+        run = self.g("actRun")
+        self.assertEqual(run, {"found": True, "room": self.loose, "closed": True}, "an action runs for the row and the menu closes")
         self.assertTrue(self.g("dotsMenu")["expanded"])
         self.assertIsNone(self.g("dotsClosed"), "Esc closes it")
         self.assertIsNone(self.g("ctxClosed"), "a click elsewhere closes it")
@@ -1108,6 +1310,52 @@ class LeftStripInChrome(unittest.TestCase):
         self.assertTrue(g["narrow"])
         self.assertTrue(g["pdInbox"], "the PO dock's Inbox tab")
         self.assertLessEqual(g["scrollW"], g["W"])
+
+    def test_a_loose_rows_dots_open_its_menu(self):
+        """ED-334: with the Files panel's listeners on, a real click on ⋯ (a task
+        row and a session row) opens the row's menu inside the window, without
+        opening the row; Escape and a click outside close it; Enter and Space
+        on the focused ⋯ open it."""
+        d = self.g("dots334")
+        for kind in ("task", "session"):
+            with self.subTest(kind=kind):
+                o = d[kind]
+                self.assertTrue(o["click"]["open"], o["click"])
+                self.assertEqual(o["click"]["items"][0], "Open")
+                items = o["click"]["items"]
+                self.assertTrue(any(i.startswith("Make PO") for i in items), items)
+                # the row's own actions (the same model as its row and task panel menus)
+                self.assertIn("Rename…", items)
+                self.assertTrue(any(i.startswith("Move to") for i in items), items)
+                self.assertIn("Delete task…" if kind == "task" else "Delete session…", items)
+                if kind == "session":
+                    self.assertIn("Archive", items)
+                self.assertTrue(o["click"]["inside"], o["click"])
+                self.assertTrue(o["click"]["expanded"])
+                self.assertEqual(o["click"]["opened"], [], "the row did not open")
+                self.assertFalse(o["esc"]["open"]); self.assertFalse(o["esc"]["expanded"])
+                self.assertTrue(o["esc"]["focusDots"], "Escape gives focus back to the ⋯")
+                self.assertTrue(o["again"]["open"])
+                self.assertFalse(o["outside"]["open"]); self.assertFalse(o["outside"]["expanded"])
+                self.assertTrue(o["enter"]["open"], o["enter"]); self.assertTrue(o["enter"]["inside"])
+                self.assertFalse(o["enterEsc"]["open"])
+                self.assertTrue(o["space"]["open"], o["space"]); self.assertTrue(o["space"]["inside"])
+                self.assertEqual(o["space"]["opened"], [], "the row did not open")
+        self.assertEqual(d["phone"]["shown"], 0, "a phone has no left panel and no ⋯")
+
+    def test_a_project_page_without_a_po_starts_beside_the_left_panel(self):
+        g = self.g("inset334")
+        self.assertTrue(g["ready"], "the 1440 page loaded before its Alpha page was painted")
+        self.assertTrue(g["readyP"], "the 390 page loaded before its Alpha page was painted")
+        w = g["wide"]
+        self.assertFalse(w["po"]); self.assertFalse(w["detail"])
+        self.assertIsNotNone(w["panelR"], w)
+        self.assertGreaterEqual(w["viewL"], w["panelR"], w)
+        self.assertLessEqual(w["viewR"], w["W"], w)
+        p = g["phone"]
+        self.assertFalse(p["ld"])
+        self.assertGreaterEqual(p["viewL"], 0, p); self.assertLessEqual(p["viewL"], 24, p)
+        self.assertLessEqual(p["scrollW"], p["W"], p)
 
     def test_the_page_threw_nothing(self):
         self.assertEqual(self.got["errors"], [])

@@ -336,6 +336,22 @@ After a crash (no planned restart) nothing comes back by itself: resume a room
 that has nothing new to do with `POST /api/room/resume` and `"quiet": true`,
 which types no line.
 
+**A service that must outlive your terminal or a hub restart** (a project's
+app, a server, a bot) is started as a systemd unit of its own, never with
+`setsid`, `nohup` or `&` alone:
+
+```sh
+systemd-run --user --unit=<project>-<name> --working-directory="$PWD" -- <command>
+```
+
+Stop it with `systemctl --user stop <project>-<name>`; `journalctl --user -u
+<project>-<name>` has its output. `setsid` and `nohup` change the session and
+the signals, not the cgroup: on Linux the process stays in the cgroup of the
+hub's unit or of its PTY host's scope, and stopping that unit ends every
+process in it. Before a restart the hub moves such a process into a scope of
+its own (`kept-<name>-<pid>.scope`) and says so, or refuses the restart when it
+cannot; do not count on that, and say in your report how the service runs.
+
 ## Long tasks: the handover
 
 Every model call re-sends the whole conversation, so a task's owner (the
@@ -799,6 +815,16 @@ What happens … How to reproduce … What we need …"
   until it next runs. A PO that is busy is told when it is idle.
 - **At most 6 wakes an hour between two projects.** More are held until the
   hour allows, and the product owner's bell shows it. Batch what you have.
+
+**After a move to another machine, `ensemble_move_check` (POs).** The hub runs
+the move check at every start: code folders, task folders, task worktrees whose
+git folder is gone, and Claude conversations filed under the old folder's name.
+It repairs what is safe by itself (a worktree only when its files equal a
+commit; a conversation is copied, never moved) and keeps the rest as it is: a
+worktree with work of its own gets `moved-<date>.patch` in its task folder.
+What it could not repair is listed in Settings › This instance, and you get one
+line about it. Without arguments the tool returns the last result; `run: true`
+runs it again (`repair: false` only looks).
 
 **Write what is due at a time under `## Due`.** One line per item, promises to
 the product owner first:

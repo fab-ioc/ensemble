@@ -59,6 +59,7 @@ class LoadingTheToken(unittest.TestCase):
         env.start()
         self.addCleanup(env.stop)
         os.environ.pop("ENSEMBLE_TOKEN", None)
+        os.environ.pop("ENSEMBLE_PTY_PREFLIGHT", None)
 
     def test_a_new_token_is_minted_kept_and_loaded_again(self):
         tok = dashboard._load_access_token()
@@ -78,6 +79,17 @@ class LoadingTheToken(unittest.TestCase):
         self.file.write_text("  \n", encoding="utf-8")
         tok = dashboard._load_access_token()
         self.assertTrue(tok and self.file.read_text(encoding="utf-8") == tok)
+
+    def test_a_preflight_start_writes_nothing(self):
+        os.environ["ENSEMBLE_PTY_PREFLIGHT"] = "1"
+        self.assertTrue(dashboard._load_access_token())
+        self.assertFalse(self.file.exists(), "the preflight leaves the state as it was")
+        if os.name == "posix":
+            self.dir.mkdir(parents=True)
+            self.file.write_text("kept-one", encoding="utf-8")
+            os.chmod(self.file, 0o644)
+            self.assertTrue(dashboard._load_access_token() == "kept-one")
+            self.assertEqual(stat.S_IMODE(self.file.stat().st_mode), 0o644)
 
     def test_ensemble_token_wins_and_writes_nothing(self):
         self.dir.mkdir(parents=True)

@@ -45,9 +45,13 @@ import zipfile
 from pathlib import Path
 
 import app_version
+import update_notes
 
 SUMS_NAME = "SHA256SUMS.txt"
-RELEASES_URL = "https://api.github.com/repos/{repo}/releases?per_page=20"
+RELEASES_URL = "https://api.github.com/repos/{repo}/releases?per_page=100"
+# What's new counts every release newer than the running one (#339): further
+# pages are read while a full page is still all newer, up to this many.
+RELEASES_MAX_PAGES = 10
 USER_AGENT = "Ensemble-updater"
 PREVIOUS_DIR = ".previous"
 FAILED_DIR = ".failed"
@@ -153,10 +157,38 @@ def _get(url: str, timeout: float = 20) -> bytes:
         return r.read()
 
 
-def fetch_releases(repo: str = app_version.REPO, timeout: float = 15) -> list:
-    # ENSEMBLE_RELEASES_URL: another list in the same shape (a rehearsal, a fork).
-    url = os.environ.get("ENSEMBLE_RELEASES_URL") or RELEASES_URL.format(repo=repo)
-    return json.loads(_get(url, timeout).decode("utf-8"))
+def fetch_releases(repo: str = app_version.REPO, timeout: float = 15,
+                   current: str = app_version.VERSION) -> list:
+    # ENSEMBLE_RELEASES_URL: another list in the same shape (a rehearsal, a
+    # fork), read as one page.
+    feed = os.environ.get("ENSEMBLE_RELEASES_URL")
+    if feed:
+        return json.loads(_get(feed, timeout).decode("utf-8"))
+    url = RELEASES_URL.format(repo=repo)
+    out = Releases()
+    for page in range(1, RELEASES_MAX_PAGES + 1):
+        got = json.loads(_get(f"{url}&page={page}", timeout).decode("utf-8"))
+        if not isinstance(got, list):
+            raise ValueError("the release list is not a list")
+        out.extend(got)
+        # A short page is the last. A page with no release newer than the
+        # running one ends it too; the order across pages is not trusted, so
+        # a page that reaches the running version but still holds a newer one
+        # does not.
+        tags = [str(r.get("tag_name") or "") for r in got if isinstance(r, dict)]
+        if len(got) < 100 or not any(app_version.parse_version(t) and app_version.is_newer(t, current)
+                                     for t in tags):
+            break
+    else:
+        # The cap, on a full page that still held newer releases: the count
+        # of what is newer is a minimum.
+        out.capped = True
+    return out
+
+
+class Releases(list):
+    """The fetched list; ``capped`` when the page cap cut it short."""
+    capped = False
 
 
 def check(current: str = app_version.VERSION, key: str | None = None, fetch=fetch_releases) -> dict:
@@ -167,14 +199,33 @@ def check(current: str = app_version.VERSION, key: str | None = None, fetch=fetc
         return {"available": False, "reason": "no_release_for_platform", "kind": "release",
                 "currentVersion": current}
     try:
-        rel = pick_release(fetch(), current, key)
+        releases = fetch()
+        rel = pick_release(releases, current, key)
     except (OSError, ValueError, urllib.error.URLError) as e:
         return {"available": False, "reason": f"error: {e.__class__.__name__}", "kind": "release",
                 "currentVersion": current}
     if not rel:
         return {"available": False, "kind": "release", "currentVersion": current}
+    # What's new (#339): the notes of every newer release, from the same list.
+    # Only those up to the one Install installs: a newer release with no build
+    # for this platform is not what the dialog offers.
+    # A release list in an odd shape (a body that is not text) drops the
+    # notes, not the update: the dialog falls back to the release's name.
+    try:
+        notes = update_notes.release_notes(releases, current, upto=rel["version"])
+    except (TypeError, ValueError, KeyError, AttributeError):
+        notes = []
+    try:
+        message = update_notes.plain_title(str(rel.get("name") or ""))
+    except (TypeError, ValueError):
+        message = ""
+    latest = next((n for n in notes if n["version"] == rel["version"]), None)
     return {"available": True, "kind": "release", "currentVersion": current,
-            "latestVersion": rel["version"], "latestMessage": rel["name"], "release": rel}
+            "latestVersion": rel["version"], "latestMessage": message,
+            "release": rel, "latestId": rel["version"],
+            "notes": notes[:update_notes.MAX_ITEMS], "more": max(0, len(notes) - update_notes.MAX_ITEMS),
+            "updates": len(notes), "atLeast": bool(getattr(releases, "capped", False)),
+            "latestDate": latest["at"] if latest else 0}
 
 
 def download(url: str, dest: Path, timeout: float = 60) -> Path:

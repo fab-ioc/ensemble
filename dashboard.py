@@ -67,10 +67,14 @@ from backends.shared import (
 )
 # Images pasted into a chat box, kept for the agent.
 import attachments
+import project_icon
+# An initiative's icon drawn by an AI model (#335).
+import icon_gen
 # Which Ensemble this is (its version; built app or a checkout), and Update now
 # for the built app (from GitHub Releases).
 import app_version
 import app_update
+import update_notes
 import app_setup
 # Agent-type abstraction (WHAT runs in a session), orthogonal to the OS backend
 # (WHERE it runs). Codex discovery + the claude/codex registry live here.
@@ -86,6 +90,8 @@ import provider_retry
 import permission_mode
 # Which tasks need a human, and why (the /api/attention join).
 import attention
+# A seat stopped on its CLI's first-run screen, answered or reported (ED-340).
+import first_run
 # What the task list read from each transcript, kept across hub starts (ED-200).
 import filefacts
 import filetable
@@ -134,6 +140,7 @@ import input_provenance
 import turnstore
 # The person's sends: each kept by its key until the agent's conversation shows it.
 import restart_drain
+import restart_guard
 import sends
 # Slash commands from the chat: what to suggest, what a command is (#253).
 import slash
@@ -169,6 +176,8 @@ agent_launch.install_spawn_guard()
 import running_rooms
 import hub_typing
 import restore_problems
+import seat_folders
+import move_check
 
 # Windows: a console program started by a host that has no console of its own
 # (pythonw.exe under the scheduled task) gets a brand-new console window, which
@@ -196,12 +205,14 @@ if "backends.windows" in sys.modules:
 ensemble_tools.bind(sys.modules[__name__])
 attention.bind(sys.modules[__name__])
 digest.bind(sys.modules[__name__])
+icon_gen.bind(sys.modules[__name__])
 board.bind(sys.modules[__name__])
 task_brief.bind(sys.modules[__name__])
 pacing.bind(sys.modules[__name__])
 due.bind(sys.modules[__name__])
 issues.bind(sys.modules[__name__])
 stall.bind(sys.modules[__name__])
+first_run.bind(sys.modules[__name__])
 idle.bind(sys.modules[__name__])
 model_limit.bind(sys.modules[__name__])
 provider_retry.bind(sys.modules[__name__])
@@ -213,6 +224,8 @@ lost_sessions.bind(sys.modules[__name__])
 running_rooms.bind(sys.modules[__name__])
 hub_typing.bind(sys.modules[__name__])
 restore_problems.bind(sys.modules[__name__])
+seat_folders.bind(sys.modules[__name__])
+move_check.bind(sys.modules[__name__])
 points.bind(sys.modules[__name__])
 asks.bind(sys.modules[__name__])
 threads.bind(sys.modules[__name__])
@@ -249,11 +262,16 @@ def _load_access_token() -> str:
         tok = tok_file.read_text(encoding="utf-8").strip()
     except (OSError, UnicodeDecodeError):
         tok = ""
+    # A preflight start of a new version (ENSEMBLE_PTY_PREFLIGHT) runs on the
+    # real state and changes none of it: a token it mints is its own.
+    preflight = bool(os.environ.get("ENSEMBLE_PTY_PREFLIGHT"))
     if tok:
-        _owner_only(tok_file)
+        if not preflight:
+            _owner_only(tok_file)
         return tok
     tok = secrets.token_urlsafe(24)
-    _keep_token(tok_file, tok)
+    if not preflight:
+        _keep_token(tok_file, tok)
     return tok
 
 
@@ -886,7 +904,7 @@ STATIC_DIR = Path(__file__).parent
 # page gets written into its <meta name="ensemble-pages"> at serve time, so an
 # open tab can tell when the page it runs is no longer the one on disk.
 PAGE_FILES = ("index.html", "session.html", "fileview.html", "static/hub-resilience.js", "static/filedrag.js",
-              "static/feedback.js", "static/feedback.css",
+              "static/feedback.js", "static/feedback.css", "static/whatsnew.js", "static/whatsnew.css",
               "static/hl.js", "static/comments.js", "static/attach.js", "static/actions.js",
               "static/selbar.js", "static/noun.js", "static/taskcard.js", "static/pointrefs.js",
               "static/pagekey.js", "static/filelinks.js", "static/progress.js", "static/progress.css",
@@ -1583,6 +1601,20 @@ def _news_in_messages(room: dict) -> float:
     return 0.0
 
 
+def _conv_in_messages(room: dict) -> float:
+    """When its chat was last spoken in (#337: the left panel's project order):
+    the newest message from anyone, the person included, but no hub note or
+    landmark. A state or column change is no conversation, so not updatedAt."""
+    for m in reversed(room.get("messages") or []):
+        if not isinstance(m, dict) or m.get("from") == "ensemble" or _news_landmark(m):
+            continue
+        try:
+            return float(m.get("ts") or 0)
+        except (TypeError, ValueError):
+            continue
+    return 0.0
+
+
 def room_news_at(room: dict, msg_news: float | None = None) -> float:
     """When a task's chat last got something for its reader: epoch seconds, 0
     for never. The page compares it with the read point the chat keeps per
@@ -2006,6 +2038,9 @@ TASK_AGENT_TOOLS_VALUES = {TASK_AGENT_TOOLS_ENSEMBLE, TASK_AGENT_TOOLS_OWN}
 _SETTINGS_DEFAULTS = {
     "feedbackRepo": feedback.DEFAULT_REPO,
     "feedbackRelayUrl": feedback.DEFAULT_RELAY,
+    # What's new › Skip this version: the commit or release skipped, on the
+    # hub so every device agrees (#339). "" = none skipped.
+    "updateSkipped": "",
     "openMode": "window",   # "window" (new iTerm window) | "tab" (new tab in front window)
     # Settings › Editor: what Open in editor opens, for every project. ""
     # = Automatic (from the repo's language, among the editors installed), an
@@ -2752,6 +2787,8 @@ usage.hub_codex_model = _hub_codex_model
 
 def save_settings(settings: dict) -> dict:
     """Persist only known keys with validated values; ignore extras."""
+    if os.environ.get("ENSEMBLE_PTY_PREFLIGHT"):
+        return load_settings()
     with _SETTINGS_LOCK:
         return _save_settings_locked(settings)
 
@@ -2780,6 +2817,9 @@ def _save_settings_locked(settings: dict) -> dict:
                 continue
             v = {**current["poFallbackModels"],
                  **{kind: model.strip() for kind, model in v.items()}}
+        if k == "updateSkipped":
+            if not isinstance(v, str) or not re.fullmatch(r"[0-9A-Za-z._+-]{0,64}", v):
+                continue
         if k == "operatorNickname":
             if not isinstance(v, str) or len(v) > 60:
                 continue
@@ -5990,8 +6030,10 @@ def review_repo(room: dict) -> str:
     """The git checkout a review looks at: the owner's or the task's working dir
     when it is one, else the first checkout found inside them."""
     own = set(chatroom.owners(room))
+    # An owner seat an older hub left outside a worktree task's folder (~/cs)
+    # is not where its work is (ED-344).
     cands = [p.get("cwd", "") for p in chatroom.agent_participants(room)
-             if p["identity"] in own]
+             if p["identity"] in own and not seat_folders.outside_task(room, p.get("cwd", ""))]
     cands += [room.get("cwd", ""), room.get("taskDir", "")]
     for c in cands:
         if not c or not os.path.isdir(c):
@@ -6687,6 +6729,8 @@ def _load_projects_uncached(dirs: list[str], codes: list[str]) -> list[dict]:
                       # Its own progress-digest interval, when it set one.
                       **({"digestIntervalMin": meta["digestIntervalMin"]}
                          if "digestIntervalMin" in meta else {}),
+                      # Its own icon in place of the coloured square (#329).
+                      **({"icon": _icon_meta(meta["icon"])} if _icon_meta(meta.get("icon")) else {}),
                       **({"taskAgentTools": (TASK_AGENT_TOOLS_OWN
                                              if meta.get("taskAgentTools") == TASK_AGENT_TOOLS_OWN
                                              else TASK_AGENT_TOOLS_ENSEMBLE)}
@@ -6706,6 +6750,8 @@ def _load_projects_uncached(dirs: list[str], codes: list[str]) -> list[dict]:
 
 
 def save_projects(projects: list[dict]) -> None:
+    if os.environ.get("ENSEMBLE_PTY_PREFLIGHT"):
+        return
     DASHBOARD_DIR.mkdir(parents=True, exist_ok=True)
     tmp = PROJECTS_FILE.with_suffix(".json.tmp")
     durable.write_tmp(tmp, json.dumps(projects, indent=2))
@@ -8128,6 +8174,8 @@ _PROJECT_META_LOCK = threading.RLock()
 def _set_project_meta(project_id: str, key: str, value) -> tuple[bool, str]:
     """Set (or, with None, remove) one key of a project's own ``project.json``
     in its home. Only that one key is touched."""
+    if os.environ.get("ENSEMBLE_PTY_PREFLIGHT"):
+        return False, "read_only_preflight"
     proj = find_project(project_id)
     if proj is None:
         return False, "no_such_project"
@@ -8201,6 +8249,167 @@ def set_project_key(project_id: str, key: str) -> tuple[bool, str]:
     if any(pid != project_id and v == k for pid, v in project_keys(projects).items()):
         return False, "key_taken"
     return _set_project_meta(project_id, "key", k)
+
+
+RENAME_REFUSALS = {
+    "empty_name": "A name cannot be empty.",
+    "name_taken": "Another project is already called that. Pick another name.",
+}
+
+
+def _set_project_field(project_id: str, key: str, value) -> tuple[bool, str]:
+    """One key of a project's record: its project.json, and its projects.json
+    entry when it has one (an external project or a legacy one, whose name
+    and icon load from there)."""
+    ok, msg = _set_project_meta(project_id, key, value)
+    if not ok:
+        return ok, msg
+    with _PROJECT_META_LOCK:
+        try:
+            d = json.loads(PROJECTS_FILE.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            d = None
+        if isinstance(d, list) and any(isinstance(e, dict) and e.get("id") == project_id for e in d):
+            for e in d:
+                if isinstance(e, dict) and e.get("id") == project_id:
+                    if value is None:
+                        e.pop(key, None)
+                    else:
+                        e[key] = value
+            try:
+                save_projects(d)
+            except OSError as e:
+                return False, f"cannot write {PROJECTS_FILE}: {e}"
+    return True, "ok"
+
+
+def rename_project(project_id: str, name: str) -> tuple[bool, str]:
+    """A project's display name, as typed on its settings (#329). Its folder,
+    id and key stay as they are; another project's name (in any case) and an
+    empty one are refused. Its PO chat's stored title follows, and its PO is
+    told once, on its next wake, so its handover stays right."""
+    new = " ".join((name or "").split())[:120]
+    if not new:
+        return False, "empty_name"
+    projects = load_projects()
+    proj = next((p for p in projects if p["id"] == project_id), None)
+    if proj is None:
+        return False, "no_such_project"
+    if any(p["id"] != project_id and (p.get("name") or "").strip().casefold() == new.casefold()
+           for p in projects):
+        return False, "name_taken"
+    old = proj.get("name") or ""
+    if old == new:
+        return True, "ok"
+    # Every key stays the one it was: a key still derived from a name (this
+    # project's, or another's that gave way to it) is written down first.
+    for pid, k in project_keys(projects).items():
+        other = next((p for p in projects if p["id"] == pid), {})
+        if k and not str(other.get("key") or "").strip():
+            _set_project_meta(pid, "key", k)
+    ok, msg = _set_project_field(project_id, "name", new)
+    if not ok:
+        return ok, msg
+    inbox.forget()      # its cards carry the project's name: the next read has the new one
+    po_rid = (proj.get("poRoomId") or "").strip()
+    po_room = chatroom.get_room(po_rid) if po_rid else None
+    if po_room is not None:
+        if (po_room.get("title") or "") == f"{old} PO"[:120]:
+            chatroom.patch_room(po_rid, title=f"{new} PO"[:120])
+        line = f"This {project_noun()} is now called \u201c{new}\u201d (was \u201c{old}\u201d)."
+        res = chatroom.post_report(po_rid, rotation.SENDER, chatroom.po_identity(po_room), line,
+                                   {"reportKind": "renamed", "reporter": rotation.SENDER}, wake=False)
+        if res:
+            quiet_reports.hold(po_rid, res["message"]["id"], line)
+    return True, "ok"
+
+
+def _icon_meta(v) -> dict | None:
+    """The ``icon`` of a project record, when it names a file the hub keeps."""
+    if not isinstance(v, dict) or not project_icon.FILE_RE.match(str(v.get("file") or "")):
+        return None
+    return {"file": v["file"], "name": str(v.get("name") or v["file"])[:200],
+            "size": v.get("size") if isinstance(v.get("size"), int) else 0,
+            "v": v.get("v") if isinstance(v.get("v"), int) else 0}
+
+
+def set_project_icon(project_id: str, data_url, name: str = "") -> tuple[bool, str, dict | None]:
+    """Keep an uploaded image as the project's icon, or (``data_url`` None)
+    remove it so the coloured square shows again."""
+    proj = find_project(project_id)
+    if proj is None:
+        return False, "no_such_project", None
+    home = Path(project_home(proj, create=True))
+    if data_url is None:
+        ok, msg = _set_project_field(project_id, "icon", None)
+        if ok:
+            for f in home.glob("project-icon.*"):
+                if project_icon.FILE_RE.match(f.name):
+                    with contextlib.suppress(OSError):
+                        f.unlink()
+        return ok, msg, None
+    try:
+        raw, ext = project_icon.accept(data_url)
+    except project_icon.Refused as e:
+        return False, e.code, None
+    fname = f"project-icon.{ext}"
+    try:
+        tmp = home / (fname + ".tmp")
+        tmp.write_bytes(raw)
+        _replace_retrying(tmp, home / fname)
+    except OSError as e:
+        return False, f"cannot write the icon: {e}", None
+    base = os.path.basename(str(name or "").replace("\\", "/")).strip() or fname
+    icon = {"file": fname, "name": base[:200], "size": len(raw), "v": int(time.time() * 1000)}
+    ok, msg = _set_project_field(project_id, "icon", icon)
+    if not ok:
+        return ok, msg, None
+    for f in home.glob("project-icon.*"):
+        if f.name != fname and project_icon.FILE_RE.match(f.name):
+            with contextlib.suppress(OSError):
+                f.unlink()
+    return True, "ok", icon
+
+
+def project_icon_about(proj: dict) -> str:
+    """What Generate tells the model a project is about (#335): its roadmap's first prose line."""
+    try:
+        return icon_gen.about_text(read_roadmap(proj).get("text") or "")
+    except OSError:
+        return ""
+
+
+def project_icon_gen_info(project_id: str) -> dict | None:
+    """What the settings show above Generate (#335): which CLI draws, and from what."""
+    proj = find_project(project_id)
+    if proj is None:
+        return None
+    cli = icon_gen.which_cli()
+    return {"agent": cli["agent"] if cli else "", "model": cli["model"] if cli else "",
+            "name": proj.get("name") or "", "about": project_icon_about(proj)}
+
+
+def generate_project_icons(project_id: str, name: str = "") -> tuple[bool, str, dict]:
+    """Four icons for a project, drawn by the CLI the hub runs (#335). Nothing is
+    kept: the page shows them and saves the picked one through /api/projects/icon.
+    `name` is the one typed in the settings, not saved yet; else the project's."""
+    proj = find_project(project_id)
+    if proj is None:
+        return False, "no_such_project", {}
+    # A lone surrogate (JSON's "\ud800") cannot be encoded for the CLI: it becomes "?".
+    name = str(name or "").encode("utf-8", "replace").decode("utf-8")
+    name = " ".join(name.split())[:120] or proj.get("name") or ""
+    return icon_gen.generate(project_id, name, project_icon_about(proj))
+
+
+def project_icon_file(project_id: str) -> Path | None:
+    """The icon file of a project, when it has one."""
+    proj = find_project(project_id)
+    icon = _icon_meta((proj or {}).get("icon"))
+    if not icon:
+        return None
+    f = Path(project_home(proj, create=False)) / icon["file"]
+    return f if f.is_file() else None
 
 
 def _task_project(room: dict, links: dict, projects: list[dict]) -> str:
@@ -9424,7 +9633,10 @@ def build_projects() -> dict:
     keep = ("sessionId", "roomId", "label", "status", "isLive", "idleSeconds",
             "updatedAt", "agents", "members", "mode", "headless", "cwd",
             "taskDir", "priority", "priorityName", "workflow", "workflowName",
-            "attention", "no", "firstWords", "after", "onReady")
+            "attention", "no", "firstWords", "after", "onReady",
+            # #337: the left panel ties projects by their latest conversation,
+            # for tasks past the task list's 300 rows too
+            "convAt", "newsAt")
     # One group per registered project, plus a synthetic unassigned bucket.
     groups: dict = {}
     keys = project_keys(projects_reg)
@@ -9436,10 +9648,13 @@ def build_projects() -> dict:
                            "aliases": aliases.get(p["id"], []),
                            "home": project_home(p, create=False),
                            # Where its tasks put reports and design notes.
-                           "documentsDir": project_documents_dir(p),
+                           "documentsDir": project_documents_dir(
+                               p, persist=not os.environ.get("ENSEMBLE_PTY_PREFLIGHT")),
                            "poRoomId": p.get("poRoomId", ""), "kind": p.get("kind") or "code",
                            **({"taskAgentTools": p["taskAgentTools"]}
                               if p.get("taskAgentTools") in TASK_AGENT_TOOLS_VALUES else {}),
+                           # Its own icon (#329): the page shows it in place of the square.
+                           **({"icon": _icon_meta(p.get("icon"))} if _icon_meta(p.get("icon")) else {}),
                            "isGit": p.get("isGit", False), "registered": True,
                            "sessions": [], "live": 0, "working": 0, "poLive": False,
                            "waiting": 0, "updatedAt": 0}
@@ -10581,7 +10796,7 @@ def project_home(project: dict, create: bool = True) -> str:
         return os.path.normpath(ppath)
     if not home:
         home = _free_home(project)
-    if create:
+    if create and not os.environ.get("ENSEMBLE_PTY_PREFLIGHT"):
         with contextlib.suppress(OSError):
             _make_home(project, home)
     return os.path.normpath(home)
@@ -12969,7 +13184,7 @@ def _message_facts(room: dict) -> dict:
                        if m.get("from") != "user" and (m.get("text") or "").strip()), None)
     return {"turns": len(msgs), "first": first_txt, "last": last_txt,
             "lastAgent": ((last_agent or {}).get("text") or "")[:400],
-            "newsMsgAt": _news_in_messages(room)}
+            "newsMsgAt": _news_in_messages(room), "convMsgAt": _conv_in_messages(room)}
 
 
 def _keeps_room_whole(room: dict) -> bool:
@@ -13415,6 +13630,7 @@ def _load_sessions_uncached(n: int = 200, progress_key: str = "") -> list[dict]:
             last_agent_txt = facts.get("lastAgent", "")
             room_cost = {} if cold else compute_room_cost(rm, files=claude_files)
             pend = pending_input(rid)
+            news_at = room_news_at(rm, facts.get("newsMsgAt"))
             room_rows.append({
                 "sessionId": rid, "roomId": rid, "headless": True,
                 # Its number in its project (#18), when it has one.
@@ -13474,7 +13690,10 @@ def _load_sessions_uncached(n: int = 200, progress_key: str = "") -> list[dict]:
                 "costTokens": room_cost.get("tokens"),
                 # When its chat last got something to read (the unread dot),
                 # and a worktree branch's change against main (+N −N).
-                "newsAt": room_news_at(rm, facts.get("newsMsgAt")),
+                "newsAt": news_at,
+                # When it was last spoken in (#337): its messages, or a solo
+                # chat's transcript (newsAt); a card from before has newsAt only.
+                "convAt": max(facts.get("convMsgAt") or 0, news_at),
                 "changes": (branch_changes(rm.get("cwd", ""))
                             if not cold and (rm.get("workspace") or {}).get("mode") == "worktree" else None),
                 # Its branch's commits ahead of main and their times (#316).
@@ -13613,6 +13832,8 @@ def check_for_update(force: bool = False) -> dict:
     if not force and _UPDATE_CHECK_CACHE and (now - _UPDATE_CHECK_CACHE[0]) < _UPDATE_CHECK_TTL:
         return _UPDATE_CHECK_CACHE[1]
     if _UPDATE_CHECK_LOCK:
+        if force:
+            return {"available": False, "reason": "checking"}
         if _UPDATE_CHECK_CACHE:
             return _UPDATE_CHECK_CACHE[1]
         return {"available": False, "reason": "checking"}
@@ -13627,9 +13848,11 @@ def check_for_update(force: bool = False) -> dict:
         else:
             try:
                 def git(*args) -> str:
+                    # UTF-8 whatever the locale (a Windows code page): an
+                    # emoji subject, or a byte that is not UTF-8, never fails.
                     return _run(
                         ["git", *args], cwd=str(install_dir),
-                        capture_output=True, text=True, timeout=5,
+                        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5,
                     ).stdout.strip()
                 # Fetch the remote our branch actually tracks — not always
                 # "origin". Otherwise we'd fetch origin but compare against
@@ -13639,7 +13862,7 @@ def check_for_update(force: bool = False) -> dict:
                 fetch = _run(
                     ["git", "fetch", "--quiet", remote_name],
                     cwd=str(install_dir),
-                    capture_output=True, text=True, timeout=15,
+                    capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15,
                 )
                 if fetch.returncode != 0:
                     result = {"available": False, "reason": "fetch_failed"}
@@ -13657,20 +13880,98 @@ def check_for_update(force: bool = False) -> dict:
                         if behind == 0:
                             result = {"available": False, "currentSha": current[:7]}
                         else:
-                            latest_msg = git("log", "-1", "--format=%s", upstream)
+                            try:
+                                latest_msg = git("log", "-1", "--format=%s", upstream)
+                            except subprocess.TimeoutExpired:
+                                latest_msg = ""
                             result = {
                                 "available": True,
                                 "currentSha": current[:7],
                                 "latestSha": upstream[:7],
+                                "latestId": upstream,
                                 "behind": behind,
                                 "latestMessage": latest_msg[:120],
                             }
-            except (subprocess.SubprocessError, OSError) as e:
+                            # What's new (#339): the merge subjects in plain
+                            # words, from the commits just fetched. A slow or
+                            # failing log drops the list, not the update: the
+                            # dialog falls back to the newest subject.
+                            try:
+                                result.update(update_notes.git_items(git, current, upstream))
+                            except (subprocess.SubprocessError, OSError, ValueError):
+                                pass
+                            # Whether Install restarts the hub only (no agent
+                            # waits) or drains first: the dialog says so.
+                            try:
+                                result["keepsHost"] = source_update_keeps_host(fetch=False)
+                            except (OSError, ValueError, ConnectionError, TimeoutError):
+                                result["keepsHost"] = False
+            except (subprocess.SubprocessError, OSError, ValueError) as e:
                 result = {"available": False, "reason": f"error: {e.__class__.__name__}"}
         _UPDATE_CHECK_CACHE = (now, result)
         return result
     finally:
         _UPDATE_CHECK_LOCK = False
+
+
+def cached_update_check() -> dict:
+    """The last check's answer, however old, and never a check of its own:
+    what the What's new dialog and Skip read (#339). Before the first check,
+    nothing is available."""
+    cache = _UPDATE_CHECK_CACHE
+    return cache[1] if cache else {"available": False, "reason": "not_checked"}
+
+
+def update_check_view(info: dict, wait: bool = False) -> dict:
+    """The cached check as the page reads it: whether the newest is the one
+    skipped (Settings, so every device agrees) and, with ``wait``, how many
+    agents Install would wait for (#339)."""
+    out = dict(info or {})
+    latest = str(out.get("latestId") or "")
+    skipped = str(load_settings().get("updateSkipped") or "")
+    out["skipped"] = bool(out.get("available") and latest and skipped == latest)
+    # No task number or hash in what the page shows, even in the fallback line.
+    if out.get("latestMessage"):
+        out["latestMessage"] = update_notes.plain_title(str(out["latestMessage"]))
+    if wait and out.get("available"):
+        out["wait"] = update_wait()
+    return out
+
+
+def update_wait() -> dict:
+    """{agents, minutes} when Install would first wait for agents at a safe
+    point (restart_drain), else {agents: 0}. A checkout whose PTY host is
+    unchanged restarts the hub only: nothing waits. A built app learns whether
+    the new release changes the PTY host only once it is downloaded (the
+    helper drains through /api/restart/external-drain when it does), so for it
+    the answer carries ``maybe``: Install may wait. Reads the cached check."""
+    if restart_drain.holding():
+        return {"agents": 0}
+    packaged = app_version.packaged()
+    if not packaged and cached_update_check().get("keepsHost"):
+        return {"agents": 0}
+    try:
+        seen = restart_drain.observe_hub()
+    except Exception as e:      # noqa: BLE001 — unknown: the dialog says nothing
+        print(f"[update] agents not read: {e!r}", flush=True)
+        return {"agents": 0}
+    busy = sum(1 for a in seen.values() if a.get("state") == "working" or a.get("background"))
+    out = {"agents": busy, "minutes": int(restart_drain.deadline_s(load_settings()) // 60)}
+    if packaged:
+        out["maybe"] = True
+    return out
+
+
+def skip_update(skip: bool) -> dict:
+    """Skip this version: the newest the check knows is stored on the hub,
+    or ``skip=False`` clears it. Returns the check as the page reads it.
+    Reads the cached check: the version skipped is the one the dialog showed."""
+    info = cached_update_check()
+    latest = str(info.get("latestId") or "")
+    if skip and not (info.get("available") and latest):
+        return {"error": "no update to skip"}
+    save_settings({"updateSkipped": latest if skip else ""})
+    return update_check_view(info)
 
 
 def trigger_update() -> dict:
@@ -13713,19 +14014,21 @@ def pull_checkout() -> str:
     return ""
 
 
-def source_update_keeps_host() -> bool:
-    """Read the upstream PTY owner before choosing the update's restart mode."""
+def source_update_keeps_host(fetch: bool = True) -> bool:
+    """Read the upstream PTY owner before choosing the update's restart mode.
+    ``fetch=False``: from the commits fetched already (the update check)."""
     if _PTY_HOST_MODE == "local":
         return False
     host = ptyhost.connect(DASHBOARD_DIR, start=False)
     if not host:
         return False
     try:
-        fetched = _run(["git", "-C", str(STATIC_DIR), "fetch", "--quiet"],
-                       capture_output=True, text=True, encoding="utf-8",
-                       errors="replace", timeout=120)
-        if fetched.returncode:
-            return False
+        if fetch:
+            fetched = _run(["git", "-C", str(STATIC_DIR), "fetch", "--quiet"],
+                           capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", timeout=120)
+            if fetched.returncode:
+                return False
         digest = hashlib.sha256()
         for name in ("backends/ptyhost.py", "backends/ptyrun.py"):
             shown = _run(["git", "-C", str(STATIC_DIR), "show", f"@{{u}}:{name}"],
@@ -13770,7 +14073,24 @@ def update_status() -> dict:
     except (OSError, ValueError):
         out["last"] = None
     out["version"] = app_version.VERSION
+    with _APP_UPDATE_LOCK:
+        out["restart"] = dict(_SRC_UPDATE)
     return out
+
+
+# Where a source update's restart stands, for the page's Update now card:
+# idle | fetching (the page's request pulls the checkout) | checking (the helper starts the new code on a spare port) |
+# restarting (the helper stops this hub) | failed (``error``: this hub runs on).
+_SRC_UPDATE: dict = {"stage": "idle"}
+
+
+def src_update_stage(stage: str, lease: str = "", **more) -> None:
+    """Set it; a lease other than the one under way leaves it as it is."""
+    with _APP_UPDATE_LOCK:
+        if lease and stage != "checking" and _SRC_UPDATE.get("lease") != lease:
+            return
+        _SRC_UPDATE.clear()
+        _SRC_UPDATE.update(stage=stage, at=time.time(), **({"lease": lease} if lease else {}), **more)
 
 
 def _launchd_service() -> dict | None:
@@ -15239,11 +15559,13 @@ def start_boot_restore() -> None:
     threading.Thread(target=run, daemon=True, name="boot-restore").start()
 
 
-def restart_plan(room_id: str = "", drain: bool = False) -> dict:
+def restart_plan(room_id: str = "", drain: bool = False, grace: int | None = None) -> dict:
     """What the helper needs: how this hub was started (to start it again the
     same way), where to preflight, whom to resume and what to tell them.
     ``room_id`` is the calling PO's room; without one (the dashboard page) the
-    restart rooms that have a live terminal are resumed, and nobody is told."""
+    restart rooms that have a live terminal are resumed, and nobody is told.
+    ``grace``: the wait before the stop, in place of ENSEMBLE_RESTART_GRACE /
+    RESTART_GRACE_S (0 for the page's own Update now: nobody's reply needs it)."""
     keep_agents = not drain and pty_host_compatible()
     if room_id and not keep_agents:
         resume = [room_id]
@@ -15273,10 +15595,13 @@ def restart_plan(room_id: str = "", drain: bool = False) -> dict:
             wake += (f" It restarted for {restart_drain.reason_text(st)} after a drain "
                      f"({st.get('outcome') or 'done'}); "
                      f"{restart_drain.po_summary(st)}: each was told where it stopped.")
-    try:
-        grace = max(0, min(300, int(os.environ.get("ENSEMBLE_RESTART_GRACE", RESTART_GRACE_S))))
-    except ValueError:
-        grace = RESTART_GRACE_S
+    if grace is not None:
+        grace = max(0, min(300, int(grace)))
+    else:
+        try:
+            grace = max(0, min(300, int(os.environ.get("ENSEMBLE_RESTART_GRACE", RESTART_GRACE_S))))
+        except ValueError:
+            grace = RESTART_GRACE_S
     logs = DASHBOARD_DIR / "logs"
     return {
         "repo": str(STATIC_DIR),
@@ -15293,6 +15618,8 @@ def restart_plan(room_id: str = "", drain: bool = False) -> dict:
         "noTask": bool(os.environ.get("ENSEMBLE_RESTART_NO_TASK")),
         "keepAgents": keep_agents,
         "launchd": _launchd_service(),
+        # Linux: the systemd user unit running this hub (read at its start).
+        "systemd": BACKEND.systemd_service(),
         "graceSeconds": grace,
         "resumeRooms": resume,
         "wakeRoom": room_id if wake else "",
@@ -15321,7 +15648,7 @@ def _last_helper_step(what: str = "restart") -> str:
 
 
 def _watch_restart_helper(pid: int, lease: str, room_id: str = "", identity: str = "",
-                          what: str = "restart") -> None:
+                          what: str = "restart", purpose: str = "restart") -> None:
     """The helper runs detached from the hub. When it ends with its lease
     still held it stopped before the hub did (ED-227: one ended silently
     after its preflight and the old hub ran on for 19 minutes): say so, let
@@ -15341,6 +15668,9 @@ def _watch_restart_helper(pid: int, lease: str, room_id: str = "", identity: str
             # Finished or gave up, and this hub still runs: its snapshot
             # describes no restart, so no later hub restores from it.
             retire_own_snapshot(lease)
+            if purpose == "update":
+                src_update_stage("failed", lease,
+                                 error="The new code did not start: " + _last_helper_step(what))
             return
         if BACKEND.process_alive(pid):
             continue
@@ -15355,6 +15685,9 @@ def _watch_restart_helper(pid: int, lease: str, room_id: str = "", identity: str
             _update_log(f"HELPER GONE - {why}")
         _drop_restart_lease(lease)
         retire_own_snapshot(lease)
+        if purpose == "update":
+            src_update_stage("failed", lease, error=f"The {what} helper ended without finishing: "
+                                                    + _last_helper_step(what))
         room = chatroom.get_room(room_id) if room_id else None
         if room:
             who = identity or next((p.get("identity", "") for p in room.get("participants") or []), "")
@@ -15364,15 +15697,56 @@ def _watch_restart_helper(pid: int, lease: str, room_id: str = "", identity: str
         return
 
 
+def _guard_room_name(rid: str) -> str:
+    """Who a guarded process belongs to, for the PO: its task (ED-18 and
+    title) or its project's PO."""
+    info = task_ref_info(rid)
+    if info and info.get("ref"):
+        return " ".join(x for x in (info["ref"], info.get("title") or "") if x)
+    project = next((p for p in load_projects() if (p.get("poRoomId") or "") == rid), None)
+    return f"the {project.get('name') or 'project'} PO" if project else ""
+
+
+def guard_foreign(what: str = "the restart", force: bool = False) -> dict | None:
+    """ED-342: before a restart stops this hub's systemd unit, a project's
+    long-running process in its cgroups (or a PTY host's scope) is moved
+    into a scope of its own (restart_guard.py). The result's ``ok`` False:
+    one could not be moved and the restart is refused (``force``: it goes
+    ahead). None when no unit runs this hub: its stop ends its own process
+    only, and no scope of its own exists."""
+    unit = BACKEND.systemd_service()
+    if not unit:
+        return None
+    return restart_guard.protect(units=[unit["unit"]], hub_pids=[os.getpid()],
+                                 state_dirs=[_restart_lease_path().parent], force=force,
+                                 log_path=DASHBOARD_DIR / "logs" / "restart.log",
+                                 room_name=_guard_room_name, what=what)
+
+
+def guard_refusal(res: dict | None) -> dict | None:
+    """The 409 a refused guard answers with."""
+    if res is None or res["ok"]:
+        return None
+    return {"started": False, "status": 409, "refused": True,
+            "error": res["message"] + " To restart anyway and stop them, ask again with "
+                                      "stopForeign: true.",
+            "foreign": [{"pid": f["pid"], "process": f["text"], "error": f["error"]}
+                        for f in res["failed"]]}
+
+
 def trigger_restart(room_id: str = "", drain: bool = False, identity: str = "",
-                    purpose: str = "restart") -> dict:
+                    purpose: str = "restart", grace: int | None = None,
+                    stop_foreign: bool = False) -> dict:
     """Start a plain restart; returns at once. ``status`` is the HTTP code.
     ``drain``: the restart a drain led to (restart_drain.py): its PO's note
     says why, and who paused. ``identity``: the agent in ``room_id`` that
     asked, told if the helper ends before the restart.
 
     ``purpose``: "update" for a source update's restart (its outcome also
-    goes to update.log).
+    goes to update.log). ``grace``: see restart_plan.
+
+    ``stop_foreign``: go ahead even when a project's long-running process
+    could not be moved out of the hub's cgroups and stops with it (ED-342).
 
     ENSEMBLE_RESTART_DRY_RUN answers with the plan instead of running it."""
     lease, since = _take_restart_lease()
@@ -15382,13 +15756,22 @@ def trigger_restart(room_id: str = "", drain: bool = False, identity: str = "",
                          f"finished — see {DASHBOARD_DIR / 'logs' / 'restart.log'}. "
                          f"Try again after {int(RESTART_BUSY_S - since) + 1}s."}
     try:
-        plan = restart_plan(room_id, drain=drain)
+        plan = restart_plan(room_id, drain=drain, grace=grace)
         plan["leasePath"] = str(_restart_lease_path())
         plan["leaseId"] = lease
         if os.environ.get("ENSEMBLE_RESTART_DRY_RUN"):
             _drop_restart_lease(lease)
             view = {k: v for k, v in plan.items() if k != "env"}
             return {"started": True, "status": 202, "dryRun": True, "plan": view}
+        guarded = guard_foreign("the update's restart" if purpose == "update" else "the restart",
+                                force=stop_foreign)
+        refused = guard_refusal(guarded)
+        if refused:
+            _drop_restart_lease(lease)
+            if purpose == "update":
+                src_update_stage("failed", error=refused["error"])
+            return refused
+        plan["stopForeign"] = bool(stop_foreign)
         # Who is running, now: what the hub that comes back restores from if
         # the helper's own snapshot, taken just before the stop, never lands.
         _restart_log("mode: " + ("hub only; agents keep running" if plan["keepAgents"]
@@ -15401,19 +15784,27 @@ def trigger_restart(room_id: str = "", drain: bool = False, identity: str = "",
                                   keep=plan["keepAgents"])
         except Exception as e:      # noqa: BLE001 — the restart goes ahead without it
             print(f"[restart] no snapshot at the request: {e!r}", flush=True)
+        if purpose == "update":
+            src_update_stage("checking", lease)     # before the helper can call back
         result = BACKEND.self_restart(plan)
-    except BaseException:
+    except BaseException as e:
         # No restart: its snapshot must not bring rooms back on a later start.
+        if purpose == "update":
+            src_update_stage("failed", lease, error=f"The restart could not start: {e}")
         retire_own_snapshot(lease)
         _drop_restart_lease(lease)
         raise
     if not result.get("started"):
+        if purpose == "update":
+            src_update_stage("failed", lease, error="The restart could not start: "
+                                                    + str(result.get("error") or "no reason given"))
         retire_own_snapshot(lease)
         _drop_restart_lease(lease)
         return {**result, "status": 500}
     if result.get("helperPid"):
         threading.Thread(target=_watch_restart_helper,
                          args=(int(result["helperPid"]), lease, "" if drain else room_id, identity),
+                         kwargs={"purpose": purpose},
                          daemon=True, name="restart-helper-watch").start()
     return {**result, "status": 202, "leaseId": lease, "graceSeconds": plan["graceSeconds"],
             "keepAgents": plan["keepAgents"],
@@ -15429,7 +15820,8 @@ def trigger_restart(room_id: str = "", drain: bool = False, identity: str = "",
                         "one line): do not resume rooms by hand. "
                         + ("You will be resumed and told when it is back. "
                            if plan["wakeRoom"] else "")
-                        + f"Progress: {plan['log']}") )}
+                        + f"Progress: {plan['log']}")
+                        + (" " + guarded["message"] if guarded and guarded["message"] else ""))}
 
 
 # ---------- HTTP server ----------
@@ -15492,6 +15884,11 @@ PRODUCT_OWNER_ROLE = chatroom.PRODUCT_OWNER_ROLE
 
 class StartRoomError(Exception):
     """A first launch that cannot be satisfied by an installed agent kind."""
+
+
+class MissingFolderError(StartRoomError):
+    """A seat's folder is missing and the hub cannot make it again: the start
+    is refused, never moved to another folder (seat_folders.py, ED-344)."""
 
 
 def check_signed_in(agent_key: str, env: dict | None = None) -> None:
@@ -18019,6 +18416,11 @@ class Handler(BaseHTTPRequestHandler):
             return
         u = urlparse(self.path)
         p = u.path
+        if os.environ.get("ENSEMBLE_PTY_PREFLIGHT") and p not in (
+                "/", "/startup", "/api/health", "/api/platform", "/api/version",
+                "/api/sessions", "/api/projects"):
+            self._send_json(503, {"error": "read_only_preflight"})
+            return
         if p == "/api/health":
             # Where a starting hub is (startup.py); cheap at any time.
             with _CHAT_REPAIRS_LOCK:
@@ -18671,6 +19073,21 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/room/attachment":
             self._attachment_get(u)
             return
+        if p == "/api/projects/icon":
+            self._project_icon_get(u)
+            return
+        if p == "/api/projects/icon-gen":
+            # #335: Generate's header: the CLI that draws, the name and what the project is about.
+            # A same-origin GET carries no Origin, so it is gated like the icon itself.
+            if not self._page_read_ok():
+                self._send_json(403, {"error": "page_only", "message": "Only the dashboard page can show this."})
+                return
+            info = project_icon_gen_info((parse_qs(u.query).get("id", [""])[0] or "").strip())
+            if info is None:
+                self._send_json(404, {"error": "no_such_project", "message": icon_gen.REFUSALS["no_such_project"]})
+            else:
+                self._send_json(200, info)
+            return
         if p == "/api/room/msg":
             # The message a balloon link points at, for the chip that shows it.
             q = parse_qs(u.query)
@@ -18832,7 +19249,19 @@ class Handler(BaseHTTPRequestHandler):
                                   "prefixes": sorted(JIRA_PREFIXES)})
             return
         if p == "/api/update-check":
-            self._send_json(200, check_for_update())
+            # ?wait=1 (the What's new dialog opening): the cached check only,
+            # however old (never a fetch), and who Install would wait for,
+            # read now. Without it (the page's periodic poll): the check,
+            # fetching again when the 30-minute cache has run out.
+            # &fresh=1 (Install now, #345): check again now, then answer, so
+            # the press acts on the hub as it is.
+            q = parse_qs(u.query)
+            want_wait = q.get("wait", [""])[0] == "1"
+            if q.get("fresh", [""])[0] == "1":
+                info = check_for_update(force=True)
+            else:
+                info = cached_update_check() if want_wait else check_for_update()
+            self._send_json(200, update_check_view(info, wait=want_wait))
             return
         if p == "/api/version":
             try:
@@ -18866,6 +19295,10 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(200, app_setup.autostart_status(app_version.app_executable())
                             if app_version.packaged() else {"enabled": False, "supported": False,
                                                             "reason": "source"})
+            return
+        if p == "/api/move-check":
+            # The last move check (#331): what it found, repaired and could not.
+            self._send_json(200, move_check.last())
             return
         if p == "/api/backup/status":
             bs = load_settings()
@@ -18987,6 +19420,9 @@ class Handler(BaseHTTPRequestHandler):
     # a new task, a chat message — so the cached listing is dropped the
     # moment the write finishes.
     def do_PUT(self):
+        if os.environ.get("ENSEMBLE_PTY_PREFLIGHT"):
+            self._send_json(503, {"error": "read_only_preflight"})
+            return
         if self._startup_hold():
             return
         try:
@@ -19074,6 +19510,9 @@ class Handler(BaseHTTPRequestHandler):
     # a new task, a chat message — so the cached listing is dropped the
     # moment the write finishes.
     def do_DELETE(self):
+        if os.environ.get("ENSEMBLE_PTY_PREFLIGHT"):
+            self._send_json(503, {"error": "read_only_preflight"})
+            return
         if self._startup_hold():
             return
         try:
@@ -19392,11 +19831,14 @@ class Handler(BaseHTTPRequestHandler):
                           "repo": root, "branch": git.get("branch", ""),
                           "head": git.get("head", ""), "base": git.get("base", ""),
                           "allocation": review_allocation}
-                if chatroom.patch_participant(
-                        room_id, ident,
-                        {"ptyId": info["ptyId"], "sessionId": info["sessionId"],
-                         "cwd": info["cwd"], "pid": None, "review": review},
-                        drop=("lastExit", "fresh")) is None:
+                # The review runs in the checkout under review; the seat's own
+                # recorded folder stays its folder (ED-344), set only when none is.
+                fields = {"ptyId": info["ptyId"], "sessionId": info["sessionId"],
+                          "pid": None, "review": review}
+                if not (part.get("cwd") or "").strip():
+                    fields["cwd"] = info["cwd"]
+                if chatroom.patch_participant(room_id, ident, fields,
+                                              drop=("lastExit", "fresh")) is None:
                     raise StartRoomError("the task went away before its reviewer was recorded")
             except BaseException:
                 for pid in seat_ptys(room_id, ident):
@@ -19585,6 +20027,23 @@ class Handler(BaseHTTPRequestHandler):
             args += ["-c", f"mcp_servers.{json.dumps(name, ensure_ascii=False)}.enabled=false"]
         return args
 
+    @staticmethod
+    def _seat_folder(room_full: dict, ident: str) -> tuple[str, str]:
+        """(the folder a seat starts in by default, the hub's own per-agent
+        folder it may make for it — "" when it has none). Project-backed
+        sessions share one workspace (agents work on the same files); ad-hoc
+        scratch collaborations keep per-identity subdirs. A room with no
+        folder recorded runs under ~/cs, made as needed."""
+        base = room_full.get("cwd") or ""
+        if not base:
+            base = str(CS_ROOT)
+            with contextlib.suppress(OSError):
+                os.makedirs(base, exist_ok=True)
+        if room_full.get("sharedCwd"):
+            return base, (base if not room_full.get("cwd") else "")
+        own = os.path.join(base, ident)
+        return own, own
+
     def _launch_room_agent(self, room_full: dict, part: dict, task: str) -> dict:
         """Spawn one agent for a room, pre-wired to the chat MCP with its own
         bearer token, in its own working dir, seeded with the collaboration
@@ -19594,14 +20053,8 @@ class Handler(BaseHTTPRequestHandler):
         token = next((t for t, i in room_full.get("tokens", {}).items()
                       if i == ident), "")
         url = self._mcp_url()
-        base = room_full.get("cwd") or str(CS_ROOT)
-        # Project-backed sessions share one workspace (agents work on the same
-        # files); ad-hoc scratch collaborations keep per-identity subdirs.
-        cwd = base if room_full.get("sharedCwd") else os.path.join(base, ident)
-        try:
-            os.makedirs(cwd, exist_ok=True)
-        except OSError:
-            pass
+        cwd, scratch = self._seat_folder(room_full, ident)
+        cwd = seat_folders.launch_folder(room_full, ident, cwd, scratch)
         teammates = [{"identity": p["identity"], "role": p.get("role", "")}
                      for p in room_full["participants"]
                      if p.get("kind") == "agent" and p["identity"] != ident]
@@ -19723,15 +20176,16 @@ class Handler(BaseHTTPRequestHandler):
         model, effort = hub_launch_model(agent_key, part.get("model"))
         token = next((t for t, i in room_full.get("tokens", {}).items()
                       if i == ident), "")
-        base = room_full.get("cwd") or str(CS_ROOT)
-        # Project-backed sessions share one workspace (agents work on the same
-        # files); ad-hoc scratch collaborations keep per-identity subdirs.
-        if not cwd:
-            cwd = base if room_full.get("sharedCwd") else os.path.join(base, ident)
-        try:
-            os.makedirs(cwd, exist_ok=True)
-        except OSError:
-            pass
+        default, scratch = self._seat_folder(room_full, ident)
+        # The folder asked for, else the seat's own recorded folder (a fresh
+        # session of a seat moved to a second checkout stays there), else the
+        # task's default. Made again when it is the task's missing worktree;
+        # a folder that cannot be is a refused start, never another folder.
+        recorded = (part.get("cwd") or "").strip()
+        moved = bool(cwd) and not (recorded and os.path.normcase(os.path.normpath(cwd))
+                                   == os.path.normcase(os.path.normpath(recorded)))
+        cwd = seat_folders.launch_folder(room_full, ident, cwd or recorded or default,
+                                         scratch, moved=moved)
         rtk_args, rtk_env, rtk_brief = _rtk_task_wiring(room_full, agent_key, part.get("role", ""))
         if prompt is not None:
             briefing = prompt
@@ -19772,6 +20226,7 @@ class Handler(BaseHTTPRequestHandler):
                     + _codex_task_args(room_full) + _codex_model_args(model, effort))
             cmd = BACKEND.headless_launch(cwd, argv, briefing)
             sess = ptyrun.create(cmd, cwd=cwd, env=env, label=label, meta=meta)
+            first_run.watch(sess, cwd)     # its CLI's trust screen, if it shows one (ED-340)
             _record_typed_input_safely(
                 sess, briefing,
                 {"kind": _launch_input_kind(room_full, part, briefing, prompt)})
@@ -19784,6 +20239,7 @@ class Handler(BaseHTTPRequestHandler):
         cmd = BACKEND.headless_launch(cwd, argv, briefing)
         meta["sessionId"] = new_sid
         sess = ptyrun.create(cmd, cwd=cwd, env=env, label=label, meta=meta)
+        first_run.watch(sess, cwd)     # its CLI's trust screen, if it shows one (ED-340)
         _record_typed_input_safely(
             sess, briefing,
             {"kind": _launch_input_kind(room_full, part, briefing, prompt)})
@@ -19809,25 +20265,17 @@ class Handler(BaseHTTPRequestHandler):
                          else hub_launch_model(agent_key, part.get("model")))
         token = next((t for t, i in room_full.get("tokens", {}).items()
                       if i == ident), "")
-        base = room_full.get("cwd") or str(CS_ROOT)
+        default, scratch = self._seat_folder(room_full, ident)
         recorded_cwd = (part.get("cwd") or "").strip()
-        cwd = recorded_cwd or (base if room_full.get("sharedCwd")
-                               else os.path.join(base, ident))
-        if not os.path.isdir(cwd):
-            # An unrecorded scratch seat gets the same directory as on first
-            # launch. A recorded directory that disappeared must not be
-            # silently recreated as an empty replacement for its old files.
-            if not recorded_cwd:
-                try:
-                    os.makedirs(cwd, exist_ok=True)
-                except OSError:
-                    pass
-            if not os.path.isdir(cwd):
-                fallback = base if os.path.isdir(base) else str(CS_ROOT)
-                os.makedirs(fallback, exist_ok=True)
-                print(f"[resume] {room_full['id']}/{ident}: cwd missing: {cwd}; "
-                      f"using {fallback}", flush=True)
-                cwd = fallback
+        # It resumes where its conversation is: its recorded folder. An
+        # unrecorded scratch seat gets the folder of its first launch; a
+        # recorded folder that disappeared is made again only when it is the
+        # task's worktree (never as an empty stand-in for its old files), and
+        # is otherwise a refused start (ED-344: never another folder).
+        cwd = seat_folders.launch_folder(room_full, ident, recorded_cwd or default,
+                                         "" if recorded_cwd else scratch)
+        if agent_key != "codex" and (part.get("sessionId") or "").strip():
+            seat_folders.resume_folder_check(room_full, ident, part["sessionId"].strip(), cwd)
         ag = agents.get_agent(agent_key)
         if hasattr(ag, "ensure_trusted"):
             ag.ensure_trusted(cwd)
@@ -19855,6 +20303,7 @@ class Handler(BaseHTTPRequestHandler):
             first = po_hub_prompt(room_full, seed) if seed and not codex_sid else ""
             cmd = BACKEND.headless_launch(cwd, argv, first)
             sess = ptyrun.create(cmd, cwd=cwd, env=env, label=label, meta=meta)
+            first_run.watch(sess, cwd)     # its CLI's trust screen, if it shows one (ED-340)
             if first:
                 _record_typed_input_safely(sess, first, {"kind": "brief"})
             return {"ptyId": sess.id, "cwd": cwd, "sessionId": part.get("sessionId", ""),
@@ -19869,6 +20318,7 @@ class Handler(BaseHTTPRequestHandler):
             argv += ["--model", model]
         cmd = BACKEND.headless_launch(cwd, argv, "")
         sess = ptyrun.create(cmd, cwd=cwd, env=env, label=label, meta=meta)
+        first_run.watch(sess, cwd)     # its CLI's trust screen, if it shows one (ED-340)
         return {"ptyId": sess.id, "cwd": cwd, "sessionId": sid, "prompted": False}
 
     def _start_room(self, room_full: dict) -> list[dict]:
@@ -21244,6 +21694,39 @@ class Handler(BaseHTTPRequestHandler):
             return
         self._send_json(200, {"ok": True, "room": rid, **res, "url": attachment_url(rid, res["name"])})
 
+    def _page_read_ok(self) -> bool:
+        """A GET only the page may make (#329, #335): its key cookie, from its own
+        origin (a same-origin GET or an <img> sends no Origin, so Sec-Fetch-Site
+        says it), never a bearer."""
+        key = self._cookie(self._ui_cookie())
+        return not (self._bearer_token() or not key or not hmac.compare_digest(key, _UI_KEY)
+                    or self.headers.get("Sec-Fetch-Site") not in (None, "same-origin"))
+
+    def _project_icon_get(self, u) -> None:
+        """GET /api/projects/icon?id=<project>&v=<version>: a project's icon
+        (#329), for the page only: its key cookie, from its own origin (an
+        <img> sends no Origin, so Sec-Fetch-Site says it), never a bearer."""
+        if not self._page_read_ok():
+            self._send_json(403, {"error": "page_only", "message": "Only the dashboard page can show this."})
+            return
+        pid = (parse_qs(u.query).get("id", [""])[0] or "").strip()
+        f = project_icon_file(pid)
+        try:
+            data = f.read_bytes() if f else None
+        except OSError:
+            data = None
+        if data is None:
+            self._send_json(404, {"error": "no_icon", "message": "This project has no icon."})
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", project_icon.TYPES[f.suffix[1:]])
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "private, max-age=31536000, immutable")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; sandbox")
+        self.end_headers()
+        self.wfile.write(data)
+
     def _attachment_get(self, u) -> None:
         """GET /api/room/attachment?room=<id>&name=<name>[&download=1|&info=1]: one
         stored file, from that room's attachments folder only. An image or a
@@ -21545,6 +22028,10 @@ class Handler(BaseHTTPRequestHandler):
     # a new task, a chat message — so the cached listing is dropped the
     # moment the write finishes.
     def do_POST(self):
+        if os.environ.get("ENSEMBLE_PTY_PREFLIGHT") and urlparse(self.path).path not in (
+                "/api/restart/typing-check", "/api/restart/host-stop"):
+            self._send_json(503, {"error": "read_only_preflight"})
+            return
         if self._startup_hold():
             return
         if urlparse(self.path).path == "/api/agent/hook":
@@ -21652,6 +22139,10 @@ class Handler(BaseHTTPRequestHandler):
             self._attachment_upload(u)
             return
         ln = int(self.headers.get("Content-Length", "0"))
+        if p == "/api/projects/icon" and ln > project_icon.MAX_BODY:
+            self._send_json(413, {"error": "too_big", "message": project_icon.REFUSALS["too_big"]})
+            self._files_drain(ln)
+            return
         body = self.rfile.read(ln) if ln else b""
         try:
             data = json.loads(body) if body else {}
@@ -21660,6 +22151,12 @@ class Handler(BaseHTTPRequestHandler):
             return
         if p == "/mcp":
             self._handle_mcp(data)
+            return
+        if p == "/api/move-check":
+            # Run the move check again; {"repair": false} only looks.
+            repair = not (isinstance(data, dict) and data.get("repair") is False)
+            r = move_check.run_check(repair=repair, notify=repair)
+            self._send_json(200, r)
             return
         if p == "/api/page-log":
             # A page's own trouble (the panels' library not loading, #132), in
@@ -21927,7 +22424,8 @@ class Handler(BaseHTTPRequestHandler):
                     return
             result = restart_drain.request_restart(
                 str(data.get("reason") or ""), self._drain_requester(),
-                "update" if p == "/api/update" else "restart")
+                "update" if p == "/api/update" else "restart",
+                stop_foreign=data.get("stopForeign") is True)
             self._send_json(result.pop("status"), result)
             return
         if p in ("/api/update", "/api/restart") and restart_drain.holding():
@@ -21936,14 +22434,26 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(403, {"error": "not_allowed", "message": refusal})
                 return
             if restart_drain.draining():
-                result = restart_drain.force_drain(self._drain_requester()["label"])
+                result = restart_drain.force_drain(self._drain_requester()["label"],
+                                                   stop_foreign=data.get("stopForeign") is True)
                 self._send_json(202 if result["ok"] else 409, {"started": result["ok"], **result})
                 return
             # The drain went to restart and nothing stopped the hub yet: a
             # plain restart now, which the drain follows.
             resolved = chatroom.resolve_token(self._bearer_token()) if self._bearer_token() else None
-            result = restart_drain.restart_now(resolved[0] if resolved else "")
+            result = restart_drain.restart_now(resolved[0] if resolved else "",
+                                               stop_foreign=data.get("stopForeign") is True)
             self._send_json(result.pop("status"), result)
+            return
+        if p == "/api/update-skip":
+            # What's new › Skip this version ({skip: false} clears it): the
+            # page, or a PO that may restart the hub.
+            refusal = self._restart_refusal()
+            if refusal:
+                self._send_json(403, {"error": "not_allowed", "message": refusal})
+                return
+            result = skip_update(data.get("skip", True) is not False)
+            self._send_json(409 if result.get("error") else 200, result)
             return
         if p == "/api/restart/drain":
             # Restart now / Cancel for a drain under way: the page, or a PO
@@ -21955,7 +22465,7 @@ class Handler(BaseHTTPRequestHandler):
             action = str(data.get("action") or "")
             who = self._drain_requester()["label"]
             if action == "force":
-                result = restart_drain.force_drain(who)
+                result = restart_drain.force_drain(who, stop_foreign=data.get("stopForeign") is True)
             elif action == "cancel":
                 result = restart_drain.cancel_drain(who)
             else:
@@ -21971,7 +22481,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(403, {"error": "not_allowed", "message": refusal})
                 return
             result = restart_drain.request_restart(str(data.get("reason") or "an update"),
-                                                   self._drain_requester(), "update")
+                                                   self._drain_requester(), "update",
+                                                   stop_foreign=data.get("stopForeign") is True)
             self._send_json(result.pop("status"), result)
             return
         if p == "/api/app/autostart":
@@ -22000,7 +22511,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(403, {"error": "not_allowed", "message": refusal})
                 return
             resolved = chatroom.resolve_token(self._bearer_token()) if self._bearer_token() else None
-            result = trigger_restart(resolved[0] if resolved else "")
+            result = trigger_restart(resolved[0] if resolved else "",
+                                     stop_foreign=data.get("stopForeign") is True)
             self._send_json(result.pop("status"), result)
             return
         if p in ("/api/restart/snapshot", "/api/restart/restore", "/api/restart/host-stop",
@@ -22022,6 +22534,8 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 self._send_json(200, preflight_typing_check())
                 return
+            if p in ("/api/restart/snapshot", "/api/restart/prepare") and _LEASE_PURPOSE.get(lease) == "update":
+                src_update_stage("restarting", lease)    # the helper stops this hub now
             if p == "/api/restart/snapshot":
                 snap = take_restart_snapshot(lease)
                 save_restart_caches()
@@ -22231,6 +22745,53 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self._send_json(404 if msg == "no_such_project" else 400,
                                 {"error": msg, "message": KEY_REFUSALS.get(msg, msg)})
+            return
+        if p in ("/api/projects/rename", "/api/projects/icon"):
+            # The project's settings (#329): {projectId, name}, or
+            # {projectId, dataUrl, name} (dataUrl null removes the icon).
+            # Only the page renames a project or changes its icon.
+            why = self._page_refusal()
+            if why:
+                self._send_json(403, {"error": "page_only", "message": why})
+                return
+            if not isinstance(data, dict):
+                self._send_json(400, {"error": "bad_json"})
+                return
+            if p == "/api/projects/rename":
+                ok, msg = rename_project(str(data.get("projectId") or ""), str(data.get("name") or ""))
+                extra = {"name": (find_project(str(data.get("projectId") or "")) or {}).get("name")} if ok else {}
+                refusals = RENAME_REFUSALS
+            else:
+                du = data.get("dataUrl")
+                ok, msg, icon = set_project_icon(str(data.get("projectId") or ""),
+                                                 None if du is None else str(du), str(data.get("name") or ""))
+                extra = {"icon": icon} if ok else {}
+                refusals = project_icon.REFUSALS
+            if ok:
+                self._send_json(200, {"ok": True, **extra})
+            else:
+                self._send_json(404 if msg == "no_such_project" else (413 if msg == "too_big" else 400),
+                                {"error": msg, "message": refusals.get(msg, msg)})
+            return
+        if p == "/api/projects/icon-gen":
+            # #335: {projectId, name?} -> {ok, svgs[<=4], agent, model, ms}; nothing is saved.
+            why = self._page_refusal()
+            if why:
+                self._send_json(403, {"error": "page_only", "message": why})
+                return
+            if not isinstance(data, dict):
+                self._send_json(400, {"error": "bad_json"})
+                return
+            nm = data.get("name")
+            ok, code, res = generate_project_icons(str(data.get("projectId") or ""), nm if isinstance(nm, str) else "")
+            if ok:
+                self._send_json(200, {"ok": True, **res})
+            else:
+                # A CLI that is missing, slow or wrong is an answer, not a hub that is
+                # down: never 502-504, which the page's hub-resilience.js takes for an
+                # update in progress (it shows "Updating" and throws).
+                status = {"no_such_project": 404, "busy": 409}.get(code, 200)
+                self._send_json(status, {"ok": False, "error": code, "message": icon_gen.REFUSALS.get(code, code), **res})
             return
         if p == "/api/projects/kind":
             # {projectId, kind: "code" | "documents"}.
@@ -23375,6 +23936,10 @@ def _listen_or_exit(host: str, port: int) -> HubServer:
 
 def main():
     global _LOG_FILE, ACCESS_TOKEN, HUB_PORT
+    if os.environ.get("ENSEMBLE_PTY_PREFLIGHT"):
+        # The project list calls git status. A probe must not refresh a real
+        # repository's index or hold its index.lock beside the running hub.
+        os.environ["GIT_OPTIONAL_LOCKS"] = "0"
     args = sys.argv[1:]
     if "--set-project-noun" in args:
         i = args.index("--set-project-noun")
@@ -23450,6 +24015,12 @@ def main():
     BACKEND.warm_editors()
     servers = []
     remote_bound = False
+    if sys.platform.startswith("linux"):
+        # How a restart stops and starts this hub: read once, now.
+        unit = BACKEND.systemd_service()
+        print("[startup] restart: " + (f"through the systemd user unit {unit['unit']}" if unit
+                                      else "not under a systemd unit; the helper starts the hub"),
+              flush=True)
     if wildcard:
         servers.append(_listen_or_exit(remote_host, port))
         _announce_remote(remote_host)
@@ -23512,6 +24083,21 @@ def main():
     for s in servers:
         threading.Thread(target=s.serve_forever, daemon=True).start()
 
+    # The spare-port hub probes real state while the old hub still owns it.
+    # Only attach its isolated PTY host and serve read probes; all migrations,
+    # repairs, caches, schedulers, restores and backup setup belong to the
+    # real start after the old hub has stopped.
+    if os.environ.get("ENSEMBLE_PTY_PREFLIGHT"):
+        startup.step("Connecting to the agents' terminals")
+        attach_pty_host()
+        startup.booted()
+        startup.ready()
+        try:
+            while True:
+                time.sleep(3600)
+        except KeyboardInterrupt:
+            return
+
     startup.step("Opening the saved state")
     # Moving from claude-dashboard: copy its state in once, and say so in the
     # log, however this hub was started (see legacy_install).
@@ -23567,6 +24153,16 @@ def main():
             print(f"finished tasks moved to In review: {name}: {n}", flush=True)
     except Exception as e:
         print(f"finished tasks not moved to In review: {e!r}", flush=True)
+    # Seats an older hub moved to its fallback folder (~/cs) when a worktree
+    # task's folder was missing go back to the task's folder (ED-344). Once
+    # per seat: a repaired seat is the task's folder. A running one is left.
+    try:
+        for r in seat_folders.repair_at_start():
+            what = f"left ({r['skipped']})" if r.get("skipped") else f"-> {r['now']}"
+            print(f"seat folders: {r['room']} #{r.get('no') or '?'} {r['identity']}: "
+                  f"{r['was']} {what}", flush=True)
+    except Exception as e:
+        print(f"seat folders not repaired: {e!r}", flush=True)
 
     startup.step("Updating questions and points")
     # Answers recorded before an ask of two questions became two asks (#195)
@@ -23635,6 +24231,15 @@ def main():
     # The restart monitor tells working agents, watches them and restarts
     # when all are ready.
     restart_drain.start_monitor(restart_drain.drain_tick)
+
+    # The move check (#331): code folders, task folders, worktrees and
+    # conversations the state copied from another machine still points at
+    # there. Repaired where safe before any room comes back below.
+    if not os.environ.get("ENSEMBLE_NO_MOVE_CHECK"):
+        try:
+            move_check.run_check(repair=True)
+        except Exception as e:      # noqa: BLE001 — never stops the hub
+            print(f"[move] check skipped: {e!r}", flush=True)
 
     # A cold start (the machine booted, the PTY host died) brings back the
     # rooms that were running, as a restart would (P190).

@@ -80,9 +80,9 @@ The app needs no Python: download it from the [latest release](https://github.co
   | 15 Sequoia, 26 Tahoe | Open **Ensemble** once and click **Done** on "Apple could not verify Ensemble is free of malware". Then System Settings › **Privacy & Security**, scroll to **Security**: next to "Ensemble was blocked to protect your Mac", click **Open Anyway**, enter your password, and click **Open Anyway** in the next window. The button is there for about an hour after the blocked try. |
   | Any, from Terminal | `xattr -dr com.apple.quarantine /Applications/Ensemble.app`, then open it as usual. This removes the "downloaded from the internet" mark from that app only. |
 
-  You do this once: after that it opens like any other app, and **Update now** keeps it current.
+  You do this once: after that it opens like any other app, and **Install now** in **What's new** keeps it current.
 
-Opening Ensemble starts the hub and opens `http://127.0.0.1:8765` in your browser; opening it again while it runs opens the page again (on a Mac, open the page from a bookmark: the app has no window or Dock icon). If the port is held by an older Ensemble hub or another program, or the hub stops while starting, Ensemble says so in a dialog (an older hub can be stopped from there) and in its log, before it changes anything. Settings shows the version, whether `claude` and `codex` are installed and signed in, and **Start Ensemble when I sign in**. When a newer release is out, the dashboard offers **Update now**: the app downloads it, checks its SHA-256, tries it on a spare port, swaps it in and restarts on the same port, and goes back to the version it had if the new one does not start. You still need `claude` or `codex` (and `git`) installed and signed in: Ensemble starts them, it does not install them.
+Opening Ensemble starts the hub and opens `http://127.0.0.1:8765` in your browser; opening it again while it runs opens the page again (on a Mac, open the page from a bookmark: the app has no window or Dock icon). If the port is held by an older Ensemble hub or another program, or the hub stops while starting, Ensemble says so in a dialog (an older hub can be stopped from there) and in its log, before it changes anything. Settings shows the version, whether `claude` and `codex` are installed and signed in, and **Start Ensemble when I sign in**. When a newer release is out, a dot appears on the user button, and **What's new** in its menu lists the changes and offers **Install now**: the app downloads it, checks its SHA-256, tries it on a spare port, swaps it in and restarts on the same port, and goes back to the version it had if the new one does not start. You still need `claude` or `codex` (and `git`) installed and signed in: Ensemble starts them, it does not install them.
 
 To run Ensemble from a clone instead, read on.
 
@@ -91,8 +91,8 @@ To run Ensemble from a clone instead, read on.
 - **Python 3.10 or newer.** The code uses `X | None` type unions, which older versions cannot parse. Developed and tested with 3.13.
 - **Claude Code** (`claude`), **Codex** (`codex`), or both, on `PATH` and logged in. Ensemble starts them; it does not install them or log them in.
 - **git** on `PATH`, for worktrees, the Changes tab, the backup and a documents project's file history.
-- **Windows 10 or 11, or macOS.** The Linux backend is a stub: the pages load, but launching agents on Linux is not wired up.
-- **`requirements.txt`**: `pywinpty` on Windows, `ptyprocess` on macOS. These run the agents headless. The start scripts install them if they are missing.
+- **Windows 10 or 11, macOS, or Linux.** On Linux, agents run headless and the hub restarts and updates itself; opening a session in a real terminal window is not wired up yet.
+- **`requirements.txt`**: `pywinpty` on Windows, `ptyprocess` on macOS and Linux. These run the agents headless. The start scripts install them if they are missing.
 
 Optional:
 
@@ -113,7 +113,7 @@ cd ensemble
 .\ensemble.ps1 doctor     # checks Python, pywinpty, claude/codex, git, the hub
 ```
 
-Other commands are `stop`, `restart`, `status` and `logs`, and `-Port N` picks another port. The log is `%USERPROFILE%\.ensemble\logs\ensemble.log`. `restart` and the dashboard's Update now bring the hub back on the port `start` last used (kept in `%USERPROFILE%\.ensemble\server.port`); the update's output goes to the same log. If PowerShell refuses to run the script, run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once.
+Other commands are `stop`, `restart`, `status` and `logs`, and `-Port N` picks another port. The log is `%USERPROFILE%\.ensemble\logs\ensemble.log`. `restart` and the dashboard's Install now bring the hub back on the port `start` last used (kept in `%USERPROFILE%\.ensemble\server.port`); the update's output goes to the same log. If PowerShell refuses to run the script, run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once.
 
 To start the hub at logon and restart it if it crashes:
 
@@ -136,9 +136,23 @@ cd ~/ensemble
 ./ensemble open
 ```
 
-Other commands are `stop`, `restart`, `status` and `logs`, and `--port N` picks another port. The log is `~/Library/Logs/ensemble.log`. `restart` and the dashboard's Update now bring the hub back on the port `start` last used (kept in `~/.ensemble/server.port`); the update's output goes to the same log. To start the hub at login, run `./install-launchd.sh`, which installs the LaunchAgent `com.ensemble.dashboard`. It also takes `status` and `uninstall`. The LaunchAgent keeps the `PATH` of the shell you run it from, so the hub finds `claude`, `codex`, `git` and `node` wherever they are installed.
+Other commands are `stop`, `restart`, `status` and `logs`, and `--port N` picks another port. The log is `~/Library/Logs/ensemble.log`. `restart` and the dashboard's Install now bring the hub back on the port `start` last used (kept in `~/.ensemble/server.port`); the update's output goes to the same log. To start the hub at login, run `./install-launchd.sh`, which installs the LaunchAgent `com.ensemble.dashboard`. It also takes `status` and `uninstall`. The LaunchAgent keeps the `PATH` of the shell you run it from, so the hub finds `claude`, `codex`, `git` and `node` wherever they are installed.
 
 The macOS scripts were read and adjusted but not run for this README; only the Windows steps were tried.
+
+### Linux
+
+```sh
+git clone https://github.com/fab-ioc/ensemble.git ~/ensemble
+cd ~/ensemble
+./install-systemd.sh      # installs ptyprocess if needed, installs and starts the systemd user unit ensemble.service
+```
+
+The unit runs the hub from this clone at login, on port 8765 (`ENSEMBLE_PORT=N ./install-systemd.sh` picks another; `ENSEMBLE_BIND=…` sets the address the hub listens on, as in [Remote use and security](#remote-use-and-security)), and starts it again if it stops. Running it again rewrites only `ensemble.service`: drop-ins in `~/.config/systemd/user/ensemble.service.d/` are kept, and their settings win over the unit's. The state stays in `~/.ensemble`, the log is `~/.ensemble/logs/ensemble.log` (and `journalctl --user -u ensemble`). The dashboard's restart and **Update now** stop and start the hub through the unit; Update now first brings this clone to its upstream (`git fetch` and a reset), so keep the clone for running Ensemble, not for development. `./install-systemd.sh status` and `./install-systemd.sh uninstall` do what they say. To keep the hub running while you are logged out: `loginctl enable-linger $USER`. Keep the unit name `ensemble.service`. At startup the hub logs which way it restarts (`[startup] restart: through the systemd user unit ensemble.service`).
+
+Stopping or restarting a systemd unit ends every process in its cgroup, whatever its session: an app an agent started from its terminal with `setsid` or `nohup` stays in the cgroup of `ensemble.service` or of its PTY host's `ensemble-detached-*` scope. So before the hub's restart, Update now, `ensemble update` and `install-systemd.sh` stop the unit, the restart guard (`restart_guard.py`) moves every such long-running process into a scope of its own (`kept-<name>-<pid>.scope`, stopped with `systemctl --user stop`), logs it to `~/.ensemble/logs/restart.log` and names it in the restart's answer. A process it cannot move refuses the restart, naming it; `stopForeign: true` (the PO's `ensemble_restart_hub`, `POST /api/restart`) or `--force` (`install-systemd.sh`; `ENSEMBLE_STOP_FOREIGN=1` for `ensemble update`) goes ahead and stops it. A service meant to outlive the hub is best started as a unit of its own: `systemd-run --user --unit=<project>-<name> -- <command>`. macOS and Windows stop the hub's own process, not a cgroup, so the guard does nothing there.
+
+Without the unit, `./ensemble start` (and `stop`, `restart`, `status`, `logs`) runs the hub in the background as on macOS, with its log in `~/.ensemble/logs/ensemble.log`.
 
 ### Moving from claude-dashboard
 
@@ -276,13 +290,15 @@ Each project keeps its own files in its folder: `project.json`, `ROADMAP.md`, `P
 | `history.py` | A documents project's file history |
 | `task_numbers.py`, `message_refs.py`, `workspace_search.py`, `peer_process.py` | Task numbers (`#18`, `ED-18`), links to messages, Workspace search, caller detection |
 | `agents/` | Adapters for Claude Code and Codex |
-| `backends/` | Per-OS code (Windows, macOS, Linux stub) and the headless terminal runner |
+| `backends/` | Per-OS code (Windows, macOS, Linux) and the headless terminal runner |
 | `skills/` | The two agent skills |
 | `tests/` | The test suite |
 | `tools/` | A measuring script for agents' tool output |
 | `docs/` | The screenshots in this README |
 | `ensemble.ps1`, `install-task.ps1`, `restart-hub.ps1` | Windows: start and stop, autostart task, restart helper |
 | `ensemble`, `install-launchd.sh`, `com.ensemble.dashboard.plist.template` | macOS: start and stop, LaunchAgent |
+| `install-systemd.sh` | Linux: the systemd user unit (`ensemble` starts and stops there too) |
+| `restart_guard.py` | Linux: moves a project's long-running processes out of the hub's cgroups before its unit stops |
 | `requirements.txt` | `pywinpty` / `ptyprocess` |
 | `ensemble_app.py`, `app_launch.py`, `app_version.py`, `app_update.py`, `app_setup.py` | The built app: its entry, start, version, Update now from GitHub Releases, agent check and start at sign-in |
 | `packaging/`, `.github/workflows/release.yml` | The PyInstaller build, the Windows installer (Inno Setup) and the release workflow |

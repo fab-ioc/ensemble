@@ -226,6 +226,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     --fg-disabled: #8590A2;      /* inactive controls ONLY — see SKILL.md §3 */
     --border: #DCDFE4;
     --border-strong: #B3B9C4;
+    --proj-icon-edge: var(--border-strong);   /* #329: the hairline inside a project's own icon */
     --hover: rgba(9, 30, 66, .06);
     --pressed: rgba(9, 30, 66, .12);
 
@@ -1540,6 +1541,13 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     background: var(--surface-overlay); border: 1px solid var(--border); border-radius: var(--r-300); box-shadow: var(--e-200); padding: var(--s-100); }
   .dcm-head { padding: var(--s-100) var(--s-200); font-size: var(--fs-100); font-weight: 600; color: var(--fg-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .dcm-list { display: flex; flex-direction: column; max-height: min(50vh, 320px); overflow: auto; }
+  /* #347: an item keeps its natural height (an overflow:hidden flex item would
+     shrink to nothing); a menu taller than its window (max-height from
+     docsMenuPlace) scrolls its list under the head, or itself. */
+  .dcm { overflow: hidden auto; overscroll-behavior: contain; }
+  .dcm > *, .dcm-list > * { flex-shrink: 0; }
+  .dcm > .dcm-list { flex-shrink: 1; min-height: 0; }
+  .dcm-list.dcm-acts { max-height: none; }
   .dcm .ov-item { overflow: hidden; text-overflow: ellipsis; }
   .dcm .ov-item:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--focus-ring); }
   .dcm-empty { padding: var(--s-200); color: var(--fg-muted); font-size: var(--fs-200); }
@@ -2504,7 +2512,10 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   #list-dock .dk-flyout:has(#switcher) > .dk-head > .dk-tabs { display: none; }
   body.ld-on #switcher:not(.ld-own-head) .sw-head { padding-right: 64px; }
   /* The page follows the stand-in on its other sides too (Move To). */
-  body.ld-on main { margin-right: var(--list-r); margin-top: var(--list-t); padding-bottom: calc(40px + var(--list-b)); }
+  /* ED-334: and on its left, the one left panel's width (it was body.sw-on's
+     alone, the Tasks panel that went with #322), so a project's page with no PO
+     and no open task starts beside the panel, not under it. */
+  body.ld-on main { padding-left: calc(var(--list-w) + 20px); margin-right: var(--list-r); margin-top: var(--list-t); padding-bottom: calc(40px + var(--list-b)); }
   body.mid.po-dock.ld-on main { height: calc(100dvh - var(--top-h) - var(--list-t) - var(--list-b)); padding-bottom: 0; }
   body.ld-on thead { top: calc(var(--top-h) + var(--list-t)); }
   /* Two quiet controls, not form boxes: the project filter as a chip
@@ -2599,6 +2610,14 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .row-expanded.row-expand-focus { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
   .sw-row.on { background: var(--selected-bg); }
   .row-expanded.on { background: var(--selected-bg); }
+  /* #337: a raised tab (a Dock panel tab, a workspace file tab) keeps its
+     strip's height and its own look; only the cap on its width goes. */
+  .tab-expanded.row-expanded { max-width: none; height: auto; padding-block: 0; }
+  .dk-tab-wrap.tab-expanded.on, .wst-tab.tab-expanded.on { background: var(--surface); }
+  /* Dock's and the workspace's own tab hover is transparent: solid here too. */
+  .tab-expanded.row-expanded:not(.on), .tab-expanded.row-expanded:not(.on):hover {
+    background: linear-gradient(var(--hover), var(--hover)), var(--surface); }
+  .tab-expanded .dk-tab { max-width: none; height: auto; align-self: stretch; }
   .sw-row.on .sw-title { font-weight: 600; }
   /* --fg-muted on --selected-bg is 4.4:1 in light; subtle keeps it over 4.5. */
   .sw-row.on .sw-l2, .sw-row.on .sw-age, .sw-row.on .tno, .sw-row.on .sw-chg,
@@ -3243,35 +3262,6 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     text-transform: uppercase;
   }
   .instance-badge::before { content: '●'; font-size: 8px; }
-  /* Update banner — shown at the top when a newer commit is available */
-  #update-banner {
-    display: flex; align-items: center; gap: 12px;
-    padding: 8px 16px;
-    background: var(--c-progress-bg);
-    border-bottom: 1px solid var(--border);
-    color: var(--fg); font-size: 13px;
-    position: sticky; top: 0; z-index: 100;
-  }
-  #update-banner[hidden] { display: none; }
-  #update-banner-text { flex: 1; }
-  #update-banner-text code {
-    background: var(--c-neutral-bg);
-    padding: 1px 6px; border-radius: 3px;
-    font-family: var(--font-mono); font-size: 12px;
-  }
-  #update-banner-go {
-    background: var(--accent); color: var(--accent-fg);
-    border: 0; padding: 5px 14px; border-radius: 5px;
-    cursor: pointer; font: inherit; font-weight: 600; font-size: 12px;
-  }
-  #update-banner-go:hover { background: var(--accent-hover); }
-  #update-banner-go:disabled { opacity: .65; cursor: progress; }
-  #update-banner-dismiss {
-    background: transparent; border: 0; color: var(--fg-muted);
-    font-size: 16px; line-height: 1; padding: 4px 6px;
-    cursor: pointer; border-radius: 3px;
-  }
-  #update-banner-dismiss:hover { color: var(--fg); background: var(--hover); }
   /* A restart waiting for agents to reach a safe point (restart_drain.py):
      it needs the person only eventually, so the warning wash. */
   #drain-banner {
@@ -3392,6 +3382,41 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   #update-close:hover { background: var(--hover); }
   #update-close:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
   #update-close[hidden] { display: none; }
+  /* The failure dialog fits a phone (#330). */
+  .update-modal { box-sizing: border-box; max-width: calc(100vw - 32px); min-width: min(380px, calc(100vw - 32px)); }
+  @media (max-width: 640px) { .update-modal { padding: 20px 16px; } }
+  /* Update now (#330): from the press until the page reloads on the new
+     version, the hub start-up card's look (static/startup.html) in the middle
+     of the page, shaded like #update-overlay. The drain's choices are in it. */
+  #upd-card { position: fixed; inset: 0; z-index: 200; display: grid; place-items: center; padding: var(--s-400);
+    background: color-mix(in srgb, var(--bg) 70%, transparent); backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px); }
+  #upd-card[hidden] { display: none; }
+  #upd-card .upd-box { box-sizing: border-box; width: min(440px, 100%); background: var(--surface); border-radius: var(--r-300);
+    box-shadow: var(--e-100); padding: var(--s-600); color: var(--fg); font: var(--fs-300)/20px var(--font-sans); }
+  #upd-card .upd-brand { display: flex; align-items: center; gap: var(--s-200); color: var(--fg-subtle);
+    font-size: var(--fs-200); font-weight: 600; letter-spacing: .05em; text-transform: uppercase; }
+  #upd-card .upd-brand img { width: 24px; height: 24px; border-radius: var(--r-200); }
+  #upd-card h2 { margin: var(--s-400) 0 var(--s-100); font-size: var(--fs-500); line-height: 24px; font-weight: 600; color: var(--fg); }
+  #upd-card .upd-detail { margin: 0; color: var(--fg-subtle); min-height: 20px; font-variant-numeric: tabular-nums; }
+  #upd-card .upd-drain { margin-top: 12px; }
+  #upd-card .upd-track { display: block; height: 4px; margin: var(--s-400) 0 0; border-radius: 2px; overflow: hidden;
+    background: color-mix(in srgb, var(--c-progress-bold) 20%, transparent); }
+  #upd-card .upd-fill { display: block; height: 100%; width: 35%; background: var(--c-progress-bold); border-radius: inherit;
+    animation: upd-slide 1.5s ease-in-out infinite; }
+  @keyframes upd-slide { from { transform: translateX(-110%); } to { transform: translateX(290%); } }
+  #upd-card .upd-actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--s-300); margin-top: var(--s-600); }
+  #upd-card .upd-actions button { height: 32px; padding: 0 var(--s-300); border-radius: var(--r-200); cursor: pointer;
+    font: 500 var(--fs-300)/20px var(--font-sans); border: 1px solid var(--border-strong); background: transparent; color: var(--fg); }
+  #upd-card .upd-actions button:hover { background: var(--hover); }
+  #upd-card .upd-actions .pri { border: 0; background: var(--accent); color: var(--accent-fg, #fff); }
+  #upd-card .upd-actions .pri:hover { background: var(--accent); filter: brightness(1.08); }
+  #upd-card .upd-actions button:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  #upd-card .upd-agents { display: flex; flex-direction: column; gap: 2px; margin-top: var(--s-300); color: var(--fg-subtle); font-size: var(--fs-200); }
+  #upd-card .upd-agents span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #upd-card [hidden] { display: none; }
+  #upd-card .upd-foot { margin: var(--s-400) 0 0; color: var(--fg-muted); font-size: var(--fs-200); line-height: 16px; }
+  @media (prefers-reduced-motion: reduce) { #upd-card .upd-fill { animation: none; width: 100%; } }
+  @media (pointer: coarse) { #upd-card .upd-actions button { height: 44px; } }
   .actions button.busy::before { content: '⏳ '; }
   .actions button.busy { opacity: .6; pointer-events: none; }
   dialog {
@@ -3805,7 +3830,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     .ptabs button, .viewsw button, .fbtn, .fchip, .colchip, .colall, .proj .newtask,
     .newproj-btn, .rm-btn, .po-btn, .dp-tab, .dp-actions button,
     .dp-actions select, .scopebar select, .chp-repo, .srow, .wse, .chf,
-    .dl-cbtns button, #update-banner-dismiss, #update-banner-go, #dock-banner-go, #wide-banner-dismiss,
+    .dl-cbtns button, #dock-banner-go, #wide-banner-dismiss,
     .seg button {
       min-height: var(--touch-min);
     }
@@ -3813,8 +3838,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     /* Home's "Group by" row: at 360 its last button sat under "+ New project". */
     .listctl { flex-wrap: wrap; row-gap: var(--s-200); }
     .dcm .ov-item, .wse-edit, .dcs-all { min-height: var(--touch-min); }
-    .po-btn.x, .dp-close, .dp-ov-btn, .chp-refresh, .wse-more,
-    #update-banner-dismiss {
+    .po-btn.x, .dp-close, .dp-ov-btn, .chp-refresh, .wse-more {
       min-width: var(--touch-min); min-height: var(--touch-min);
       display: inline-flex; align-items: center; justify-content: center;
     }
@@ -3952,13 +3976,13 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     text-align: left; cursor: pointer; }
   .ldp-row:hover { background: var(--hover); }
   .ldp-row:focus-visible, .ldp-more:focus-visible, .ldp-dots:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--focus-ring); }
-  .ldp-row[aria-current="true"] { background: var(--selected-bg); color: var(--selected-fg); font-weight: 600; }
+  .ldp-row[aria-current="true"], .ldp-row[data-cur] { background: var(--selected-bg); color: var(--selected-fg); font-weight: 600; }
   .ldp-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .ldp-row[data-ldp="all"] { padding-left: 24px; }
   .ldp-ico { flex: none; display: block; width: 12px; height: 12px; }
   .ldp-n { flex: none; padding: 0 6px; border-radius: 8px; background: var(--c-neutral-bg); color: var(--c-neutral-fg);
     font-size: 10px; text-align: center; font-weight: 400; }
-  .ldp-row[aria-current="true"] .ldp-n { background: var(--surface); }
+  .ldp-row[aria-current="true"] .ldp-n, .ldp-row[data-cur] .ldp-n { background: var(--surface); }
   .ldp-item { position: relative; display: flex; align-items: center; }
   .ldp-dots { position: absolute; right: 2px; top: 50%; transform: translateY(-50%); width: 24px; height: 22px; border: 0; border-radius: var(--r-200);
     background: var(--surface); color: var(--fg-subtle); font: inherit; cursor: pointer; opacity: 0; }
@@ -4017,6 +4041,8 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   #workspace-compose iframe.menu-room { position:relative; z-index:1; background:transparent; }   /* a menu's room over the chats (wcFrameRoom) */
   @media (min-width:768px) {
     body.po-dock #workspace-compose:not([hidden]) { display:block; }
+    /* Clear of the window's foot and right edge, all four corners in view (#333). */
+    body.po-dock #workspace-compose { margin:0 var(--s-300) var(--s-200) 0; }
   }
   /* Just after a click restored a minimised panel: its second click, if it
      lands on the chat that slid under the pointer, is the dock's (pdDblGuard). */
@@ -4092,7 +4118,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .ibx-row { --ibx-ground: var(--surface); position: relative; }
   .ibx-row.ibx-mark { --ibx-ground: var(--c-danger-bg); }
   .ibx-acts { display: none; flex-wrap: wrap; gap: var(--s-100); margin-top: var(--s-100); }
-  .ibx-row:hover .ibx-acts, .ibx-row:focus-within .ibx-acts, .ibx-row.ibx-confirming .ibx-acts { display: flex; }
+  .ibx-row:hover .ibx-acts, .ibx-row:focus-within .ibx-acts, .ibx-row.ibx-confirming .ibx-acts, .ibx-row.row-expand-host .ibx-acts { display: flex; }
   @media (hover: hover) {
     .ibx-row:not(.ibx-confirming) > .ibx-acts { position: absolute; right: 0; bottom: var(--s-100); z-index: 1; margin: 0; flex-wrap: nowrap;
       padding-left: var(--s-400); background: linear-gradient(to right, transparent, var(--ibx-ground) var(--s-300)); }
@@ -4117,7 +4143,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   /* #322 P287 drawing: under the project list the rows are cards (.row: 7px 8px, 1px border, radius 6, 5px apart,
      12px, bold title, small muted line), a 3px left bar: amber asks/waits, green checks. */
   .ibx.ibx-listed { gap: 0; padding: 8px; font-family: var(--ldp-font, inherit); }
-  .ibx-listed .ibx-title.ibx-title-listed { margin: 4px 4px 6px; font-size: 11px; line-height: 1.4; }
+  .ibx-listed .ibx-title.ibx-title-listed, .ldp-expanded .ibx-title.ibx-title-listed { margin: 4px 4px 6px; font-size: 11px; line-height: 1.4; }
   .ibx-cards { list-style: none; margin: 0; padding: 0; }
   .ibx-listed .ibx-row, .ibx-listed .ibx-row:last-child { padding: 7px 8px; margin: 5px 0; border: 1px solid var(--border); border-radius: var(--r-200);
     background: var(--surface); font-size: 12px; line-height: 1.4; }
@@ -4126,6 +4152,11 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .ibx-listed .ibx-line { font-size: 12px; line-height: 1.4; font-weight: 600; }
   .ibx-listed .ibx-reason, .ibx-listed .ibx-meta { font-size: 11px; line-height: 1.4; margin-top: 0; }
   .ibx-listed .ibx-meta { color: var(--fg-muted); }
+  /* #337: a card's cut text raised whole on hover (rowExpandShow's copy, in the body): the card's own type, unclamped. */
+  .ldp-expanded.ibx-link { display: block; padding: 2px 4px; color: var(--fg); text-decoration: none; font-size: 12px; line-height: 1.4; }
+  .ldp-expanded .ibx-line, .ldp-expanded .ibx-reason { display: block; -webkit-line-clamp: unset; overflow: visible; }
+  .ldp-expanded .ibx-line { font-size: 12px; line-height: 1.4; font-weight: 600; }
+  .ldp-expanded .ibx-reason { font-size: 11px; line-height: 1.4; margin-top: 0; color: var(--fg-subtle); }
   .ibx-listed .ibx-row.ibx-mark { margin: 5px 0; padding: 7px 8px; box-shadow: none; border-left-color: var(--c-danger-bold); }
   @media (hover: hover) { .ibx-listed .ibx-row:not(.ibx-confirming) > .ibx-acts, .ibx-listed .ibx-row.ibx-mark:not(.ibx-confirming) > .ibx-acts { right: 8px; bottom: 6px; } }
   .ibx-row.ibx-mark.ibx-confirming .ibx-link, .ibx-row.ibx-mark.ibx-confirming .ibx-line, .ibx-row.ibx-mark:hover .ibx-line { color: var(--fg); }
@@ -4176,7 +4207,10 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   #po-dock { --dk-strip-badge-bg: var(--surface); --dk-strip-badge-fs: 10px; }
   /* The list dock's left strip (#322, the P287 drawing): 52px, the Inbox's icon in a 32x30 box with its
      name under it, a red count on the icon's corner; the font is the drawing's. */
-  #list-dock { --ldp-font: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  #list-dock, .ldp-expanded { --ldp-font: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  /* #337: a cut name raised from the left panel (rowExpandShow) keeps the panel's font. */
+  .row-expanded.ldp-expanded { font-family: var(--ldp-font); }
+  .ldp-row.row-expanded:not([data-cur]) { background: linear-gradient(var(--hover), var(--hover)), var(--surface); }
   #list-dock .dk-strip-left { padding: 8px 0; gap: 8px; align-items: center; }
   #list-dock .dk-strip-btn.dk-strip-icon-btn { aspect-ratio: auto; width: auto; flex-direction: column; gap: 1px; padding: 0; border: 0; border-radius: 0;
     background: transparent; color: var(--fg-muted); font: 9px/1.4 var(--ldp-font); }
@@ -4452,6 +4486,134 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
 
 }
 
+  /* #329 (P297 drawing): a project's own icon, in the square's box (.ldp-ico, .pm-sw: 12px),
+     cropped to a square, a hairline inside its edge so a white logo keeps its shape. */
+  .ldp-pic { position: relative; border-radius: 3px; overflow: hidden; }
+  .ldp-pic img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .ldp-pic::after { content: ''; position: absolute; inset: 0; border-radius: 3px; border: 1px solid var(--proj-icon-edge); }
+  .pm-head { display: flex; align-items: center; gap: 6px; }
+  .pm-head .pm-sw { flex: none; display: block; width: 12px; height: 12px; }
+  .dcm-rule { border-top: 1px solid var(--border); margin: 4px 0; }
+  #proj-switch-ico { flex: none; display: flex; }
+  #proj-switch-ico:empty { display: none; }
+  #proj-switch-ico .ldp-ico { margin-right: 6px; }
+  .ibx-where .ldp-ico { display: inline-block; vertical-align: -1px; margin-right: 4px; }
+  /* The settings dialog (projSettings). */
+  dialog.ps-dlg { width: 560px; max-width: calc(100vw - 16px); box-sizing: border-box; }
+  dialog.ps-dlg h3.ps-h { margin: 0; display: flex; align-items: center; gap: 8px; }
+  .ps-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ps-x { margin-left: auto; width: 28px; height: 28px; flex: none; display: grid; place-items: center; border: 0; border-radius: var(--r-200);
+    background: transparent; color: var(--fg-subtle); font: inherit; font-size: 14px; cursor: pointer; }
+  .ps-x:hover { background: var(--hover); color: var(--fg); }
+  .ps-sub { color: var(--fg-muted); font-size: 12px; margin: 2px 0 0; font-family: var(--font-mono); overflow-wrap: anywhere; }
+  .ps-fld { margin: 16px 0 0; }
+  .ps-fld > label, .ps-lg { display: block; font-size: 12px; color: var(--fg-subtle); font-weight: 500; margin-bottom: 4px; }
+  .ps-inp { width: 100%; height: 34px; box-sizing: border-box; padding: 0 10px; border: 1px solid var(--border); border-radius: var(--r-200);
+    background: var(--bg); color: var(--fg); font: inherit; font-size: 14px; outline: none; }
+  .ps-inp:focus { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .ps-inp.bad { border-color: var(--c-danger-bold); }
+  .ps-inp.bad:focus { box-shadow: 0 0 0 1px var(--c-danger-bold); }
+  .ps-hint { font-size: 12px; color: var(--fg-muted); margin: 6px 0 0; }
+  .ps-err { font-size: 12px; color: var(--c-danger-fg); margin: 6px 0 0; }
+  .ps-choices { display: flex; flex-direction: column; gap: 8px; }
+  .ps-choice { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--r-200); font-size: 13px; cursor: pointer; }
+  .ps-choice:has(.ps-radio:checked) { background: var(--selected-bg); border-color: var(--accent); }
+  .ps-radio { appearance: none; -webkit-appearance: none; width: 14px; height: 14px; margin: 0; flex: none; border-radius: 50%;
+    border: 1.5px solid var(--border-strong); background: transparent; cursor: pointer; }
+  .ps-radio:checked { border-color: var(--accent); background: radial-gradient(circle, var(--accent) 0 3px, transparent 3.5px); }
+  .ps-radio:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--focus-ring); }
+  .ps-big { width: 40px; height: 40px; flex: none; border-radius: 8px; overflow: hidden; position: relative; display: block; }
+  .ps-big svg { display: block; }
+  .ps-big img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .ps-big-img::after { content: ''; position: absolute; inset: 0; border-radius: 8px; border: 1px solid var(--proj-icon-edge); }
+  .ps-big-none { border: 1px dashed var(--border-strong); box-sizing: border-box; }
+  .ps-t { flex: 1; min-width: 0; }
+  .ps-t b { font-weight: 500; display: block; }
+  .ps-t small { display: block; color: var(--fg-muted); font-size: 12px; font-family: var(--font-mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ps-t small.ps-plain { font-family: inherit; }
+  .ps-btn { height: 32px; padding: 0 12px; display: inline-flex; align-items: center; flex: none; border: 1px solid var(--border-strong); border-radius: var(--r-200);
+    background: var(--surface); color: var(--fg); font: inherit; font-size: 13px; font-weight: 500; white-space: nowrap; cursor: pointer; }
+  .ps-btn:hover { background: var(--hover); }
+  .ps-save { height: 32px; padding: 0 16px; display: inline-flex; align-items: center; border: 0; border-radius: var(--r-200);
+    background: var(--accent); color: var(--accent-fg); font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; }
+  .ps-save:hover { background: var(--accent-hover, var(--accent)); }
+  .ps-save.off, .ps-save:disabled { background: var(--c-neutral-bg); color: var(--fg-muted); cursor: default; }
+  .ps-btn:focus-visible, .ps-save:focus-visible, .ps-x:focus-visible, .ps-set-go:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--focus-ring); }
+  .ps-sample { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
+  .ps-sample .ps-srow { width: 180px; cursor: default; }
+  .ps-sample .ps-srow:hover { background: var(--selected-bg); }
+  .ps-more { margin-top: 18px; border-top: 1px solid var(--border); padding-top: 14px; }
+  .ps-more .ps-lg { margin-bottom: 6px; }
+  .ps-set { display: grid; grid-template-columns: 150px 1fr auto; align-items: center; gap: 8px; min-height: 40px; border-bottom: 1px solid var(--border); font-size: 13px; }
+  .ps-set:last-child { border-bottom: 0; }
+  .ps-k { color: var(--fg-subtle); }
+  .ps-v { color: var(--fg); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ps-v code { font-family: var(--font-mono); font-size: 12px; }
+  .ps-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+  /* Generate (#335): four icons drawn by the hub's CLI, under the Image choice. */
+  .ps-ibtns { display: contents; }
+  .ps-btn .ps-gi { width: 14px; height: 14px; margin-right: 6px; flex: none; }
+  .ps-btn.off { color: var(--fg-disabled); border-color: var(--border); }
+  .ps-btn.off:hover { background: var(--surface); }
+  .ps-gen { margin-top: 10px; border: 1px solid var(--border); border-radius: var(--r-200); background: var(--surface-sunken); padding: 10px 12px; }
+  .ps-gen-h { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+  .ps-gen-h b { font-weight: 500; }
+  .ps-gen-who { margin-left: auto; font-size: 12px; color: var(--fg-muted); font-family: var(--font-mono); white-space: nowrap; }
+  .ps-gen-sub { font-size: 12px; color: var(--fg-muted); margin-top: 2px; overflow-wrap: anywhere; }
+  .ps-gen-sub b { font-weight: 500; color: var(--fg-subtle); }
+  .ps-tiles { display: flex; gap: 8px; margin-top: 10px; }
+  .ps-tile { width: 64px; height: 64px; flex: none; padding: 0; border: 1px solid var(--border); border-radius: var(--r-200); background: var(--surface);
+    display: grid; place-items: center; position: relative; cursor: pointer; }
+  .ps-tile img { width: 44px; height: 44px; display: block; }
+  button.ps-tile:hover { border-color: var(--border-strong); }
+  .ps-tile.wait { border-style: dashed; border-color: var(--border-strong); background: transparent; cursor: default; }
+  .ps-tile.on { background: var(--selected-bg); border: 2px solid var(--accent); }
+  .ps-tile.on::after { content: '✓'; position: absolute; top: -7px; right: -7px; width: 16px; height: 16px; border-radius: 50%;
+    background: var(--accent); color: var(--accent-fg); font-size: 11px; line-height: 16px; text-align: center; font-weight: 600; }
+  .ps-tile:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--focus-ring); }
+  .ps-gen-foot { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 12px; color: var(--fg-muted); }
+  .ps-gen-foot .ps-sp { flex: 1; }
+  .ps-gen-msg { font-size: 13px; color: var(--fg); margin-top: 8px; }
+  .ps-gen-msg:first-child { margin-top: 0; }
+  .ps-gen-msg small { display: block; color: var(--fg-muted); font-size: 12px; margin-top: 2px; }
+  @media (max-width: 640px), (max-width: 1024px) and (pointer: coarse) {
+    /* Generate on a phone (phone.html): Upload… and Generate… on a row under the Image choice, the tiles spread. */
+    .ps-choice-img { flex-wrap: wrap; }
+    .ps-ibtns { display: flex; gap: 8px; width: 100%; padding-left: 26px; margin-bottom: 4px; box-sizing: border-box; }
+    .ps-btn .ps-gi { width: 16px; height: 16px; }
+    .ps-gen-h { font-size: 15px; }
+    .ps-gen-sub { font-size: 13px; }
+    .ps-tiles { justify-content: space-between; }
+    .ps-tile.on::after { width: 18px; height: 18px; font-size: 12px; line-height: 18px; }
+    .ps-gen-foot { font-size: 13px; }
+    .ps-gen-msg { font-size: 15px; }
+    .ps-gen-msg small { font-size: 13px; }
+  }
+  @media (max-width: 640px), (max-width: 1024px) and (pointer: coarse) {
+    /* The phone's menu offers its settings in one item (phone.html). */
+    #proj-menu .pm-set:not(.proj-settings-btn) { display: none; }
+    /* At the top (the keyboard), the screen's width less 8px gutters, 44px targets, 16px type in the field. */
+    dialog.ps-dlg { width: calc(100vw - 16px); max-width: none; max-height: calc(var(--vv-h, 100dvh) - 24px); margin: 12px auto auto; padding: 16px; }
+    dialog.ps-dlg h3.ps-h { font-size: 17px; }
+    .ps-x { width: 44px; height: 44px; margin: -10px -10px -10px auto; }
+    .ps-fld { margin-top: 14px; }
+    .ps-fld > label, .ps-lg { font-size: 13px; }
+    .ps-inp { height: 44px; font-size: 16px; }
+    .ps-hint { font-size: 13px; }
+    .ps-choice { min-height: 56px; padding: 6px 10px; font-size: 15px; }
+    .ps-radio { width: 16px; height: 16px; }
+    .ps-btn, .ps-save { height: auto; min-height: 44px; font-size: 15px; }
+    .ps-save { padding: 0 18px; }
+    .ps-more { margin-top: 14px; padding-top: 10px; }
+    .ps-more .ps-lg { margin-bottom: 2px; }
+    .ps-set { display: flex; gap: 8px; min-height: 44px; font-size: 15px; }
+    .ps-set-go { width: 100%; padding: 0; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; background: transparent; color: var(--fg); font: inherit; font-size: 15px; text-align: left; cursor: pointer; }
+    .ps-set .ps-k { flex: none; width: 96px; font-size: 14px; }
+    .ps-set .ps-v { flex: 1; }
+    .ps-set .ps-v code { font-size: 13px; }
+    .ps-go { color: var(--fg-muted); font-size: 18px; }
+    .ps-foot { margin-top: 14px; }
+  }
 </style>
 <!-- Shared with fileview.html and session.html: the code highlighter, and the
      store that keeps review comments until they are delivered. -->
@@ -4468,6 +4630,9 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
 <script>FileDrag.attach(document); FileLinks.watch();</script>
 <link rel="stylesheet" href="/static/feedback.css">
 <script src="/static/feedback.js" defer></script>
+<!-- What's new (#339): the update chip on the user button, its menu item and dialog. -->
+<link rel="stylesheet" href="/static/whatsnew.css">
+<script src="/static/whatsnew.js" defer></script>
 <!-- The Dock library (static/dock), which a project's PO screen is built on.
      Imported when a PO screen is first drawn; listed here so the page knows it
      depends on them (Page update), and fetched early. -->
@@ -4512,11 +4677,6 @@ window.DOC_LISTENERS_PAUSED = false;
 <script src="/static/actions.js"></script>
 </head>
 <body>
-<div id="update-banner" hidden>
-  <span id="update-banner-text"></span>
-  <button id="update-banner-go">Update now</button>
-  <button id="update-banner-dismiss" title="Dismiss for this session" aria-label="Dismiss">×</button>
-</div>
 <div id="drain-banner" role="status" hidden>
   <span id="drain-text"></span>
   <button id="drain-details" type="button" aria-expanded="false" aria-controls="drain-agents">Agents ▸</button>
@@ -4546,6 +4706,24 @@ window.DOC_LISTENERS_PAUSED = false;
     <button type="button" id="update-close" hidden>Close</button>
   </div>
 </div>
+<div id="upd-card" hidden>
+  <div class="upd-box" role="dialog" aria-modal="true" aria-labelledby="upd-card-title">
+    <div class="upd-brand"><img src="/static/icons/icon-192.png" alt=""><span>Ensemble</span></div>
+    <h2 id="upd-card-title">Updating Ensemble</h2>
+    <p class="upd-detail"><span id="upd-card-step" role="status" aria-live="polite"></span><span id="upd-card-time" aria-hidden="true"></span></p>
+    <span class="upd-track" role="progressbar" aria-label="Updating"><span class="upd-fill"></span></span>
+    <div id="upd-card-drain" hidden>
+      <p class="upd-detail upd-drain" id="upd-card-drain-text"></p>
+      <div class="upd-actions">
+        <button type="button" class="pri" id="upd-card-force">Restart now</button>
+        <button type="button" id="upd-card-cancel">Cancel</button>
+        <button type="button" id="upd-card-agents" aria-expanded="false" aria-controls="upd-card-agent-list">Agents ▸</button>
+      </div>
+      <div class="upd-agents" id="upd-card-agent-list" hidden></div>
+    </div>
+    <p class="upd-foot">Opens the new version by itself when it is ready.</p>
+  </div>
+</div>
 <header>
   <!-- Where you are, and the way back: the app (its every project) / the
        project, whose menu switches project and holds the project's settings.
@@ -4562,7 +4740,7 @@ window.DOC_LISTENERS_PAUSED = false;
          project's settings), then the conversation, the tool and the file
          (barCrumbs). -->
     <button id="proj-switch" class="bar-btn" data-noun-title="Switch {project}, or change this {project}'s settings" title="Switch project, or change this project's settings" aria-haspopup="true" aria-expanded="false" aria-controls="proj-menu">
-      <span id="proj-switch-name" data-noun="All {projects}">All projects</span><span class="caret">▾</span>
+      <span id="proj-switch-ico" aria-hidden="true"></span><span id="proj-switch-name" data-noun="All {projects}">All projects</span><span class="caret">▾</span>
     </button>
     <span id="bar-crumbs"></span>
   </nav>
@@ -4664,6 +4842,8 @@ window.DOC_LISTENERS_PAUSED = false;
   </div>
   <div class="me-rule"></div>
   <!-- Phone only: the plan chip has no room in the bar there, so its tray opens from here. -->
+  <!-- What's new (#339): shown while an update is available; quiet once it is skipped. -->
+  <button class="me-item me-upd" id="me-whatsnew" data-me="whatsnew" hidden><span class="me-upd-dot" aria-hidden="true"></span>What's new<span class="me-upd-tag">Update available</span></button>
   <button class="me-item me-phone" data-me="usage">Plan allowance</button>
   <button class="me-item" data-me="feedback">Send feedback…</button>
   <button class="me-item" data-me="settings">Settings</button>
@@ -4845,6 +5025,11 @@ window.DOC_LISTENERS_PAUSED = false;
              autocomplete="off" spellcheck="false" maxlength="60">
     </div>
     <p class="cfg-hint">Used in the collaboration briefing, so agents address you by name instead of “the human.” Empty = your git <code>user.name</code>.</p>
+    <!-- #337: the Tasks list's Full names switch (#170), which a computer's list
+         no longer shows since #322; this browser's, as that one was. -->
+    <h5 class="sp-sub">Lists</h5>
+    <div class="pref-row"><label><input type="checkbox" id="pref-full-names" checked> Show full names on hover</label></div>
+    <p class="cfg-hint">A name cut short in the left panel or a list shows whole while the pointer rests on it. Kept in this browser.</p>
     <h5 class="sp-sub">Stalls and restarts</h5>
     <div class="pref-row" style="margin-top: 14px;">
       <span class="pref-label">Call an agent stalled after</span>
@@ -4964,6 +5149,12 @@ window.DOC_LISTENERS_PAUSED = false;
     <h4>This instance</h4>
     <dl class="cfg-grid"></dl>
     <p class="cfg-hint">Read-only. Override with <code>ENSEMBLE_*</code> env vars at start time — see the README.</p>
+    <!-- #331: what the move check at hub start could not repair; shown only when there is something. -->
+    <div id="move-check" hidden>
+      <h5 class="sp-sub">Moved from another machine</h5>
+      <p class="cfg-hint" style="margin-top: 0;">The check at hub start repaired what was safe. These it left as they are, for you to look at.</p>
+      <dl class="cfg-grid" id="move-check-list" style="margin-top: 10px;"></dl>
+    </div>
   </div>
   </div>
   </div>
@@ -5017,6 +5208,12 @@ window.addEventListener('cd-noun', () => {
 // The one dialog most of the page's questions are asked in, kept by
 // reference: it moves to the window the person is using (pdModal).
 const MODAL_EL = document.getElementById('modal');
+// A chat under the dialog says its state itself while the dialog covers the
+// header that says it (session.html, placeState), and looks again only on its
+// next poll: once the dialog closes, it looks now.
+MODAL_EL.addEventListener('close', () => setTimeout(() => {
+  for (const f of document.querySelectorAll('iframe')) { try { f.contentWindow.dispatchEvent(new Event('resize')); } catch (e) {} }
+}, 0));
 const fmtAgo = secs => {
   if (secs == null) return '-';
   if (secs < 0) secs = 0;
@@ -5634,6 +5831,7 @@ const toast = (msg, ms=2500, kind='') => {
     toast._t = setTimeout(() => { s.hidden = true; }, ms);
   }
 };
+window.toast = toast;   // static/whatsnew.js says through it too
 
 function offerTerminalSendRetry(pid, text) {
   toast('May not have been delivered - check the chat, then Retry.', 0, 'err');
@@ -5876,7 +6074,7 @@ const detailWMax = () =>
   handle.addEventListener('pointercancel', stop);
 })();
 
-function openDetail(sid) {
+function openDetail(sid, o) {
   phPanesClose(true);   // a phone: the pane it was opened from steps aside (#307)
   if (phoneNow()) PH_BACK.sel = { sid };   // and marks this row when it comes back
   // A task open as a chat panel of its own (#150): that panel comes on
@@ -5885,6 +6083,14 @@ function openDetail(sid) {
     const r0 = rowBySid(sid);
     const cid = r0 && r0.roomId ? pdChatId(r0.roomId) : '';
     if (cid && PD.dock && PD.rt.has(cid)) { try { PD.dock.reveal(cid); } catch (e) {} return; }
+    // A task of another project: the one open in the conversation's window
+    // keeps that window (#346); the middle comes back here for this one.
+    // A tool returning its own window to this panel already chose its owner:
+    // do not hand that window to the task being replaced in the middle.
+    const r1 = SELECTED_SID && sid !== SELECTED_SID ? rowBySid(SELECTED_SID) : null;
+    const pjOf = r => r && (projectOfRoom(r.roomId || r.sessionId) || wsProjectForRow(r));
+    const p0 = pjOf(r0), p1 = pjOf(r1);
+    if (r1 && (p0 && p0.id) !== (p1 && p1.id) && !o?.keepTaskWindow) pdTaskKeepOut();
   }
   const reopened = !document.body.classList.contains('detail-open') || sid !== SELECTED_SID;
   if (sid !== SELECTED_SID) {
@@ -9154,35 +9360,21 @@ async function setPref(key, val) {
   } catch (e) { toast('preference save failed: ' + e.message, 4000, 'err'); }
 }
 
-let UPDATE_DISMISSED = false;
 let UPDATE_IN_PROGRESS = false;
+let UPDATE_TARGET = '';   // the app: the release Update now installs
+let UPD_ATTEMPT = 0;           // a new press ends the loop of the one before (one still looking after "did not come back")
 const UPDATE_CHECK_INTERVAL_MS = 30 * 60 * 1000; // 30 min — matches backend cache TTL
+// No banner (#339): an available update is a dot on the user button and a
+// What's new item in its menu (static/whatsnew.js).
 async function checkForUpdate() {
-  if (UPDATE_DISMISSED || UPDATE_IN_PROGRESS) return;
+  if (UPDATE_IN_PROGRESS) return;
+  const at = UPD_ATTEMPT;   // an Install now press since this check began owns what the page shows (#330)
   try {
     const info = await api('/api/update-check');
-    renderUpdateBanner(info);
+    if (UPDATE_IN_PROGRESS || at !== UPD_ATTEMPT) return;
+    if (info && info.kind === 'release') UPDATE_TARGET = info.latestVersion || '';   // the app: the release it installs
+    if (window.whatsNew) whatsNew.render(info);
   } catch {}
-}
-function renderUpdateBanner(info) {
-  const banner = document.getElementById('update-banner');
-  if (!banner) return;
-  if (!info || !info.available) {
-    banner.hidden = true;
-    return;
-  }
-  const text = document.getElementById('update-banner-text');
-  if (info.kind === 'release') {
-    // The app: a newer release on GitHub.
-    text.textContent = `Ensemble ${info.latestVersion} is available. You have ${info.currentVersion}.`;
-    banner.hidden = false;
-    return;
-  }
-  const plural = info.behind === 1 ? '' : 's';
-  text.innerHTML =
-    `Update available — ${info.behind} commit${plural} behind. Latest: ` +
-    `<code>${esc(info.latestMessage || info.latestSha || '')}</code>`;
-  banner.hidden = false;
 }
 // After a restart: how the app's last update ended, said once.
 async function noteLastUpdate() {
@@ -9265,6 +9457,7 @@ async function drainPoll() {
 function drainPaint(v) {
   const banner = document.getElementById('drain-banner');
   if (!banner) return;
+  if (updCardUp()) { banner.hidden = true; return; }   // the Update now card says it (#330)
   if (!v) {   // no answer: a restart under way keeps its banner, saying so
     if (DRAIN.wasHolding) document.getElementById('drain-text').textContent = 'Restarting… the page refreshes when the hub is back.';
     return;
@@ -9324,116 +9517,310 @@ function setUpdateStage(text) {
   const el = document.getElementById('update-stage');
   if (el) el.textContent = text;
 }
-async function triggerUpdate() {
-  if (UPDATE_IN_PROGRESS || ensUpd.reloading) return;
+// Update now (#330): from the press until the page reloads on the new
+// version, one card over the shaded page says the step and the time since the
+// press (m:ss); a drain's choices are in it. A failure goes to the update
+// dialog (showUpdateFailed).
+const UPD_CARD = { t0: 0, step: '', timer: 0, open: false };
+const updMmss = ms => { const s = Math.max(0, Math.floor(ms / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
+function updCardTick() {
+  const t = document.getElementById('upd-card-time');
+  if (t) t.textContent = ' · ' + updMmss(performance.now() - UPD_CARD.t0);   // monotonic: never counts back
+}
+function updCardShow(step) {
+  const o = document.getElementById('upd-card');
+  if (!o) return;
+  if (o.hidden) {
+    o.hidden = false;
+    clearInterval(UPD_CARD.timer);
+    UPD_CARD.timer = setInterval(updCardTick, 1000);
+  }
+  if (step && step !== UPD_CARD.step) {
+    UPD_CARD.step = step;
+    document.getElementById('upd-card-step').textContent = step;
+  }
+  updCardTick();
+  const db = document.getElementById('drain-banner');
+  if (db) db.hidden = true;   // the card says it, and the shade would cover it
+}
+function updCardHide() {
+  const o = document.getElementById('upd-card');
+  clearInterval(UPD_CARD.timer);
+  UPD_CARD.timer = 0;
+  UPD_CARD.step = '';
+  if (o) o.hidden = true;
+  updCardDrain(null);
+}
+const updCardUp = () => { const o = document.getElementById('upd-card'); return !!o && !o.hidden; };
+// The drain under way, in the card: whom it waits for, Restart now, Cancel, Agents.
+function updCardDrain(v) {
+  const box = document.getElementById('upd-card-drain');
+  if (!box) return;
+  const draining = !!v && v.state === 'draining';
+  box.hidden = !draining;
+  if (!draining) return;
+  const waiting = v.waitingFor || [];
+  const mins = Math.max(1, Math.ceil((v.secondsLeft || 0) / 60));
+  document.getElementById('upd-card-drain-text').textContent = waiting.length
+    ? `Waiting for ${waiting.length} agent${waiting.length === 1 ? '' : 's'} (${waiting.map(a => a.label).join(', ')}) · restarts anyway in ${mins} min.`
+    : 'Every agent is at a safe point · restarting.';
+  const btn = document.getElementById('upd-card-agents');
+  const list = document.getElementById('upd-card-agent-list');
+  btn.hidden = !(v.agents || []).length;
+  list.hidden = btn.hidden || !UPD_CARD.open;
+  btn.textContent = UPD_CARD.open ? 'Agents ▾' : 'Agents ▸';
+  btn.setAttribute('aria-expanded', String(UPD_CARD.open));
+  const sig = JSON.stringify(v.agents || []);
+  if (list.dataset.sig !== sig) {
+    list.dataset.sig = sig;
+    list.replaceChildren(...(v.agents || []).map(a => {
+      const s = document.createElement('span');
+      s.textContent = `${a.label}: ${DRAIN_STATE_WORDS[a.state] || a.state || 'looking'}` + (a.next ? `, next: ${a.next}` : '');
+      s.title = s.textContent;
+      return s;
+    }));
+  }
+}
+const updSleep = ms => new Promise(r => setTimeout(r, ms));
+// A timed-out fetch, so a hung request never keeps the card spinning.
+function updSignal(ms) {
+  if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') return AbortSignal.timeout(ms);
+  const c = new AbortController();   // a browser without AbortSignal.timeout
+  setTimeout(() => c.abort(), ms);
+  return c.signal;
+}
+async function updJson(url) {
+  try { const r = await fetch(url, { cache: 'no-store', signal: updSignal(UPD_LIMITS.fetchS * 1000) }); return r.ok ? await r.json() : null; } catch { return null; }
+}
+// Where the update's helper writes: logs/update.log (the app) or logs/restart.log.
+function updLogPath(app) {
+  const dir = (RUNTIME_CFG && RUNTIME_CFG.stateDir) || '';
+  if (!dir) return (RUNTIME_CFG && RUNTIME_CFG.logFile) || '';
+  const sep = dir.includes('\\') ? '\\' : '/';
+  return dir.replace(/[\\/]+$/, '') + sep + 'logs' + sep + (app ? 'update.log' : 'restart.log');
+}
+const UPD_LIMITS = {
+  downS: 300,      // the hub away this long: "The hub did not come back"
+  stallS: 600,     // the old hub answering this long with no new step: stopped
+  idlePolls: 5,    // the request got no answer and the hub, up, shows no update this many polls
+  fetchS: 8,       // one status request, at most
+};
+// Install now (#345): starts the update and returns '' (the Update card
+// shows until the page reloads), or says why it did not start. An update
+// already under way is this press's: its card is showing.
+function triggerUpdate() {
+  if (ensUpd.reloading) return 'The page is reloading, try again in a moment.';
+  if (UPDATE_IN_PROGRESS) { if (!updCardUp()) updCardShow(UPD_CARD.step || 'Fetching the update from GitHub'); return ''; }
+  runUpdate();
+  return '';
+}
+async function runUpdate() {
   UPDATE_IN_PROGRESS = true;
-  ensUpd.hold = true;   // the page refreshes on the new pid below, not for a changed stamp too
-  const banner = document.getElementById('update-banner');
+  ensUpd.hold = true;   // the page reloads on the new hub below, not for a changed stamp too
   const overlay = document.getElementById('update-overlay');
-  if (banner) banner.hidden = true;
-  if (overlay) overlay.hidden = false;
+  if (overlay) overlay.hidden = true;
   resetUpdateModal();   // an earlier attempt may have left it saying it failed
   const app = !!(RUNTIME_CFG && RUNTIME_CFG.packaged);
-  setUpdateStage(app ? 'Downloading…' : 'Fetching from origin…');
-
-  const startPid = RUNTIME_CFG && RUNTIME_CFG.pid;
-  const startedAt = Date.now() / 1000;
+  let target = app ? UPDATE_TARGET : '';
+  const my = ++UPD_ATTEMPT;
+  const mine = () => my === UPD_ATTEMPT;
+  UPD_CARD.t0 = performance.now();
+  UPD_CARD.open = false;
+  updCardShow(app ? (target ? `Downloading ${target}` : 'Downloading the update') : 'Fetching the update from GitHub');
+  // The hub as it is now, before the request: a page left open across a
+  // restart still holds the pid it loaded with, and would take the hub that
+  // already runs for the new one (#345).
+  const stop = () => { UPDATE_IN_PROGRESS = false; ensUpd.hold = false; updCardHide(); };
+  const stopPreflight = () => {
+    stop();
+    const why = 'The hub could not be reached, try again.';
+    if (window.whatsNew) whatsNew.refused(why); else toast(why, 8000, 'err');
+  };
+  // What the hub said before this press: anything it records later is this
+  // attempt's (an earlier attempt's outcome is not). Without it nothing
+  // could be told apart from an earlier attempt's, so a hub that does not
+  // answer gets no request.
+  let before = null;
+  for (let i = 0; i < 3 && !before; i++) {
+    if (i) await updSleep(1000);
+    before = await updJson('/api/update-status');
+  }
+  if (!mine()) return;
+  const cfg0 = before && await updJson('/api/config');
+  if (!mine()) return;
+  if (!cfg0 || !cfg0.pid) {
+    stopPreflight();
+    return;
+  }
+  const startPid = cfg0.pid;
+  const now = () => performance.now();
+  let logPath = updLogPath(app);
+  // A failure leaves this hub as it was: What's new still offers Install now.
+  const fail = (reason, advice) => { stop(); showUpdateFailed(logPath, reason, advice); };
+  const seen = {
+    last: (before.last && before.last.at) || 0,
+    app: before.at || 0,
+    src: (before.restart && before.restart.at) || 0,
+  };
   // The hub only restarts for this page (it holds the key the hub handed it
   // when the page opened) or the Ensemble Dashboard PO. A 403 is a real no —
   // e.g. the key is from before a restart and the page needs a reload — so
-  // say why instead of waiting a minute for a restart that never comes.
-  let refused = '';
-  let logPath = (RUNTIME_CFG && RUNTIME_CFG.logFile) || '';
-  try {
-    const r = await fetch('/api/update', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-                                           body: JSON.stringify({ when: 'safe', reason: 'an update' }) });
-    const body = await r.json().catch(() => ({}));
-    if (body.log) logPath = body.log;
-    if (body.keepAgents && overlay) overlay.hidden = true;
-    if (body.draining) {
-      // The hub waits for every agent to reach a safe point first: the
-      // drain banner takes over, and refreshes the page once it is back.
-      UPDATE_IN_PROGRESS = false;
-      ensUpd.hold = false;
-      if (overlay) overlay.hidden = true;
-      drainPoll();
-      return;
+  // say why instead of waiting for a restart that never comes. A source
+  // update fetches from GitHub inside this request.
+  let status = 0, body = {};
+  const ask = async () => {
+    status = 0; body = {};
+    try {
+      const r = await fetch('/api/update', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                             body: JSON.stringify({ when: 'safe', reason: 'an update' }),
+                                             signal: updSignal(200000) });   // a source fetch and reset: 3 min at most
+      status = r.status;
+      body = await r.json().catch(() => ({}));
+    } catch {
+      // No answer: the hub may have stopped mid-request; the polls below see.
     }
-    if (body.started && overlay) overlay.hidden = true;
-    if (r.status === 403) {
-      refused = body.message || 'the hub refused the update';
-    } else if (!r.ok && r.status !== 202) {
-      // The update never started (the hub is still up): say why now.
-      refused = `Update could not start: ${body.error || body.message || `HTTP ${r.status}`}`;
-    }
-  } catch {
-    // Network error here is expected — the server may have died mid-request.
+  };
+  await ask();
+  // A page left open across a hub restart holds the key from before it:
+  // today's key (static/pagekey.js), then the same request once more.
+  if (status === 403 && mine() && window.pageKeyRefresh) {
+    await window.pageKeyRefresh();
+    if (!mine()) return;
+    await ask();
   }
-  if (refused) {
-    UPDATE_IN_PROGRESS = false;
-    ensUpd.hold = false;
-    if (overlay) overlay.hidden = true;
-    if (banner) banner.hidden = false;
-    toast(refused, 8000, 'err');
+  if (!mine()) return;
+  if (body.log) logPath = body.log;
+  if (body.version) target = body.version;
+  if (status === 403) {
+    // Still no: say so where Install now was pressed, in plain words (the
+    // hub's own message is written for agents).
+    stop();
+    const why = 'The hub refused the update from this page. Reload the page, then Install now again.';
+    if (window.whatsNew) whatsNew.refused(why); else toast(why, 8000, 'err');
+    return;
+  }
+  if (status && (status < 200 || status >= 300)) {
+    // The update never started and the hub is still up: say why now.
+    const why = body.error || body.message || `HTTP ${status}`;
+    fail(why, /^git (fetch|reset) failed/.test(why) ? 'Check the connection, then Install now again.' : '');
     return;
   }
 
-  setUpdateStage(app ? 'Downloading…' : 'Restarting server…');
-  // Wait for the new pid to appear. launchctl kickstart is ~5-10s typically
-  // (git fetch dominates). Cap at 60s. The app downloads the release and
-  // starts it once on a spare port first: up to 4 minutes.
-  const deadline = performance.now() + (app ? 240_000 : 60_000);
-  let lastStage = 'restart';
-  while (performance.now() < deadline) {
-    await new Promise(r => setTimeout(r, app ? 1000 : 500));
-    if (app) {
+  // No answer at all: the hub may have stopped mid-request, or the request
+  // never reached it. The polls below tell which.
+  const unanswered = !status;
+  let draining = !!body.draining;
+  let downSince = 0, notBack = false, idlePolls = 0;
+  let lastStep = '', lastStepAt = now();
+  const step = s => { if (s !== lastStep) { lastStep = s; lastStepAt = now(); } updCardShow(s); };
+  while (true) {
+    await updSleep(notBack ? 3000 : 1000);
+    if (!mine()) return;
+    const cfg = await updJson('/api/config');
+    if (!mine()) return;
+    if (!cfg || !cfg.pid) {
+      // The hub is away: the restart under way.
+      if (!downSince) downSince = now();
+      if (notBack) continue;
+      step('The hub is restarting, back in a moment');
+      if (now() - downSince > UPD_LIMITS.downS * 1000) {
+        // Say where the reason is, and keep looking: the page still
+        // reloads if it comes back after all.
+        notBack = true;
+        fail('');
+      }
+      continue;
+    }
+    downSince = 0;
+    if (cfg.pid !== startPid) {
+      // A new hub. The app's: the new version, or the old one put back.
+      if (app && target && cfg.version && cfg.version !== target) {
+        const st = await updJson('/api/update-status');
+        if (!mine()) return;
+        const last = st && st.last;
+        fail(last && last.rolledBack && last.from
+          ? `Ensemble ${target} did not start, so ${last.from} was put back`
+          : `Ensemble ${target} did not start, so ${cfg.version} was put back`);
+        return;
+      }
+      document.getElementById('update-overlay').hidden = true;
+      updCardShow(app || target ? `${target || cfg.version} is running · Reloading the page`
+                                : 'The new code is running · Reloading the page');
+      await updSleep(600);
+      if (!mine()) return;
+      ensUpd.hold = false;
+      ensUpd.reload();   // keeps the place
+      return;
+    }
+    if (notBack) {
+      // The same hub is back after all: it still runs the old code (What's
+      // new still offers Install now); keep looking for a new one.
+      continue;
+    }
+    // The hub that took the update still runs: where it stands.
+    if (unanswered && !draining) {
+      const v = await updJson('/api/restart/drain');
+      if (v && (v.state === 'draining' || v.state === 'restarting')) draining = true;
+    }
+    if (draining) {
+      const v = await updJson('/api/restart/drain');
+      if (v && v.state === 'draining') {
+        const n = (v.waitingFor || []).length;
+        updCardDrain(v);
+        step(n ? `Waiting for ${n} agent${n === 1 ? '' : 's'} to reach a safe point` : 'Every agent is at a safe point');
+        lastStepAt = now();     // a drain has its own deadline
+        continue;
+      }
+      updCardDrain(null);
+      if (v && v.state === 'cancelled') {
+        stop();
+        toast('Update cancelled: nothing was restarted', 6000);
+        return;
+      }
+      if (v && v.state === 'failed') {
+        fail(`The update did not happen: ${v.outcome || 'it failed'}`);
+        return;
+      }
+      if (v && v.state === 'restarting') step(app ? (target ? `Downloading ${target}` : 'Downloading the update') : 'Fetching the update from GitHub');
+    }
+    const st = await updJson('/api/update-status');
+    if (!mine()) return;
+    let busy = draining;
+    if (app && st) {
       // Its stages, and a stop the hub survived (a checksum that does not
       // match, a new version that did not start): say so now.
-      let st = null;
-      try { const resp = await fetch('/api/update-status'); st = resp.ok ? await resp.json() : null; } catch {}
-      const last = st && st.last;
-      const why = st && st.stage === 'failed' ? st.error
-        : (last && !last.ok && last.at >= startedAt && last.stage === 'preflight' ? last.reason : '');
-      if (why) {
-        showUpdateFailed(logPath, why);
-        UPDATE_IN_PROGRESS = false;
-        ensUpd.hold = false;
+      if (st.to) target = st.to;
+      const last = st.last;
+      if (st.stage === 'failed' && (st.at || 0) > seen.app) {
+        fail(lastStep.startsWith('Downloading') ? `The download failed: ${st.error}` : st.error,
+             lastStep.startsWith('Downloading') ? 'Try Install now again later.' : '');
         return;
       }
-      if (st && st.stage) {
-        const stages = { downloading: 'Downloading…', starting: 'Starting the new version…',
-                         restarting: 'Restarting…' };
-        if (stages[st.stage]) setUpdateStage(stages[st.stage]);
-      }
+      // The helper gave up while this hub runs (preflight, copy, stop ...).
+      if (last && !last.ok && (last.at || 0) > seen.last) { fail(last.reason || 'The update did not happen'); return; }
+      busy = busy || (['downloading', 'starting', 'restarting'].includes(st.stage) && (st.at || 0) > seen.app);
+      if (st.stage === 'downloading') step(`Downloading ${target || 'the update'}`);
+      else if (st.stage === 'starting' || st.stage === 'restarting') step(`Checking that ${target || 'the new version'} starts`);
+    } else if (st && st.restart) {
+      const rs = st.restart;
+      const ours = (rs.at || 0) > seen.src;   // not an earlier attempt's outcome
+      if (rs.stage === 'failed' && ours) { fail(rs.error || 'The new code did not start', rs.advice || ''); return; }
+      busy = busy || (ours && ['fetching', 'checking', 'restarting'].includes(rs.stage));
+      if (rs.stage === 'checking') step('Checking that the new code starts');
+      else if (rs.stage === 'restarting') step('Restarting the hub');
     }
-    try {
-      const resp = await fetch('/api/config');
-      if (!resp.ok) continue;
-      const cfg = await resp.json();
-      if (cfg && cfg.pid && cfg.pid !== startPid) {
-        if (overlay) overlay.hidden = true;
-        UPDATE_IN_PROGRESS = false;
-        ensUpd.hold = false;
-        ensUpd.checkedAt = 0;
-        ensUpd.poll();
-        refresh();
+    if (unanswered && !busy) {
+      // The hub is up, the same one, and no update is under way: the request
+      // never reached it.
+      if (++idlePolls >= UPD_LIMITS.idlePolls) {
+        fail('The hub did not get the update request', 'Check the connection, then Install now again.');
         return;
       }
-    } catch { /* still restarting */ }
-  }
-
-  // Timed out: the hub did not come back. Say where the reason is, and keep
-  // looking, so the page still reloads if it comes back after all.
-  showUpdateFailed(logPath);
-  UPDATE_IN_PROGRESS = false;
-  ensUpd.hold = false;
-  while (true) {
-    await new Promise(r => setTimeout(r, 3000));
-    try {
-      const resp = await fetch('/api/config');
-      const cfg = resp.ok ? await resp.json() : null;
-      if (cfg && cfg.pid && cfg.pid !== startPid) { ensUpd.checkedAt = 0; ensUpd.poll(); refresh(); return; }
-    } catch { /* still down */ }
+    } else idlePolls = 0;
+    if (now() - lastStepAt > UPD_LIMITS.stallS * 1000) {
+      fail(`Nothing moved for ${Math.round(UPD_LIMITS.stallS / 60)} min at “${lastStep}”`);
+      return;
+    }
   }
 }
 function resetUpdateModal() {
@@ -9445,23 +9832,27 @@ function resetUpdateModal() {
     'The server will restart and this page will refresh automatically.';
   document.getElementById('update-close').hidden = true;
 }
-function showUpdateFailed(logPath, reason) {
+// A failure: what happened, what to do, where the log is, Close.
+function showUpdateFailed(logPath, reason, advice) {
   const overlay = document.getElementById('update-overlay');
   const modal = overlay && overlay.querySelector('.update-modal');
   if (!modal) return;
+  updCardHide();
   modal.classList.add('is-failed');
+  const log = tildeify(logPath) || 'the hub log';
   if (reason) {
     // The update stopped and this version keeps running.
     modal.querySelector('h3').textContent = 'Not updated';
     setUpdateStage(reason);
     document.getElementById('update-hint').textContent =
-      `This version keeps running. More in ${tildeify(logPath) || 'the hub log'}.`;
+      `This version keeps running. ${advice ? advice + ' ' : ''}More in ${log}.`;
   } else {
     modal.querySelector('h3').textContent = 'The hub did not come back';
-    setUpdateStage(`See ${tildeify(logPath) || 'the hub log'}`);
+    setUpdateStage(`Waited ${Math.round(UPD_LIMITS.downS / 60)} min. See ${log}`);
     document.getElementById('update-hint').textContent =
-      'The last lines there say why. This page refreshes if the hub starts again.';
+      'The last lines there say why. This page reloads by itself if the hub starts again.';
   }
+  overlay.hidden = false;
   const close = document.getElementById('update-close');
   close.hidden = false;
   close.onclick = () => { overlay.hidden = true; };
@@ -12854,7 +13245,7 @@ let CH_FILE = '';
 const ROW_EXPAND_HOVER_KEY = 'cd-switcher-full-names';
 let ROW_EXPAND_NAMES = true;
 try { ROW_EXPAND_NAMES = localStorage.getItem(ROW_EXPAND_HOVER_KEY) !== 'false'; } catch (e) {}
-let ROW_EXPAND = null, ROW_EXPAND_TIMER = 0, ROW_EXPAND_LAST = 0;
+let ROW_EXPAND = null, ROW_EXPAND_TIMER = 0, ROW_EXPAND_LAST = 0, ROW_EXPAND_PENDING = null;
 let ROW_EXPAND_MENU_OBSERVER = null, ROW_EXPAND_WIN = null;
 function rowExpandOpenMenu(doc) {
   return [...doc.querySelectorAll('.dk-menu, .ov-menu:not([hidden]), .dcm:not([hidden]), #create-menu:not([hidden]), .me-menu:not([hidden]), .wf-menu:not([hidden]), .pr-menu:not([hidden])')]
@@ -12867,23 +13258,82 @@ function rowExpandHide() {
   ROW_EXPAND_MENU_OBSERVER = null;
   if (ROW_EXPAND_WIN) ROW_EXPAND_WIN.removeEventListener('resize', rowExpandHide);
   ROW_EXPAND_WIN = null;
-  if (ROW_EXPAND) ROW_EXPAND.copy.remove();
+  if (ROW_EXPAND) {
+    ROW_EXPAND.copy.remove();
+    // Raised by focus, the card shows its buttons by :focus-within: nothing to hold.
+    if (ROW_EXPAND.host && !ROW_EXPAND.focus) rowExpandHostHold(ROW_EXPAND.host);
+    else rowExpandHostLet();
+  }
   ROW_EXPAND = null;
+}
+// The card under a copy that just went (spec.host): the browser marks it :hover
+// only at the pointer's next move, so a press at once would miss its Close/Done.
+// It keeps them shown until the pointer is off the card.
+let ROW_EXPAND_HOST = null;
+function rowExpandHostLet() {
+  if (!ROW_EXPAND_HOST) return;
+  ROW_EXPAND_HOST.el.classList.remove('row-expand-host');
+  ROW_EXPAND_HOST.doc.removeEventListener('pointermove', ROW_EXPAND_HOST.off, true);
+  ROW_EXPAND_HOST = null;
+}
+function rowExpandHostHold(el) {
+  if (ROW_EXPAND_HOST && ROW_EXPAND_HOST.el === el) return;
+  rowExpandHostLet();
+  const doc = el.ownerDocument;
+  const off = ev => {
+    const r = el.getBoundingClientRect();
+    if (!el.isConnected || ev.clientX < r.left || ev.clientX > r.right || ev.clientY < r.top || ev.clientY > r.bottom) rowExpandHostLet();
+  };
+  el.classList.add('row-expand-host');
+  doc.addEventListener('pointermove', off, true);
+  ROW_EXPAND_HOST = { el, doc, off };
 }
 function rowExpandBeforeChange(root) {
   if (ROW_EXPAND && root && root.contains(ROW_EXPAND.row)) rowExpandHide();
+  if (ROW_EXPAND_HOST && root && root.contains(ROW_EXPAND_HOST.el)) rowExpandHostLet();
 }
 function rowExpandRefresh(root) {
   if (!ROW_EXPAND || (root && !root.contains(ROW_EXPAND.row))) return;
   const { row, spec } = ROW_EXPAND;
   rowExpandShow(row, spec, row.ownerDocument.activeElement === row);
 }
+// #337: a row whose name expands drops its native tooltip (spec.untitle names
+// the elements that carry one), so the two never show together; a row that no
+// longer expands (the setting off, or the name fits) gets it back.
+function rowExpandUntitle(row, spec, drop) {
+  if (!spec.untitle || !row) return;
+  for (const el of [row, ...row.querySelectorAll(spec.untitle)]) {
+    if (!el.matches(spec.untitle)) continue;
+    if (drop && el.hasAttribute('title')) { el.dataset.rxTitle = el.getAttribute('title'); el.removeAttribute('title'); }
+    else if (!drop && el.dataset.rxTitle != null && !el.hasAttribute('title')) el.setAttribute('title', el.dataset.rxTitle);
+    if (!drop) delete el.dataset.rxTitle;
+  }
+}
+function rowExpandRetitleAll(doc) {
+  doc.querySelectorAll('[data-rx-title]').forEach(el => {
+    if (!el.hasAttribute('title')) el.setAttribute('title', el.dataset.rxTitle);
+    delete el.dataset.rxTitle;
+  });
+}
+// The original element at the copy's element's place (the copy is a clone).
+function rowExpandOriginal(copy, row, el) {
+  const path = [];
+  for (let n = el; n && n !== copy; n = n.parentElement) path.unshift([...n.parentElement.children].indexOf(n));
+  let o = row;
+  for (const i of path) { o = o && o.children[i]; }
+  return o || row;
+}
 function rowExpandAllowed(row, spec) {
   if (!ROW_EXPAND_NAMES || !row || !spec || !row.isConnected || !spec.root.contains(row)) return false;
   const win = row.ownerDocument.defaultView, name = row.querySelector(spec.name);
   return !!(win && win.matchMedia('(hover: hover) and (pointer: fine)').matches
     && !rowExpandOpenMenu(row.ownerDocument)
-    && name && name.scrollWidth > name.clientWidth + 1);
+    && name && (name.scrollWidth > name.clientWidth + 1 || rowExpandClamped(name, win)));
+}
+// #337: a name cut at its lines (-webkit-line-clamp, an Inbox card's text) is cut too.
+function rowExpandClamped(name, win) {
+  const c = win.getComputedStyle(name).webkitLineClamp;
+  return !!c && c !== 'none' && name.scrollHeight > name.clientHeight + 1;
 }
 function rowExpandShow(row, spec, focus = false) {
   rowExpandHide();
@@ -12892,14 +13342,30 @@ function rowExpandShow(row, spec, focus = false) {
   const rect = row.getBoundingClientRect(), edge = 8;
   const opensLeft = spec.opensLeft ? spec.opensLeft(row, rect, win) : rect.left > win.innerWidth / 2;
   const available = opensLeft ? rect.right - edge : win.innerWidth - rect.left - edge;
-  const wanted = rect.width + name.scrollWidth - name.clientWidth + 8;
+  // A name cut at its lines (an Inbox card) keeps its card's width: it grows downwards.
+  const cutX = name.scrollWidth - name.clientWidth;
+  const wanted = rect.width + (cutX > 1 ? cutX + 8 : 0);
   const width = Math.min(Math.max(rect.width, wanted), available);
   const copy = row.cloneNode(true), copyName = copy.querySelector(spec.name);
   copy.classList.add('row-expanded', spec.copyClass);
   if (copyName) copyName.classList.add('row-expand-name');
   if (focus) copy.classList.add('row-expand-focus', spec.focusClass);
   copy.removeAttribute('id');
+  copy.querySelectorAll('[id]').forEach(el => el.removeAttribute('id'));
+  if (copyName) copyName.removeAttribute('title');
   copy.removeAttribute('title');
+  if (spec.forward) {
+    // A tab: its text styles come from where it lives (the copy is in the
+    // body), its height stays the strip's, and nothing in it takes the focus.
+    const cs = win.getComputedStyle(row);
+    for (const k of ['fontFamily', 'fontSize', 'fontWeight', 'letterSpacing', 'textTransform', 'lineHeight', 'color'])
+      copy.style[k] = cs[k];
+    copy.style.minHeight = `${rect.height}px`;
+    copy.querySelectorAll('button, [tabindex]').forEach(el => { el.tabIndex = -1; });
+    // Dock's own native drag (between windows) listens on the dock: the copy
+    // moves its panel by Dock's pointer drag instead.
+    copy.querySelectorAll('[data-dk-tab][draggable]').forEach(el => el.removeAttribute('draggable'));
+  }
   copy.removeAttribute('aria-current');
   copy.tabIndex = -1;
   copy.setAttribute('aria-hidden', 'true');
@@ -12924,30 +13390,71 @@ function rowExpandShow(row, spec, focus = false) {
     if (next.matches(spec.row)) rowExpandSchedule(next, spec, true);
     else rowExpandHide();
   });
+  // spec.forward (a tab): a click, middle click, right click or press goes to
+  // the original element at the same place (the tab, its ×), so the tab's own
+  // handlers act; a press that moves (Dock's tab drag) lets the copy go.
+  const at = ev => (spec.forward && ev.target.nodeType === 1 ? rowExpandOriginal(copy, row, ev.target) : row);
+  const mouse = (ev, extra) => ({ view: win, bubbles: true, cancelable: true, clientX: ev.clientX, clientY: ev.clientY,
+    ctrlKey: ev.ctrlKey, metaKey: ev.metaKey, shiftKey: ev.shiftKey, altKey: ev.altKey, ...extra });
   copy.addEventListener('click', ev => {
     ev.preventDefault();
     const next = covered(ev);
+    const target = next || at(ev);
     rowExpandHide();
-    const target = next || row;
-    target.dispatchEvent(new MouseEvent('click', { view: target.ownerDocument.defaultView, bubbles: true,
-      ctrlKey: ev.ctrlKey, metaKey: ev.metaKey, shiftKey: ev.shiftKey }));
+    target.dispatchEvent(new MouseEvent('click', mouse(ev)));
   });
   copy.addEventListener('auxclick', ev => {
     if (ev.button !== 1) return;
     ev.preventDefault();
+    const target = at(ev);
     rowExpandHide();
-    row.dispatchEvent(new MouseEvent('auxclick', { view: row.ownerDocument.defaultView, bubbles: true, button: 1 }));
+    target.dispatchEvent(new MouseEvent('auxclick', mouse(ev, { button: 1 })));
   });
+  if (spec.forward) {
+    copy.addEventListener('contextmenu', ev => {
+      ev.preventDefault();
+      const target = at(ev);
+      rowExpandHide();
+      target.dispatchEvent(new MouseEvent('contextmenu', mouse(ev, { button: 2, buttons: 2 })));
+    });
+    copy.addEventListener('pointerdown', ev => {
+      if (ev.button !== 0) return;
+      // A file tab's own drag handle is a native drag (FileDrag, marked on the
+      // clone too): the copy stays until that drag ends.
+      if (!ev.target.closest('[draggable="true"]')) ev.preventDefault();
+      at(ev).dispatchEvent(new PointerEvent('pointerdown', mouse(ev, { button: 0, buttons: 1,
+        pointerId: ev.pointerId, pointerType: ev.pointerType, isPrimary: ev.isPrimary })));
+      const x0 = ev.clientX, y0 = ev.clientY;
+      const move = e => {
+        if (Math.abs(e.clientX - x0) + Math.abs(e.clientY - y0) <= 4) return;
+        if (ROW_EXPAND && ROW_EXPAND.copy === copy) rowExpandHide();
+        end();
+      };
+      const end = () => { doc.removeEventListener('pointermove', move, true); doc.removeEventListener('pointerup', end, true); };
+      doc.addEventListener('pointermove', move, true);
+      doc.addEventListener('pointerup', end, true);
+    });
+    copy.addEventListener('dragend', () => { if (ROW_EXPAND && ROW_EXPAND.copy === copy) rowExpandHide(); });
+  }
   copy.addEventListener('pointerleave', ev => {
     if (!ROW_EXPAND || ROW_EXPAND.copy !== copy) return;
     const next = ev.relatedTarget && ev.relatedTarget.closest && ev.relatedTarget.closest(spec.row);
     if (next && spec.root.contains(next) && next !== row) rowExpandSchedule(next, spec, true);
-    else if (!focus || doc.activeElement !== row) rowExpandHide();
+    else if (!focus || !row.contains(doc.activeElement)) rowExpandHide();
   });
   doc.body.appendChild(copy);
-  ROW_EXPAND = { row, copy, spec };
+  // spec.host (an Inbox card): the pointer is on the copy, not the card, so the card
+  // would lose its :hover and hide its Close/Done under the copy; it keeps them
+  // shown while the copy is up and until the pointer is off the card (rowExpandHostHold).
+  const host = spec.host ? row.closest(spec.host) : null;
+  if (host) rowExpandHostHold(host);
+  else rowExpandHostLet();
+  ROW_EXPAND = { row, copy, spec, host, focus };
   if (win.MutationObserver) {
-    ROW_EXPAND_MENU_OBSERVER = new win.MutationObserver(() => { if (rowExpandOpenMenu(doc)) rowExpandHide(); });
+    // A menu opening, or the row redrawn away under the copy (Dock redraws its tabs), lets it go.
+    ROW_EXPAND_MENU_OBSERVER = new win.MutationObserver(() => {
+      if (rowExpandOpenMenu(doc) || (ROW_EXPAND && !ROW_EXPAND.row.isConnected)) rowExpandHide();
+    });
     ROW_EXPAND_MENU_OBSERVER.observe(doc.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['hidden', 'style', 'class'] });
   }
   ROW_EXPAND_WIN = win;
@@ -12958,9 +13465,11 @@ function rowExpandSchedule(row, spec, immediate = false) {
   if (ROW_EXPAND && ROW_EXPAND.row === row) return;
   clearTimeout(ROW_EXPAND_TIMER);
   ROW_EXPAND_TIMER = 0;
-  if (!rowExpandAllowed(row, spec)) { rowExpandHide(); return; }
+  const ok = rowExpandAllowed(row, spec);
+  rowExpandUntitle(row, spec, ok);
+  if (!ok) { rowExpandHide(); return; }
   if (immediate || Date.now() - ROW_EXPAND_LAST < 200) rowExpandShow(row, spec);
-  else ROW_EXPAND_TIMER = setTimeout(() => rowExpandShow(row, spec), 320);
+  else { ROW_EXPAND_PENDING = row; ROW_EXPAND_TIMER = setTimeout(() => rowExpandShow(row, spec), 320); }
 }
 function rowExpandWire(root, spec) {
   if (!root || root._rowExpandWired) return;
@@ -12987,15 +13496,41 @@ function rowExpandWire(root, spec) {
   });
   root.addEventListener('focusin', ev => {
     const row = ev.target.closest(spec.row);
-    if (row && spec.root.contains(row) && row.matches(':focus-visible')) rowExpandShow(row, spec, true);
+    if (row && spec.root.contains(row) && (row.matches(':focus-visible') || (spec.forward && ev.target.matches(':focus-visible')))) {
+      rowExpandUntitle(row, spec, rowExpandAllowed(row, spec));
+      rowExpandShow(row, spec, true);
+    }
   });
   root.addEventListener('focusout', ev => {
-    if (ROW_EXPAND && ROW_EXPAND.row === ev.target) rowExpandHide();
+    const r = ROW_EXPAND && ROW_EXPAND.row;
+    if (r && (r === ev.target || (r.contains(ev.target) && !r.contains(ev.relatedTarget)))) rowExpandHide();
   });
   root.addEventListener('scroll', rowExpandHide, { passive: true });
   root._rowExpandSpec = spec;
 }
 const CH_ROW_EXPAND = { row: '.chf:not(.none)', name: '.nm', copyClass: 'ch-expanded', focusClass: 'ch-expand-focus' };
+// #337 (P309): a panel tab (Dock's, in any dock of the window) or a
+// workspace file tab whose title is cut shows whole on hover or focus, raised
+// over its neighbours. Its clicks, ×, right click and drag go to the tab under
+// it (spec.forward); it grows leftwards when the window's edge is near.
+const TAB_ROW_EXPAND = {
+  row: '.dk-stack:not(.dk-min) .dk-tab-wrap:not(.row-expanded), .wst-tab:not(.row-expanded)',
+  name: '.dk-tab:not(.dk-tab-iconic), .wst-nm', untitle: '.dk-tab, .wst-tab',
+  copyClass: 'tab-expanded', focusClass: 'tab-expand-focus', forward: true,
+  opensLeft: (row, rect, win) => {
+    const name = row.querySelector('.dk-tab, .wst-nm');
+    return rect.right + (name ? name.scrollWidth - name.clientWidth : 0) + 16 > win.innerWidth;
+  },
+};
+function tabExpandWire(doc) {
+  if (!doc || !doc.body || doc.body._rowExpandWired) return;
+  rowExpandWire(doc.body, TAB_ROW_EXPAND);
+  // A tab row scrolled sideways moves the tab from under its copy.
+  doc.addEventListener('scroll', ev => {
+    if (ROW_EXPAND && ev.target && ev.target.contains && ev.target.contains(ROW_EXPAND.row)) rowExpandHide();
+  }, { capture: true, passive: true });
+}
+tabExpandWire(document);
 
 let CH_ROOT = '';                     // the repository currently shown (found within the scope)
 // Review comments belong to one repository of one project. Each keeps its own
@@ -13721,8 +14256,8 @@ function openTurnChanges(rid, n, here) {
   if (v) tchTurn(v, n); else TCH_TURN_WANT.set(sid, +n);
   ISSUE_TAB_SID = sid;
   ISSUE_TAB = 'changes';
-  if (row.roomId) pdChatUnpanel(row.roomId);
-  if (SELECTED_SID !== sid) openDetail(sid);
+  const keptWindow = row.roomId && pdChatUnpanel(row.roomId);
+  if (SELECTED_SID !== sid) openDetail(sid, { keepTaskWindow: keptWindow });
   else { const p = $('#detail-panel'); if (p) p.dataset.sig = ''; renderDetail(); }
   if (pdTask()) pdReveal('changes');
 }
@@ -13995,8 +14530,57 @@ function poMidGo() {
 // An open task fills the middle (a phone's whole screen): going somewhere else
 // closes it.
 function midLeave() {
+  pdTaskKeepOut();
   if (SELECTED_SID && document.body.classList.contains('detail-open')) closeDetail();
 }
+// The conversation's panel in a window of its own takes the open task with it
+// (#148). Going somewhere else in this page (another project, its PO, a task
+// of another project) took the task out of that window, which then showed the
+// PO the page went to (#346, GitHub issue 42). Now the task keeps the window:
+// it becomes the task's own chat panel (pdChatOpen) in that same window, which
+// does not move or reload as a page, and the conversation's panel comes back
+// here, docked, for where the person went. Closing the task (its ×, Esc,
+// deleting or archiving it) is not going somewhere else: the window shows the
+// PO, as before. Dock has no call that hands a panel's window to another
+// panel; its openWindow option is how the new panel gets this window rather
+// than a new one (PD_HELD_WIN), and the window's close is held while the
+// conversation's panel comes back (Dock closes the window it leaves).
+let PD_HELD_WIN = null;
+function pdPopInKeepWindow(d, id, w) {
+  let own = false, close = null, held = false;
+  try {
+    own = Object.prototype.hasOwnProperty.call(w, 'close');
+    close = w.close;
+    const keep = () => {};
+    w.close = keep;
+    held = w.close === keep;
+    return held && !!d.popIn(id);
+  } catch (e) { return false; }
+  finally { if (held) { try { if (own) w.close = close; else delete w.close; } catch (e) {} } }
+}
+function pdTaskKeepOut() {
+  const d = PD.dock;
+  if (!d || !pdTask()) return false;
+  let w = null;
+  try { w = d.popWindow('po-chat'); } catch (e) { w = null; }
+  const r = rowBySid(SELECTED_SID);
+  if (!w || !r || !r.roomId || PD.rt.has(pdChatId(r.roomId))) return false;
+  try { if (w.closed) return false; } catch (e) { return false; }
+  const id = pdChatId(r.roomId), name = 'ensemble-panel-' + id;
+  if (!pdPopInKeepWindow(d, 'po-chat', w)) return false;
+  // Its name is the new panel's (popName + id): a reload of this page finds it.
+  try { w.name = name; } catch (e) {}
+  PD_HELD_WIN = { name, win: w };
+  let out = false;
+  try { out = pdChatOpen(r.roomId) && d.popOut(id); } catch (e) { out = false; }
+  finally { PD_HELD_WIN = null; }
+  // The task did not get its window: the window shows nothing, so it goes.
+  if (!out) { try { w.close(); } catch (e) {} }
+  return out;
+}
+// A page reload also removes the middle task. Hand its window to the task's
+// chat before Dock suspends windows for the next page to adopt.
+window.addEventListener('pagehide', () => { pdTaskKeepOut(); });
 function poClosePeek() {
   PO_PEEK = false; PO_PIN = '';
   renderPo();
@@ -14510,6 +15094,13 @@ function pdEnsure() {
       || (id !== 'po-chat' ? (a !== 'hide' || PD.dock?.viewMode(id) === 'window')
           : (a === 'float' || a === 'pop' || a === 'max' || a === 'min' || (a === 'hide' && PD.dock?.viewMode(id) === 'window'))),
     popName: 'ensemble-panel-',
+    // A task keeping the window its conversation's panel had (#346,
+    // pdTaskKeepOut): its chat panel goes out into that same window.
+    openWindow: (url, name, features) => {
+      const h = PD_HELD_WIN;
+      if (h && h.name === name) { PD_HELD_WIN = null; try { if (!h.win.closed) return h.win; } catch (e) {} }
+      return window.open(url, name, features);
+    },
     // A window is named after its panel, then the project. The library asks
     // again when a panel's title changes (Dock v0.11.0's setTitle, pdSyncTitles).
     popTitle: p => { const pj = pdProjectName() || 'Ensemble'; return p.title === pj ? pj : `${p.title} · ${pj}`; },
@@ -14611,6 +15202,7 @@ function pdPanelName(k) {
 }
 function pdTabTips() {
   for (const d of pdHostDocs()) {
+    tabExpandWire(d);
     FileDrag.attach(d);
     if (!PD.rt.size) continue;
     d.querySelectorAll('.dk-tab[data-dk-tab^="file:"]').forEach(tab => {
@@ -14627,7 +15219,10 @@ function pdTabTips() {
         handle.innerHTML = '<svg viewBox="0 0 16 16"><path d="M3 1.5h6l4 4v9H3z"/><path d="M9 1.5v4h4"/></svg>';
         tab.prepend(handle);
       }
-      tab.title = t + ': drag the tab to move its panel';
+      // A tab whose name expands keeps its tip aside (#337, rowExpandUntitle).
+      const tip = t + ': drag the tab to move its panel';
+      if (tab.dataset.rxTitle != null) { tab.dataset.rxTitle = tip; tab.removeAttribute('title'); }
+      else tab.title = tip;
       wsDragMark(e.v, handle, e.path, 'dock-tab', t);
     });
   }
@@ -14646,7 +15241,37 @@ const pdChatId = roomId => 'chat:' + roomId;
 // The room's chat panel, if it has one, goes (dock-removed -> pdChatRemoved).
 function pdChatUnpanel(roomId) {
   const cid = pdChatId(roomId);
-  if (PD.dock && PD.rt.has(cid)) { try { PD.dock.removePanel(cid); } catch (e) {} }
+  const d = PD.dock;
+  if (!d || !PD.rt.has(cid)) return;
+  // Changes and Workspace take a task's chat from its panel back to the
+  // middle. If the chat has its own window, the task and its tools keep that
+  // window: transfer it back to po-chat before removing the chat panel.
+  let w = null;
+  try { w = d.popWindow(cid); } catch (e) {}
+  // If another task owns the conversation's window, it keeps that one too.
+  if (w && d.popWindow('po-chat') && pdTask()) pdTaskKeepOut();
+  else if (w && d.popWindow('po-chat')) {
+    // A PO conversation in its own window can stay there as a standalone
+    // conversation, freeing po-chat for this task and its tools.
+    const poWin = d.popWindow('po-chat');
+    const poRoom = wcPoRoom() || poDockProject()?.poRoomId;
+    if (poRoom && pdPopInKeepWindow(d, 'po-chat', poWin)) {
+      try { poWin.location.replace('/session?room=' + encodeURIComponent(poRoom)); } catch (e) {}
+    }
+  }
+  if (w) {
+    // Leave the task in its window if the transfer cannot run.
+    if (d.popWindow('po-chat') || !pdPopInKeepWindow(d, cid, w)) return;
+    try { d.removePanel(cid); } catch (e) {}
+    const name = 'ensemble-panel-po-chat';
+    try { w.name = name; } catch (e) {}
+    PD_HELD_WIN = { name, win: w };
+    let out = false;
+    try { out = d.popOut('po-chat'); } catch (e) {}
+    finally { PD_HELD_WIN = null; }
+    return out;
+  }
+  try { d.removePanel(cid); } catch (e) {}
 }
 // What a chat panel is called: "#12 The title" (the conversation's window too).
 function pdRowTitle(r) { return [taskNoText(r, false), detailTitle(r)].filter(Boolean).join(' ') || 'Chat'; }
@@ -14801,7 +15426,7 @@ document.getElementById('workspace-compose-link').addEventListener('click', e =>
   e.preventDefault();
   const t = WC.target;
   if (!t) return;
-  if (t.kind === 'po') { if (SELECTED_SID) closeDetail(); PD.dock.reveal('po-chat'); }
+  if (t.kind === 'po') { midLeave(); if (SELECTED_SID) closeDetail(); PD.dock.reveal('po-chat'); }
   else if (t.kind === 'thread') PD.dock.reveal(PD_THREAD);
   else {
     const id = PD.rt.has(pdChatId(t.room)) ? pdChatId(t.room) : 'po-chat';
@@ -14815,7 +15440,8 @@ function wcFrameFit(height, sized) {
   const f = document.getElementById('workspace-compose-frame');
   // A height set by hand (#274) may take about 70% of the window, To: line included.
   const cap = sized ? Math.floor(innerHeight * .7) - (f.parentElement.querySelector('.wc-to')?.offsetHeight || 0) : Math.floor(innerHeight * .4);
-  WC.boxH = Math.min(Math.max(80, +height || 110), cap);
+  // Unsized, the frame is as tall as the box it holds (#333: no blank under the input).
+  WC.boxH = Math.min(Math.max(sized ? 80 : 40, +height || 110), cap);
   wcFrameApply(f);
 }
 // A menu opening upward from the box (+, Send's, Stop's, the / list) needs
@@ -15279,14 +15905,14 @@ function pdActionItems(r, ctx, o) {
 // button has no place, so one that opens something under its button is
 // given the panel's ⋯ as `_at`, in the window the menu was in: Terminal
 // colours' picker, Open in editor's repo picker).
-function pdRunAction(it, ctx, el) {
+function pdRunAction(it, ctx, el, at) {
   const b = document.createElement('button');
   b.type = 'button';
   b.className = it.cls || '';
   b.dataset.act = it.id;
   Object.entries(it.data || {}).forEach(([k, v]) => { if (v !== undefined && v !== null) b.dataset[k] = v; });
   b.hidden = true;
-  b._at = pdMenuButton(ctx, el);
+  b._at = at || pdMenuButton(ctx, el);
   if (it.popup) { openThemeMenu(b, b._at); return; }
   document.body.appendChild(b);
   try { b.click(); } finally { b.remove(); }
@@ -15816,7 +16442,7 @@ function ibxHtml(d, scope, pid, now, phone, opts) {
       + `${hint ? `<span class="ibx-reason ibx-hint">${esc(hint)}</span>` : ''}</a>`;
     return `<li class="ibx-row${marked.has(r.id) ? ' ibx-mark' : ''}${conf === r.id ? ' ibx-confirming' : ''}" data-kind="${esc(r.kind)}" data-ibx="${esc(r.id)}"${n ? ' data-q="1"' : ''}>`
       + (doneAll ? `<div class="ibx-hd">${link}${doneAll}</div>` : link)
-      + `<div class="ibx-meta"><span class="ibx-where">${esc(ibxWhere(r, all))}</span>`
+      + `<div class="ibx-meta"><span class="ibx-where">${all && r.project && r.projectId && typeof ldpSwatch === 'function' ? ldpSwatch(r.projectId) : ''}${esc(ibxWhere(r, all))}</span>`
       + (task ? `<span class="ibx-task">${esc(task)}</span>` : '') + (st ? `<span class="ibx-state">${esc(st)}</span>` : '')
       + `<span class="pdp-age" data-at="${esc(String(r.since || 0))}">${esc(pdPtAge(r.since, now))}</span></div>`
       + (r.items && r.items.length ? more(r) : '')
@@ -15945,6 +16571,7 @@ function ibxPaintIn(el, pid, key, phone, opts) {
   const fk = f ? ['data-ibx-close', 'data-ibx-earlier', 'data-ibx-done', 'data-ibx-undo', 'data-ibx-go', 'data-ibx-cancel', 'data-ibx-bulk-undo', 'data-ibx-dismiss', 'data-clear']
     .map(a => f.hasAttribute(a) ? `[${a}${f.getAttribute(a) ? `="${CSS.escape(f.getAttribute(a))}"` : ''}]` : '').find(Boolean) : '';
   IBX[key] = sig;
+  rowExpandBeforeChange(el);
   el.innerHTML = html;
   if (fk) { const g = el.querySelector(fk); if (g) g.focus({ preventScroll: true }); }
 }
@@ -16301,7 +16928,7 @@ document.getElementById('inbox-btn').addEventListener('click', ibxOpen);
 // folded Unassigned group of the old list. Picking a row scopes the Inbox and
 // opens it in the middle. Make PO of a new
 // project is on a loose row's ⋯ and on its right click.
-var LDP = { more: false, moreLoose: false, sig: '' };
+var LDP = { more: false, moreLoose: false, sig: '', shown: {}, want: {}, hold: {}, holdT: 0 };
 var LDP_N = 9, LDP_LOOSE_N = 5;
 // The task or session in no project open in the middle: its room (or session) id.
 function ldpLooseOpen() {
@@ -16319,14 +16946,16 @@ function ldpModel() {
     rec = swRecent(ALL_ROWS, attentionItems(), registeredProjects(),
       { dayStart: today / 1000, unassigned: (un && un.sessions) || [] });
   } catch (e) {}
-  const opened = projOpened();
-  const seenP = new Set(), projs = [];
+  // #337 (P309): by Inbox count, then latest conversation (ldpConvAt), then
+  // name. Opening one never moves it.
+  const seenP = new Set(), projs = [], fresh = new Map();
+  for (const r of ALL_ROWS || []) if (r) fresh.set(r.roomId || r.sessionId, r);
   for (const e of rec.recent.filter(x => x.po || x.proj).concat(rec.quiet)) {
     if (!e.pid || e.pid === UNASSIGNED_ID || seenP.has(e.pid)) continue;
     seenP.add(e.pid);
-    projs.push({ pid: e.pid, name: e.project || e.pid, at: Math.max(e.at || 0, (Number(opened[e.pid]) || 0) / 1000) });
+    projs.push({ pid: e.pid, name: e.project || e.pid, at: ldpConvAt(e.pid, fresh), n: ldpCount(e.pid) });
   }
-  projs.sort((a, b) => (b.at - a.at) || a.name.localeCompare(b.name));
+  projs.sort((a, b) => (b.n - a.n) || (b.at - a.at) || a.name.localeCompare(b.name));
   const seenL = new Set(), loose = [];
   const add = (e, kind, at) => {
     if (!e || !e.key || seenL.has(e.key)) return;
@@ -16337,7 +16966,59 @@ function ldpModel() {
   for (const e of rec.recent) if (!e.po && !e.proj && !e.pid) add(e, e.row && !e.row.headless ? 'session' : 'task', e.at);
   for (const e of rec.unassigned) add(e, 'session', swActivity(e.row));
   loose.sort((a, b) => b.at - a.at);
-  return { projs, loose };
+  return { projs: ldpHeld('projs', projs, p => p.pid), loose: ldpHeld('loose', loose, e => e.key) };
+}
+// When a project was last spoken in (#337): the newest message in its PO's
+// chat, its tasks' chats (the hub's convAt; newsAt on a card from before it)
+// or its sessions (a session's updatedAt is its transcript's last write). Not
+// swActivity: a state, column or spec change is no conversation.
+// `fresh`: the task list's rows by id, which it polls more often than PROJECTS.
+function ldpConvAt(pid, fresh) {
+  const p = projectById(pid);
+  if (!p) return 0;
+  const rows = (p.sessions || []).map(r => fresh.get(r && (r.roomId || r.sessionId)) || r);
+  if (p.poRoomId && fresh.has(p.poRoomId)) rows.push(fresh.get(p.poRoomId));
+  let at = 0;
+  for (const r of rows) {
+    if (!r || r.draft) continue;
+    at = Math.max(at, r.headless ? (Number(r.convAt) || Number(r.newsAt) || 0) : (Number(r.updatedAt) || 0));
+  }
+  return at;
+}
+// A project's (or 'room:<id>') Inbox count, the one its row shows; '' is All's.
+function ldpCount(pid) {
+  const d = IBX.data;
+  return d ? ibxRows(d, pid ? 'project' : 'all', pid).length : 0;
+}
+// #337: nothing moves under the pointer. A change that comes while it is over
+// the list (or a row raised from it) waits until it has left and 2 s have
+// passed since the latest change: each list keeps the order it was shown in,
+// a newcomer last, a gone one out. Away from the list a change shows at once.
+const LDP_HOLD_MS = 2000;
+function ldpPointerIn() {
+  const box = document.getElementById('ld-projs');
+  return !!box && (box.matches(':hover') || !!(ROW_EXPAND && box.contains(ROW_EXPAND.row)));
+}
+function ldpHeld(k, list, id) {
+  const shown = LDP.shown[k], now = Date.now(), fresh = list.map(id).join('\n');
+  // The wanted order moved again: the 2 s count from now (held, or arriving under the pointer).
+  if (fresh !== LDP.want[k]) {
+    LDP.want[k] = fresh;
+    if (LDP.hold[k] || ldpPointerIn()) LDP.hold[k] = now;
+  }
+  const at = LDP.hold[k];
+  if (!shown || !at || fresh === shown.join('\n') || (!ldpPointerIn() && now - at >= LDP_HOLD_MS)) {
+    LDP.hold[k] = 0;
+    LDP.shown[k] = list.map(id);
+    return list;
+  }
+  clearTimeout(LDP.holdT);
+  LDP.holdT = setTimeout(ldpPaint, 300);   // till it may go: then ldpHeld lets it
+  const by = new Map(list.map(e => [id(e), e]));
+  const out = shown.filter(x => by.has(x)).map(x => by.get(x));
+  for (const e of list) if (!shown.includes(id(e))) out.push(e);
+  LDP.shown[k] = out.map(id);
+  return out;
 }
 // A project's swatch (P289 drawing): a project has no colour of its own, so a
 // stable pick from the status tokens' bold shades. #328: by its place among the
@@ -16352,30 +17033,41 @@ function ldpColour(pid) {
   for (const ch of String(pid || '')) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
   return LDP_COLOURS[h % LDP_COLOURS.length];
 }
-// #328 (P294 drawing): every row's 12px icon. A project its colour square; a task
-// a check in a square; a session a speech bubble. Named by its tooltip.
+// #328 (P294 drawing): every row's 12px icon. A project its colour square; #335
+// (CEO's pick, set B): a task a clipboard with a check, a session the terminal it
+// runs in, so neither reads as one more project square. Named by its tooltip.
+// #329: a project with an icon of its own shows it in the square's box instead.
 function ldpSwatch(pid, cls) {
+  let pj = null;
+  try { pj = projectById(pid); } catch (e) {}
+  if (pj && pj.icon && pj.icon.v) return `<span class="${cls || 'ldp-ico'} ldp-pic"><img src="${esc(projIconUrl(pid, pj.icon))}" alt="${esc(pj.name || '')}" draggable="false"></span>`;
   return `<svg class="${cls || 'ldp-ico'}" viewBox="0 0 12 12" aria-hidden="true"><rect width="12" height="12" rx="3" fill="${ldpColour(pid)}"/></svg>`;
 }
 function ldpKindIcon(kind, cls) {
   const c = cls || 'ldp-ico';
-  if (kind === 'task') return `<svg class="${c}" viewBox="0 0 12 12" role="img" aria-label="task"><title>task</title><rect width="12" height="12" rx="3" fill="var(--tool-list)"/>`
-    + '<path d="M3.2 6.2l1.9 1.9 3.7-4" stroke="var(--tool-ink)" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  if (kind === 'task') return `<svg class="${c}" viewBox="0 0 12 12" role="img" aria-label="task"><title>task</title>`
+    + '<rect x="1.6" y="2.2" width="8.8" height="9.2" rx="1.4" fill="var(--tool-list)" fill-opacity=".22" stroke="var(--tool-list)" stroke-width="1.2"/>'
+    + '<rect x="3.8" y=".6" width="4.4" height="2.6" rx=".8" fill="var(--tool-list)"/>'
+    + '<path d="M3.8 7l1.5 1.5 3-3.1" stroke="var(--tool-list)" stroke-width="1.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>';
   return `<svg class="${c}" viewBox="0 0 12 12" role="img" aria-label="session"><title>session</title>`
-    + '<path d="M2.5 1h7A1.5 1.5 0 0 1 11 2.5v5A1.5 1.5 0 0 1 9.5 9H6l-3 2.5V9h-.5A1.5 1.5 0 0 1 1 7.5v-5A1.5 1.5 0 0 1 2.5 1z" fill="var(--c-neutral-bold)"/></svg>';
+    + '<rect x=".9" y="1.6" width="10.2" height="8.8" rx="1.4" fill="var(--c-neutral-bold)" fill-opacity=".22" stroke="var(--c-neutral-bold)" stroke-width="1.2"/>'
+    + '<path d="M3.2 4.6l1.8 1.4-1.8 1.4M6.4 7.8h2.4" stroke="var(--c-neutral-bold)" stroke-width="1.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 }
 function ldpHtml(m) {
-  const d = IBX.data;
-  const cnt = pid => d ? ibxRows(d, pid ? 'project' : 'all', pid).length : 0;
+  const cnt = ldpCount;
   const pill = n => n ? `<span class="ldp-n" title="${n} waiting on you">${n}</span>` : '';
   const lp = ibxLdPid();
   const selAll = IBX.scope === 'all' || !lp;
-  const cur = on => on ? ' aria-current="true"' : '';
+  // data-cur: the row raised whole on hover (#337) drops aria-current but stays selected.
+  const cur = on => on ? ' aria-current="true" data-cur' : '';
   let h = `<button type="button" class="ldp-row" data-ldp="all"${cur(selAll)} title="${esc(nounText("Every {project}'s Inbox"))}"><span class="ldp-name">All</span>${pill(cnt(''))}</button>`;
   const ps = LDP.more ? m.projs : m.projs.slice(0, LDP_N);
   for (const p of ps) {
-    h += `<button type="button" class="ldp-row" data-ldp-proj="${esc(p.pid)}"${cur(!selAll && lp === p.pid)} title="${esc(p.name)}">`
-      + `${ldpSwatch(p.pid)}<span class="ldp-name">${esc(p.name)}</span>${pill(cnt(p.pid))}</button>`;
+    const reg = projectById(p.pid);
+    h += `<div class="ldp-item"><button type="button" class="ldp-row" data-ldp-proj="${esc(p.pid)}"${cur(!selAll && lp === p.pid)} title="${esc(p.name)}">`
+      + `${ldpSwatch(p.pid)}<span class="ldp-name">${esc(p.name)}</span>${pill(cnt(p.pid))}</button>`
+      + (reg && reg.registered && p.pid !== UNASSIGNED_ID ? `<button type="button" class="ldp-dots" data-ldp-pmenu="${esc(p.pid)}" aria-haspopup="menu" aria-expanded="false" aria-label="${esc('More for ' + p.name)}" title="More">⋯</button>` : '')
+      + '</div>';
   }
   if (m.projs.length > LDP_N) {
     const rest = m.projs.length - LDP_N;
@@ -16414,9 +17106,10 @@ function ldpPaint() {
   const html = (window.LD && LD.dock && !window.ensListDocked) ? ldpHtml(ldpModel()) : '';
   if (html === LDP.sig) return;
   LDP.sig = html;
+  rowExpandBeforeChange(el);
   // Keep focus on the same control across the repaint.
   const a = document.activeElement, keep = a && el.contains(a)
-    ? ['data-ldp', 'data-ldp-proj', 'data-ldp-room', 'data-ldp-sid', 'data-ldp-more'].map(k => a.hasAttribute(k) ? `[${k}="${CSS.escape(a.getAttribute(k))}"]` : '').join('')
+    ? ['data-ldp', 'data-ldp-proj', 'data-ldp-pmenu', 'data-ldp-room', 'data-ldp-sid', 'data-ldp-more'].map(k => a.hasAttribute(k) ? `[${k}="${CSS.escape(a.getAttribute(k))}"]` : '').join('')
       + (a.hasAttribute('data-ldp-menu') ? '[data-ldp-menu]' : (a.classList.contains('ldp-row') ? '.ldp-row' : ''))
     : '';
   el.innerHTML = html;
@@ -16439,20 +17132,17 @@ function ldpMenuClose() {
   m.el.remove();
   if (m.btn) m.btn.setAttribute('aria-expanded', 'false');
 }
-function ldpMenu(b, r, rect) {
+// A left-list row's menu (its ⋯ or a right click): `html` its items, `act(it)`
+// what a pick does (true: handled; else the item's own document handler acts).
+function ldpMenuOpen(b, rect, label, html, dotsSel, act) {
   ldpMenuClose();
   const el = document.createElement('div');
   el.className = 'dcm'; el.setAttribute('role', 'menu');
-  const title = rowTitle(r);
-  el.setAttribute('aria-label', 'Actions for ' + title);
-  const mp = SessionActions.makePoItem(actionState(r, r.isLive));
-  const data = Object.entries(mp.data || {}).map(([k, v]) => ` data-${k}="${esc(v)}"`).join('');
-  el.innerHTML = `<div class="dcm-head">${esc(title)}</div>`
-    + `<button type="button" role="menuitem" class="ov-item dcm-item" data-act="open">Open</button>`
-    + `<button type="button" role="menuitem" class="ov-item dcm-item ${mp.cls}"${data} title="${esc(mp.disabled ? mp.reason : mp.title)}"${mp.disabled ? ' disabled' : ''}>${esc(mp.label)}</button>`;
+  el.setAttribute('aria-label', label);
+  el.innerHTML = html;
   document.body.appendChild(el);
   docsMenuPlace(el, rect);
-  const dots = b.matches('[data-ldp-menu]') ? b : (b.closest('.ldp-item') || b).querySelector('[data-ldp-menu]');
+  const dots = b.matches(dotsSel) ? b : (b.closest('.ldp-item') || b).querySelector(dotsSel);
   if (dots) dots.setAttribute('aria-expanded', 'true');
   const away = e => { if (!(e.target && e.target.nodeType === 1 && el.contains(e.target))) ldpMenuClose(); };
   const key = e => { if (e.key === 'Escape') { e.preventDefault(); const f = dots; ldpMenuClose(); if (f) f.focus(); } };
@@ -16473,15 +17163,82 @@ function ldpMenu(b, r, rect) {
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); if (items.length) items[(i + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length].focus(); }
     else if (e.key === 'Tab') { ldpMenuClose(); }
   };
-  // Make PO: the page's own .makepo-btn handler (on document) does the work.
   el.addEventListener('click', (e) => {
     const it = e.target.closest('.dcm-item');
     if (!it || it.disabled) return;
-    if (it.dataset.act === 'open') { ldpMenuClose(); ldpOpenLoose(b); return; }
+    if (act(it)) return;
     setTimeout(ldpMenuClose, 0);
   });
   const first = el.querySelector('.dcm-item');
   if (first) first.focus();
+}
+function ldpMenu(b, r, rect) {
+  const title = rowTitle(r);
+  // ED-334: the row's own actions, the same model as its row and task panel
+  // menus (Start/Resume, Rename, Move, Make PO, Delete…), after Open (the
+  // row's click). Hidden items (Hide terminal) are left out: no terminal is
+  // up for a row in the left panel.
+  const model = SessionActions.sessionActions(actionState(r, !!r.isLive), actionEnv());
+  const acts = [];
+  const groups = (model.primary ? [[model.primary], ...model.groups] : model.groups)
+    .map(g => g.filter(it => !it.hidden && it.id !== 'open')).filter(g => g.length);
+  const itemHtml = (it) => {
+    const i = acts.push(it) - 1;
+    const tip = it.disabled ? it.reason : it.title;
+    return `<button type="button" role="${it.role || 'menuitem'}" class="ov-item dcm-item${it.danger ? ' danger' : ''}" data-ldp-act="${i}"`
+      + (tip ? ` title="${esc(tip)}"` : '') + (it.disabled ? ' disabled aria-disabled="true"' : '')
+      + (it.role === 'menuitemcheckbox' ? ` aria-checked="${!!it.checked}"` : '')
+      + (it.popup ? ' aria-haspopup="dialog"' : '') + `>${esc(it.label)}</button>`;
+  };
+  // A pick runs the page's own handler for it (on document, keyed on the
+  // item's class and data), through the Dock menu's stand-in button; a picker
+  // it opens (Terminal colours) opens under the ⋯.
+  ldpMenuOpen(b, rect, 'Actions for ' + title, `<div class="dcm-head">${esc(title)}</div><div class="dcm-list dcm-acts">`
+    + `<button type="button" role="menuitem" class="ov-item dcm-item" data-act="open">Open</button>`
+    + groups.map(g => '<div class="dcm-rule" role="separator"></div>' + g.map(itemHtml).join('')).join('')
+    + '</div>',
+  '[data-ldp-menu]', it => {
+    if (it.dataset.act === 'open') { ldpMenuClose(); ldpOpenLoose(b); return true; }
+    const a = acts[+it.dataset.ldpAct], dots = LDP_MENU && LDP_MENU.btn;
+    ldpMenuClose();
+    if (a && a.id === 'terminals') ldpTerms(b, r);
+    else if (a) pdRunAction(a, null, null, dots || b);
+    return true;
+  });
+}
+// The terminals item for this row's task, never the open one's (the
+// handler's own fallback is the task in the middle): its chat panel's
+// terminals when it has one, else the task is picked and opened with its
+// terminal showing.
+function ldpTerms(b, r) {
+  const room = r.roomId || '';
+  const pf = room ? pdChatFrameOf(room) : null;
+  if (pf) { toggleCapturedTerms(pf); return; }
+  // On the hub the item shows or hides: the task already open in the middle
+  // has its terminals toggled there (a second pick hides them).
+  const mid = room && onHubMachine() ? document.querySelector(`#detail-panel iframe.dp-session[data-room="${CSS.escape(room)}"]`) : null;
+  if (mid) { toggleCapturedTerms(mid); return; }
+  ldpScope('project');
+  ldSelSet('room:' + room);
+  showCapturedTerminal(room);
+  ibxRepaint();
+}
+// #329 (P297 drawing): a project row's menu: Open, then Rename and its settings.
+function ldpProjMenu(b, pid, rect) {
+  const pj = projectById(pid);
+  if (!pj) return;
+  ldpMenuOpen(b, rect, 'Actions for ' + pj.name, `<div class="dcm-head">${esc(pj.name)}</div>`
+    + `<button type="button" role="menuitem" class="ov-item dcm-item" data-act="open">Open</button>`
+    + '<div class="dcm-rule" role="separator"></div>'
+    + `<button type="button" role="menuitem" class="ov-item dcm-item" data-act="rename">${esc(nounText('Rename {project}…'))}</button>`
+    + `<button type="button" role="menuitem" class="ov-item dcm-item" data-act="settings">${esc(nounText('{Project} settings…'))}</button>`,
+  '[data-ldp-pmenu]', it => {
+    const a = it.dataset.act;
+    ldpMenuClose();
+    if (a === 'open') { ldpScope('project'); ldSelSet(pid); projPick(pid); ibxRepaint(); }
+    else projSettings(pid, { rename: a === 'rename' });
+    return true;
+  });
 }
 function ldpOpenLoose(b) {
   const r = ldpRow(b), room = b.getAttribute('data-ldp-room') || '';
@@ -16491,6 +17248,17 @@ function ldpOpenLoose(b) {
   else swOpenRoomTab(room);
   ibxRepaint();
 }
+// #337 (P309, P123): a cut name in the left panel shows whole on hover, as the
+// old list's did (#170): its project, task and session rows, and the Inbox's
+// title under them, which names the project or task picked.
+rowExpandWire(document.getElementById('ld-projs'),
+  { row: '.ldp-row', name: '.ldp-name', covered: '.ldp-row, .ldp-dots, .ldp-more', copyClass: 'ldp-expanded', focusClass: 'ldp-expand-focus' });
+// A card's text cut at its lines (a question, an answer) shows whole too,
+// downwards; a press on what the copy covers (the card's buttons) goes there.
+rowExpandWire(document.getElementById('ld-ibx-body'),
+  { row: '.ibx-head, a.ibx-link', name: '.ibx-title-listed, .ibx-line',
+    covered: '.ibx-head, a.ibx-link, .ibx-meta, .ibx-acts, .ibx-btn, .ibx-more > summary, .ibx-gone',
+    host: '.ibx-row', copyClass: 'ldp-expanded', focusClass: 'ldp-expand-focus' });
 (function () {
   const box = document.getElementById('ld-projs');
   if (!box) return;
@@ -16511,6 +17279,12 @@ function ldpOpenLoose(b) {
     if (more) {
       if (more === 'proj') LDP.more = !LDP.more; else LDP.moreLoose = !LDP.moreLoose;
       ldpPaint();
+      return;
+    }
+    const pm = b.getAttribute('data-ldp-pmenu');
+    if (pm) {
+      if (LDP_MENU && LDP_MENU.btn === b) { ldpMenuClose(); return; }
+      ldpProjMenu(b, pm, b.getBoundingClientRect());
       return;
     }
     if (b.hasAttribute('data-ldp-menu')) {
@@ -16544,6 +17318,14 @@ function ldpOpenLoose(b) {
     if (b.hasAttribute('data-ldp-room')) ldpOpenLoose(b);
   });
   box.addEventListener('contextmenu', (e) => {
+    const pr = e.target.closest('.ldp-item .ldp-row[data-ldp-proj]');
+    if (pr) {
+      const pid = pr.getAttribute('data-ldp-proj'), pj = projectById(pid);
+      if (!pj || !pj.registered || pid === UNASSIGNED_ID) return;
+      e.preventDefault();
+      ldpProjMenu(pr, pid, { left: e.clientX, right: e.clientX, top: e.clientY, bottom: e.clientY });
+      return;
+    }
     const b = e.target.closest('.ldp-item .ldp-row');
     if (!b) return;
     const r = ldpRow(b);
@@ -16829,6 +17611,7 @@ async function makePoOpen(resp) {
     if (!shown()) await new Promise(res => setTimeout(res, 250));
   } while (!shown() && Date.now() < end);
   updateRoomsBadge();
+  midLeave();
   if (SELECTED_SID) closeDetail();
   SELECTED_PROJECT = pid; PROJECT_TAB = 'tasks'; WS_SCOPE = '';
   PO_PIN = pid; PO_PEEK = true;       // renderPo drops the peek where the PO leads the page
@@ -17296,6 +18079,7 @@ async function projectSetupFlow(opts) {
   return got;
 }
 function openProjectPage(pid) {
+  midLeave();
   if (SELECTED_SID) closeDetail();
   SELECTED_PROJECT = pid; PROJECT_TAB = 'tasks'; WS_SCOPE = '';
   renderRows();
@@ -17303,6 +18087,8 @@ function openProjectPage(pid) {
 document.addEventListener('click', async (ev) => {
   const choose = ev.target.closest('.po-choose');
   if (choose) { projectSetupFlow({ projectId: choose.dataset.proj }); return; }
+  const psb = ev.target.closest('.proj-settings-btn, .proj-rename-btn');
+  if (psb) { projSettings(psb.dataset.proj, { rename: psb.classList.contains('proj-rename-btn') }); return; }
   const ttb = ev.target.closest('.task-tools-btn');
   if (ttb) { taskToolsChoose(ttb.dataset.proj); return; }
   const kb = ev.target.closest('.kind-btn');
@@ -17489,7 +18275,7 @@ async function keyChoose(pid, err) {
                                      body: JSON.stringify({ projectId: pid, key }) });
     toast(`${pj.name}'s tasks are ${key}-1, ${key}-2… where ${noun('many')} mix`, 4000, 'ok');
     await refreshProjects(); renderRows();
-  } catch (e) { keyChoose(pid, histErr(e)); }
+  } catch (e) { return keyChoose(pid, histErr(e)); }
 }
 // The plain sentence the hub sends with a refusal, out of api()'s error.
 function histErr(e) {
@@ -17515,6 +18301,424 @@ async function kindChoose(pid) {
     toast(kind === 'documents' ? `${pj.name} is a documents ${noun('one')}: its files are in its Workspace tab` : `${pj.name} is a code ${noun('one')} again`, 4000, 'ok');
     await refreshProjects(); renderRows();
   } catch (e) { toast(histErr(e), 8000, 'err'); }
+}
+
+// ---- #329 (P297 drawing): a project's settings ---------------------------------
+// One dialog: its name, its icon (the coloured square or a picture of its own),
+// then its other settings, each opening its own dialog and coming back here.
+// The name and the icon change only on Save (/api/projects/rename, /icon).
+const PS_MAX = 1024 * 1024;
+const PS_TYPES = ['image/png', 'image/jpeg', 'image/svg+xml', 'image/webp'];
+function projIconUrl(pid, icon) {
+  return `/api/projects/icon?id=${encodeURIComponent(pid)}&v=${encodeURIComponent(String((icon && icon.v) || 0))}`;
+}
+function psSize(n) {
+  n = Number(n) || 0;
+  return n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${Math.max(1, Math.round(n / 1024))} KB` : `${(n / 1048576).toFixed(1)} MB`;
+}
+// The hub's whitespace: what Python's str.split() and strip() treat as space.
+const PS_WS = '\\t\\n\\v\\f\\r\\x1c-\\x20\\x85\\xa0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000';
+const PS_WS_RUN = new RegExp(`[${PS_WS}]+`), PS_WS_ENDS = new RegExp(`^[${PS_WS}]+|[${PS_WS}]+$`, 'g');
+// A typed name as the hub keeps it: spaces run together, at most 120 characters.
+function psName(s) { return Array.from(String(s || '').split(PS_WS_RUN).filter(Boolean).join(' ')).slice(0, 120).join(''); }
+// The hub compares names with Python's casefold(). This folds only letters
+// below U+0590 (Latin, Greek, Cyrillic, Armenian: ß as ss), where JavaScript's
+// lower case and Python's casefold() agree, so a name it calls taken the hub
+// refuses too (Straße and STRASSE); any other case pair is left to the hub.
+const psFold = s => Array.from(String(s || '')).map(c => c.codePointAt(0) < 0x590 ? c.toLowerCase().replace('ß', 'ss') : c).join('');
+// The other project already called `name`, as the hub compares: its stored
+// name with only its ends trimmed against the typed one, case aside.
+function psClash(pid, name) {
+  const k = psFold(psName(name));
+  return k ? ((PROJECTS && PROJECTS.projects) || []).find(p => p.id !== pid && psFold(String(p.name || '').replace(PS_WS_ENDS, '')) === k) || null : null;
+}
+function psNameErr(pid, name) {
+  if (!psName(name)) return 'A name is needed.';
+  const o = psClash(pid, name);
+  return o ? nounText(`Another {project} is already called ${psName(name)}. Pick another name.`) : '';
+}
+// The picture the Image choice shows: a new file, else the one it has.
+function psPicSrc(pj, d) { return d.file ? d.file.dataUrl : (pj.icon ? projIconUrl(pj.id, pj.icon) : ''); }
+function psCanSave(pj, d) {
+  if (d.busy || psNameErr(pj.id, d.name)) return false;
+  if (d.choice === 'image' && !psPicSrc(pj, d)) return false;
+  return true;
+}
+function psSettingsRowsHtml(pj, phone) {
+  const po = poRowOf(pj);
+  const tools = pj.taskAgentTools === 'own' ? 'Own tools' : pj.taskAgentTools === 'ensemble' ? 'Ensemble only' : 'Inherit';
+  const rows = [];
+  if (pj.path) rows.push({ k: 'Kind', v: esc(nounText(isDocsProject(pj) ? 'Documents {project}' : 'Code {project}')), act: 'kind' });
+  if (pj.key) rows.push({ k: 'Key', v: `<code>${esc(pj.key)}</code>` + (phone ? '' : ` · its tasks are ${esc(pj.key)}-18 where ${esc(noun('many'))} mix`), act: 'key' });
+  rows.push({ k: phone ? 'Task tools' : "Task agents' tools", v: esc(tools), act: 'tools' });
+  if (po) {
+    const { m } = poAgent(po);
+    const n = pastCount(pj);
+    const past = n ? `${n} past conversation${n === 1 ? '' : 's'}` : '';
+    const v = phone ? (n ? `Past conversations (${n})` : m.agent || 'claude') : [m.agent || 'claude', shortModel(m.model), past].filter(Boolean).join(' · ');
+    rows.push({ k: 'PO', v: esc(v), act: n ? 'past' : '', btn: 'Past conversations…' });
+  } else rows.push({ k: 'PO', v: 'none', act: poChooseOffered(pj) ? 'po' : '', btn: 'Set up the PO…' });
+  return rows.map(r => phone
+    ? (r.act ? `<button type="button" class="ps-set ps-set-go" data-ps-act="${r.act}"><span class="ps-k">${esc(r.k)}</span><span class="ps-v">${r.v}</span><span class="ps-go" aria-hidden="true">›</span></button>`
+             : `<div class="ps-set"><span class="ps-k">${esc(r.k)}</span><span class="ps-v">${r.v}</span></div>`)
+    : `<div class="ps-set"><span class="ps-k">${esc(r.k)}</span><span class="ps-v">${r.v}</span>`
+      + (r.act ? `<button type="button" class="ps-btn" data-ps-act="${r.act}">${esc(r.btn || 'Change…')}</button>` : '<span></span>') + '</div>').join('');
+}
+function psHint(pj, phone) {
+  const keep = pj.key ? `Its folder, its id and its key ${pj.key} stay as they are.` : 'Its folder and its id stay as they are.';
+  return phone ? `Shown everywhere at once. ${keep}` : `Shown everywhere at once: the list, the bar, the Board, the Inbox and the chats. ${keep}`;
+}
+// ---- Generate (#335): four icons drawn by the CLI the hub runs ----
+const PS_SPARK = '<svg class="ps-gi" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5l1.4 3.6 3.6 1.4-3.6 1.4L8 11.5 6.6 7.9 3 6.5l3.6-1.4z" fill="currentColor"/>'
+  + '<path d="M12.5 10.5l.6 1.4 1.4.6-1.4.6-.6 1.4-.6-1.4-1.4-.6 1.4-.6z" fill="currentColor"/></svg>';
+const PS_GEN_WAIT = 65000;   // the hub gives its CLI 60 s
+// What the hub's refusals say after "No icons this time: <agent> ".
+const PS_GEN_WHY = { timeout: 'did not answer within 60 s.', failed: 'stopped with an error.', no_icons: 'answered with no icon that could be used.', busy: 'is already drawing icons on the hub.' };
+// Generate is greyed only once the hub said it has neither CLI.
+const psGenOff = d => !!(d.genInfo && d.genInfo.agent === '');
+const psGenWho = (agent, model) => [agent, model].filter(Boolean).join(' · ');
+function psImageSub(d, src, fileName, fileSize) {
+  if (d.file && d.file.gen) return `<small class="ps-plain">drawn by ${esc([d.file.gen.agent, d.file.gen.model].filter(Boolean).join(' '))}, not saved yet</small>`;
+  return `<small${src ? '' : ' class="ps-plain"'}>${src ? esc(fileName || 'image') + (fileSize ? ' · ' + esc(psSize(fileSize)) : '') : 'none yet'}</small>`;
+}
+function psGenSecs(g) { return Math.max(0, Math.floor((Date.now() - g.t0) / 1000)); }
+function psGenHtml(pj, d) {
+  const g = d.gen;
+  if (!g) return '';
+  if (g.st === 'nocli') return `<div class="ps-gen" id="ps-gen-box"><div class="ps-gen-msg" role="status">Generating needs claude or codex on the hub, and neither is installed there.`
+    + '<small>Upload an image instead. Once either is installed, Generate works without a restart.</small></div></div>';
+  const info = d.genInfo || {};
+  const who = psGenWho(g.agent || info.agent, g.agent ? g.model : info.model);
+  const name = psName(d.name) || pj.name;
+  const about = info.about ? (Array.from(info.about).length > 60 ? Array.from(info.about).slice(0, 59).join('').trimEnd() + '…' : info.about) : '';
+  const head = `<div class="ps-gen-h"><b>Generate an icon</b>${who ? `<span class="ps-gen-who">${esc(who)}</span>` : ''}</div>`
+    + `<div class="ps-gen-sub">From the name <b>${esc(name)}</b>${about ? ` and its roadmap, “${esc(about)}”` : ''}</div>`;
+  if (g.st === 'busy') {
+    const n = psGenSecs(g);
+    return `<div class="ps-gen" id="ps-gen-box" aria-busy="true">${head}<div class="ps-tiles">${'<span class="ps-tile wait"></span>'.repeat(4)}</div>`
+      + `<div class="ps-gen-foot"><span role="status">Drawing 4 icons…</span> <span id="ps-gen-t">${n} s</span><span class="ps-sp"></span>`
+      + '<button type="button" class="ps-btn" id="ps-gen-cancel">Cancel</button></div></div>';
+  }
+  if (g.st === 'cands') {
+    const tiles = g.svgs.map((u, i) => `<button type="button" class="ps-tile${g.pick === i ? ' on' : ''}" id="ps-gt-${i}" role="radio" aria-checked="${g.pick === i}"`
+      + ` tabindex="${(g.pick < 0 ? i === 0 : g.pick === i) ? 0 : -1}" data-gt="${i}"><img src="${esc(u.url)}" alt="Icon ${i + 1}"></button>`).join('');
+    return `<div class="ps-gen" id="ps-gen-box">${head}<div class="ps-tiles" role="radiogroup" aria-label="Generated icons">${tiles}</div>`
+      + `<div class="ps-gen-foot"><span role="status">${g.pick >= 0 ? `Icon ${g.pick + 1} picked: it becomes the image when you save.` : 'Pick one. Nothing changes until you save.'}</span>`
+      + '<span class="ps-sp"></span><button type="button" class="ps-btn" id="ps-gen-more">More ideas</button></div></div>';
+  }
+  // failed
+  const agent = g.agent || info.agent || 'the hub';
+  let msg, small;
+  if (g.code === 'busy') { msg = 'Icons for this project are already being drawn.'; small = 'Nothing was changed. Try again in a minute.'; }
+  else if (g.code === 'network') { msg = 'No icons this time: the hub did not answer.'; small = 'Nothing was changed. Try again in a minute, or upload an image.'; }
+  else {
+    msg = `No icons this time: ${agent} ${PS_GEN_WHY[g.code] || PS_GEN_WHY.failed}`;
+    small = g.code === 'timeout' ? 'Nothing was changed. It may be busy or signed out; try again in a minute, or upload an image.'
+      : g.code === 'busy' ? 'Nothing was changed. Try again in a minute, or upload an image.'
+      : 'Nothing was changed. Try again, or upload an image.';
+  }
+  return `<div class="ps-gen" id="ps-gen-box">${head}<div class="ps-gen-msg" role="status">${esc(msg)}<small>${esc(small)}</small></div>`
+    + '<div class="ps-gen-foot"><span class="ps-sp"></span><button type="button" class="ps-btn" id="ps-gen-close">Close</button>'
+    + '<button type="button" class="ps-btn" id="ps-gen-again">Try again</button></div></div>';
+}
+// One POST: {svgs, agent, model} or {error, agent, model}; throws only when aborted.
+async function psGenPost(pid, name, signal) {
+  let r;
+  try {
+    r = await fetch('/api/projects/icon-gen', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ projectId: pid, name }), signal });
+  } catch (e) {
+    if (signal && signal.aborted) throw e;
+    return { error: 'network' };
+  }
+  let j = {};
+  try { j = await r.json(); } catch (e) {}
+  if (r.ok && j && j.ok && Array.isArray(j.svgs) && j.svgs.length) return j;
+  return { error: (j && j.error) || (r.ok ? 'no_icons' : 'failed'), agent: (j && j.agent) || '', model: (j && j.model) || '' };
+}
+// A generated SVG as the data URL the Image choice and Save take.
+function psSvgUrl(svg) {
+  const bytes = new TextEncoder().encode(svg);
+  let bin = '';
+  bytes.forEach(b => { bin += String.fromCharCode(b); });
+  return { url: 'data:image/svg+xml;base64,' + btoa(bin), size: bytes.length };
+}
+function psDialogHtml(pj, d, phone) {
+  const nameErr = psNameErr(pj.id, d.name);
+  const hint = esc(psHint(pj, phone));
+  const src = psPicSrc(pj, d);
+  const fileName = d.file ? d.file.name : (pj.icon && pj.icon.name) || '';
+  const fileSize = d.file ? d.file.size : (pj.icon && pj.icon.size) || 0;
+  const sq = d.choice !== 'image';
+  const bigSq = `<span class="ps-big"><svg viewBox="0 0 40 40" width="40" height="40" aria-hidden="true"><rect width="40" height="40" rx="8" fill="${ldpColour(pj.id)}"/></svg></span>`;
+  const bigPic = src ? `<span class="ps-big ps-big-img"><img src="${esc(src)}" alt=""></span>` : '<span class="ps-big ps-big-none"></span>';
+  const small = sq ? `<svg class="ldp-ico" viewBox="0 0 12 12" aria-hidden="true"><rect width="12" height="12" rx="3" fill="${ldpColour(pj.id)}"/></svg>`
+    : (src ? `<span class="ldp-ico ldp-pic"><img src="${esc(src)}" alt=""></span>` : '<span class="ldp-ico"></span>');
+  let n = 0;
+  try { n = IBX.data ? ibxRows(IBX.data, 'project', pj.id).length : 0; } catch (e) {}
+  const save = psCanSave(pj, d);
+  return `<h3 class="ps-h">${ldpSwatch(pj.id)}<span class="ps-title">${esc(nounText('{Project} settings'))}</span>`
+    + `<button type="button" class="ps-x" id="ps-x" aria-label="Close" title="Close">✕</button></h3>`
+    + (pj.path ? `<div class="ps-sub">${esc(pj.path)}</div>` : '')
+    + `<div class="ps-fld"><label for="ps-name">Name</label>`
+    + `<input type="text" id="ps-name" class="ps-inp${(nameErr && d.touched) || d.nameErr ? ' bad' : ''}" value="${esc(d.name)}" autocomplete="off" spellcheck="false"`
+    + ` aria-describedby="ps-name-note"${(nameErr && d.touched) || d.nameErr ? ' aria-invalid="true"' : ''}>`
+    + (nameErr && d.touched ? `<p class="ps-err" id="ps-name-note" role="alert">${esc(nameErr)}</p>` : `<p class="ps-hint" id="ps-name-note">${hint}</p>`)
+    + (d.nameErr ? `<p class="ps-err" id="ps-name-hub" role="alert">${esc(d.nameErr)}</p>` : '') + '</div>'
+    + `<div class="ps-fld"><div class="ps-lg" id="ps-icon-lg">Icon</div>`
+    + `<div class="ps-choices" role="radiogroup" aria-labelledby="ps-icon-lg">`
+    + `<label class="ps-choice"><input type="radio" class="ps-radio" name="ps-icon" value="square"${sq ? ' checked' : ''}>${bigSq}`
+    + `<span class="ps-t"><b>Coloured square</b>${phone ? '' : '<small class="ps-plain">its colour comes from its place in the list</small>'}</span></label>`
+    + `<label class="ps-choice ps-choice-img"><input type="radio" class="ps-radio" name="ps-icon" value="image"${sq ? '' : ' checked'}>${bigPic}`
+    + `<span class="ps-t"><b>Image</b>${psImageSub(d, src, fileName, fileSize)}</span>`
+    + `<span class="ps-ibtns"><button type="button" class="ps-btn" id="ps-up">${src && !phone ? 'Replace…' : phone ? 'Upload…' : 'Upload image…'}</button>`
+    + `<button type="button" class="ps-btn${psGenOff(d) ? ' off' : ''}" id="ps-gen"${psGenOff(d) ? ' aria-disabled="true"' : ''} aria-expanded="${!!d.gen}" aria-controls="ps-gen-box">${PS_SPARK}Generate…</button></span></label>`
+    + `<input type="file" id="ps-file" accept="${PS_TYPES.join(',')}" hidden></div>`
+    + psGenHtml(pj, d)
+    + (d.iconErr ? `<p class="ps-err" role="alert">${esc(d.iconErr)}</p>` : '')
+    + `<p class="ps-hint">${phone ? 'PNG, JPEG, SVG or WebP, up to 1 MB, or Generate. Cropped to a square.'
+        : "PNG, JPEG, SVG or WebP, up to 1 MB, or Generate. A picture that is not square is cropped to its middle. It shows in place of the square at the square's size:"}</p>`
+    + (phone ? '' : `<div class="ps-sample"><span class="ldp-row ps-srow" aria-current="true">${small}<span class="ldp-name">${esc(psName(d.name) || pj.name)}</span>${n ? `<span class="ldp-n">${n}</span>` : ''}</span></div>`)
+    + '</div>'
+    + `<div class="ps-more"><div class="ps-lg">More settings</div>${psSettingsRowsHtml(pj, phone)}</div>`
+    + `<div class="ps-foot"><button type="button" class="ps-btn" id="ps-cancel">Cancel</button>`
+    + `<button type="button" class="ps-save${save ? '' : ' off'}" id="ps-save"${save ? '' : ' disabled'}>${d.busy ? 'Saving…' : 'Save'}</button></div>`;
+}
+function psReadFile(f) {
+  return new Promise((resolve, reject) => {
+    const rd = new FileReader();
+    rd.onload = () => resolve(String(rd.result || ''));
+    rd.onerror = () => reject(rd.error || new Error('could not read the file'));
+    rd.readAsDataURL(f);
+  });
+}
+// The settings once: resolves 'saved', null (closed), or { sub } (another
+// setting's dialog to open; the dialog is closed by then).
+function psOnce(pid, d, focus) {
+  const dlg = pdModal();
+  const phone = phoneNow();
+  return new Promise(resolve => {
+    let done = false;
+    let tick = 0;
+    const finish = (v) => {
+      if (done) return;
+      done = true;
+      clearInterval(tick);
+      // Drawing stops with the dialog (or another setting's dialog over it).
+      if (d.gen && d.gen.st === 'busy') { d.gen.ctl.abort(); d.gen = d.gen.prev || null; }
+      dlg.removeEventListener('cancel', onCancel);
+      dlg.classList.remove('ps-dlg');
+      if (dlg.open) dlg.close();
+      resolve(v);
+    };
+    const onCancel = (ev) => { ev.preventDefault(); finish(null); };
+    const paint = (keep) => {
+      const pj = projectById(pid);
+      if (!pj) { finish(null); return; }
+      const a = keep || (dlg.contains(document.activeElement) ? document.activeElement.id || '' : '');
+      const sel = dlg.querySelector('#ps-name');
+      const caret = sel && document.activeElement === sel ? [sel.selectionStart, sel.selectionEnd] : null;
+      dlg.innerHTML = psDialogHtml(pj, d, phone);
+      wire(pj);
+      const f = a && dlg.querySelector('#' + CSS.escape(a));
+      if (f) { f.focus(); if (caret && f.id === 'ps-name') f.setSelectionRange(caret[0], caret[1]); }
+    };
+    // The name's note and Save follow each key without redrawing the field.
+    const nameState = (pj) => {
+      const inp = dlg.querySelector('#ps-name');
+      const err = psNameErr(pid, d.name);
+      const shown = !!(err && d.touched);
+      // The hub's refusal holds until the name is typed again.
+      const hub = dlg.querySelector('#ps-name-hub');
+      if (hub && !d.nameErr) hub.remove();
+      inp.classList.toggle('bad', shown || !!d.nameErr);
+      if (shown) inp.setAttribute('aria-invalid', 'true'); else inp.removeAttribute('aria-invalid');
+      const note = dlg.querySelector('#ps-name-note');
+      const want = shown ? 'ps-err' : 'ps-hint';
+      note.className = want;
+      if (shown) note.setAttribute('role', 'alert'); else note.removeAttribute('role');
+      const text = shown ? err : psHint(pj, phone);
+      if (note.textContent !== text) note.textContent = text;
+      const ok = psCanSave(pj, d);
+      const b = dlg.querySelector('#ps-save');
+      b.disabled = !ok; b.classList.toggle('off', !ok);
+      const s = dlg.querySelector('.ps-srow .ldp-name');
+      if (s) s.textContent = psName(d.name) || pj.name;
+      const g = dlg.querySelector('.ps-gen-sub b');
+      if (g) g.textContent = psName(d.name) || pj.name;
+    };
+    // ---- Generate (#335) ----
+    const genInfoLoad = async () => {
+      try { d.genInfo = await api('/api/projects/icon-gen?id=' + encodeURIComponent(pid)); } catch (e) {}
+    };
+    const genStart = async (pj) => {
+      if (d.busy || (d.gen && d.gen.st === 'busy')) return;
+      // Greyed, it asks the hub again: a CLI installed since works at once.
+      if (psGenOff(d)) {
+        await genInfoLoad();
+        if (done) return;
+        if (psGenOff(d)) { d.gen = { st: 'nocli' }; paint('ps-gen'); return; }
+      }
+      const was = dlg.contains(document.activeElement) ? document.activeElement.id : '';
+      const g = { st: 'busy', t0: Date.now(), ctl: new AbortController(), prev: d.gen && d.gen.st === 'cands' ? d.gen : null, timedOut: false };
+      d.gen = g;
+      paint(was === 'ps-gen' ? 'ps-gen' : 'ps-gen-cancel');
+      const tm = setTimeout(() => { g.timedOut = true; g.ctl.abort(); }, PS_GEN_WAIT);
+      let res = null;
+      try { res = await psGenPost(pid, psName(d.name) || pj.name, g.ctl.signal); }
+      catch (e) { res = g.timedOut ? { error: 'timeout', agent: (d.genInfo && d.genInfo.agent) || '' } : null; }
+      finally { clearTimeout(tm); }
+      if (done || d.gen !== g || !res) return;   // cancelled, or the dialog closed
+      if (res.error === 'no_cli') { d.genInfo = Object.assign({}, d.genInfo, { agent: '', model: '' }); d.gen = { st: 'nocli' }; }
+      else if (res.error) d.gen = { st: 'failed', code: res.error, agent: res.agent || '', model: res.model || '' };
+      else {
+        d.gen = { st: 'cands', svgs: res.svgs.slice(0, 4).map(psSvgUrl), pick: -1, agent: res.agent || '', model: res.model || '' };
+        if (res.agent) d.genInfo = Object.assign({}, d.genInfo, { agent: res.agent, model: res.model || '' });
+      }
+      // Focus moves to the answer from where the drawing was asked (or Cancel,
+      // which is gone); elsewhere, as in the name, it stays.
+      const now = dlg.contains(document.activeElement) ? document.activeElement.id : '';
+      const asked = !now || now === 'ps-gen' || now === 'ps-gen-cancel';
+      paint(!asked ? '' : d.gen.st === 'cands' ? 'ps-gt-0' : d.gen.st === 'failed' ? 'ps-gen-again' : 'ps-gen');
+    };
+    const genPick = (i) => {
+      const g = d.gen;
+      if (!g || g.st !== 'cands' || !g.svgs[i]) return;
+      g.pick = i;
+      d.file = { dataUrl: g.svgs[i].url, name: 'generated-icon.svg', size: g.svgs[i].size, gen: { agent: g.agent, model: g.model } };
+      d.choice = 'image'; d.iconErr = '';
+      paint('ps-gt-' + i);
+    };
+    const save = async (pj) => {
+      if (!psCanSave(pj, d)) return;
+      d.busy = true; d.nameErr = ''; d.iconErr = '';
+      paint('ps-save');
+      const post = (url, body) => api(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      let step = 'name';
+      try {
+        const name = psName(d.name);
+        if (name !== pj.name) await post('/api/projects/rename', { projectId: pid, name });
+        step = 'icon';
+        if (d.choice === 'image' && d.file) await post('/api/projects/icon', { projectId: pid, dataUrl: d.file.dataUrl, name: d.file.name });
+        else if (d.choice !== 'image' && pj.icon) await post('/api/projects/icon', { projectId: pid, dataUrl: null });
+      } catch (e) {
+        d.busy = false;
+        if (step === 'name') d.nameErr = histErr(e); else d.iconErr = histErr(e);
+        // The Inbox's cards carry the project's name from the hub: ask for them again.
+        try { await refreshProjects(); renderRows(); ldpPaint(); syncProjSwitch(); ibxPoll(); } catch (x) {}
+        if (!done) paint(step === 'name' ? 'ps-name' : 'ps-up');
+        return;
+      }
+      d.busy = false;
+      try { await refreshProjects(); renderRows(); ldpPaint(); syncProjSwitch(); ibxPoll(); } catch (x) {}
+      finish('saved');
+    };
+    const wire = (pj) => {
+      const inp = dlg.querySelector('#ps-name');
+      inp.oninput = () => { d.name = inp.value; d.touched = true; d.nameErr = ''; nameState(pj); };
+      inp.onkeydown = (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); d.touched = true; nameState(pj); save(pj); } };
+      dlg.querySelector('#ps-x').onclick = () => finish(null);
+      dlg.querySelector('#ps-cancel').onclick = () => finish(null);
+      dlg.querySelector('#ps-save').onclick = () => save(pj);
+      dlg.querySelectorAll('input[name="ps-icon"]').forEach(r => {
+        r.onchange = () => {
+          if (!r.checked) return;
+          d.choice = r.value; d.iconErr = '';
+          paint('');
+          const again = dlg.querySelector(`input[name="ps-icon"][value="${r.value}"]`);
+          if (again) again.focus();
+          // Image with no picture yet: pick one.
+          if (r.value === 'image' && !psPicSrc(pj, d)) dlg.querySelector('#ps-file').click();
+        };
+      });
+      const file = dlg.querySelector('#ps-file');
+      dlg.querySelector('#ps-up').onclick = (ev) => { ev.preventDefault(); file.click(); };
+      dlg.querySelector('#ps-gen').onclick = (ev) => { ev.preventDefault(); genStart(pj); };
+      const gb = (id, fn) => { const b = dlg.querySelector('#' + id); if (b) b.onclick = fn; };
+      gb('ps-gen-cancel', () => {
+        const g = d.gen;
+        if (!g || g.st !== 'busy') return;
+        d.gen = g.prev || null;
+        g.ctl.abort();
+        paint(d.gen ? 'ps-gen-more' : 'ps-gen');
+      });
+      gb('ps-gen-more', () => genStart(pj));
+      gb('ps-gen-again', () => genStart(pj));
+      gb('ps-gen-close', () => { d.gen = null; paint('ps-gen'); });
+      dlg.querySelectorAll('[data-gt]').forEach(t => {
+        const i = +t.getAttribute('data-gt');
+        t.onclick = () => genPick(i);
+        t.onkeydown = (ev) => {
+          const n = d.gen && d.gen.svgs ? d.gen.svgs.length : 0;
+          const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[ev.key];
+          if (!step || !n) return;
+          ev.preventDefault();
+          genPick((i + step + n) % n);
+        };
+      });
+      file.onchange = async () => {
+        const f = file.files && file.files[0];
+        if (!f) return;
+        d.iconErr = '';
+        if (f.size > PS_MAX) d.iconErr = `That image is ${psSize(f.size)}; an icon can be up to 1 MB.`;
+        else if (f.type && !PS_TYPES.includes(f.type)) d.iconErr = 'Only a PNG, JPEG, SVG or WebP image can be an icon.';
+        else {
+          try {
+            d.file = { dataUrl: await psReadFile(f), name: f.name, size: f.size }; d.choice = 'image';
+            if (d.gen && d.gen.st === 'cands') d.gen.pick = -1;   // the upload, not a drawn one
+          }
+          catch (e) { d.iconErr = 'Could not read that file.'; }
+        }
+        if (!done) paint('ps-up');
+      };
+      dlg.querySelectorAll('[data-ps-act]').forEach(b => {
+        b.onclick = () => {
+          const act = b.getAttribute('data-ps-act');
+          const sub = act === 'kind' ? () => kindChoose(pid) : act === 'key' ? () => keyChoose(pid)
+            : act === 'tools' ? () => taskToolsChoose(pid) : act === 'past' ? () => pastList(pid)
+            : act === 'po' ? () => projectSetupFlow({ projectId: pid }) : null;
+          if (sub) finish({ sub, from: b.id || act });
+        };
+      });
+    };
+    dlg.classList.add('ps-dlg');
+    dlg.addEventListener('cancel', onCancel);
+    paint('');
+    // Drawing's seconds count up without redrawing the dialog.
+    tick = setInterval(() => {
+      const t = dlg.querySelector('#ps-gen-t');
+      const v = d.gen && d.gen.st === 'busy' ? `${psGenSecs(d.gen)} s` : '';
+      if (t && v && t.textContent !== v) t.textContent = v;
+    }, 250);
+    // Which CLI draws, once per settings: greys Generate when there is none.
+    if (d.genInfo === undefined) {
+      d.genInfo = null;
+      genInfoLoad().then(() => { if (!done && (psGenOff(d) || d.gen)) paint(''); });
+    }
+    if (!dlg.open) dlg.showModal();
+    const inp = dlg.querySelector('#ps-name');
+    if (focus === 'rename' && inp) { inp.focus(); inp.select(); }
+    else if (focus && dlg.querySelector(`[data-ps-act="${focus}"]`)) dlg.querySelector(`[data-ps-act="${focus}"]`).focus();
+    else if (inp) inp.focus();
+  });
+}
+// The dialog closes for another setting's dialog and comes back, with what
+// was typed and picked, once that one is closed; not after one that opened a
+// conversation (a past one, a new PO).
+async function projSettings(pid, opts) {
+  const pj = projectById(pid);
+  if (!pj || !pj.registered || pj.id === UNASSIGNED_ID) return;
+  const d = { name: pj.name, choice: pj.icon ? 'image' : 'square', file: null, touched: false, busy: false, nameErr: '', iconErr: '', gen: null, genInfo: undefined };
+  let focus = opts && opts.rename ? 'rename' : '';
+  for (;;) {
+    const got = await psOnce(pid, d, focus);
+    if (!got || got === 'saved') return;
+    const sid = SELECTED_SID;
+    await got.sub();
+    const dlg = pdModal();
+    if (dlg.open) await new Promise(res => dlg.addEventListener('close', res, { once: true }));
+    if (SELECTED_SID !== sid) return;
+    focus = got.from;
+  }
 }
 
 // ---- the file history ----
@@ -18288,7 +19492,7 @@ function docsDocListen() {
     }));
   });
   document.addEventListener('click', (ev) => {
-    pdQueryAll('.dcm:not([hidden])').forEach(m => {
+    pdQueryAll('.dcm[data-docs-menu]:not([hidden])').forEach(m => {
       if (!m.contains(ev.target) && !(ev.target.closest && ev.target.closest('.wse-more'))) docsMenuClose(m, false);
     });
   });
@@ -18296,7 +19500,7 @@ function docsDocListen() {
   // Overview, the page; scroll does not bubble, so it is caught on the way
   // down) or a resize closes it.
   const away = (ev) => {
-    pdQueryAll('.dcm:not([hidden])').forEach(m => {
+    pdQueryAll('.dcm[data-docs-menu]:not([hidden])').forEach(m => {
       if (!(ev && ev.target && ev.target.nodeType === 1 && m.contains(ev.target))) docsMenuClose(m, false);
     });
   };
@@ -18315,7 +19519,9 @@ function docsFilesWire(el, pid) {
   up.setAttribute('role', 'region'); up.setAttribute('aria-label', 'Files being added');
   side.insertBefore(up, tree);
   const menu = document.createElement('div');
-  menu.className = 'dcm'; menu.hidden = true; menu.setAttribute('role', 'menu');
+  // data-docs-menu: the document listeners below close this menu only, never
+  // another .dcm (a loose row's ⋯ in the left panel, ED-334).
+  menu.className = 'dcm'; menu.dataset.docsMenu = ''; menu.hidden = true; menu.setAttribute('role', 'menu');
   menu._el = el; menu._pid = pid;
   sec.appendChild(menu);
 
@@ -18546,6 +19752,7 @@ function docsMenuPlace(menu, r) {
   menu.hidden = false;
   menu.style.left = '0px'; menu.style.top = '0px';
   const win = menu.ownerDocument.defaultView || window;   // its panel's window, popped out or not
+  menu.style.maxHeight = (win.innerHeight - 16) + 'px';   // #347: never past the window; it scrolls
   const w = menu.offsetWidth, h = menu.offsetHeight, vw = win.innerWidth, vh = win.innerHeight;
   let top = r.bottom + 4;
   if (top + h > vh - 8) top = Math.max(8, r.top - h - 4);
@@ -20344,7 +21551,12 @@ const SW_ROW_EXPAND = {
 rowExpandWire($('#sw-list'), SW_ROW_EXPAND);
 // Compatibility names used by #170's focused regression test and any open
 // dashboard console; their implementation is the shared row helper above.
-function swExpandHide() { rowExpandHide(); }
+// #337: only the task list's own raised row (its redraw must not hide a
+// left panel row's or a tab's).
+function swExpandHide() {
+  const box = $('#sw-list'), r = ROW_EXPAND ? ROW_EXPAND.row : ROW_EXPAND_TIMER ? ROW_EXPAND_PENDING : null;
+  if (!r || box.contains(r)) rowExpandHide();
+}
 function swExpandAllowed(row) { return rowExpandAllowed(row, $('#sw-list')._rowExpandSpec); }
 function swExpandShow(row, focus = false) { rowExpandShow(row, $('#sw-list')._rowExpandSpec, focus); }
 function swExpandSchedule(row, immediate = false) { rowExpandSchedule(row, $('#sw-list')._rowExpandSpec, immediate); }
@@ -20353,10 +21565,12 @@ Object.defineProperties(window, {
   SW_EXPAND_TIMER: { configurable: true, get: () => ROW_EXPAND_TIMER },
   SW_EXPAND_LAST: { configurable: true, get: () => ROW_EXPAND_LAST, set: v => { ROW_EXPAND_LAST = v; } },
 });
-$('#sw-hover-names').addEventListener('change', ev => {
+$('#pref-full-names').checked = ROW_EXPAND_NAMES;
+for (const id of ['#sw-hover-names', '#pref-full-names']) $(id).addEventListener('change', ev => {
   ROW_EXPAND_NAMES = ev.target.checked;
+  $('#sw-hover-names').checked = $('#pref-full-names').checked = ROW_EXPAND_NAMES;
   try { localStorage.setItem(ROW_EXPAND_HOVER_KEY, String(ROW_EXPAND_NAMES)); } catch (e) {}
-  if (!ROW_EXPAND_NAMES) rowExpandHide();
+  if (!ROW_EXPAND_NAMES) { rowExpandHide(); pdHostDocs().forEach(rowExpandRetitleAll); }
 });
 function swRender() {
   const el = SW_EL;
@@ -21402,9 +22616,17 @@ function projSwitchLabel() {
   const pj = projectById(SELECTED_PROJECT);
   return pj ? pj.name : noun('one', 'title');
 }
+// #329: the project's icon before its name in the bar (none for All).
+function projSwitchIco(pid) {
+  const el = document.getElementById('proj-switch-ico');
+  if (!el) return;
+  const h = pid && projectById(pid) ? ldpSwatch(pid) : '';
+  if (el.innerHTML !== h) el.innerHTML = h;
+}
 function syncProjSwitch() {
   const el = document.getElementById('proj-switch-name');
   if (el) el.textContent = projSwitchLabel();
+  projSwitchIco(SELECTED_PROJECT);
   barPaint();
 }
 // The bar is also the project's header: in a project, the way back and what
@@ -21688,6 +22910,7 @@ function barCrumbs() {
   // The switcher names the project you are in: an open task's too (#303).
   const nm = pc ? pc.text : projSwitchLabel();
   if (name.textContent !== nm) name.textContent = nm;
+  projSwitchIco(projHere());
   writeSlot(box, crumbsHtml(cs));
   projNoteOpened(projHere());
 }
@@ -21697,6 +22920,7 @@ function crumbGo(level) {
   if (level === 'project') {
     const pj = crumbProject(r);
     if (!pj) return;
+    midLeave();
     if (SELECTED_SID) closeDetail();
     if (SELECTED_PROJECT !== pj.id) WS_SCOPE = '';
     SELECTED_PROJECT = pj.id; PROJECT_TAB = 'tasks';
@@ -21757,6 +22981,10 @@ document.getElementById('bar-crumbs').addEventListener('click', (e) => {
 function projMenuSettingsHtml(pj) {
   if (!pj || !pj.registered || pj.id === UNASSIGNED_ID) return '';
   const items = [
+    `<button class="pm-item pm-set proj-settings-btn" data-proj="${esc(pj.id)}" title="${esc(nounText('Its name, its icon, its kind, its key, its task agents\' tools and its PO'))}">`
+      + `<span class="pm-name">${esc(nounText('{Project} settings…'))}</span></button>`,
+    `<button class="pm-item pm-set proj-rename-btn" data-proj="${esc(pj.id)}">`
+      + `<span class="pm-name">${esc(nounText('Rename {project}…'))}</span></button>`,
     `<button class="pm-item pm-set task-tools-btn" data-proj="${esc(pj.id)}" title="Which MCP servers and connectors its task owners, reviewers and handovers start with">`
       + `<span class="pm-name">Task agents' tools: ${esc(pj.taskAgentTools === 'own' ? 'Own tools' : pj.taskAgentTools === 'ensemble' ? 'Ensemble only' : 'Inherit')}…</span></button>`,
     pj.path ? `<button class="pm-item pm-set kind-btn" data-proj="${esc(pj.id)}" title="Code or documents: what its Overview and Workspace are">`
@@ -21768,7 +22996,8 @@ function projMenuSettingsHtml(pj) {
     poChooseOffered(pj) ? `<button class="pm-item pm-set po-choose" data-proj="${esc(pj.id)}" title="Make a conversation you already had, or a fresh one, its PO: the other tasks report to it, and its conversation joins this page">`
       + `<span class="pm-name">Set up the PO…</span></button>` : '',
   ].filter(Boolean);
-  return items.length ? `<div class="pm-rule"></div><div class="pm-head">${esc(pj.name)}</div>` + items.join('') : '';
+  const ico = typeof ldpSwatch === 'function' ? ldpSwatch(pj.id, 'pm-sw') : '';
+  return items.length ? `<div class="pm-rule"></div><div class="pm-head">${ico}${esc(pj.name)}</div>` + items.join('') : '';
 }
 // ---- The project switcher (#303, Layout A step 2): begin ---------------------
 // The bar's project name is the switcher: its menu lists the two or three
@@ -22079,7 +23308,7 @@ function wideBanner() {
 // bar reads --top-h, so --banner-h has to say how much room they take right
 // now. A ResizeObserver sees a banner appear, grow or hide.
 (function trackBanners() {
-  const ids = ['update-banner', 'drain-banner', 'dock-banner', 'wide-banner'];
+  const ids = ['drain-banner', 'dock-banner', 'wide-banner', 'agents-banner'];
   const apply = () => {
     const h = ids.reduce((sum, id) => {
       const el = document.getElementById(id);
@@ -22240,6 +23469,20 @@ function openSettings(tab, opener) {
   const focus = asked && isPhone() ? $('#sp-back') : $('#sp-nav .sp-tab[aria-selected="true"]');
   if (focus) focus.focus();
   loadAgentModels();            // what the agents offer may have changed
+  loadMoveCheck();
+}
+// The move check's open items (#331): one list in "This instance", only when there is one.
+async function loadMoveCheck() {
+  let r = null;
+  try { r = await api('/api/move-check'); } catch (e) { return; }
+  const box = document.getElementById('move-check');
+  const list = document.getElementById('move-check-list');
+  if (!box || !list) return;
+  const items = (r && Array.isArray(r.open)) ? r.open : [];
+  box.hidden = !items.length;
+  const kind = {code: 'code folder', taskFolder: 'task folder', worktree: 'worktree', transcript: 'conversation'};
+  list.innerHTML = items.map(it =>
+    `<dt>${esc(it.what || '')} · ${esc(kind[it.kind] || it.kind || '')}</dt><dd>${esc(it.detail || '')}</dd>`).join('');
 }
 // Kept for the tests and any caller that hangs Settings off a control.
 function openSettingsPanel(anchor, tab) { openSettings(tab, anchor); }
@@ -22397,6 +23640,7 @@ $('#me-menu').addEventListener('click', (ev) => {
   }
   closeMeMenu();
   if (it.dataset.me === 'feedback') { feedbackOpen(); return; }
+  if (it.dataset.me === 'whatsnew') { if (window.whatsNew) whatsNew.open(); return; }
   openSettingsPanel($('#me-btn'));
 });
 $('#feedback-open').addEventListener('click', () => feedbackOpen());
@@ -23114,8 +24358,8 @@ function openWorkspaceTab(sid) {
   // A task open as a chat panel (#150): its tools are the middle's, so it
   // comes back to the middle (its panel closes: one chat per task) and its
   // Files tool comes out there, not another task's.
-  if (row && row.roomId) pdChatUnpanel(row.roomId);
-  if (SELECTED_SID !== sid) openDetail(sid);
+  const keptWindow = row && row.roomId && pdChatUnpanel(row.roomId);
+  if (SELECTED_SID !== sid) openDetail(sid, { keepTaskWindow: keptWindow });
   else { const p = $('#detail-panel'); if (p) p.dataset.sig = ''; renderDetail(); }
   // On the tool strip: its Files tool comes out.
   if (pdTask()) { pdReveal('workspace'); return; }
@@ -24397,10 +25641,19 @@ window.ensUpdPlace = () => ({
   document.getElementById('pref-split')?.addEventListener('click', (ev) => {
     runItermAction('/api/iterm/split-live', 'split', ev.currentTarget);
   });
-  // Update banner: initial check + periodic. RUNTIME_CFG.pid must be set
-  // before the first check so triggerUpdate can detect the new pid later.
-  document.getElementById('update-banner-go')?.addEventListener('click', triggerUpdate);
+  // The update check (What's new, #339): initial + periodic. RUNTIME_CFG.pid
+  // must be set before the first check so triggerUpdate can detect the new pid later.
   document.getElementById('drain-force')?.addEventListener('click', () => drainAction('force'));
+  document.getElementById('upd-card-force')?.addEventListener('click', () => drainAction('force'));
+  document.getElementById('upd-card-cancel')?.addEventListener('click', () => drainAction('cancel'));
+  document.getElementById('upd-card-agents')?.addEventListener('click', () => {
+    UPD_CARD.open = !UPD_CARD.open;
+    const list = document.getElementById('upd-card-agent-list');
+    list.hidden = !UPD_CARD.open;
+    const btn = document.getElementById('upd-card-agents');
+    btn.textContent = UPD_CARD.open ? 'Agents ▾' : 'Agents ▸';
+    btn.setAttribute('aria-expanded', String(UPD_CARD.open));
+  });
   document.getElementById('drain-cancel')?.addEventListener('click', () => drainAction('cancel'));
   document.getElementById('drain-dismiss')?.addEventListener('click', () => {
     DRAIN.dismissed = DRAIN.id || '';
@@ -24419,10 +25672,6 @@ window.ensUpdPlace = () => ({
   document.getElementById('wide-banner-dismiss')?.addEventListener('click', e => {
     const b = e.currentTarget.parentElement;
     b.dataset.closed = '1'; b.hidden = true;
-  });
-  document.getElementById('update-banner-dismiss')?.addEventListener('click', () => {
-    UPDATE_DISMISSED = true;
-    document.getElementById('update-banner').hidden = true;
   });
   checkForUpdate();
   setInterval(checkForUpdate, UPDATE_CHECK_INTERVAL_MS);

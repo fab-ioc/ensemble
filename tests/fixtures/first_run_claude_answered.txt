@@ -1,0 +1,23 @@
+78
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+Accessingworkspace:
+/srv/hub/work
+is-an-repo/srv/hub/work/WTE/repo
+Quicksafetycheck:Isthisaprojectyoucreatedoroneyoutrust?(Likeyourowncode,awell-knownopensource
+project,orworkfromyourteam).Ifnot,takeamomenttoreviewwhat'sinthisfolderfirst.
+ClaudeCode'llbeabletoread,edit,andexecutefileshere.
+Securityguide
+❯No,exit
+Yes,Itrustthisfolder
+Entertoconfirm·Esctocancel
+No, exit
+❯Yes, I trust this folder
+▐▛███▛█Claude Codev2.1.322
+▝▜██████▀Fable 5.2 · Claude Ultra
+▝▝   ▝▝ /…/srv/hub/work/WT E/repo
+⚠Your login expires in 2 days · run /login to renew
+◐ medium · /effort
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ Try "how does <filepath> work?"
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents

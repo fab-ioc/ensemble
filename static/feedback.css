@@ -36,6 +36,24 @@
 #feedback-images figure { margin: 0; max-width: 128px; }
 #feedback-images img { width: 128px; height: 80px; object-fit: contain; }
 #feedback-images a, #feedback-images button { display: block; }
+/* #332: the done state (sent, or opened on GitHub), a failed send, an unsent draft. */
+#feedback-done { margin: 0; }
+#feedback-done .feedback-done-head { display: flex; align-items: center; gap: var(--s-200); margin: 0 0 var(--s-300); }
+#feedback-done .feedback-done-head svg { flex: none; width: 24px; height: 24px; color: var(--c-success-bold); }
+#feedback-done .feedback-done-head h2 { margin: 0; }
+#feedback-done p { margin: 0 0 var(--s-300); }
+#feedback-done .feedback-sent { margin: 0 0 var(--s-300); padding: var(--s-300); background: var(--surface-sunken);
+  border: 1px solid var(--border); border-radius: var(--r-200); }
+#feedback-done .feedback-sent-label { display: block; margin-bottom: var(--s-100); color: var(--fg-muted); font-size: var(--fs-200); }
+#feedback-done .feedback-sent-title { display: flex; gap: var(--s-200); align-items: center; font-weight: 600; overflow-wrap: anywhere; }
+#feedback-done .feedback-kind { flex: none; height: 16px; padding: 0 6px; border-radius: var(--r-100); font-size: var(--fs-100);
+  line-height: 16px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em;
+  background: var(--c-neutral-bg); color: var(--c-neutral-fg); }
+#feedback-done .feedback-sent pre { margin: var(--s-200) 0 0; max-height: 120px; overflow: auto; white-space: pre-wrap;
+  overflow-wrap: anywhere; font: inherit; color: var(--fg-subtle); }
+#feedback-done .feedback-actions { margin-top: var(--s-400); }
+#feedback-status.feedback-error { color: var(--c-danger-fg); }
+.feedback-draft { display: flex; align-items: center; gap: var(--s-200); margin: 0 0 var(--s-200); color: var(--fg-muted); font-size: var(--fs-200); }
 @media (max-width: 640px), (max-width: 1024px) and (pointer: coarse) {
   #feedback-dialog { margin-top: calc(var(--vv-top, 0px) + 16px); }
   #feedback-dialog input, #feedback-dialog textarea, #feedback-dialog select, .feedback-setting input { font-size: var(--fs-400); }

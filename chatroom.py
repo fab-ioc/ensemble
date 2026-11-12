@@ -321,6 +321,8 @@ def sweep_cards(now: float | None = None) -> int:
 
 def save_cards(force: bool = False) -> bool:
     """Write the cards file when cards changed, at most every CARDS_SAVE_S."""
+    if os.environ.get("ENSEMBLE_PTY_PREFLIGHT"):
+        return False
     if not CARDS_WRITER and ROOMS_DIR == _HOME_ROOMS:
         return False
     with _INDEX_LOCK:
@@ -686,6 +688,8 @@ def _write(room: dict, *, removed: int = 0) -> None:
     """Write the room: its log first, then its file. ``removed``: messages
     taken out of the list on purpose (a withdraw), which a rewrite of the
     log may drop."""
+    if os.environ.get("ENSEMBLE_PTY_PREFLIGHT"):
+        return
     ROOMS_DIR.mkdir(parents=True, exist_ok=True)
     p = _room_path(room["id"])
     tmp = p.with_suffix(".json.tmp")

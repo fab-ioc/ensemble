@@ -749,7 +749,12 @@ RESTART_TOOLS = [
             "code on a spare port and calls it off if it does not serve. `when: "
             "\"now\"` restarts at once (agents mid-turn are cut off), or forces a "
             "drain under way; `cancel: true` calls a drain off. Progress is logged "
-            "to ~/.ensemble/logs/restart.log. Call it once."
+            "to ~/.ensemble/logs/restart.log. Call it once. Before the hub stops, "
+            "a project's long-running process left in the hub's processes (an app "
+            "an agent started with setsid or nohup) is moved into a systemd scope "
+            "of its own and runs on; the answer names each. One that cannot be "
+            "moved refuses the restart, naming it: stop it, or pass `stopForeign: "
+            "true` to restart anyway and stop it."
         ),
         "inputSchema": {
             "type": "object",
@@ -758,11 +763,39 @@ RESTART_TOOLS = [
                          "description": "safe (default): drain first; now: at once."},
                 "reason": {"type": "string", "description": "Why, for the CEO's banner."},
                 "cancel": {"type": "boolean", "description": "Call off a drain under way."},
+                "stopForeign": {"type": "boolean",
+                                "description": "Restart even if a project's long-running "
+                                               "process could not be moved out and stops."},
             },
         },
     },
 ]
 RESTART_TOOL_NAMES = frozenset(t["name"] for t in RESTART_TOOLS)
+
+# Offered to every project's PO (#331).
+MOVE_TOOLS = [
+    {
+        "name": "ensemble_move_check",
+        "description": (
+            "The move check: what the state copied from another machine still "
+            "points at there (code folders, task folders, task worktrees whose git "
+            "folder is gone, Claude conversations filed under the old folder's "
+            "name). The hub runs it at every start and repairs what is safe; the "
+            "rest is listed in Settings. Without arguments it returns the last "
+            "result; `run: true` runs it again now (and repairs), `run: true, "
+            "repair: false` only looks."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "run": {"type": "boolean", "description": "Run the check now."},
+                "repair": {"type": "boolean",
+                           "description": "With run: repair what is safe (default true)."},
+            },
+        },
+    },
+]
+MOVE_TOOL_NAMES = frozenset(t["name"] for t in MOVE_TOOLS)
 
 
 def _role_head(part: dict) -> str:
@@ -808,6 +841,7 @@ def tool_schemas(room: dict, identity: str) -> list[dict]:
         tools += list(RESTART_TOOLS)
     if _is_project_po(room or {}, identity):
         tools += list(PO_MESSAGE_TOOLS)
+        tools += list(MOVE_TOOLS)
     return tools
 
 
@@ -2235,17 +2269,20 @@ def _restart_hub(ctx, args, handler):
     when = str(args.get("when") or "safe").lower()
     if when not in ("safe", "now"):
         raise ToolError('when is "safe" or "now"')
+    stop_foreign = args.get("stopForeign") is True
     if when == "now" and _d.restart_drain.draining():
-        res = _d.restart_drain.force_drain(by["label"])
+        res = _d.restart_drain.force_drain(by["label"], stop_foreign=stop_foreign)
         if not res["ok"]:
             raise ToolError(res.get("error") or "the restart is already under way")
         return {"ok": True, "forced": True, "drain": res["drain"]}
     if when == "safe":
-        res = _d.restart_drain.request_restart(str(args.get("reason") or ""), by, "restart")
+        res = _d.restart_drain.request_restart(str(args.get("reason") or ""), by, "restart",
+                                               stop_foreign=stop_foreign)
     elif _d.restart_drain.holding():
-        res = _d.restart_drain.restart_now(ctx["room"]["id"])
+        res = _d.restart_drain.restart_now(ctx["room"]["id"], stop_foreign=stop_foreign)
     else:
-        res = _d.trigger_restart(ctx["room"]["id"], identity=by.get("identity", ""))
+        res = _d.trigger_restart(ctx["room"]["id"], identity=by.get("identity", ""),
+                                 stop_foreign=stop_foreign)
     res.pop("status", None)
     if not res.get("started"):
         raise ToolError(res.get("error") or "the restart did not start")
@@ -2342,6 +2379,13 @@ def _mark_wait(ctx, args, handler):
             "reads": f"Waiting {_d.idle.wait_words(mark)}"}
 
 
+def _move_check(ctx, args, handler):
+    if args.get("run") is True:
+        repair = args.get("repair") is not False
+        return _d.move_check.run_check(repair=repair, notify=False)
+    return _d.move_check.last() or {"note": "the move check has not run yet: run: true runs it"}
+
+
 _IMPL = {
     "ensemble_whoami": _whoami,
     "ensemble_report": _report,
@@ -2366,6 +2410,7 @@ _IMPL = {
     "ensemble_points": _points,
     "ensemble_message_po": _message_po,
     "ensemble_read_message": _read_message,
+    "ensemble_move_check": _move_check,
 }
 
 NAMES = frozenset(_IMPL)
@@ -2387,7 +2432,7 @@ def call(name: str, args: dict, room_id: str, identity: str, handler) -> tuple[s
                     f"{name} is available only to a reviewer during an active review")
             if name in RESTART_TOOL_NAMES:
                 raise ToolError(_d.RESTART_REFUSED)
-            if name in PO_MESSAGE_TOOL_NAMES:
+            if name in PO_MESSAGE_TOOL_NAMES or name in MOVE_TOOL_NAMES:
                 raise ToolError(
                     f"{name} is only for a project's PO: a task reports to its own PO "
                     "with ensemble_report, and that PO writes to other projects' POs")

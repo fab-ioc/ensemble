@@ -370,6 +370,11 @@ class Backend:
         wired up."""
         return {"started": False, "error": "a plain restart is not supported on this platform"}
 
+    def systemd_service(self) -> dict | None:
+        """The systemd user unit running this hub, if one does (Linux only):
+        the restart helper stops and starts the hub through it."""
+        return None
+
     def start_detached(self, argv: list[str], log_file: Path) -> dict:
         """Start ``argv`` so that it outlives the hub (the built app's update
         helper): its own session, so stopping the hub's service does not end

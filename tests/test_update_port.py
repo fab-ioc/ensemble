@@ -67,7 +67,8 @@ class BashLauncher(unittest.TestCase):
         self.bin = self.home / "bin"
         self.bin.mkdir()
         (self.home / ".ensemble").mkdir()
-        self.log = self.home / "Library" / "Logs" / "ensemble.log"
+        self.log = (self.home / "Library" / "Logs" / "ensemble.log" if sys.platform == "darwin"
+                    else self.home / ".ensemble" / "logs" / "ensemble.log")
         self.args_file = self.home / "hub-args"
         _stub(self.bin, "python3",
               'if [[ "$1" == "-c" || "$1" == "-m" ]]; then exit 0; fi\n'
@@ -347,13 +348,13 @@ class Page(unittest.TestCase):
     def test_update_page_names_the_log_when_the_hub_stays_down(self):
         html = (ROOT / "index.html").read_text(encoding="utf-8")
         self.assertIn("The hub did not come back", html)
-        self.assertIn("function showUpdateFailed(logPath, reason)", html)
+        self.assertIn("function showUpdateFailed(logPath, reason, advice)", html)
         self.assertIn('id="update-close"', html)
         self.assertNotIn("update timed out", html)
 
     def test_a_retry_starts_from_the_normal_dialog(self):
         html = (ROOT / "index.html").read_text(encoding="utf-8")
-        body = html[html.index("async function triggerUpdate()"):html.index("function resetUpdateModal()")]
+        body = html[html.index("function triggerUpdate()"):html.index("function resetUpdateModal()")]
         self.assertIn("resetUpdateModal();", body)
         reset = html[html.index("function resetUpdateModal()"):html.index("function showUpdateFailed(")]
         for undo in ("classList.remove('is-failed')", "'Updating Ensemble'",

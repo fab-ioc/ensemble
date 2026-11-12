@@ -16,7 +16,7 @@
 # State:
 #   PID file: ~/.ensemble/server.pid
 #   Port:     ~/.ensemble/server.port (the port `start` last started the hub on)
-#   Logs:     ~/Library/Logs/ensemble.log
+#   Logs:     ~/Library/Logs/ensemble.log (macOS), ~/.ensemble/logs/ensemble.log (Linux)
 #
 # Tip: symlink this script onto your PATH so you can run it from anywhere:
 #   ln -s "$(pwd)/ensemble" ~/.local/bin/
@@ -35,7 +35,11 @@ SCRIPT="$DIR/dashboard.py"
 STATE_DIR="$HOME/.ensemble"
 PID_FILE="$STATE_DIR/server.pid"
 PORT_FILE="$STATE_DIR/server.port"
-LOG="$HOME/Library/Logs/ensemble.log"
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  LOG="$HOME/Library/Logs/ensemble.log"
+else
+  LOG="$STATE_DIR/logs/ensemble.log"
+fi
 if [[ -n "${ENSEMBLE_PORT:-}" ]]; then
   PORT="$ENSEMBLE_PORT"; PORT_SOURCE="ENSEMBLE_PORT"
 else
@@ -234,13 +238,21 @@ cmd_status() {
 
 cmd_logs() { exec tail -n 50 -f "$LOG"; }
 
-cmd_open() { open "$(url)"; }
+cmd_open() { if [[ "$(uname -s)" == "Darwin" ]]; then open "$(url)"; else xdg-open "$(url)"; fi; }
 
 # Pull the latest code and restart. Invoked by the in-app "Update now" button
 # (the server spawns `ensemble update` detached so it survives the restart).
 cmd_update() {
   parse_port_args "$@"
   echo "[update $(date '+%Y-%m-%d %H:%M:%S')] Updating $DIR (hub port $PORT, from $PORT_SOURCE)…"
+  # Restarting the unit ends every process in its cgroups: a project's
+  # long-running app is moved out first, and one that cannot be refuses the
+  # update before anything changes (ED-342; ENSEMBLE_STOP_FOREIGN=1 stops it).
+  if [[ -n "${ENSEMBLE_SYSTEMD_UNIT:-}" ]]; then
+    python3 "$DIR/restart_guard.py" --unit "$ENSEMBLE_SYSTEMD_UNIT" --what "the update" \
+      ${ENSEMBLE_STOP_FOREIGN:+--force} \
+      || { echo "update refused: see above (ENSEMBLE_STOP_FOREIGN=1 to stop them)" >&2; exit 3; }
+  fi
   git -C "$DIR" fetch --quiet || { echo "git fetch failed" >&2; exit 1; }
   local up
   up="$(git -C "$DIR" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || true)"
@@ -254,9 +266,13 @@ cmd_update() {
     || python3 -m pip install --user -r "$DIR/requirements.txt" 2>/dev/null \
     || python3 -m pip install --user --break-system-packages -r "$DIR/requirements.txt" 2>/dev/null \
     || true
-  # Restart: prefer the LaunchAgent if it's loaded, else the manual process.
+  # Restart: the systemd user unit that runs the hub (named by the hub, Linux),
+  # else the LaunchAgent if it's loaded, else the manual process.
   local label="com.ensemble.dashboard"
-  if launchctl print "gui/${UID}/${label}" >/dev/null 2>&1; then
+  if [[ -n "${ENSEMBLE_SYSTEMD_UNIT:-}" ]]; then
+    systemctl --user restart "$ENSEMBLE_SYSTEMD_UNIT"
+    echo "Restarted via systemd ($ENSEMBLE_SYSTEMD_UNIT)."
+  elif command -v launchctl >/dev/null 2>&1 && launchctl print "gui/${UID}/${label}" >/dev/null 2>&1; then
     launchctl kickstart -k "gui/${UID}/${label}"
     echo "Restarted via launchd ($label)."
   else
