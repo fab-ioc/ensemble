@@ -13761,6 +13761,8 @@ def check_for_update(force: bool = False) -> dict:
     if not force and _UPDATE_CHECK_CACHE and (now - _UPDATE_CHECK_CACHE[0]) < _UPDATE_CHECK_TTL:
         return _UPDATE_CHECK_CACHE[1]
     if _UPDATE_CHECK_LOCK:
+        if force:
+            return {"available": False, "reason": "checking"}
         if _UPDATE_CHECK_CACHE:
             return _UPDATE_CHECK_CACHE[1]
         return {"available": False, "reason": "checking"}

@@ -13,6 +13,7 @@ install and shows the Update card, or keeps the dialog open with a plain line:
 * a check the hub's new one contradicts (the update installed meanwhile):
   "Already up to date, nothing to install", no POST, the dialog stays;
 * the update went while the dialog was open (the page's poll): it stays, says so;
+* the hub disappears after the fresh check but before the POST: it says so;
 * the hub away: "The hub could not be reached, try again";
 * GitHub away: the hub could not reach it, Install now stays to try again;
 * the hub refuses even with today's key: the dialog comes back with the
@@ -33,7 +34,8 @@ import sys
 import tempfile
 import threading
 import unittest
-from http.server import ThreadingHTTPServer
+from http.client import HTTPConnection
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest import mock
 
@@ -77,14 +79,15 @@ const SEEN = `(() => {
 async function main() {
   const udd = chromeProfile(A);
   const ch = spawn(A.chrome, ['--headless=new', '--remote-debugging-port=0', '--user-data-dir=' + udd, '--no-first-run', '--no-default-browser-check',
-    '--disable-gpu', '--hide-scrollbars', '--window-size=1440,900', 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] });
+    '--disable-gpu', '--hide-scrollbars', '--window-size=1440,900', '--no-proxy-server',
+    '--host-resolver-rules=MAP hub.tailnet.test 127.0.0.1', 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] });
   const ws = await new Promise((res, rej) => {
     let buf = ''; ch.stderr.on('data', d => { buf += d; const m = buf.match(/DevTools listening on (ws:\S+)/); if (m) res(m[1]); });
     ch.on('exit', c => rej(new Error('chrome exited ' + c))); setTimeout(() => rej(new Error('no devtools ' + buf)), 20000);
   });
   const c = new Cdp(ws); await c.open();
   const out = {};
-  const page = async () => {
+  const page = async (url = A.base + '/') => {
     const { targetId } = await c.send('Target.createTarget', { url: 'about:blank' });
     const { sessionId } = await c.send('Target.attachToTarget', { targetId, flatten: true });
     await c.send('Page.enable', {}, sessionId);
@@ -98,7 +101,7 @@ async function main() {
     };
     const shot = async (name) => { if (!A.shots) return; const r = await c.send('Page.captureScreenshot', { format: 'png' }, sessionId); fs.writeFileSync(path.join(A.shots, name + '.png'), Buffer.from(r.data, 'base64')); };
     await c.send('Page.addScriptToEvaluateOnNewDocument', { source: 'window.ensBootOpen = false;' }, sessionId);
-    await c.send('Page.navigate', { url: A.base + '/' }, sessionId);
+    await c.send('Page.navigate', { url }, sessionId);
     await until('window.ensBooted === true && !!window.whatsNew && !!whatsNew.info && whatsNew.info.available', 30000);
     await sleep(300);
     await evalIn(`{ const original = window.fetch; window.__updatePosts = [];
@@ -190,6 +193,30 @@ async function main() {
     mode({ ...OK, case: 'G2' });
     out.G2 = await press(p, cardUp, 'install-now-again');
     await p.close();
+
+    // H: the hub answered the fresh check and status, then stopped before
+    // the config read. The old page's pid must not stand in for today's.
+    mode({ ...OK, case: 'H' });
+    p = await page();
+    await openDialog(p);
+    await p.evalIn(`{ const f = window.fetch; window.fetch = (u, o) =>
+      String(u) === '/api/config' ? Promise.reject(new TypeError('Failed to fetch')) : f(u, o); } 0`);
+    out.H = await press(p, `document.getElementById('wn-dialog').open && ${said}`, 'install-now-config-away');
+    await p.close();
+
+    // T: a tailnet-style hostname reaches the hub directly with a token.
+    mode({ ...OK, case: 'T' });
+    p = await page(A.direct + '/?token=test-token');
+    await openDialog(p);
+    out.T = await press(p, cardUp, 'install-now-tailnet-direct');
+    await p.close();
+
+    // P: a tailnet-style proxy rewrites Host and supplies X-Forwarded-Host.
+    mode({ ...OK, case: 'P' });
+    p = await page(A.proxy + '/?token=test-token');
+    await openDialog(p);
+    out.P = await press(p, cardUp, 'install-now-proxied');
+    await p.close();
   } finally {
     try { ch.kill(); } catch (e) {}
   }
@@ -241,7 +268,9 @@ class InstallNowInChrome(unittest.TestCase):
                 rotated[0] = m["rotate"]
                 dashboard._UI_KEY = secrets.token_urlsafe(32)   # the hub restarted
             why = dashboard.RESTART_REFUSED if m.get("refuse") else real_refusal(handler)
-            cls.log.append({"case": m.get("case"), "refusal": handler.path, "refused": bool(why)})
+            cls.log.append({"case": m.get("case"), "refusal": handler.path, "refused": bool(why),
+                            "origin": handler.headers.get("Origin"), "host": handler.headers.get("Host"),
+                            "forwarded": handler.headers.get("X-Forwarded-Host")})
             return why
 
         def request_restart(reason, who, kind, stop_foreign=False):
@@ -263,6 +292,7 @@ class InstallNowInChrome(unittest.TestCase):
             mock.patch.object(dashboard, "check_for_update", check),
             mock.patch.object(dashboard, "cached_update_check", lambda: answer(mode().get("cached", "avail"))),
             mock.patch.object(dashboard, "_UI_KEY", dashboard._UI_KEY),
+            mock.patch.object(dashboard, "ACCESS_TOKEN", "test-token"),
             mock.patch.object(dashboard.Handler, "_restart_refusal", refusal),
             mock.patch.object(dashboard.app_version, "packaged", lambda: False),
             mock.patch.object(restart_drain, "holding", lambda: False),
@@ -279,14 +309,47 @@ class InstallNowInChrome(unittest.TestCase):
         cls.server.daemon_threads = True
         cls.server.handle_error = lambda *a: None
         threading.Thread(target=cls.server.serve_forever, daemon=True).start()
+
+        class Proxy(BaseHTTPRequestHandler):
+            def do_GET(self): self.forward()
+            def do_POST(self): self.forward()
+            def log_message(self, *a): pass
+            def forward(self):
+                host = f"127.0.0.1:{cls.server.server_address[1]}"
+                headers = {k: v for k, v in self.headers.items() if k.lower() != "host"}
+                headers.update({"Host": host, "X-Forwarded-Host": self.headers.get("Host", ""),
+                                "X-Forwarded-For": "100.64.0.7", "X-Forwarded-Proto": "http"})
+                body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+                conn = HTTPConnection(*cls.server.server_address)
+                try:
+                    conn.request(self.command, self.path, body=body, headers=headers)
+                    response = conn.getresponse()
+                    data = response.read()
+                    self.send_response(response.status)
+                    for key, value in response.getheaders():
+                        if key.lower() not in ("connection", "transfer-encoding"):
+                            self.send_header(key, value)
+                    self.end_headers()
+                    self.wfile.write(data)
+                finally:
+                    conn.close()
+
+        cls.proxy = ThreadingHTTPServer(("127.0.0.1", 0), Proxy)
+        cls.proxy.daemon_threads = True
+        cls.proxy.handle_error = lambda *a: None
+        threading.Thread(target=cls.proxy.serve_forever, daemon=True).start()
         cls.addClassCleanup(cls.tmp.cleanup)
         cls.addClassCleanup(cls.server.server_close)
         cls.addClassCleanup(cls.server.shutdown)
+        cls.addClassCleanup(cls.proxy.server_close)
+        cls.addClassCleanup(cls.proxy.shutdown)
         shots = os.environ.get("ENSEMBLE_SHOTS", "")
         if shots:
             Path(shots).mkdir(parents=True, exist_ok=True)
         args = {**chrome_profile.node_args(), "tmp": cls.tmp.name,
-                "base": f"http://127.0.0.1:{cls.server.server_address[1]}", "shots": shots}
+                "base": f"http://127.0.0.1:{cls.server.server_address[1]}",
+                "direct": f"http://hub.tailnet.test:{cls.server.server_address[1]}",
+                "proxy": f"http://hub.tailnet.test:{cls.proxy.server_address[1]}", "shots": shots}
         script = base / "install_now_cdp.js"
         script.write_text(CDP_JS, encoding="utf-8")
         run = subprocess.run([NODE, str(script), json.dumps(args)], capture_output=True, encoding="utf-8", timeout=400)
@@ -364,6 +427,29 @@ class InstallNowInChrome(unittest.TestCase):
                          "once with the page's key, once with today's")
         self.assertBusy(self.got["G2"])
         self.assertEqual(self.posts("G2"), 1)
+
+    def test_hub_gone_before_post_keeps_the_dialog_with_a_plain_line(self):
+        self.assertSays(self.got["H"], "The hub could not be reached, try again.")
+        self.assertEqual(self.posts("H"), 0)
+
+    def test_proxied_tailnet_page_with_token_installs(self):
+        self.assertBusy(self.got["P"])
+        self.assertEqual(self.posts("P"), 1)
+        asked = self.of("P", "refusal")
+        self.assertEqual(len(asked), 1)
+        self.assertFalse(asked[0]["refused"])
+        self.assertTrue(asked[0]["origin"].startswith("http://hub.tailnet.test:"))
+        self.assertTrue(asked[0]["host"].startswith("127.0.0.1:"))
+        self.assertEqual(asked[0]["forwarded"], asked[0]["origin"].removeprefix("http://"))
+
+    def test_direct_tailnet_page_with_token_installs(self):
+        self.assertBusy(self.got["T"])
+        self.assertEqual(self.posts("T"), 1)
+        asked = self.of("T", "refusal")
+        self.assertEqual(len(asked), 1)
+        self.assertFalse(asked[0]["refused"])
+        self.assertEqual(asked[0]["origin"], "http://" + asked[0]["host"])
+        self.assertIsNone(asked[0]["forwarded"])
 
     def test_the_page_threw_nothing(self):
         self.assertEqual(self.got["errors"], [])

@@ -232,6 +232,7 @@
     if (!dialog.open) return;   // Later or Esc meanwhile: the person chose
     if (!got) { say('The hub could not be reached, try again.', true); el('wn-install').focus(); return; }
     if (!showing(got)) { nothingToInstall(got); return; }
+    if (got.kind === 'release') UPDATE_TARGET = got.latestVersion || '';
     paint();
     // Started (the Update card shows until the page reloads), or why not.
     const why = window.triggerUpdate ? window.triggerUpdate() : 'The page is still loading, try again in a moment.';

@@ -9616,6 +9616,12 @@ async function runUpdate() {
   // restart still holds the pid it loaded with, and would take the hub that
   // already runs for the new one (#345).
   let startPid = RUNTIME_CFG && RUNTIME_CFG.pid;
+  const stop = () => { UPDATE_IN_PROGRESS = false; ensUpd.hold = false; updCardHide(); };
+  const stopPreflight = () => {
+    stop();
+    const why = 'The hub could not be reached, try again.';
+    if (window.whatsNew) whatsNew.refused(why); else toast(why, 8000, 'err');
+  };
   // What the hub said before this press: anything it records later is this
   // attempt's (an earlier attempt's outcome is not). Without it nothing
   // could be told apart from an earlier attempt's, so a hub that does not
@@ -9628,14 +9634,17 @@ async function runUpdate() {
   if (!mine()) return;
   const cfg0 = before && await updJson('/api/config');
   if (!mine()) return;
-  if (cfg0 && cfg0.pid) startPid = cfg0.pid;
+  if (!cfg0 || !cfg0.pid) {
+    stopPreflight();
+    return;
+  }
+  startPid = cfg0.pid;
   const now = () => performance.now();
   let logPath = updLogPath(app);
-  const stop = () => { UPDATE_IN_PROGRESS = false; ensUpd.hold = false; updCardHide(); };
   // A failure leaves this hub as it was: What's new still offers Install now.
   const fail = (reason, advice) => { stop(); showUpdateFailed(logPath, reason, advice); };
   if (!before) {
-    fail('The hub did not answer', 'Check the connection, then Install now again.');
+    stopPreflight();
     return;
   }
   const seen = {

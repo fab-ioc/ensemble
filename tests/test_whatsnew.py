@@ -170,6 +170,13 @@ class Seeded(unittest.TestCase):
 
 
 class GitList(Seeded):
+    def test_forced_check_waits_for_a_check_already_running(self):
+        stale = {"available": True, "latestSha": "old"}
+        with mock.patch.object(dashboard, "_UPDATE_CHECK_CACHE", (0, stale)), \
+                mock.patch.object(dashboard, "_UPDATE_CHECK_LOCK", True):
+            self.assertEqual(dashboard.check_for_update(force=True),
+                             {"available": False, "reason": "checking"})
+
     def test_first_parent_subjects_newest_first_plain(self):
         self.merge(1, "the first feature")
         (self.up / "g").write_text("x")
