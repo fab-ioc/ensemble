@@ -19679,11 +19679,14 @@ class Handler(BaseHTTPRequestHandler):
                           "repo": root, "branch": git.get("branch", ""),
                           "head": git.get("head", ""), "base": git.get("base", ""),
                           "allocation": review_allocation}
-                if chatroom.patch_participant(
-                        room_id, ident,
-                        {"ptyId": info["ptyId"], "sessionId": info["sessionId"],
-                         "cwd": info["cwd"], "pid": None, "review": review},
-                        drop=("lastExit", "fresh")) is None:
+                # The review runs in the checkout under review; the seat's own
+                # recorded folder stays its folder (ED-344), set only when none is.
+                fields = {"ptyId": info["ptyId"], "sessionId": info["sessionId"],
+                          "pid": None, "review": review}
+                if not (part.get("cwd") or "").strip():
+                    fields["cwd"] = info["cwd"]
+                if chatroom.patch_participant(room_id, ident, fields,
+                                              drop=("lastExit", "fresh")) is None:
                     raise StartRoomError("the task went away before its reviewer was recorded")
             except BaseException:
                 for pid in seat_ptys(room_id, ident):
@@ -20022,9 +20025,12 @@ class Handler(BaseHTTPRequestHandler):
         token = next((t for t, i in room_full.get("tokens", {}).items()
                       if i == ident), "")
         default, scratch = self._seat_folder(room_full, ident)
-        # Its folder, made again when it is the task's missing worktree; a
-        # folder that cannot be is a refused start, never another folder.
-        cwd = seat_folders.launch_folder(room_full, ident, cwd or default, scratch)
+        # The folder asked for, else the seat's own recorded folder (a fresh
+        # session of a seat moved to a second checkout stays there), else the
+        # task's default. Made again when it is the task's missing worktree;
+        # a folder that cannot be is a refused start, never another folder.
+        cwd = seat_folders.launch_folder(
+            room_full, ident, cwd or (part.get("cwd") or "").strip() or default, scratch)
         rtk_args, rtk_env, rtk_brief = _rtk_task_wiring(room_full, agent_key, part.get("role", ""))
         if prompt is not None:
             briefing = prompt

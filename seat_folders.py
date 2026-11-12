@@ -23,10 +23,11 @@ A Claude seat resumes only in the folder its conversation was recorded in
 (Claude keeps a conversation under its folder's name): ``resume_folder_check``
 refuses when the conversation is on disk for another folder only.
 
-``repair_rooms`` puts back the seats an older hub moved to its fallback
-folder: a seat of a worktree task whose folder is outside the task's own
-folder gets the task's folder again (at hub start, and ``tools/
-repair_seat_folders.py`` once).
+A seat an older hub moved to its fallback folder (a worktree task's seat
+recorded outside the task's own folder) starts in the task's folder again at
+its next launch, and ``repair_at_start`` writes the task's folder back on
+every stopped one when the hub starts (``tools/repair_seat_folders.py``
+lists them, read only).
 """
 from __future__ import annotations
 
@@ -35,7 +36,6 @@ import os
 import shutil
 import subprocess
 import time
-import uuid
 from pathlib import Path
 
 _d = None  # the dashboard module, set by bind()
@@ -190,6 +190,12 @@ def launch_folder(room: dict, ident: str, cwd: str, scratch: str = "") -> str:
     hub's own per-agent folder of a task whose folder is there). Raises
     MissingFolderError otherwise; the task is then marked."""
     room_cwd = (room.get("cwd") or "").strip()
+    if outside_task(room, cwd):
+        # An older hub's fallback recorded as the seat's folder: it starts in
+        # its task's folder again (the caller records that), never there.
+        print(f"[folder] {room.get('id', '')}/{ident}: {cwd} is outside the task's folder; "
+              f"starting in {room_cwd}", flush=True)
+        cwd = room_cwd
     worktree_path = _is_worktree_room(room) and _inside(cwd, room_cwd)
     # An empty folder at a worktree's place: an older hub made it for an
     # agent that found the worktree gone. git adds a worktree into it.
@@ -285,8 +291,8 @@ def resume_folder_check(room: dict, ident: str, sid: str, cwd: str) -> None:
     where = _recorded_cwd(hits[0]) or f"the folder Claude names {hits[0].parent.name}"
     text = (f"{ident}'s conversation {sid} was recorded in {where}, not in {cwd} where the "
             f"hub would resume it: Claude finds a conversation only in the folder it was "
-            f"recorded in. Move the seat back to that folder, or give it a fresh session, "
-            f"then start the task again.")
+            f"recorded in. Give the seat a fresh session, or bring its conversation to "
+            f"this folder, then start the task again.")
     refuse(room, ident, cwd, text, kind="elsewhere")
 
 
@@ -294,66 +300,44 @@ def resume_folder_check(room: dict, ident: str, sid: str, cwd: str) -> None:
 # Repair: seats an older hub moved to its fallback folder
 # ---------------------------------------------------------------------------
 
-def damaged_seats(room: dict) -> list[dict]:
-    """The agent seats of a worktree task whose folder is outside the task's
-    own folder (its task folder, else its worktree): an older hub's
-    fallback (``~/cs``). A seat in another folder of the task (a second
-    checkout someone made, ``repo-linux``) was moved there on purpose."""
-    if not _is_worktree_room(room):
-        return []
+def _task_folder(room: dict) -> str:
+    """A worktree task's own folder: its task folder, else its worktree."""
+    return ((room.get("taskDir") or (room.get("workspace") or {}).get("taskDir") or "").strip()
+            or (room.get("cwd") or "").strip())
+
+
+def outside_task(room: dict, cwd: str) -> bool:
+    """``cwd`` is a folder an agent of this worktree task must not run in: it
+    is outside the task's own folder (an older hub's fallback, ``~/cs``). A
+    second checkout inside it (``repo-linux``) is the task's own."""
     room_cwd = (room.get("cwd") or "").strip()
-    if not room_cwd:
-        return []
-    own = (room.get("taskDir") or (room.get("workspace") or {}).get("taskDir")
-           or "").strip() or room_cwd
-    out = []
-    for p in room.get("participants") or []:
-        if p.get("kind") != "agent":
-            continue
-        pc = (p.get("cwd") or "").strip()
-        if pc and not _same(pc, room_cwd) and not _inside(pc, own) and not _inside(pc, room_cwd):
-            out.append(p)
-    return out
+    if not _is_worktree_room(room) or not room_cwd or not cwd:
+        return False
+    return not _inside(cwd, _task_folder(room)) and not _inside(cwd, room_cwd)
 
 
-def repair_room_file(path: Path, backup_dir: Path, is_live=None) -> list[dict]:
-    """Repair one room file in place (backup first). Returns what changed:
-    [{room, no, identity, was, now}], and [{..., skipped}] for a seat running
-    now (its record stays as its process is; it is put right once stopped)."""
-    try:
-        room = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return []
-    seats = damaged_seats(room)
-    if not seats:
-        return []
-    out, changed = [], False
-    for p in seats:
-        row = {"room": room.get("id", path.stem), "no": room.get("no"),
-               "identity": p.get("identity", ""), "was": p.get("cwd", ""), "now": room["cwd"]}
-        if is_live is not None and is_live(room, p):
-            out.append({**row, "skipped": "running now"})
-            continue
-        p["cwd"] = room["cwd"]
-        changed = True
-        out.append(row)
-    if changed:
-        room["_revision"] = uuid.uuid4().hex     # chatroom's index reads it again
-        backup_dir.mkdir(parents=True, exist_ok=True)
-        stamp = time.strftime("%Y%m%d-%H%M%S")
-        shutil.copy2(path, backup_dir / f"{path.stem}.{stamp}.json")
-        tmp = path.with_name(path.name + ".seatfix.tmp")
-        tmp.write_text(json.dumps(room, indent=2, ensure_ascii=False), encoding="utf-8")
-        os.replace(tmp, path)
-    return out
+def damaged_seats(room: dict) -> list[dict]:
+    """The agent seats of a worktree task recorded outside the task's own
+    folder (``outside_task``)."""
+    return [p for p in room.get("participants") or []
+            if p.get("kind") == "agent" and outside_task(room, (p.get("cwd") or "").strip())]
 
 
-def repair_rooms(rooms_dir: Path, backup_dir: Path, is_live=None) -> list[dict]:
-    """``repair_room_file`` for every room. Idempotent: a repaired seat is
-    the room's folder, which is not damaged."""
+def scan_rooms(rooms_dir: Path) -> list[dict]:
+    """Read only: every damaged seat in the room files, [{room, no, identity,
+    was, now}]. The repair itself is the hub's (``repair_at_start``, and every
+    launch puts such a seat in its task's folder: ``launch_folder``)."""
     out: list[dict] = []
     for f in sorted(Path(rooms_dir).glob("room-*.json")):
-        out += repair_room_file(f, backup_dir, is_live)
+        try:
+            room = json.loads(f.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        for p in damaged_seats(room):
+            out.append({"room": room.get("id", f.stem), "no": room.get("no"),
+                        "identity": p.get("identity", ""), "was": p.get("cwd", ""),
+                        "now": room["cwd"], "ptyId": p.get("ptyId") or "",
+                        "sessionId": p.get("sessionId") or ""})
     return out
 
 

@@ -1,16 +1,18 @@
-"""Put back the seats an older hub moved to its fallback folder (ED-344).
+"""List the seats an older hub moved to its fallback folder (ED-344). Read only.
 
-    py tools/repair_seat_folders.py [--dry-run] [--rooms DIR] [--backups DIR]
+    python3 tools/repair_seat_folders.py [--rooms DIR]
 
-A seat of a worktree task whose folder is outside the task's own folder (an
-older hub recorded ``~/cs`` there when the task's worktree was missing) gets
-the task's folder again. A seat in another folder of the task (a second
-checkout such as ``repo-linux``) is left, and so is a seat whose session is
-running now (its process runs where it runs; the hub repairs it at its next
-start once it has stopped). Each room changed is backed up first.
+A seat of a worktree task recorded outside the task's own folder (an older
+hub stored ``~/cs`` there when the task's worktree was missing). A second
+checkout inside the task folder (``repo-linux``) is the task's own and is not
+listed.
 
-Writes the room files only; never calls the hub. The hub does the same at its
-start (seat_folders.repair_at_start), so this is for a hub that is running.
+Nothing is written here: a room file edited beside a running hub could lose
+what the hub writes meanwhile. The hub repairs them itself, under its room
+lock: every launch starts such a seat in its task's folder and records that
+(seat_folders.launch_folder), and each hub start writes the task's folder back
+on every stopped one (seat_folders.repair_at_start, with a backup in
+~/.ensemble/backups/seat-folders/).
 """
 import argparse
 import subprocess
@@ -19,9 +21,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
-import seat_folders  # noqa: E402  (damaged_seats / repair_rooms need no hub)
-
-HOME = Path.home()
+import seat_folders  # noqa: E402  (damaged_seats / scan_rooms need no hub)
 
 
 def _running_args() -> str:
@@ -34,42 +34,16 @@ def _running_args() -> str:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--dry-run", action="store_true", help="say what would change, write nothing")
-    ap.add_argument("--rooms", default=str(HOME / ".ensemble" / "rooms"))
-    ap.add_argument("--backups", default=str(HOME / ".ensemble" / "backups" / "seat-folders"))
+    ap.add_argument("--rooms", default=str(Path.home() / ".ensemble" / "rooms"))
     a = ap.parse_args()
-
     procs = _running_args()
-
-    def is_live(room, part):
-        sid = (part.get("sessionId") or "").strip()
-        return bool(sid) and sid in procs
-
-    rooms, backups = Path(a.rooms), Path(a.backups)
-    if a.dry_run:
-        rows = []
-        import json
-        for f in sorted(rooms.glob("room-*.json")):
-            try:
-                room = json.loads(f.read_text(encoding="utf-8"))
-            except (OSError, ValueError):
-                continue
-            for p in seat_folders.damaged_seats(room):
-                row = {"room": room.get("id", f.stem), "no": room.get("no"),
-                       "identity": p.get("identity", ""), "was": p.get("cwd", ""),
-                       "now": room["cwd"]}
-                if is_live(room, p):
-                    row["skipped"] = "running now"
-                rows.append(row)
-    else:
-        rows = seat_folders.repair_rooms(rooms, backups, is_live)
+    rows = seat_folders.scan_rooms(Path(a.rooms))
     for r in rows:
-        what = f"left ({r['skipped']})" if r.get("skipped") else f"-> {r['now']}"
-        print(f"{r['room']} #{r.get('no') or '?'} {r['identity']}: {r['was']} {what}")
-    fixed = sum(1 for r in rows if not r.get("skipped"))
-    verb = "would be repaired" if a.dry_run else "repaired"
-    print(f"{fixed} seat(s) {verb}, {len(rows) - fixed} left"
-          + ("" if a.dry_run or not fixed else f"; backups in {backups}"))
+        # A hint only: a fresh Codex session has no id on its command line.
+        live = " (its session is running)" if r["sessionId"] and r["sessionId"] in procs else ""
+        print(f"{r['room']} #{r.get('no') or '?'} {r['identity']}: {r['was']} "
+              f"-> {r['now']} at its next launch{live}")
+    print(f"{len(rows)} seat(s) outside their task's folder")
     return 0
 
 

@@ -270,6 +270,35 @@ class ResumeNeverMoves(_Base):
         self.assertEqual(seen, [str(task / "repo")] * 2)
 
 
+    def test_a_seat_left_on_cs_resumes_in_its_tasks_folder_and_is_recorded_so(self):
+        task = self.dir / "task"
+        (task / "repo").mkdir(parents=True)
+        (task / "repo" / "f.txt").write_text("x")
+        rid = self.room(task / "repo", task)
+        room = self.full(rid)
+        self.seat(room)["cwd"] = str(dashboard.CS_ROOT)
+        seen: list = []
+        h = self.handler(seen)
+        with self.assertRaises(_Stop):
+            h._resume_room_agent_pty(room, self.seat(room))
+        self.assertEqual(seen, [str(task / "repo")])
+
+    def test_a_fresh_session_keeps_the_seats_own_second_checkout(self):
+        task = self.dir / "task"
+        for d in ("repo", "repo-linux"):
+            (task / d).mkdir(parents=True)
+            (task / d / "f.txt").write_text("x")
+        rid = self.room(task / "repo", task)
+        room = self.full(rid)
+        self.seat(room)["cwd"] = str(task / "repo-linux")
+        seen: list = []
+        h = self.handler(seen)
+        with mock.patch.object(dashboard, "hub_launch_model", lambda *a: ("", "")):
+            with self.assertRaises(_Stop):
+                h._launch_room_agent_pty(room, self.seat(room), "brief")
+        self.assertEqual(seen, [str(task / "repo-linux")])
+
+
 class Repair(_Base):
     def damaged(self):
         task = self.dir / "task"
@@ -282,25 +311,13 @@ class Repair(_Base):
         chatroom.update_room(room)
         return rid, task
 
-    def test_a_seat_moved_to_cs_is_put_back_once_with_a_backup(self):
+    def test_the_scan_lists_them_and_writes_nothing(self):
         rid, task = self.damaged()
-        backups = self.dir / "bk"
-        rows = seat_folders.repair_rooms(chatroom.ROOMS_DIR, backups)
+        before = (chatroom.ROOMS_DIR / f"{rid}.json").read_bytes()
+        rows = seat_folders.scan_rooms(chatroom.ROOMS_DIR)
         self.assertEqual([(r["identity"], r["now"]) for r in rows],
                          [("claude", str(task / "repo"))])
-        raw = self.raw(rid)
-        self.assertEqual(self.seat(raw, "claude")["cwd"], str(task / "repo"))
-        self.assertEqual(self.seat(raw, "codex")["cwd"], str(task / "repo-linux"))
-        self.assertEqual(len(list(backups.glob(f"{rid}.*.json"))), 1)
-        self.assertEqual(seat_folders.repair_rooms(chatroom.ROOMS_DIR, backups), [])
-        self.assertEqual(len(list(backups.glob(f"{rid}.*.json"))), 1)
-
-    def test_a_running_seat_is_left_and_said(self):
-        rid, _ = self.damaged()
-        rows = seat_folders.repair_rooms(chatroom.ROOMS_DIR, self.dir / "bk",
-                                         is_live=lambda room, p: True)
-        self.assertEqual(rows[0]["skipped"], "running now")
-        self.assertEqual(self.seat(self.raw(rid), "claude")["cwd"], str(dashboard.CS_ROOT))
+        self.assertEqual((chatroom.ROOMS_DIR / f"{rid}.json").read_bytes(), before)
 
     def test_a_task_that_is_not_a_worktree_is_left_alone(self):
         task = self.dir / "task"
@@ -309,7 +326,17 @@ class Repair(_Base):
         room = self.full(rid)
         self.seat(room)["cwd"] = str(dashboard.CS_ROOT)
         chatroom.update_room(room)
-        self.assertEqual(seat_folders.repair_rooms(chatroom.ROOMS_DIR, self.dir / "bk"), [])
+        self.assertEqual(seat_folders.scan_rooms(chatroom.ROOMS_DIR), [])
+
+    def test_its_next_launch_starts_it_in_the_tasks_folder(self):
+        rid, task = self.damaged()
+        (task / "repo" / "f.txt").write_text("x")
+        room = self.full(rid)
+        self.assertEqual(seat_folders.launch_folder(room, "claude", str(dashboard.CS_ROOT)),
+                         str(task / "repo"))
+        # A second checkout inside the task is the seat's own.
+        self.assertEqual(seat_folders.launch_folder(room, "codex", str(task / "repo-linux")),
+                         str(task / "repo-linux"))
 
     def test_at_hub_start_through_the_room_store(self):
         rid, task = self.damaged()
