@@ -95,6 +95,27 @@ class PlainTitle(unittest.TestCase):
         self.assertEqual(update_notes.plain_notes(body),
                          "- Added drag and\n  drop to the inbox\n- Works on macOS or\n  Windows\n- Merge requests: faster")
 
+    def test_spacing_is_tidied_on_every_title(self):
+        cases = {
+            "Merge #9 (P5): Fix : spacing": "Fix: spacing",
+            "Fix : spacing": "Fix: spacing",
+            "Added  drag and drop": "Added drag and drop",
+            "Keep ( the note ) here": "Keep (the note) here",
+            "Merge requests: faster": "Merge requests: faster",
+            "Merge hotfix: a stuck chip": "A stuck chip",
+            "Merge hotfix (P261): a stuck chip": "A stuck chip",
+            "Merge P89: a stuck chip": "A stuck chip",
+            "Merge P89 hotfix: a stuck chip": "A stuck chip",
+            "Merge po/alarm-switch: a stuck chip": "A stuck chip",
+            "Merge follow-up: a stuck chip": "A stuck chip",
+            "Merge review 3: a stuck chip": "A stuck chip",
+        }
+        for subject, want in cases.items():
+            self.assertEqual(update_notes.plain_title(subject), want, subject)
+        # A release note keeps "Merge …" and a wrapped line its words.
+        self.assertEqual(update_notes.plain_notes("- Merge hotfix: x\n- Added  drag and\n  drop"),
+                         "- Merge hotfix: x\n- Added drag and\n  drop")
+
     def test_notes_keep_links_and_clean_their_labels(self):
         got = update_notes.plain_notes("- [Fix ED-12](https://x/y/12) now\n- [#12](https://x/12)\n- Plain #9 ![a](i.png)")
         self.assertEqual(got, "- [Fix](https://x/y/12) now\n- Plain ![a](i.png)")
@@ -200,24 +221,54 @@ class ReleaseNotes(unittest.TestCase):
         self.assertEqual(got["latestVersion"], "1.1.0")
         self.assertEqual([n["version"] for n in got["notes"]], ["1.1.0", "1.0.5"])
 
-    def test_the_fetch_reads_every_page_newer_than_the_running_one(self):
-        sizes = {1: 100, 2: 100, 3: 50}
-        pages = {n: [self.rel(f"v1.{260 - (n - 1) * 100 - i}.0", "-") for i in range(k)] for n, k in sizes.items()}
+    def fetching(self, pages):
         asked = []
         def get(url, timeout=20):
             page = int(url.rsplit("page=", 1)[1])
             asked.append(page)
             return json.dumps(pages.get(page, [])).encode()
-        with mock.patch.object(app_update, "_get", side_effect=get), \
-                mock.patch.dict(os.environ, {"ENSEMBLE_RELEASES_URL": ""}):
-            # v1.260 .. v1.161 then v1.160 .. v1.61: page 2 holds 1.100.0, so page 3 is not read.
+        return asked, mock.patch.object(app_update, "_get", side_effect=get)
+
+    def test_the_fetch_reads_every_page_newer_than_the_running_one(self):
+        sizes = {1: 100, 2: 100, 3: 50}
+        pages = {n: [self.rel(f"v1.{260 - (n - 1) * 100 - i}.0", "-") for i in range(k)] for n, k in sizes.items()}
+        asked, get = self.fetching(pages)
+        with get, mock.patch.dict(os.environ, {"ENSEMBLE_RELEASES_URL": ""}):
+            # v1.260 .. v1.161, then v1.160 .. v1.61, then v1.60 .. v1.11.
+            # Page 2 still holds newer ones than 1.100.0, page 3 none: it is the last.
             got = app_update.fetch_releases(current="1.100.0")
-            self.assertEqual(asked, [1, 2])
-            self.assertEqual(len(got), 200)
-            asked.clear()
-            # Everything newer: page 3 is short, so it is the last.
-            self.assertEqual(len(app_update.fetch_releases(current="1.0.0")), 250)
             self.assertEqual(asked, [1, 2, 3])
+            self.assertEqual(len(got), 250)
+            self.assertFalse(got.capped)
+            asked.clear()
+            # Nothing on page 2 is newer than 1.200.0: page 3 is not read.
+            self.assertEqual(len(app_update.fetch_releases(current="1.200.0")), 200)
+            self.assertEqual(asked, [1, 2])
+
+    def test_pages_out_of_order_are_all_read(self):
+        # A full page 1 that ends at the running version, then a newer one on page 2.
+        pages = {1: [self.rel(f"v1.0.{i}", "-") for i in range(99, 0, -1)] + [self.rel("v1.0.0", "-")],
+                 2: [self.rel("v2.1.0", "- The newest")]}
+        asked, get = self.fetching(pages)
+        with get, mock.patch.dict(os.environ, {"ENSEMBLE_RELEASES_URL": ""}):
+            got = app_update.check("1.0.0", "windows-x64", fetch=lambda: app_update.fetch_releases(current="1.0.0"))
+        self.assertEqual(asked, [1, 2])
+        self.assertEqual(got["latestVersion"], "2.1.0")
+        self.assertEqual(got["updates"], 100)
+        self.assertFalse(got["atLeast"])
+
+    def test_the_page_cap_makes_the_count_a_minimum(self):
+        pages = {n: [self.rel(f"v{2000 - (n - 1) * 100 - i}.0.0", "-") for i in range(100)]
+                 for n in range(1, app_update.RELEASES_MAX_PAGES + 3)}
+        asked, get = self.fetching(pages)
+        with get, mock.patch.dict(os.environ, {"ENSEMBLE_RELEASES_URL": ""}):
+            got = app_update.check("1.0.0", "windows-x64", fetch=lambda: app_update.fetch_releases(current="1.0.0"))
+        self.assertEqual(asked, list(range(1, app_update.RELEASES_MAX_PAGES + 1)))
+        self.assertTrue(got["atLeast"])
+        self.assertEqual(got["updates"], app_update.RELEASES_MAX_PAGES * 100)
+        self.assertEqual(got["more"], got["updates"] - 20)
+        page = (ROOT / "static" / "whatsnew.js").read_text()
+        self.assertIn("i.atLeast ? 'at least ' : ''", page)
 
     def test_a_long_release_list_says_how_many_more(self):
         rels = [self.rel(f"v1.{n}.0", f"- Change {n}") for n in range(1, 26)]

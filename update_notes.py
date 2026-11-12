@@ -18,8 +18,12 @@ MAX_ITEMS = 20
 
 # "Merge #328 (P294, P296): …", "Merge #327 (P292 follow-up): …", "Merge #12: …"
 _MERGE_PREFIX = re.compile(r"^\s*Merge\s+(?:[A-Z][A-Z0-9]{1,9}-)?#?\d+\b\s*(?:\([^)]*\))?\s*[:\-–—]\s*")
-# "Merge fix: …", "Merge round 2: …", "Merge follow-up: …"
-_MERGE_WORD = re.compile(r"^\s*Merge\b[^:#\n]{0,24}:\s*")
+# "Merge hotfix: …", "Merge hotfix (P261): …", "Merge round 2: …", "Merge follow-up: …",
+# "Merge P89: …", "Merge po/alarm-switch: …": bookkeeping words only, so a
+# subject such as "Merge requests: faster" keeps its words.
+_MERGE_WORD = re.compile(r"^\s*Merge\s+(?:hot-?fix|fix|follow-?up|(?:round|part|review)\s+\d+|"
+                         r"P\d+[a-z]?(?:\s+(?:hot-?fix|fix|follow-?up))?|[\w.-]+/[\w./-]+)"
+                         r"(?:\s*\([^)]*\))?\s*:\s*", re.I)
 # A whole parenthesis of references: "(P294, P296)", "(#330, P306)", "(ED-12)".
 _REF = r"(?:[A-Z][A-Z0-9]{1,9}-\d+|#\d+|P\d+[a-z]?)"
 # A run of references: "#14, #15, and #16", "#12/#13", "P294 & P296".
@@ -40,7 +44,16 @@ _SHA = re.compile(r"(?<![\w/])" + _SHA_HEX + r"(?![\w/])")
 _URL = re.compile(r"https?://[^\s)\]>]+")
 _KEEP = re.compile(r"\x00(\d+)\x00")
 
+def _spacing(s: str) -> str:
+    """Harmless spacing, on every line: "Fix : x" -> "Fix: x", "a  b" -> "a b"."""
+    s = re.sub(r"[ \t]+([,;:.)])", r"\1", s)
+    s = re.sub(r"\([ \t]+", "(", s)
+    return re.sub(r"[ \t]{2,}", " ", s).strip(" \t")
+
+
 def _tidy(s: str) -> str:
+    """What a removed reference leaves behind: "()", a separator or a
+    conjunction alone, "the the"."""
     s = re.sub(r"\(\s*[,;:/&]?\s*\)", "", s)               # "()" left behind
     s = re.sub(r"\s+([,;:.)])", r"\1", s)                    # "word ," -> "word,"
     s = re.sub(r"\(\s+", "(", s)
@@ -53,15 +66,16 @@ def _tidy(s: str) -> str:
 
 
 def _plain(s: str) -> str:
-    """References out; the punctuation tidied only where one was taken out,
-    so a line without any (a wrapped "drag and") is left as it is."""
+    """References out. What they leave behind is tidied only where one was
+    taken out, so a line without any (a wrapped "drag and") keeps its words;
+    every line gets the harmless spacing fixes."""
     was = s
     s = _REF_PARENS.sub("", s)
     s = _REF_POSSESSIVE.sub("the", s)
     s = _REF_LEAD.sub("", s)
     s = _REF_LONE.sub("", s)
     s = _SHA.sub("", s)
-    return s if s == was else _tidy(s)
+    return _spacing(s) if s == was else _tidy(s)
 
 
 def plain_title(subject: str, links: bool = False) -> str:

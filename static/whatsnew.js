@@ -78,7 +78,7 @@
         + (n.body ? md(n.body) : '<p>No notes for this release.</p>')).join('');
       return `<div class="wn-label">${many ? 'Release notes, newest first' : 'Release notes'}</div>`
         + (body || `<p>${esc(i.latestMessage || 'No notes for this release.')}</p>`)
-        + (i.more ? `<div class="wn-more">and ${plural(i.more, 'earlier release', 'earlier releases')}</div>` : '');
+        + (i.more ? `<div class="wn-more">and ${i.atLeast ? 'at least ' : ''}${plural(i.more, 'earlier release', 'earlier releases')}</div>` : '');
     }
     const items = i.items || [];
     if (!items.length) return `<div class="wn-label">What's new</div><p>${esc(i.latestMessage || '')}</p>`;

@@ -51,7 +51,7 @@ SUMS_NAME = "SHA256SUMS.txt"
 RELEASES_URL = "https://api.github.com/repos/{repo}/releases?per_page=100"
 # What's new counts every release newer than the running one (#339): further
 # pages are read while a full page is still all newer, up to this many.
-RELEASES_MAX_PAGES = 5
+RELEASES_MAX_PAGES = 10
 USER_AGENT = "Ensemble-updater"
 PREVIOUS_DIR = ".previous"
 FAILED_DIR = ".failed"
@@ -165,19 +165,30 @@ def fetch_releases(repo: str = app_version.REPO, timeout: float = 15,
     if feed:
         return json.loads(_get(feed, timeout).decode("utf-8"))
     url = RELEASES_URL.format(repo=repo)
-    out: list = []
+    out = Releases()
     for page in range(1, RELEASES_MAX_PAGES + 1):
         got = json.loads(_get(f"{url}&page={page}", timeout).decode("utf-8"))
         if not isinstance(got, list):
             raise ValueError("the release list is not a list")
         out.extend(got)
-        # A short page is the last; a page that reaches the running version
-        # holds everything newer (GitHub lists the newest first).
+        # A short page is the last. A page with no release newer than the
+        # running one ends it too; the order across pages is not trusted, so
+        # a page that reaches the running version but still holds a newer one
+        # does not.
         tags = [str(r.get("tag_name") or "") for r in got if isinstance(r, dict)]
-        if len(got) < 100 or any(app_version.parse_version(t) and not app_version.is_newer(t, current)
-                                 for t in tags):
+        if len(got) < 100 or not any(app_version.parse_version(t) and app_version.is_newer(t, current)
+                                     for t in tags):
             break
+    else:
+        # The cap, on a full page that still held newer releases: the count
+        # of what is newer is a minimum.
+        out.capped = True
     return out
+
+
+class Releases(list):
+    """The fetched list; ``capped`` when the page cap cut it short."""
+    capped = False
 
 
 def check(current: str = app_version.VERSION, key: str | None = None, fetch=fetch_releases) -> dict:
@@ -204,7 +215,8 @@ def check(current: str = app_version.VERSION, key: str | None = None, fetch=fetc
             "latestVersion": rel["version"], "latestMessage": update_notes.plain_title(rel["name"]),
             "release": rel, "latestId": rel["version"],
             "notes": notes[:update_notes.MAX_ITEMS], "more": max(0, len(notes) - update_notes.MAX_ITEMS),
-            "updates": len(notes), "latestDate": latest["at"] if latest else 0}
+            "updates": len(notes), "atLeast": bool(getattr(releases, "capped", False)),
+            "latestDate": latest["at"] if latest else 0}
 
 
 def download(url: str, dest: Path, timeout: float = 60) -> Path:
