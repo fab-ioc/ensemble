@@ -173,6 +173,11 @@ Object.assign(ctx, { $: () => box, nearEnd: () => false, showLatest: () => {}, w
 vm.runInContext(`var TEAM_ALL = true, GOTO = '', GOTO_OPEN = false, STICK = true, CU_OPENED = false, CU_SNAP = null;
   globalThis.t.open = (items, link) => { LAST_ITEMS = items; GOTO_OPEN = link; store.clear(); READ_MEM = null; catchUpOpen(); return GOTO_OPEN; };`, Object.assign(ctx, { store }));
 T.open(items, false);
+out.openNoHistory = box.scrollTop;   // no read point kept: the end, the line stays up the chat (#333)
+vm.runInContext(`globalThis.t.openStored = (items, stored) => { LAST_ITEMS = items; GOTO_OPEN = false; store.clear(); READ_MEM = null;
+  store.set(READ_KEY(), JSON.stringify(stored)); catchUpOpen(); };`, ctx);
+box.scrollTop = 900;
+T.openStored(items, { id: 's:7', ts: 141 });
 out.openJump = box.scrollTop;
 box.scrollTop = 900;
 out.openLinkConsumed = T.open(items, true);
@@ -302,6 +307,7 @@ class CatchUpLine(unittest.TestCase):
 
     def test_opening_on_the_line_unless_on_a_link(self):
         o = self.out
+        self.assertEqual(o["openNoHistory"], 5000)
         self.assertEqual(o["openJump"], 288)
         self.assertFalse(o["openLinkConsumed"])
         self.assertEqual(o["openLink"], 900)

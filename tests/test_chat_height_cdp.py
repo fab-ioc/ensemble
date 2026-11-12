@@ -52,8 +52,12 @@ async function main() {
     const d=frame?.contentDocument, list=d?.querySelector('#msgs'), compose=d?.querySelector('#compose');
     const parent=panel || (frame?.closest('#detail-panel, #po-panel'));
     const pb=b(parent), fb=b(frame), lb=b(list), cb=b(compose);
+    // The chat's own box is hidden when the shared box under the chats serves it
+    // (f0a5f87): the chat's foot is then the lowest visible one of its list, a status
+    // panel (prompt card, command panel, live tail, stop note) or a thread's Reply (#333).
+    const foot=[...(d?.querySelectorAll('#msgs,#promptcard,#cmdpanel,#livetail,#stop-note,#thread-reply,#compose')||[])].map(b).filter(r=>r&&r.h).sort((p,q)=>q.b-p.b)[0];
     return {panel:pb,frame:fb,list:lb,box:cb,body:b(d?.body),main:b(d?.querySelector('main')),
-      listHeight:lb?.h, bottomGap:cb&&fb?fb.h-cb.b:null, emptyBelow:cb&&pb?pb.b-(fb?.y||0)-cb.b:null,
+      listHeight:lb?.h, bottomGap:foot&&fb?fb.h-foot.b:null, emptyBelow:foot&&pb?pb.b-(fb?.y||0)-foot.b:null,
       scrollRemaining:list?Math.max(0,list.scrollHeight-list.clientHeight-list.scrollTop):null,
       ratio:lb&&pb?lb.h/pb.h:null, bodyHeight:d?.body?.getBoundingClientRect().height,
       frameClientHeight:frame?.clientHeight, mode:panel?PD.dock.viewMode('chat:'+rid):'middle',
@@ -72,6 +76,11 @@ async function main() {
     await until(`!!PD.rt.get('chat:'+${JSON.stringify(A.task)})?.el.querySelector('iframe')?.contentDocument?.querySelector('#compose')`);
     await sleep(500);
     out.dockedLaptop=await ev(measure);
+    // A status panel under the list while the shared box serves the chat (#333 review 3).
+    const stopNote = on => `(() => { const n=PD.rt.get('chat:'+${JSON.stringify(A.task)}).el.querySelector('iframe').contentDocument.getElementById('stop-note');
+      n.textContent=${on}?'Stopped: the agent was interrupted.':''; n.hidden=!${on}; return 0; })()`;
+    await ev(stopNote(true)); await sleep(300); out.dockedStopNote=await ev(measure);
+    await ev(stopNote(false)); await sleep(200);
     await size(1728,2000); await sleep(400); out.dockedTall=await ev(measure);
     await send('Page.reload',{},s);
     await until(`!!PD.rt.get('chat:'+${JSON.stringify(A.task)})?.el.querySelector('iframe')?.contentDocument?.querySelector('#compose')`);
@@ -141,7 +150,7 @@ async function main() {
     await ev(`PD.dock.setViewMode('po-chat','pinned'); 0`);
     await size(1728,2000); await sleep(400); out.middlePopRestore=await ev(measure);
     out.tools={};
-    for(const id of ['spec','changes','points','board','workspace']) {
+    for(const id of ['spec','changes','board','workspace']) {
       await ev(`PD.dock.setViewMode(${JSON.stringify(id)},'pinned'); PD.dock.reveal(${JSON.stringify(id)}); 0`);
       await sleep(250);
       out.tools[id]=await ev(`(() => { const e=PD.els[${JSON.stringify(id)}]; const r=e.getBoundingClientRect();
@@ -174,9 +183,9 @@ async function main() {
       const po=PD.els['po-chat'].querySelector('iframe.po-session'), pd=po?.contentDocument;
       const side=PD.rt.get('thread:po')?.el, f=side?.querySelector('iframe'), d=f?.contentDocument;
       const list=d?.querySelector('#msgs'), compose=d?.querySelector('#compose');
-      const pb=b(po), sb=b(side), fb=b(f), lb=b(list), cb=b(compose), main=b(side?.closest('.dk-body'));
-      return {panel:sb, frame:fb, list:lb, box:cb, chat:pb, listHeight:lb?.h, bottomGap:cb&&fb?fb.h-cb.b:null,
-        emptyBelow:cb&&sb&&fb?sb.b-fb.y-cb.b:null, sideOfMain:sb&&main?sb.h/main.h:null,
+      const pb=b(po), sb=b(side), fb=b(f), lb=b(list), cb=b(compose), main=b(side?.closest('.dk-body')), foot=[...(d?.querySelectorAll('#msgs,#promptcard,#cmdpanel,#livetail,#stop-note,#thread-reply,#compose')||[])].map(b).filter(r=>r&&r.h).sort((p,q)=>q.b-p.b)[0];
+      return {panel:sb, frame:fb, list:lb, box:cb, chat:pb, listHeight:lb?.h, bottomGap:foot&&fb?fb.h-foot.b:null,
+        emptyBelow:foot&&sb&&fb?sb.b-fb.y-foot.b:null, sideOfMain:sb&&main?sb.h/main.h:null,
         scrollRemaining:list?Math.max(0,list.scrollHeight-list.clientHeight-list.scrollTop):null,
         scrollTop:list?list.scrollTop:null, screens:list?list.scrollHeight/list.clientHeight:null,
         ratio:lb&&sb?lb.h/sb.h:null, layer:!side || !!pd?.getElementById('thr-side')?.classList.contains('layer')};
@@ -285,16 +294,15 @@ class ChatHeight(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertLessEqual(g['emptyBelow'], 16, g)
                 self.assertGreaterEqual(g['ratio'], .7, g)
+
+    def test_a_thread_opens_at_its_latest_reply(self):
         for name in ('threadLaptop', 'threadTall', 'threadReload'):
             with self.subTest(name=name):
                 g = self.got[name]
-                # Up to a screen and a half tall it opens on its first
-                # message (Slack's), a longer one at its latest reply; made
-                # taller once open (threadTall), it stays where it was.
-                if g['screens'] <= 1.5 and name != 'threadTall':
-                    self.assertEqual(g['scrollTop'], 0, g)
-                else:
-                    self.assertLessEqual(g['scrollRemaining'], 16, g)
+                # A thread opens at its latest reply, short or long, on a
+                # reload too (#333: the #234 open-at-top rule is gone); made
+                # taller once open (threadTall), it stays at the end.
+                self.assertLessEqual(g['scrollRemaining'], 16, g)
                 self.assertFalse(g['layer'], 'a laptop: the thread in a panel beside the chat')
                 self.assertGreaterEqual(g['sideOfMain'], .99, g)
 

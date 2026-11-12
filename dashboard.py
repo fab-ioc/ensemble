@@ -169,6 +169,7 @@ agent_launch.install_spawn_guard()
 import running_rooms
 import hub_typing
 import restore_problems
+import move_check
 
 # Windows: a console program started by a host that has no console of its own
 # (pythonw.exe under the scheduled task) gets a brand-new console window, which
@@ -213,6 +214,7 @@ lost_sessions.bind(sys.modules[__name__])
 running_rooms.bind(sys.modules[__name__])
 hub_typing.bind(sys.modules[__name__])
 restore_problems.bind(sys.modules[__name__])
+move_check.bind(sys.modules[__name__])
 points.bind(sys.modules[__name__])
 asks.bind(sys.modules[__name__])
 threads.bind(sys.modules[__name__])
@@ -15313,6 +15315,8 @@ def restart_plan(room_id: str = "", drain: bool = False) -> dict:
         "noTask": bool(os.environ.get("ENSEMBLE_RESTART_NO_TASK")),
         "keepAgents": keep_agents,
         "launchd": _launchd_service(),
+        # Linux: the systemd user unit running this hub (read at its start).
+        "systemd": BACKEND.systemd_service(),
         "graceSeconds": grace,
         "resumeRooms": resume,
         "wakeRoom": room_id if wake else "",
@@ -18889,6 +18893,10 @@ class Handler(BaseHTTPRequestHandler):
                             if app_version.packaged() else {"enabled": False, "supported": False,
                                                             "reason": "source"})
             return
+        if p == "/api/move-check":
+            # The last move check (#331): what it found, repaired and could not.
+            self._send_json(200, move_check.last())
+            return
         if p == "/api/backup/status":
             bs = load_settings()
             self._send_json(200, {**backup.status(), "root": str(PROJECTS_ROOT),
@@ -21679,6 +21687,12 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/mcp":
             self._handle_mcp(data)
             return
+        if p == "/api/move-check":
+            # Run the move check again; {"repair": false} only looks.
+            repair = not (isinstance(data, dict) and data.get("repair") is False)
+            r = move_check.run_check(repair=repair, notify=repair)
+            self._send_json(200, r)
+            return
         if p == "/api/page-log":
             # A page's own trouble (the panels' library not loading, #132), in
             # the hub's log: a browser's console is read by nobody. One line,
@@ -23490,6 +23504,12 @@ def main():
     BACKEND.warm_editors()
     servers = []
     remote_bound = False
+    if sys.platform.startswith("linux"):
+        # How a restart stops and starts this hub: read once, now.
+        unit = BACKEND.systemd_service()
+        print("[startup] restart: " + (f"through the systemd user unit {unit['unit']}" if unit
+                                      else "not under a systemd unit; the helper starts the hub"),
+              flush=True)
     if wildcard:
         servers.append(_listen_or_exit(remote_host, port))
         _announce_remote(remote_host)
@@ -23675,6 +23695,15 @@ def main():
     # The restart monitor tells working agents, watches them and restarts
     # when all are ready.
     restart_drain.start_monitor(restart_drain.drain_tick)
+
+    # The move check (#331): code folders, task folders, worktrees and
+    # conversations the state copied from another machine still points at
+    # there. Repaired where safe before any room comes back below.
+    if not os.environ.get("ENSEMBLE_NO_MOVE_CHECK"):
+        try:
+            move_check.run_check(repair=True)
+        except Exception as e:      # noqa: BLE001 — never stops the hub
+            print(f"[move] check skipped: {e!r}", flush=True)
 
     # A cold start (the machine booted, the PTY host died) brings back the
     # rooms that were running, as a restart would (P190).

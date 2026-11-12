@@ -123,7 +123,7 @@ const GEOM = `(() => {
   const strip = s => [...document.querySelectorAll('#list-dock .dk-strip-' + s + ' .dk-strip-btn[data-dk-auto]')].map(b => b.dataset.dkAuto);
   const sb = id => document.querySelector('#list-dock .dk-strip-btn[data-dk-auto="' + id + '"]');
   const leftHead = document.querySelector('#list-dock .dk-head:has([data-dk-tab="inbox"])');
-  const ico = b => { const s = b.querySelector('svg'); if (!s) return null; const r = s.getBoundingClientRect(); return { k: s.getAttribute('aria-label') || 'swatch', w: Math.round(r.width), h: Math.round(r.height), fill: getComputedStyle(s.querySelector('rect, path')).fill }; };
+  const ico = b => { const s = b.querySelector('svg'); if (!s) return null; const r = s.getBoundingClientRect(); return { k: s.getAttribute('aria-label') || 'swatch', w: Math.round(r.width), h: Math.round(r.height), fill: getComputedStyle(s.querySelector('rect, path')).fill, parts: [...s.querySelectorAll('rect, path, circle')].map(e => e.tagName).join(','), rx: (s.querySelector('rect') || { getAttribute: () => '' }).getAttribute('rx') || '' }; };
   const tb = document.querySelector('#list-dock .dk-tab[data-dk-tab="inbox"] .dk-badge');
   const sp = document.getElementById('ld-split');
   const wideEls = [...document.querySelectorAll('body *')].filter(e => { const r = e.getBoundingClientRect(); return r.width > 0 && r.right > document.documentElement.clientWidth + 1 && getComputedStyle(e).position !== 'fixed' && !e.closest('[hidden], .dk-off') && !(e.closest('#detail-panel') && !document.body.classList.contains('detail-open')); });
@@ -305,9 +305,12 @@ async function main() {
       LDP.sig = ''; ldpPaint();
       const b = document.querySelector('#ld-projs .ldp-row[data-ldp-sid="sess-loose-1"]');
       const t = b ? b.textContent.trim() : null;
+      const sv = b && b.querySelector('svg');
+      const parts = sv ? [...sv.querySelectorAll('rect, path, circle')].map(e => e.tagName).join(',') : '';
+      const sz = sv ? [Math.round(sv.getBoundingClientRect().width), Math.round(sv.getBoundingClientRect().height)] : null;
       if (b) b.click();
       openDetail = od;
-      return { un: !!un, row: t, opened: seen };
+      return { un: !!un, row: t, opened: seen, parts, sz };
     })()`);
     // back to Motors' PO from its row
     await front(p, 'inbox'); await p.click(LDP(`[data-ldp-proj="${P.Motors}"]`));
@@ -566,6 +569,32 @@ async function main() {
     await sleep(600);
     out.phone = await ph.evalIn(`(() => ({ ld: !!LD.dock, narrow: !!PD.dock && PD.dock.narrow(), pdInbox: !!PD.dock && PD.dock.title('inbox') != null, W: document.documentElement.clientWidth, scrollW: document.documentElement.scrollWidth }))()`);
     await ph.shot('left-strip-phone');
+    // #335: the phone's list wears the same task and session icons (set B) on its rows in no project
+    out.phoneList = await ph.evalIn(`(() => {
+      const un = projectById(UNASSIGNED_ID);
+      const now = Date.now() / 1000;
+      const rs = [{ sessionId: 'ph-sess-1', label: 'Fix my printer driver', headless: false, updatedAt: now, isLive: false, agent: 'claude' },
+                  { sessionId: 'ph-task-1', roomId: 'room-phtask1', label: 'Old parts inventory', headless: true, updatedAt: now + 1, isLive: false, agent: 'claude' }];
+      for (const r of rs) ALL_ROWS.push(r);
+      if (un) un.sessions = (un.sessions || []).concat(rs.map(r => ({ sessionId: r.sessionId })));
+      phPane('list'); swSetView('status');
+      for (const d of document.querySelectorAll('details.sw-group[data-group="unassigned"]')) d.open = true;
+      // each seeded row by its own id, scrolled to as a person would, its icon inside the screen
+      const W = document.documentElement.clientWidth, H = document.documentElement.clientHeight;
+      return rs.map(x => {
+        const row = document.querySelector('[data-group="unassigned"] [data-sid="' + x.sessionId + '"]');
+        const s = row && row.querySelector('.sw-kind-ico');
+        if (!s) return { sid: x.sessionId, k: null };
+        s.scrollIntoView({ block: 'center' });
+        const r = s.getBoundingClientRect();
+        return { sid: x.sessionId, k: s.getAttribute('aria-label'), w: Math.round(r.width), h: Math.round(r.height),
+                 inView: r.left >= 0 && r.top >= 0 && r.right <= W && r.bottom <= H,
+                 parts: [...s.querySelectorAll('rect, path, circle')].map(e => e.tagName).join(',') };
+      });
+    })()`);
+    out.phoneListW = await ph.evalIn(`[document.documentElement.clientWidth, document.documentElement.scrollWidth]`);
+    await ph.shot('left-strip-phone-list');
+    await ph.evalIn(`(swSetView('recent'), phPane(''), 0)`);
     // ---- the same page made a computer's: the Inbox leaves the PO dock, onto the list dock's strip
     const RS = `({ tabs: [...document.querySelectorAll('#po-dock .dk-tab')].map(t => t.dataset.dkTab), narrow: PD.dock.narrow(), pdInbox: PD.dock.title('inbox') != null, lay: JSON.stringify(PD.dock.layout()), left: LD.dock ? [...document.querySelectorAll('#list-dock .dk-strip-left .dk-strip-btn[data-dk-auto]')].map(b => b.dataset.dkAuto) : [] })`;
     await c.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false }, ph.sessionId);
@@ -766,6 +795,31 @@ class LeftStripInChrome(unittest.TestCase):
         fills = [r["ico"]["fill"] for r in rows if r["proj"]]
         self.assertEqual(len(set(fills)), len(fills), "three projects, three colours: %s" % fills)
         self.assertEqual(next(r for r in rows if r["room"] == self.loose)["ico"]["k"], "task")
+
+    def test_the_task_icon_is_a_clipboard(self):
+        # #335 (CEO's pick, set B): a task a clipboard with a check (its body, its clip, the check),
+        # never the projects' rounded square
+        ico = next(r for r in self.g("fresh")["ldp"] if r["room"] == self.loose)["ico"]
+        self.assertEqual(ico["parts"], "rect,rect,path")
+        self.assertNotEqual(ico["rx"], "3", "not the swatch's square")
+        self.assertEqual((ico["w"], ico["h"]), (12, 12))
+
+    def test_the_session_icon_is_a_terminal(self):
+        # #335: a session the terminal window it runs in (its frame, the prompt >_)
+        s = self.g("session")
+        self.assertEqual(s["parts"], "rect,path")
+        self.assertEqual(s["sz"], [12, 12])
+
+    def test_the_phone_list_wears_the_same_icons(self):
+        by = {i["sid"]: i for i in self.got["phoneList"]}
+        want = {"ph-task-1": ("task", "rect,rect,path"), "ph-sess-1": ("session", "rect,path")}
+        for sid, (k, parts) in want.items():
+            with self.subTest(sid=sid):
+                i = by[sid]
+                self.assertEqual((i["k"], i["parts"], i["w"], i["h"]), (k, parts, 12, 12), i)
+                self.assertTrue(i["inView"], "its icon on the screen: %s" % i)
+        w, sw = self.got["phoneListW"]
+        self.assertEqual((w, sw), (390, 390), "no sideways scroll on a phone")
 
     def test_the_divider(self):
         g = self.got

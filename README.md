@@ -91,8 +91,8 @@ To run Ensemble from a clone instead, read on.
 - **Python 3.10 or newer.** The code uses `X | None` type unions, which older versions cannot parse. Developed and tested with 3.13.
 - **Claude Code** (`claude`), **Codex** (`codex`), or both, on `PATH` and logged in. Ensemble starts them; it does not install them or log them in.
 - **git** on `PATH`, for worktrees, the Changes tab, the backup and a documents project's file history.
-- **Windows 10 or 11, or macOS.** The Linux backend is a stub: the pages load, but launching agents on Linux is not wired up.
-- **`requirements.txt`**: `pywinpty` on Windows, `ptyprocess` on macOS. These run the agents headless. The start scripts install them if they are missing.
+- **Windows 10 or 11, macOS, or Linux.** On Linux, agents run headless and the hub restarts and updates itself; opening a session in a real terminal window is not wired up yet.
+- **`requirements.txt`**: `pywinpty` on Windows, `ptyprocess` on macOS and Linux. These run the agents headless. The start scripts install them if they are missing.
 
 Optional:
 
@@ -139,6 +139,18 @@ cd ~/ensemble
 Other commands are `stop`, `restart`, `status` and `logs`, and `--port N` picks another port. The log is `~/Library/Logs/ensemble.log`. `restart` and the dashboard's Install now bring the hub back on the port `start` last used (kept in `~/.ensemble/server.port`); the update's output goes to the same log. To start the hub at login, run `./install-launchd.sh`, which installs the LaunchAgent `com.ensemble.dashboard`. It also takes `status` and `uninstall`. The LaunchAgent keeps the `PATH` of the shell you run it from, so the hub finds `claude`, `codex`, `git` and `node` wherever they are installed.
 
 The macOS scripts were read and adjusted but not run for this README; only the Windows steps were tried.
+
+### Linux
+
+```sh
+git clone https://github.com/fab-ioc/ensemble.git ~/ensemble
+cd ~/ensemble
+./install-systemd.sh      # installs ptyprocess if needed, installs and starts the systemd user unit ensemble.service
+```
+
+The unit runs the hub from this clone at login, on port 8765 (`ENSEMBLE_PORT=N ./install-systemd.sh` picks another; `ENSEMBLE_BIND=…` sets the address the hub listens on, as in [Remote use and security](#remote-use-and-security)), and starts it again if it stops. Running it again rewrites only `ensemble.service`: drop-ins in `~/.config/systemd/user/ensemble.service.d/` are kept, and their settings win over the unit's. The state stays in `~/.ensemble`, the log is `~/.ensemble/logs/ensemble.log` (and `journalctl --user -u ensemble`). The dashboard's restart and **Update now** stop and start the hub through the unit; Update now first brings this clone to its upstream (`git fetch` and a reset), so keep the clone for running Ensemble, not for development. `./install-systemd.sh status` and `./install-systemd.sh uninstall` do what they say. To keep the hub running while you are logged out: `loginctl enable-linger $USER`. Keep the unit name `ensemble.service`. At startup the hub logs which way it restarts (`[startup] restart: through the systemd user unit ensemble.service`).
+
+Without the unit, `./ensemble start` (and `stop`, `restart`, `status`, `logs`) runs the hub in the background as on macOS, with its log in `~/.ensemble/logs/ensemble.log`.
 
 ### Moving from claude-dashboard
 
@@ -276,13 +288,14 @@ Each project keeps its own files in its folder: `project.json`, `ROADMAP.md`, `P
 | `history.py` | A documents project's file history |
 | `task_numbers.py`, `message_refs.py`, `workspace_search.py`, `peer_process.py` | Task numbers (`#18`, `ED-18`), links to messages, Workspace search, caller detection |
 | `agents/` | Adapters for Claude Code and Codex |
-| `backends/` | Per-OS code (Windows, macOS, Linux stub) and the headless terminal runner |
+| `backends/` | Per-OS code (Windows, macOS, Linux) and the headless terminal runner |
 | `skills/` | The two agent skills |
 | `tests/` | The test suite |
 | `tools/` | A measuring script for agents' tool output |
 | `docs/` | The screenshots in this README |
 | `ensemble.ps1`, `install-task.ps1`, `restart-hub.ps1` | Windows: start and stop, autostart task, restart helper |
 | `ensemble`, `install-launchd.sh`, `com.ensemble.dashboard.plist.template` | macOS: start and stop, LaunchAgent |
+| `install-systemd.sh` | Linux: the systemd user unit (`ensemble` starts and stops there too) |
 | `requirements.txt` | `pywinpty` / `ptyprocess` |
 | `ensemble_app.py`, `app_launch.py`, `app_version.py`, `app_update.py`, `app_setup.py` | The built app: its entry, start, version, Update now from GitHub Releases, agent check and start at sign-in |
 | `packaging/`, `.github/workflows/release.yml` | The PyInstaller build, the Windows installer (Inno Setup) and the release workflow |
