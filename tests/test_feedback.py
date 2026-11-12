@@ -225,6 +225,7 @@ class FeedbackEndpoint(unittest.TestCase):
         self.assertIn('not anonymous', result['message'])
         self.assertTrue(result['url'].startswith('https://github.com/fab-ioc/ensemble/issues/new?'))
         self.assertNotIn('Alice', result['url'])
+        self.assertFalse(result['unsure'])   # nothing was sent anywhere
 
     def test_relay_down_offers_fallback_and_preserves_retry(self):
         draft = self.draft(anonymous=True)
@@ -233,6 +234,7 @@ class FeedbackEndpoint(unittest.TestCase):
             _, result = self.post('send', {'id': draft['id']})
         self.assertTrue(result['fallback'])
         self.assertNotIn('private host', result['message'])
+        self.assertTrue(result['unsure'])    # the relay may have created it (#332)
         self.assertEqual(feedback._drafts[draft['id']]['state'], 'ready')
 
     def test_missing_ca_certificates_are_named(self):
@@ -242,6 +244,7 @@ class FeedbackEndpoint(unittest.TestCase):
             _, result = self.post('send', {'id': draft['id']})
         self.assertTrue(result['fallback'])
         self.assertIn('Install Certificates', result['message'])
+        self.assertFalse(result['unsure'])   # refused before anything was sent
 
     def test_rate_limit_does_not_bypass_through_fallback(self):
         draft = self.draft(anonymous=True)

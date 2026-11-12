@@ -94,22 +94,25 @@
     el('feedback-sent-title').textContent = sent.title; el('feedback-sent-body').textContent = sent.body;
     const what = el('feedback-done-what'), hint = el('feedback-done-hint');
     hint.replaceChildren(); hint.hidden = true;
+    // The screenshots never leave this page: their links stay until Close.
+    const downloads = where => {
+      const many = images.length > 1;
+      hint.append(`Download the screenshot${many ? 's' : ''} (`);
+      images.forEach((item, i) => {
+        const a = document.createElement('a'); a.href = item.url; a.download = item.name.replace('.', many ? `-${i + 1}.` : '.'); a.textContent = a.download;
+        hint.append(...(i ? [', ', a] : [a]));
+      });
+      hint.append(`), then drag ${many ? 'them' : 'it'} onto the GitHub ${where}.`); hint.hidden = false;
+    };
     if (opened) {
+      if (images.length) { downloads('page'); hint.append(' '); }
       what.textContent = "GitHub's new-issue page opened in a new tab with your text filled in. Submit it there to finish; it posts under your GitHub account and is not anonymous.";
       hint.append('Tab closed by mistake? ', anchor(url, 'Open the GitHub page again'), '.'); hint.hidden = false;
     } else {
       const number = (/\/issues\/(\d+)$/.exec(url) || [])[1];
       what.replaceChildren('Issue ', anchor(url, number ? '#' + number : 'on GitHub'), ` was created in ${sent.repo}, ` +
         (sent.route === 'gh' ? `posted as GitHub user ${sent.login}.` : sent.anonymous ? 'posted anonymously through the relay.' : 'posted through the relay with your typed name.'));
-      if (images.length && !sent.anonymous) {
-        const many = images.length > 1;
-        hint.append(`Download the screenshot${many ? 's' : ''} (`);
-        images.forEach((item, i) => {
-          const a = document.createElement('a'); a.href = item.url; a.download = item.name.replace('.', many ? `-${i + 1}.` : '.'); a.textContent = a.download;
-          hint.append(...(i ? [', ', a] : [a]));
-        });
-        hint.append(`), then drag ${many ? 'them' : 'it'} onto the GitHub issue.`); hint.hidden = false;
-      }
+      if (images.length && !sent.anonymous) downloads('issue');
       if (sent.warning) { hint.append(hint.hidden ? '' : ' ', sent.warning); hint.hidden = false; }
     }
     el('feedback-done-close').focus();
@@ -202,7 +205,8 @@
       }
       if (result.fallback) {
         // The text stays for a retry; opening the prefilled page finishes there.
-        status(`Not sent. ${result.reason} Your text is kept: ` + (draft.route === 'browser' ? '' : 'press Send to retry, or '), true);
+        // unsure: the relay may have created the issue, so this is not "Not sent".
+        status(`${result.unsure ? 'Could not confirm delivery.' : 'Not sent.'} ${result.reason} Your text is kept: ` + (draft.route === 'browser' ? '' : 'press Send to retry, or '), true);
         const a = anchor(result.url, 'open GitHub (not anonymous)');
         a.addEventListener('click', () => setTimeout(() => showDone(result.url, true)));
         el('feedback-status').append(a, draft.route === 'browser' ? ' to finish there.' : '.');

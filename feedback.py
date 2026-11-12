@@ -231,9 +231,10 @@ def preview(data, settings, host="", private_values=()):
     return {k: plan[k] for k in ("title", "body", "kind", "repo", "route", "anonymous", "login", "attachments")} | {"id": ident}
 
 
-def fallback(plan, reason):
+def fallback(plan, reason, unsure=False):
+    """unsure: the relay may have created the issue (a timeout or a bad reply)."""
     query = urllib.parse.urlencode(dict(title=plan["title"], body=plan["body"], labels="feedback," + plan["kind"]))
-    return dict(ok=False, fallback=True, reason=reason, message=reason + " GitHub requires your login and will post under your account; this is not anonymous. Review and submit there.",
+    return dict(ok=False, fallback=True, reason=reason, unsure=unsure, message=reason + " GitHub requires your login and will post under your account; this is not anonymous. Review and submit there.",
                 url=f'https://github.com/{plan["repo"]}/issues/new?{query}')
 
 
@@ -287,15 +288,15 @@ def send(ident):
             except urllib.error.HTTPError as error:
                 if error.code in (400, 413, 429):
                     return dict(ok=False, message={400: "Relay repository or request does not match its configuration.", 413: "Relay size limit exceeded; shorten the description.", 429: "Relay limit reached (3 per hour per hub IP). Try later."}[error.code])
-                result = fallback(plan, "The relay failed. It may have created the issue; check the repository before retrying.")
+                result = fallback(plan, "The relay failed. It may have created the issue; check the repository before retrying.", unsure=True)
             except urllib.error.URLError as error:
                 if isinstance(error.reason, ssl.SSLCertVerificationError):
                     # python.org's macOS Python ships without CA certificates until its installer script runs.
                     result = fallback(plan, "This machine's Python cannot verify the relay's certificate. On a Mac, run \"Install Certificates.command\" in the Python folder under Applications, then send again.")
                 else:
-                    result = fallback(plan, "The relay is unreachable or returned an invalid reply. Check the repository before retrying to avoid duplicates.")
+                    result = fallback(plan, "The relay is unreachable or returned an invalid reply. Check the repository before retrying to avoid duplicates.", unsure=True)
             except (OSError, ValueError):
-                result = fallback(plan, "The relay is unreachable or returned an invalid reply. Check the repository before retrying to avoid duplicates.")
+                result = fallback(plan, "The relay is unreachable or returned an invalid reply. Check the repository before retrying to avoid duplicates.", unsure=True)
         return result
     except (OSError, subprocess.SubprocessError, ValueError):
         return dict(ok=False, message="Could not confirm delivery. Check the repository before retrying; your text is kept.")

@@ -148,11 +148,11 @@ async function main() {
 
       // Relay down, then the prefilled GitHub page: "Opened on GitHub".
       await ctl('relay=down'); await reopen();
-      await fill('Opened fallback ' + w, {anonymous: true}); await send();
+      await fill('Opened fallback ' + w, {name: 'Tester', image: true}); await send();
       await ev(`document.querySelector('#feedback-status a').click()`);
       await until(`!document.getElementById('feedback-done').hidden`);
       o.opened = await ev(DONE);
-      o.openedAgain = await ev(`document.querySelector('#feedback-done-hint a').href`);
+      o.openedAgain = await ev(`document.querySelector('#feedback-done-hint a:not([download])').href`);
       await key('Escape'); await sleep(200); await reopen();
       o.openedReopen = await ev(FORM);
       await ctl('relay=ok');
@@ -263,7 +263,8 @@ class FeedbackDonePage(unittest.TestCase):
         for w, o in self.each():
             f = o['failed']
             self.assertTrue(f['open']); self.assertFalse(f['done']); self.assertTrue(f['error'])
-            self.assertTrue(f['status'].startswith('Not sent. '))
+            self.assertTrue(f['status'].startswith('Could not confirm delivery. The relay '))
+            self.assertIn('Check the repository before retrying', f['status'])
             self.assertIn('press Send to retry', f['status'])
             self.assertEqual(f['title'], 'Relay down ' + w); self.assertEqual(f['description'], 'What happened at ' + w)
             self.assertTrue(f['send'])
@@ -274,11 +275,13 @@ class FeedbackDonePage(unittest.TestCase):
         for w, o in self.each():
             d = o['opened']; self.assertDone(d, w, 'Opened on GitHub')
             self.assertIn('not anonymous', d['what']); self.assertEqual(d['label'], 'What was filled in')
+            self.assertEqual(d['downloads'], ['screenshot.png'])   # still downloadable until Close
+            self.assertIn('drag it onto the GitHub page', d['hint'])
             self.assertTrue(o['openedAgain'].startswith('https://github.com/fab-ioc/ensemble/issues/new?'))
             self.assertBlank(o['openedReopen'])
             self.assertEqual(o['noRelaySaved'], 'Saved.')
             b = o['browser']
-            self.assertTrue(b['error']); self.assertIn('No feedback relay is configured.', b['status'])
+            self.assertTrue(b['error']); self.assertTrue(b['status'].startswith('Not sent. No feedback relay is configured.'))
             self.assertNotIn('press Send to retry', b['status']); self.assertIn('to finish there', b['status'])
             self.assertEqual(b['title'], 'No relay ' + w)
             self.assertDone(o['browserDone'], w, 'Opened on GitHub')
