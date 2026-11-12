@@ -53,8 +53,9 @@ async function main() {
     const parent=panel || (frame?.closest('#detail-panel, #po-panel'));
     const pb=b(parent), fb=b(frame), lb=b(list), cb=b(compose);
     // The chat's own box is hidden when the shared box under the chats serves it
-    // (f0a5f87): then the chat's foot is a thread's Reply button, else its list (#333).
-    const foot=[cb,b(d?.querySelector('#thread-reply')),lb].find(r=>r&&r.h);
+    // (f0a5f87): the chat's foot is then the lowest visible one of its list, a status
+    // panel (prompt card, command panel, live tail, stop note) or a thread's Reply (#333).
+    const foot=[...(d?.querySelectorAll('#msgs,#promptcard,#cmdpanel,#livetail,#stop-note,#thread-reply,#compose')||[])].map(b).filter(r=>r&&r.h).sort((p,q)=>q.b-p.b)[0];
     return {panel:pb,frame:fb,list:lb,box:cb,body:b(d?.body),main:b(d?.querySelector('main')),
       listHeight:lb?.h, bottomGap:foot&&fb?fb.h-foot.b:null, emptyBelow:foot&&pb?pb.b-(fb?.y||0)-foot.b:null,
       scrollRemaining:list?Math.max(0,list.scrollHeight-list.clientHeight-list.scrollTop):null,
@@ -75,6 +76,11 @@ async function main() {
     await until(`!!PD.rt.get('chat:'+${JSON.stringify(A.task)})?.el.querySelector('iframe')?.contentDocument?.querySelector('#compose')`);
     await sleep(500);
     out.dockedLaptop=await ev(measure);
+    // A status panel under the list while the shared box serves the chat (#333 review 3).
+    const stopNote = on => `(() => { const n=PD.rt.get('chat:'+${JSON.stringify(A.task)}).el.querySelector('iframe').contentDocument.getElementById('stop-note');
+      n.textContent=${on}?'Stopped: the agent was interrupted.':''; n.hidden=!${on}; return 0; })()`;
+    await ev(stopNote(true)); await sleep(300); out.dockedStopNote=await ev(measure);
+    await ev(stopNote(false)); await sleep(200);
     await size(1728,2000); await sleep(400); out.dockedTall=await ev(measure);
     await send('Page.reload',{},s);
     await until(`!!PD.rt.get('chat:'+${JSON.stringify(A.task)})?.el.querySelector('iframe')?.contentDocument?.querySelector('#compose')`);
@@ -177,7 +183,7 @@ async function main() {
       const po=PD.els['po-chat'].querySelector('iframe.po-session'), pd=po?.contentDocument;
       const side=PD.rt.get('thread:po')?.el, f=side?.querySelector('iframe'), d=f?.contentDocument;
       const list=d?.querySelector('#msgs'), compose=d?.querySelector('#compose');
-      const pb=b(po), sb=b(side), fb=b(f), lb=b(list), cb=b(compose), main=b(side?.closest('.dk-body')), foot=[cb,b(d?.querySelector('#thread-reply')),lb].find(r=>r&&r.h);
+      const pb=b(po), sb=b(side), fb=b(f), lb=b(list), cb=b(compose), main=b(side?.closest('.dk-body')), foot=[...(d?.querySelectorAll('#msgs,#promptcard,#cmdpanel,#livetail,#stop-note,#thread-reply,#compose')||[])].map(b).filter(r=>r&&r.h).sort((p,q)=>q.b-p.b)[0];
       return {panel:sb, frame:fb, list:lb, box:cb, chat:pb, listHeight:lb?.h, bottomGap:foot&&fb?fb.h-foot.b:null,
         emptyBelow:foot&&sb&&fb?sb.b-fb.y-foot.b:null, sideOfMain:sb&&main?sb.h/main.h:null,
         scrollRemaining:list?Math.max(0,list.scrollHeight-list.clientHeight-list.scrollTop):null,
