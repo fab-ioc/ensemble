@@ -52,8 +52,11 @@ async function main() {
     const d=frame?.contentDocument, list=d?.querySelector('#msgs'), compose=d?.querySelector('#compose');
     const parent=panel || (frame?.closest('#detail-panel, #po-panel'));
     const pb=b(parent), fb=b(frame), lb=b(list), cb=b(compose);
+    // The chat's own box is hidden when the shared box under the chats serves it
+    // (f0a5f87): then the chat's foot is a thread's Reply button, else its list (#333).
+    const foot=[cb,b(d?.querySelector('#thread-reply')),lb].find(r=>r&&r.h);
     return {panel:pb,frame:fb,list:lb,box:cb,body:b(d?.body),main:b(d?.querySelector('main')),
-      listHeight:lb?.h, bottomGap:cb&&fb?fb.h-cb.b:null, emptyBelow:cb&&pb?pb.b-(fb?.y||0)-cb.b:null,
+      listHeight:lb?.h, bottomGap:foot&&fb?fb.h-foot.b:null, emptyBelow:foot&&pb?pb.b-(fb?.y||0)-foot.b:null,
       scrollRemaining:list?Math.max(0,list.scrollHeight-list.clientHeight-list.scrollTop):null,
       ratio:lb&&pb?lb.h/pb.h:null, bodyHeight:d?.body?.getBoundingClientRect().height,
       frameClientHeight:frame?.clientHeight, mode:panel?PD.dock.viewMode('chat:'+rid):'middle',
@@ -174,9 +177,9 @@ async function main() {
       const po=PD.els['po-chat'].querySelector('iframe.po-session'), pd=po?.contentDocument;
       const side=PD.rt.get('thread:po')?.el, f=side?.querySelector('iframe'), d=f?.contentDocument;
       const list=d?.querySelector('#msgs'), compose=d?.querySelector('#compose');
-      const pb=b(po), sb=b(side), fb=b(f), lb=b(list), cb=b(compose), main=b(side?.closest('.dk-body'));
-      return {panel:sb, frame:fb, list:lb, box:cb, chat:pb, listHeight:lb?.h, bottomGap:cb&&fb?fb.h-cb.b:null,
-        emptyBelow:cb&&sb&&fb?sb.b-fb.y-cb.b:null, sideOfMain:sb&&main?sb.h/main.h:null,
+      const pb=b(po), sb=b(side), fb=b(f), lb=b(list), cb=b(compose), main=b(side?.closest('.dk-body')), foot=[cb,b(d?.querySelector('#thread-reply')),lb].find(r=>r&&r.h);
+      return {panel:sb, frame:fb, list:lb, box:cb, chat:pb, listHeight:lb?.h, bottomGap:foot&&fb?fb.h-foot.b:null,
+        emptyBelow:foot&&sb&&fb?sb.b-fb.y-foot.b:null, sideOfMain:sb&&main?sb.h/main.h:null,
         scrollRemaining:list?Math.max(0,list.scrollHeight-list.clientHeight-list.scrollTop):null,
         scrollTop:list?list.scrollTop:null, screens:list?list.scrollHeight/list.clientHeight:null,
         ratio:lb&&sb?lb.h/sb.h:null, layer:!side || !!pd?.getElementById('thr-side')?.classList.contains('layer')};
