@@ -17784,7 +17784,7 @@ const PS_SPARK = '<svg class="ps-gi" viewBox="0 0 16 16" aria-hidden="true"><pat
   + '<path d="M12.5 10.5l.6 1.4 1.4.6-1.4.6-.6 1.4-.6-1.4-1.4-.6 1.4-.6z" fill="currentColor"/></svg>';
 const PS_GEN_WAIT = 65000;   // the hub gives its CLI 60 s
 // What the hub's refusals say after "No icons this time: <agent> ".
-const PS_GEN_WHY = { timeout: 'did not answer within 60 s.', failed: 'stopped with an error.', no_icons: 'answered with no icon that could be used.' };
+const PS_GEN_WHY = { timeout: 'did not answer within 60 s.', failed: 'stopped with an error.', no_icons: 'answered with no icon that could be used.', busy: 'is already drawing icons on the hub.' };
 // Generate is greyed only once the hub said it has neither CLI.
 const psGenOff = d => !!(d.genInfo && d.genInfo.agent === '');
 const psGenWho = (agent, model) => [agent, model].filter(Boolean).join(' · ');
@@ -17825,6 +17825,7 @@ function psGenHtml(pj, d) {
   else {
     msg = `No icons this time: ${agent} ${PS_GEN_WHY[g.code] || PS_GEN_WHY.failed}`;
     small = g.code === 'timeout' ? 'Nothing was changed. It may be busy or signed out; try again in a minute, or upload an image.'
+      : g.code === 'busy' ? 'Nothing was changed. Try again in a minute, or upload an image.'
       : 'Nothing was changed. Try again, or upload an image.';
   }
   return `<div class="ps-gen" id="ps-gen-box">${head}<div class="ps-gen-msg" role="status">${esc(msg)}<small>${esc(small)}</small></div>`

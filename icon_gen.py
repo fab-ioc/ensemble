@@ -52,12 +52,23 @@ REFUSALS = {
     "timeout": "did not answer within 60 s.",
     "failed": "stopped with an error.",
     "no_icons": "answered with no icon that could be used.",
-    "busy": "Icons for this project are already being drawn.",
+    "busy": "Icons are already being drawn on the hub; try again in a minute.",
     "no_such_project": "No such project.",
 }
 
 _BUSY: set[str] = set()
 _BUSY_LOCK = threading.Lock()
+MAX_RUNS = 2   # hub-wide: more at once answer "busy"
+
+# Windows: the CLI must not open a console window (as digest.py).
+_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+_d = None  # the dashboard module, set by bind(): its _claude_bin() finds claude
+
+
+def bind(dashboard_module) -> None:
+    global _d
+    _d = dashboard_module
 
 
 class Unsafe(Exception):
@@ -114,6 +125,8 @@ def sanitize(text: str) -> str:
                 raise Unsafe("attribute " + name)
             if tag == "svg" and name in ("width", "height", "x", "y"):
                 continue
+            if name == "viewbox" and any(k == "viewBox" for k, _ in attrs):
+                continue   # viewBox and VIEWBOX both: keep the first, or the XML is malformed
             attrs.append((k if name != "viewbox" else "viewBox", " ".join(v.split())))
         if tag == "svg":
             if not any(k == "viewBox" for k, _ in attrs):
@@ -205,19 +218,25 @@ def prompt(name: str, about: str) -> str:
 
 def which_cli() -> dict | None:
     """The CLI Generate runs: {agent, model, bin}, or None."""
-    claude = shutil.which("claude")
-    if not claude:
-        for c in (Path.home() / ".local/bin/claude", Path("/opt/homebrew/bin/claude"),
-                  Path("/usr/local/bin/claude"), Path("/usr/bin/claude")):
-            if c.exists():
-                claude = str(c)
-                break
+    claude = _d._claude_bin() if _d is not None else shutil.which("claude")
     if claude:
         return {"agent": "claude", "model": CLAUDE_MODEL, "bin": claude}
     codex = shutil.which("codex")
     if codex:
         return {"agent": "codex", "model": "", "bin": codex}
     return None
+
+
+def _workspace() -> str | None:
+    """The hub's folder for one-shot model calls (digest.py's), or None."""
+    if _d is None:
+        return None
+    w = _d.DASHBOARD_DIR / "_rename_workspace"
+    try:
+        w.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return None
+    return str(w)
 
 
 def _head(path: Path, limit: int = MAX_OUTPUT) -> str:
@@ -241,16 +260,28 @@ def _run(cli: dict, text: str, timeout: float) -> str:
         t = Path(tmp)
         env = {k: v for k, v in os.environ.items() if k not in ("CLAUDECODE",)}
         if cli["agent"] == "claude":
-            cmd = [cli["bin"], "-p", "--model", cli["model"], "--tools", ""]
+            # No tools, no MCP servers (a roadmap line could steer the model to the
+            # user's own), no session file left in ~/.claude/projects: as digest.py.
+            cmd = [cli["bin"], "-p", "--model", cli["model"], "--no-session-persistence",
+                   "--tools", "", "--strict-mcp-config"]
             out_file = None
+            # claude still makes ~/.claude/projects/<its cwd>/ for every new cwd: run it
+            # where the hub's other one-shot calls run (digest.py), not in a fresh folder.
+            cwd = _workspace() or tmp
         else:
+            # codex has no flag that keeps the MCP servers in the user's config.toml
+            # off; the read-only sandbox in an empty folder and --ephemeral are what
+            # bound it. claude, when installed, is always preferred.
             out_file = t / "answer.txt"
             cmd = [cli["bin"], "exec", "--sandbox", "read-only", "--skip-git-repo-check", "--ephemeral",
                    "-C", tmp, "-o", str(out_file), "-"]
-        (t / "prompt.txt").write_text(text, encoding="utf-8")
+            cwd = tmp
+        # errors="replace": a lone surrogate (from JSON's \\ud800) cannot be encoded.
+        (t / "prompt.txt").write_text(text, encoding="utf-8", errors="replace")
         with open(t / "prompt.txt", "rb") as fin, open(t / "stdout.txt", "wb") as fout, \
                 open(t / "stderr.txt", "wb") as ferr:
-            p = subprocess.run(cmd, cwd=tmp, env=env, stdin=fin, stdout=fout, stderr=ferr, timeout=timeout)
+            p = subprocess.run(cmd, cwd=cwd, env=env, stdin=fin, stdout=fout, stderr=ferr, timeout=timeout,
+                               creationflags=_NO_WINDOW)
         if p.returncode:
             raise RuntimeError((_head(t / "stderr.txt", 4096) or _head(t / "stdout.txt", 4096))[-300:])
         if out_file is not None and out_file.exists():
@@ -265,7 +296,7 @@ def generate(key: str, name: str, about: str, timeout: float = TIMEOUT_S) -> tup
         return False, "no_cli", {}
     meta = {"agent": cli["agent"], "model": cli["model"]}
     with _BUSY_LOCK:
-        if key in _BUSY:
+        if key in _BUSY or len(_BUSY) >= MAX_RUNS:
             return False, "busy", meta
         _BUSY.add(key)
     t0 = time.monotonic()
@@ -274,7 +305,7 @@ def generate(key: str, name: str, about: str, timeout: float = TIMEOUT_S) -> tup
             answer = _run(cli, prompt(name, about), timeout)
         except subprocess.TimeoutExpired:
             return False, "timeout", meta
-        except (RuntimeError, OSError) as e:
+        except (RuntimeError, OSError, ValueError) as e:
             print(f"[icon-gen] {cli['agent']} failed: {e!r}"[:400], flush=True)
             return False, "failed", meta
         svgs = parse(answer)

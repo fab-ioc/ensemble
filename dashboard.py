@@ -199,6 +199,7 @@ if "backends.windows" in sys.modules:
 ensemble_tools.bind(sys.modules[__name__])
 attention.bind(sys.modules[__name__])
 digest.bind(sys.modules[__name__])
+icon_gen.bind(sys.modules[__name__])
 board.bind(sys.modules[__name__])
 task_brief.bind(sys.modules[__name__])
 pacing.bind(sys.modules[__name__])
@@ -8296,7 +8297,9 @@ def generate_project_icons(project_id: str, name: str = "") -> tuple[bool, str, 
     proj = find_project(project_id)
     if proj is None:
         return False, "no_such_project", {}
-    name = " ".join(str(name or "").split())[:120] or proj.get("name") or ""
+    # A lone surrogate (JSON's "\ud800") cannot be encoded for the CLI: it becomes "?".
+    name = str(name or "").encode("utf-8", "replace").decode("utf-8")
+    name = " ".join(name.split())[:120] or proj.get("name") or ""
     return icon_gen.generate(project_id, name, project_icon_about(proj))
 
 

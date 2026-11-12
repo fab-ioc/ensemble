@@ -27,6 +27,7 @@ import sys
 import tempfile
 import threading
 import time
+import xml.etree.ElementTree as ET
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -67,6 +68,13 @@ class Sanitize(unittest.TestCase):
             raw, ext = project_icon.accept("data:image/svg+xml;base64," + base64.b64encode(out.encode()).decode())
             self.assertEqual(ext, "svg")
             self.assertEqual(raw.decode(), out)
+
+    def test_viewbox_twice_in_two_cases_is_kept_once(self):
+        out = icon_gen.sanitize(svg('<rect width="4" height="4"/>', 'viewBox="0 0 48 48" VIEWBOX="0 0 9 9"'))
+        self.assertEqual(out.count("viewBox="), 1)
+        self.assertIn('viewBox="0 0 48 48"', out)
+        ET.fromstring(out)   # well-formed
+        self.assertEqual(project_icon.accept("data:image/svg+xml;base64," + base64.b64encode(out.encode()).decode())[1], "svg")
 
     def test_whatever_runs_or_links_is_refused(self):
         for bad in (
@@ -216,6 +224,26 @@ class Generate(unittest.TestCase):
         (ok, code, res), _ = self.run_with("Sorry, no.")
         self.assertEqual((ok, code, res["agent"]), (False, "no_icons", "claude"))
 
+    def test_at_most_two_runs_on_the_hub(self):
+        go, release = threading.Semaphore(0), threading.Event()
+
+        def slow(c, text, timeout):
+            go.release()
+            release.wait(5)
+            return GOOD
+        got = {}
+        with mock.patch.object(icon_gen, "which_cli", lambda: CLAUDE), mock.patch.object(icon_gen, "_run", slow):
+            ts = [threading.Thread(target=lambda k=k: got.update({k: icon_gen.generate(k, "B", "")})) for k in ("p1", "p2")]
+            for t in ts:
+                t.start()
+            self.assertTrue(go.acquire(timeout=5) and go.acquire(timeout=5))
+            self.assertEqual(icon_gen.generate("p3", "C", "")[:2], (False, "busy"), "a third project waits its turn")
+            release.set()
+            for t in ts:
+                t.join(5)
+            self.assertTrue(got["p1"][0] and got["p2"][0])
+            self.assertTrue(icon_gen.generate("p3", "C", "")[0], "free again afterwards")
+
     def test_one_at_a_time_per_project(self):
         go, release = threading.Event(), threading.Event()
 
@@ -253,9 +281,11 @@ class Run(unittest.TestCase):
             seen["cmd"] = cmd
             seen["stdin"] = kw["stdin"].read().decode("utf-8")
             self.assertNotIn("input", kw)
+            seen["flags"] = kw.get("creationflags")
+            seen["cwd"] = kw.get("cwd")
             kw["stdout"].write(GOOD.encode())
             return subprocess.CompletedProcess(cmd, 0)
-        with mock.patch.object(icon_gen.subprocess, "run", fake):
+        with mock.patch.object(icon_gen.subprocess, "run", fake), mock.patch.object(icon_gen, "_NO_WINDOW", 0x08000000):
             out = icon_gen._run(cli, icon_gen.prompt(self.NASTY, "about & | ^"), 5)
         return seen, out
 
@@ -265,8 +295,31 @@ class Run(unittest.TestCase):
             self.assertIn(self.NASTY, seen["stdin"], cli["agent"])
             self.assertFalse(any("Harbour" in a or "about" in a for a in seen["cmd"]), seen["cmd"])
             self.assertEqual(out, GOOD)
-        self.assertEqual(self.caught(CLAUDE)[0]["cmd"][1:], ["-p", "--model", "haiku", "--tools", ""])
+        c = self.caught(CLAUDE)[0]
+        # No MCP servers, no session folder left behind, no tools; no console window on Windows.
+        self.assertEqual(c["cmd"][1:], ["-p", "--model", "haiku", "--no-session-persistence",
+                                        "--tools", "", "--strict-mcp-config"])
+        self.assertEqual(c["flags"], 0x08000000)
+        # The hub's one workspace, so no ~/.claude/projects/-tmp-ens-icon-* per run.
+        self.assertEqual(Path(c["cwd"]), dashboard.DASHBOARD_DIR / "_rename_workspace")
         self.assertEqual(seen["cmd"][-1], "-", "codex exec reads its prompt from stdin")
+
+    def test_a_lone_surrogate_does_not_break_the_run(self):
+        seen = {}
+
+        def fake(cmd, **kw):
+            seen["stdin"] = kw["stdin"].read().decode("utf-8")
+            kw["stdout"].write(GOOD.encode())
+            return subprocess.CompletedProcess(cmd, 0)
+        with mock.patch.object(icon_gen.subprocess, "run", fake):
+            self.assertEqual(icon_gen._run(CLAUDE, icon_gen.prompt("A\ud800B", ""), 5), GOOD)
+        self.assertIn('"A?B"', seen["stdin"])
+
+    def test_claude_is_found_the_hub_s_way(self):
+        fake = mock.Mock(_claude_bin=lambda: "/opt/x/claude")
+        with mock.patch.object(icon_gen, "_d", fake):
+            self.assertEqual(icon_gen.which_cli()["bin"], "/opt/x/claude")
+        self.assertIs(icon_gen._d, dashboard, "the hub binds itself")
 
     @unittest.skipIf(os.name == "nt", "a POSIX stand-in script")
     def test_a_runaway_answer_is_read_only_up_to_the_cap(self):
@@ -316,6 +369,8 @@ class Endpoints(Hub):
             self.assertEqual((seen["key"], seen["name"]), (self.ed, "Ensemble Dashboard"))
             st, body = self.post({"projectId": self.ed, "name": "  Harbour   Lights "})
             self.assertEqual(seen["name"], "Harbour Lights", "the name typed in the settings, not saved yet")
+            st, body = self.post({"projectId": self.ed, "name": "Harbour \ud800 Lights"})
+            self.assertEqual((st, seen["name"]), (200, "Harbour ? Lights"), "a lone surrogate is replaced, not a dropped connection")
             self.post({"projectId": self.ed, "name": 7})
             self.assertEqual(seen["name"], "Ensemble Dashboard")
             # Never 502-504: hub-resilience.js reads those as the hub being down.
