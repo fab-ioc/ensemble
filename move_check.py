@@ -665,8 +665,11 @@ def _copy_ignored(src: Path, dst: Path, names: list[str]) -> tuple[int, list[str
         try:
             if s.is_symlink() or not s.is_dir():
                 if d.exists() or d.is_symlink():
-                    same = (s.is_symlink() and d.is_symlink() and os.readlink(s) == os.readlink(d)) \
-                        or (not s.is_symlink() and d.is_file() and filecmp.cmp(s, d, shallow=False))
+                    # Never through a link: a link is the same only as the same link.
+                    if s.is_symlink() or d.is_symlink():
+                        same = s.is_symlink() and d.is_symlink() and os.readlink(s) == os.readlink(d)
+                    else:
+                        same = d.is_file() and filecmp.cmp(s, d, shallow=False)
                     if not same:
                         missed.append(rel)
                     return
@@ -674,8 +677,8 @@ def _copy_ignored(src: Path, dst: Path, names: list[str]) -> tuple[int, list[str
                 shutil.copy2(s, d, follow_symlinks=False)
                 copied += 1
                 return
-            if d.exists() and not d.is_dir():
-                missed.append(rel)
+            if d.is_symlink() or (d.exists() and not d.is_dir()):
+                missed.append(rel)          # never written through a link
                 return
             d.mkdir(parents=True, exist_ok=True)
             for c in sorted(s.iterdir()):

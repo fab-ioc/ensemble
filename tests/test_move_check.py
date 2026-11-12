@@ -251,6 +251,43 @@ class Check(unittest.TestCase):
         aside = Path(r["open"][0]["aside"])
         self.assertEqual((aside / ".secret").read_text(), "unique\n")
 
+    @unittest.skipIf(os.name == "nt", "a POSIX hook and symlink")
+    def test_a_worktree_whose_ignored_folder_is_a_link_after_checkout_is_not_repaired(self):
+        (self.repo / ".gitignore").write_text("cache/\n")
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-q", "-m", "ignore")
+        out = self.tmp / "outside"
+        out.mkdir()
+        hub, chat = fake_hub(self.tmp, [{"id": "p1", "path": str(self.repo)}])
+        wt = self._task(hub, chat, "r14", "sess/fourteen")
+        (wt / "cache").mkdir()
+        (wt / "cache" / "unique.txt").write_text("u\n")
+        hook = self.repo / ".git" / "hooks" / "post-checkout"
+        hook.write_text(f"#!/bin/sh\nln -s '{out}' cache\n")
+        hook.chmod(0o755)
+        r = mc.run_check(repair=True, notify=False)
+        self.assertEqual(r["repaired"], [])
+        self.assertIn("cache", r["open"][0]["detail"])
+        self.assertEqual(list(out.iterdir()), [])               # nothing written through it
+        aside = Path(r["open"][0]["aside"])
+        self.assertEqual((aside / "cache" / "unique.txt").read_text(), "u\n")
+
+    def test_ignored_files_never_go_through_a_link(self):
+        with tempfile.TemporaryDirectory() as t:
+            t = Path(t)
+            src, dst, out = t / "src", t / "dst", t / "out"
+            (src / "cache").mkdir(parents=True)
+            (src / "cache" / "unique.txt").write_text("u\n")
+            (src / "f").write_text("same\n")
+            out.mkdir()
+            (out / "f").write_text("same\n")
+            dst.mkdir()
+            (dst / "cache").symlink_to(out, target_is_directory=True)
+            (dst / "f").symlink_to(out / "f")
+            copied, missed = mc._copy_ignored(src, dst, ["cache", "f"])
+            self.assertEqual((copied, sorted(missed)), (0, ["cache", "f"]))
+            self.assertFalse((out / "unique.txt").exists())
+
     @unittest.skipIf(os.name == "nt" or os.geteuid() == 0, "POSIX permissions")
     def test_an_ignored_file_that_cannot_be_copied_is_listed(self):
         self._ignored_secret()
