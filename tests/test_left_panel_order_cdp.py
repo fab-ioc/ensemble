@@ -67,7 +67,8 @@ LONG_ASK = ("Should the winter timetable keep the late trains on the coastal lin
             "or move them to the inland line for those weeks, and who tells the stations about it, and when? "
             "Say which one and the date the change starts.")
 LOOSE = ["Loose task with a really long title that will be cut in the left panel",
-         "Second loose task whose long title is also cut in its tab"]
+         "Second loose task whose long title is also cut in its tab",
+         "Third loose task with a long title that will be cut in the same dock stack"]
 
 CDP_JS = chrome_profile.JS + r"""
 const { spawn } = require('child_process');
@@ -291,7 +292,7 @@ async function main() {
       o.poTab.titleWhileOn = await p.evalIn(`document.querySelector('#po-dock .dk-tab[data-dk-tab="po-chat"]').getAttribute('title')`);
       await p.shot('hover-po-tab');
       await away(p);
-      for (const r of A.loose) { await p.evalIn(`pdChatOpen(${JSON.stringify(r)}), 0`); await sleep(700); }
+      for (const r of A.loose.slice(0, 2)) { await p.evalIn(`pdChatOpen(${JSON.stringify(r)}), 0`); await sleep(700); }
       const c1 = 'chat:' + A.loose[0], c2 = 'chat:' + A.loose[1];
       await p.until(`!!document.querySelector('#po-dock .dk-tab[data-dk-tab="${c2}"]')`, 10000);
       // the second as a tab of the first's stack, in front
@@ -325,6 +326,38 @@ async function main() {
       }
       if (o.chatTab.x) { await p.clickAt(o.chatTab.x.x, o.chatTab.x.y); await sleep(1000); }
       o.chatTab.afterX = await p.evalIn(TAB(c1));
+
+      // Three tabs in one stack: the raised name must leave the close control
+      // at its original row coordinate, from the name and from a neighbour.
+      await p.evalIn(`(() => { pdChatOpen(${JSON.stringify(A.loose[0])}); pdChatOpen(${JSON.stringify(A.loose[2])});
+        const c3 = ${JSON.stringify('chat:' + A.loose[2])};
+        const find = n => !n ? null : n.t === 'stack' ? (n.panels.includes(${JSON.stringify(c2)}) ? n : null) : (n.kids || []).map(find).find(Boolean);
+        const s = find(PD.dock.layout().root);
+        for (const id of [${JSON.stringify(c1)}, c3]) if (s && !s.panels.includes(id)) PD.dock.moveTo(id, { kind: 'stack', stack: s }, 'center');
+        PD.dock.activate(${JSON.stringify(c2)}); return 0; })()`);
+      await sleep(600);
+      const c3 = 'chat:' + A.loose[2];
+      const closePoint = id => `(() => { const t = document.querySelector('#po-dock .dk-tab[data-dk-tab=${JSON.stringify(id)}]');
+        if (!t) return null; const x = t.closest('.dk-tab-wrap').querySelector('.dk-tab-x').getBoundingClientRect();
+        const n = t.getBoundingClientRect(); return { x: Math.round(x.left + x.width / 2), y: Math.round(x.top + x.height / 2),
+          nx: Math.round(n.left + Math.min(n.width / 2, 40)), ny: Math.round(n.top + n.height / 2),
+          siblings: [...t.closest('.dk-tabs').querySelectorAll('.dk-tab')].map(t => t.dataset.dkTab), cut: t.scrollWidth > t.clientWidth + 1 }; })()`;
+      const closeFromHover = async (id, stem, fromNeighbour) => {
+        await away(p); await p.evalIn(`document.querySelector('#po-dock .dk-tab[data-dk-tab=${JSON.stringify(id)}]').scrollIntoView({inline:'nearest', block:'nearest'}), 0`);
+        const before = await p.evalIn(closePoint(id));
+        await p.shot(stem + '-before');
+        if (fromNeighbour) { const n = await p.evalIn(TAB(c3)); await p.move(n.x, n.y); await sleep(80); }
+        await p.move(before.nx, before.ny); await sleep(500);
+        const raised = await p.evalIn(`(() => { const c = document.querySelector('.tab-expanded'); const x = c && c.querySelector('.dk-tab-x');
+          if (!x) return null; const r = x.getBoundingClientRect(); return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }; })()`);
+        await p.shot(stem + '-hover');
+        await p.move(before.x, before.y); await sleep(80);
+        await p.clickAt(before.x, before.y); await sleep(500);
+        const all = await p.evalIn(`(() => [...document.querySelectorAll('#po-dock .dk-tab')].map(t => t.dataset.dkTab))()`);
+        return { target: id, before, raised, after: all.filter(id => before.siblings.includes(id)) };
+      };
+      o.fixedClose = { fromName: await closeFromHover(c2, 'task-close-from-name', false),
+        fromNeighbour: await closeFromHover(c1, 'task-close-from-neighbour', true) };
 
       // ---- a file tab: its tip stays off while it is raised, even when it is drawn again
       await away(p);
@@ -379,6 +412,20 @@ async function main() {
       const d2 = rows.find(r => r.proj === P[A.delta]);
       o.off.delta = (await hover(p, d2.cx, d2.cy)).at450;
       await p.evalIn(`(() => { const c = document.getElementById('pref-full-names'); c.checked = true; c.dispatchEvent(new Event('change')); return 0; })()`);
+      // A Workspace file is a Dock panel when the Dock is available.
+      await p.evalIn(`document.querySelector('#po-dock .dk-tab[data-dk-tab=${JSON.stringify(ftab.id)}]').scrollIntoView({inline:'nearest'}), 0`);
+      const fileX = await p.evalIn(`(() => { const t = document.querySelector('#po-dock .dk-tab[data-dk-tab=${JSON.stringify(ftab.id)}]');
+        const r = t.closest('.dk-tab-wrap').querySelector('.dk-tab-x').getBoundingClientRect();
+        return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }; })()`);
+      await p.shot('file-close-before');
+      const fileTabNow = await p.evalIn(TAB(ftab.id));
+      await hover(p, fileTabNow.x, fileTabNow.y);
+      const fileCopyX = await p.evalIn(`(() => { const x = document.querySelector('.tab-expanded .dk-tab-x'); if (!x) return null;
+        const r = x.getBoundingClientRect(); return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }; })()`);
+      await p.shot('file-close-hover');
+      await p.clickAt(fileX.x, fileX.y); await sleep(500);
+      o.fileClose = { fileX, fileCopyX, closed: await p.evalIn(`!document.querySelector('#po-dock .dk-tab[data-dk-tab=${JSON.stringify(ftab.id)}]')`),
+        poStayed: await p.evalIn(`!!document.querySelector('#po-dock .dk-tab[data-dk-tab="po-chat"]')`) };
       o.scroll = await p.evalIn(`[document.documentElement.scrollWidth, document.documentElement.clientWidth]`);
       await p.close();
     }
@@ -587,6 +634,23 @@ class LeftPanelOrderInChrome(unittest.TestCase):
         self.assertTrue(o["clicked"]["on"], "a click on the copy brings it to the front")
         self.assertTrue(o["x"], "the copy has its x")
         self.assertIsNone(o["afterX"], "x on the copy closed it")
+
+    def test_a_cut_tab_closes_at_its_original_x_with_one_click(self):
+        for direction in ("fromName", "fromNeighbour"):
+            with self.subTest(direction=direction):
+                o = self.w()["fixedClose"][direction]
+                self.assertGreaterEqual(len(o["before"]["siblings"]), 3 if direction == "fromName" else 2)
+                self.assertTrue(o["before"]["cut"])
+                self.assertIsNotNone(o["raised"])
+                self.assertEqual(o["raised"]["x"], o["before"]["x"], "the × stays at its row coordinate")
+                self.assertEqual(o["raised"]["y"], o["before"]["y"])
+                self.assertEqual(o["after"], [id for id in o["before"]["siblings"] if id != o["target"]])
+
+    def test_a_cut_workspace_file_tab_closes_at_its_original_x(self):
+        o = self.w()["fileClose"]
+        self.assertEqual(o["fileCopyX"], o["fileX"])
+        self.assertTrue(o["closed"], "the long file closed with one click")
+        self.assertTrue(o["poStayed"], "the neighbouring tab stayed open")
 
     def test_a_drag_from_a_raised_tab_moves_it(self):
         # pressed on the copy, dragged past the other tab: Dock takes the panel there
