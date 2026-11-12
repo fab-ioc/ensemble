@@ -494,6 +494,7 @@ def repair_at_start() -> list[dict]:
                 changed = True
                 out.append(row)
             if changed:
+                room.pop("folderMissing", None)     # it named the old folder (#352)
                 cr._write(room)
     return out
 

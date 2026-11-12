@@ -392,10 +392,13 @@ class Check(unittest.TestCase):
             {"id": "p2", "name": "Q", "code": r"C:\Users\u\cs\gone"}))
         chat.rooms["r6"] = {"id": "r6", "title": "t6",
                             "cwd": r"C:\Users\u\EnsembleProjects\P\t6",
-                            "taskDir": r"C:\Users\u\EnsembleProjects\P\t6", "participants": []}
+                            "taskDir": r"C:\Users\u\EnsembleProjects\P\t6", "participants": [],
+                            "folderMissing": {"reason": "its folder is missing", "identity": "claude",
+                                              "path": r"C:\Users\u\EnsembleProjects\P\t6"}}
         r = mc.run_check(repair=True, notify=False)
         self.assertEqual(json.loads((home / "project.json").read_text())["code"], str(self.repo))
         self.assertEqual(chat.rooms["r6"]["cwd"], str(home / "t6"))
+        self.assertIsNone(chat.rooms["r6"]["folderMissing"], "a refusal about the old folder goes (#352)")
         self.assertEqual(sorted(i["kind"] for i in r["repaired"]), ["code", "taskFolder"])
         self.assertEqual([(i["kind"], i["what"]) for i in r["open"]], [("code", "Q")])
         self.assertEqual(mc.last()["open"][0]["what"], "Q")

@@ -1607,16 +1607,18 @@ def _room_level(room: dict, live_agents: list[str],
     return None
 
 
-# When each (task, state) was first seen, so the tray can say how long a task
-# has been in trouble rather than when its chat last moved. Reset the moment a
-# state clears, so a state that comes back reads as new. An unguarded dict is
+# When each (task, state, cause) was first seen, so the tray can say how long a
+# task has been in trouble rather than when its chat last moved. Reset the
+# moment a state clears, so a state that comes back reads as new; keyed by its
+# cause too, so another trouble in the same state (a permission prompt, then
+# two terminals) is new as well, and a Done in the Inbox (#352) does not hide it. An unguarded dict is
 # safe here because `_items()` has exactly one caller, `snapshot()`, and it
 # runs under `_COMPUTE_LOCK` — keep it that way.
-_FIRST_SEEN: dict[tuple[str, str], float] = {}
+_FIRST_SEEN: dict[tuple[str, str, str], float] = {}
 
 
-def _first_seen(room_id: str, state: str, now: float) -> float:
-    return _FIRST_SEEN.setdefault((room_id, state), now)
+def _first_seen(room_id: str, state: str, now: float, cause: str = "") -> float:
+    return _FIRST_SEEN.setdefault((room_id, state, cause), now)
 
 
 def _stall_seconds() -> int:
@@ -1740,7 +1742,7 @@ def _items() -> list[dict]:
     except Exception:
         keys = {}
     items: list[dict] = []
-    seen_now: set[tuple[str, str]] = set()
+    seen_now: set[tuple[str, str, str]] = set()
     try:
         held_po = _d.po_messages.held_by_room()
     except Exception:
@@ -1879,10 +1881,10 @@ def _items() -> list[dict]:
             # has to mean. Room `updatedAt` would be the last chat message, and
             # would read as 4 minutes for an agent blocked for an hour.
             # An ask the agent reported dates from the report.
-            "since": float(extra.get("endedAt") or extra.get("since") or _first_seen(rid, state, now)),
+            "since": float(extra.get("endedAt") or extra.get("since") or _first_seen(rid, state, now, extra.get("cause") or "")),
             "otherStates": sorted({f[0] for f in found[1:]}),
         }
-        seen_now.add((rid, state))
+        seen_now.add((rid, state, extra.get("cause") or ""))
         if extra.get("since"):
             item["askedAt"] = float(extra["since"])     # the pages say "since 15:55"
         for k in ("quote", "cause", "exitCode", "lastLines", "waitedSeconds", "askId", "askPart",

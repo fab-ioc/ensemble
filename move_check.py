@@ -527,6 +527,8 @@ def _check_task_folders(run: _Run, room: dict) -> dict:
     if not run.repair:
         run.left("taskFolder", label, f"{detail} (repairable)", roomId=room["id"])
         return room
+    if room.get("folderMissing"):
+        fields["folderMissing"] = None  # the refusal was about the old folders (#352)
     _d.chatroom.patch_room(room["id"], **fields)
     run.fixed("taskFolder", label, f"{detail} moved to this machine's folders", roomId=room["id"])
     return {**room, **fields}

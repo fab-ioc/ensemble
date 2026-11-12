@@ -501,6 +501,14 @@ class Repair(_Base):
         self.assertEqual(len(list((self.dir / "backups" / "seat-folders").glob("*.json"))), 1)
         self.assertEqual(seat_folders.repair_at_start(), [])
 
+    def test_352_a_seat_moved_at_hub_start_loses_its_refusal(self):
+        rid, _ = self.damaged()
+        chatroom.patch_room(rid, folderMissing={"reason": "claude's folder is missing",
+                                                "identity": "claude", "path": "/gone"})
+        seat_folders.repair_at_start()
+        stored = json.loads((chatroom.ROOMS_DIR / f"{rid}.json").read_text())
+        self.assertNotIn("folderMissing", stored)
+
     def test_at_hub_start_a_live_seat_is_left(self):
         rid, _ = self.damaged()
         chatroom.patch_participant(rid, "claude", {"ptyId": "live-1"})
@@ -546,6 +554,18 @@ class Attention(unittest.TestCase):
         self.assertIsNone(attention._folder_missing(r))
         hit = attention._folder_missing(self.room("/no/such/folder", kind="elsewhere"))
         self.assertEqual(hit[2]["folderKind"], "elsewhere")
+
+    def test_352_another_cause_in_the_same_state_is_new(self):
+        """Done in the Inbox sets a task's trouble aside until it is new
+        (inbox step 5): a second block of another cause, while the task stays
+        blocked, has its own first-seen time, later than the Done."""
+        attention._FIRST_SEEN.clear()
+        self.addCleanup(attention._FIRST_SEEN.clear)
+        self.assertEqual(attention._first_seen("r", "blocked", 100.0, "permission"), 100.0)
+        dealt_at = 150.0
+        self.assertEqual(attention._first_seen("r", "blocked", 200.0, "permission"), 100.0)
+        later = attention._first_seen("r", "blocked", 200.0, "duplicate_pty")
+        self.assertGreater(later, dealt_at)
 
 if __name__ == "__main__":
     unittest.main()
