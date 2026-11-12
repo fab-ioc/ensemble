@@ -122,9 +122,22 @@ def mapped_dir(old: str, home: Path, root: Path, git: bool = False) -> Path | No
     """The first candidate of ``map_old_path`` that is a folder (and a git
     repository, with ``git``)."""
     for p in map_old_path(old, home, root):
-        if p.is_dir() and (not git or (p / ".git").exists()):
+        if p.is_dir() and (not git or is_repo(p)):
             return p
     return None
+
+
+def is_repo(p: Path) -> bool:
+    """Git can run in ``p`` and ``p`` is its repository's top (a ``.git`` that
+    is empty or names a folder that is gone is not one)."""
+    if not (p / ".git").exists():
+        return False
+    try:
+        top = _ok(_git(str(p), "rev-parse", "--show-toplevel", timeout=30))
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return bool(top) and os.path.normcase(os.path.realpath(top)) == \
+        os.path.normcase(os.path.realpath(str(p)))
 
 
 def worktree_gitdir(wt: Path) -> tuple[bool, str]:
@@ -166,13 +179,33 @@ def claude_slug(path: str) -> str:
 
 def claude_dir_for(proj_dir: Path, cwd: str) -> Path | None:
     """The folder Claude reads a seat's conversations from. Claude cuts a
-    slug longer than 200 characters and adds a hash: such a folder is used
-    when there is exactly one with that start, else None."""
+    slug longer than 200 characters and adds a hash of its own: such a folder
+    is used only when exactly one with that start holds a conversation that
+    says it ran in ``cwd``; else None (the folder cannot be named safely)."""
     slug = claude_slug(cwd)
     if len(slug) <= 200:
         return proj_dir / slug
-    hits = [p for p in proj_dir.glob(glob_escape(slug[:200]) + "-*") if p.is_dir()]
+    hits = [p for p in proj_dir.glob(glob_escape(slug[:200]) + "-*")
+            if p.is_dir() and _ran_in(p, cwd)]
     return hits[0] if len(hits) == 1 else None
+
+
+def _ran_in(folder: Path, cwd: str, files: int = 5, lines: int = 50) -> bool:
+    """A conversation in ``folder`` records ``cwd`` as its working folder."""
+    want = os.path.normcase(os.path.normpath(cwd))
+    for f in sorted(folder.glob("*.jsonl"))[:files]:
+        try:
+            with open(f, encoding="utf-8", errors="replace") as fh:
+                for _, line in zip(range(lines), fh):
+                    try:
+                        got = json.loads(line).get("cwd")
+                    except (ValueError, AttributeError):
+                        continue
+                    if isinstance(got, str) and got:
+                        return os.path.normcase(os.path.normpath(got)) == want
+        except OSError:
+            continue
+    return False
 
 
 def glob_escape(s: str) -> str:
@@ -213,12 +246,15 @@ def branch_tip(repo: str, branch: str) -> str:
     return ""
 
 
-def files_tree(repo: str, wt: Path, seed: str = "") -> str:
+def files_tree(repo: str, wt: Path, seed: str = "", ignore_mode: bool = False
+               ) -> tuple[str, list[str]]:
     """A worktree's files (what git would commit: its .gitignore applies) as
-    a tree in ``repo``'s object store. Line ends are compared as committed
-    (a checkout made with autocrlf on Windows has CRLF on disk), and file
-    modes are taken from ``seed`` (a commit) where it has the file: files
-    copied from Windows all carry the exec bit, which is no change."""
+    a tree in ``repo``'s object store, and the ignored files and folders it
+    has besides (no commit holds those). Line ends are compared as committed
+    (a checkout made with autocrlf on Windows has CRLF on disk). With
+    ``ignore_mode`` (a folder copied from Windows, whose files all carry the
+    exec bit) file modes are taken from ``seed`` (a commit) where it has the
+    file, so the copy's modes are no change."""
     fd, index = tempfile.mkstemp(prefix="move-check-index-")
     os.close(fd)
     os.unlink(index)
@@ -231,14 +267,20 @@ def files_tree(repo: str, wt: Path, seed: str = "") -> str:
             r = _git(repo, "read-tree", seed, env=env, timeout=300)
             if r.returncode != 0:
                 raise RuntimeError("git read-tree: " + (r.stderr or "").strip()[:200])
-        r = _git(repo, *base, "-c", "core.fileMode=false", "add", "-A", "--", ".",
-                 env=env, timeout=600)
+        mode = ["-c", f"core.fileMode={'false' if ignore_mode else 'true'}"]
+        r = _git(repo, *base, *mode, "add", "-A", "--", ".", env=env, timeout=600)
         if r.returncode != 0:
             raise RuntimeError("git add: " + (r.stderr or "").strip()[:200])
         r = _git(repo, *base, "write-tree", env=env)
         if r.returncode != 0:
             raise RuntimeError("git write-tree: " + (r.stderr or "").strip()[:200])
-        return r.stdout.strip()
+        tree = r.stdout.strip()
+        r = _git(repo, *base, "ls-files", "-z", "--others", "--ignored", "--exclude-standard",
+                 "--directory", env=env, timeout=300)
+        if r.returncode != 0:
+            raise RuntimeError("git ls-files: " + (r.stderr or "").strip()[:200])
+        ignored = [x.rstrip("/") for x in (r.stdout or "").split("\0") if x.strip("/")]
+        return tree, ignored
     finally:
         try:
             os.unlink(index)
@@ -249,21 +291,28 @@ def files_tree(repo: str, wt: Path, seed: str = "") -> str:
 _TREES: dict = {}
 
 
-def commit_with_tree(repo: str, tree: str, prefer: str = "") -> str:
-    """A commit of the repository whose tree is ``tree`` ("" when none):
-    ``prefer`` (the task branch's tip) first, then any reachable one."""
+def commit_with_tree(repo: str, tree: str, prefer: str = "", main: str = "") -> str:
+    """A commit whose tree is ``tree`` ("" when none), only in the task's own
+    history: ``prefer`` (the task branch's tip) first, then a commit the task
+    branch or the main branch ``main`` reaches. Another branch's commit is no
+    proof the files are the task's."""
     if prefer and _ok(_git(repo, "rev-parse", prefer + "^{tree}")) == tree:
         return prefer
-    heads = _ok(_git(repo, "for-each-ref", "--format=%(objectname)"))
+    refs = [x for x in (prefer, main) if x]
+    if not refs:
+        return ""
+    heads = " ".join(_ok(_git(repo, "rev-parse", r)) for r in refs)
     key = (os.path.normcase(repo), heads)
     idx = _TREES.get(key)
     if idx is None:
-        r = _git(repo, "log", "--all", f"-n{TREE_SCAN_LIMIT}", "--format=%H %T", timeout=300)
+        r = _git(repo, "log", *refs, f"-n{TREE_SCAN_LIMIT}", "--format=%H %T", "--",
+                 timeout=300)
         idx = {}
         for line in (r.stdout or "").splitlines():
             c, _, t = line.partition(" ")
             idx.setdefault(t, c)
-        _TREES.clear()
+        if len(_TREES) > 64:
+            _TREES.clear()
         _TREES[key] = idx
     return idx.get(tree, "")
 
@@ -505,52 +554,52 @@ def _check_worktree(run: _Run, room: dict, projects: dict) -> None:
     label, rid = _label(room), room["id"]
     project = _project_of(room, projects) or {}
     repo = project.get("path") or ""
-    if not repo or not (Path(repo) / ".git").exists():
+    if not repo or not is_repo(Path(repo)):
         run.left("worktree", label, f"git cannot run in {wt} (its git folder {gd} is gone), "
                  f"and the project's code folder is not a repository on this machine",
                  roomId=rid)
         return
     branch = (ws.get("branch") or "").strip()
     key = os.path.normcase(str(wt))
-    try:
-        sig = (wt / ".git").read_text(encoding="utf-8", errors="replace").strip()
-    except OSError:
-        sig = ""
-    prev = run.cache.get(key) or {}
-    if prev.get("sig") == sig and prev.get("state") == "kept" and Path(prev.get("patch", "")).is_file():
-        # Looked at before: its files were the task's own and are kept as they were.
-        run.worktrees[key] = prev
-        run.left("worktree", label, prev.get("detail", ""), roomId=rid,
-                 patch=prev.get("patch", ""), branch=prev.get("newBranch", ""))
-        return
-    if run.repair and _d._room_is_live(room):
+    if run.repair and _room_working(room):
         run.left("worktree", label, f"git cannot run in {wt} (its git folder {gd} is gone); "
-                 f"the task is running, so it is looked at again when it stops", roomId=rid)
+                 f"an agent of the task is running, so it is looked at again when it stops",
+                 roomId=rid)
         return
+    tip = branch_tip(repo, branch)
+    ref = main_ref(repo)
+    # Files copied from Windows all carry the exec bit: their modes are no change.
+    from_windows = bool(_DRIVE.match((re.split(r"[\\/]", gd) or [""])[0]))
     try:
-        tree = files_tree(repo, wt, seed=branch_tip(repo, branch) or main_ref(repo))
+        tree, ignored = files_tree(repo, wt, seed=tip or ref, ignore_mode=from_windows)
     except (RuntimeError, OSError, subprocess.SubprocessError) as e:
         run.left("worktree", label, f"git cannot run in {wt}; its files could not be read: {e}",
                  roomId=rid)
         return
-    tip = branch_tip(repo, branch)
-    same = commit_with_tree(repo, tree, prefer=tip)
+    same = commit_with_tree(repo, tree, prefer=tip, main=ref)
     if same:
         if not run.repair:
             run.left("worktree", label, f"{wt}: files equal commit {same[:10]} (repairable)",
                      roomId=rid)
             return
-        _recreate(run, room, wt, repo, branch, tip, same, gd)
+        _recreate(run, room, wt, repo, branch, tip, same, gd, ignored)
         return
     # Its files are no commit's: possibly the only copy of the task's work.
+    prev = run.cache.get(key) or {}
+    if prev.get("tree") == tree and prev.get("state") == "kept" and \
+            Path(prev.get("patch") or "").is_file():
+        # Looked at before with these very files: their patch is already saved.
+        run.worktrees[key] = prev
+        run.left("worktree", label, prev.get("detail", ""), roomId=rid,
+                 patch=prev.get("patch", ""), branch=prev.get("newBranch", ""))
+        return
     task_dir = Path(room.get("taskDir") or ws.get("taskDir") or wt.parent)
-    ref = main_ref(repo)
     base = base_at(repo, ref, float(room.get("createdAt") or 0))
     patch, n = task_dir / f"moved-{run.date}.patch", 2
     while patch.exists():
         patch, n = task_dir / f"moved-{run.date}-{n}.patch", n + 1
-    detail = (f"git cannot run in {wt} (its git folder {gd} is gone) and its files differ from "
-              f"every commit the repository has: kept as they are")
+    detail = (f"git cannot run in {wt} (its git folder {gd} is gone) and its files are in no "
+              f"commit of the task's branch or the main branch: kept as they are")
     new_branch = ""
     if run.repair:
         try:
@@ -568,14 +617,16 @@ def _check_worktree(run: _Run, room: dict, projects: dict) -> None:
         if tip:
             # The base is clear: the task's branch is there. The files go on a
             # new branch from it, the task's branch is left as it is.
-            name = f"{branch}-moved-{run.date}"
+            name, n = f"{branch}-moved-{run.date}", 2
+            while branch_tip(repo, name):
+                name, n = f"{branch}-moved-{run.date}-{n}", n + 1
             c = _git(repo, "commit-tree", tree, "-p", tip,
                      "-m", f"Files of {wt.name} as found after a move to another machine")
             sha = _ok(c)
-            if sha and not branch_tip(repo, name) and _git(repo, "branch", name, sha).returncode == 0:
+            if sha and _git(repo, "branch", name, sha).returncode == 0:
                 new_branch = name
                 detail += f"; committed on branch {name}"
-        entry = {"sig": sig, "state": "kept", "patch": str(patch), "detail": detail,
+        entry = {"tree": tree, "state": "kept", "patch": str(patch), "detail": detail,
                  "newBranch": new_branch}
         run.worktrees[key] = entry
     else:
@@ -584,8 +635,47 @@ def _check_worktree(run: _Run, room: dict, projects: dict) -> None:
              branch=new_branch)
 
 
+def _room_working(room: dict) -> bool:
+    """An agent of the room is at work: a terminal of the hub's that the room
+    names or that names the room, or an agent in a terminal of its own whose
+    process is alive (one recorded on the old machine is not)."""
+    if _d._room_is_live(room) or _d._room_has_live_pty(room["id"]):
+        return True
+    for pp in room.get("participants") or []:
+        pid = pp.get("pid")
+        if pp.get("kind") == "agent" and pid and not pp.get("ptyId"):
+            try:
+                if _d.pid_alive(int(pid)):
+                    return True
+            except (TypeError, ValueError):
+                continue
+    return False
+
+
+def _copy_ignored(src: Path, dst: Path, names: list[str]) -> list[str]:
+    """The ignored files and folders of the old folder into the new worktree
+    (no commit holds them); those that could not be copied."""
+    failed = []
+    for name in names:
+        s, d = src / name, dst / name
+        try:
+            if d.exists():
+                continue
+            d.parent.mkdir(parents=True, exist_ok=True)
+            if s.is_dir() and not s.is_symlink():
+                shutil.copytree(s, d, symlinks=True)
+            else:
+                shutil.copy2(s, d, follow_symlinks=False)
+        except OSError:
+            failed.append(name)
+    return failed
+
+
 def _recreate(run: _Run, room: dict, wt: Path, repo: str, branch: str, tip: str,
-              commit: str, gd: str) -> None:
+              commit: str, gd: str, ignored: list[str]) -> None:
+    """Put the old folder aside and make the worktree again. Any failure
+    after the folder was put aside brings it back; a failed bring-back is
+    listed with where the folder is."""
     label, rid = _label(room), room["id"]
     aside = _aside(wt, f"moved-{run.date}")
     try:
@@ -593,32 +683,55 @@ def _recreate(run: _Run, room: dict, wt: Path, repo: str, branch: str, tip: str,
     except OSError as e:
         run.left("worktree", label, f"{wt} could not be put aside: {e}", roomId=rid)
         return
-    _git(repo, "worktree", "prune")
-    if tip and tip == commit and branch_tip(repo, branch) and \
-            _ok(_git(repo, "rev-parse", "--verify", "--quiet", "refs/heads/" + branch)):
-        r = _git(repo, "worktree", "add", str(wt), branch)
-    else:
-        name = branch or f"sess/moved-{wt.parent.name}"
-        if _ok(_git(repo, "rev-parse", "--verify", "--quiet", "refs/heads/" + name)):
-            name = f"{name}-moved-{run.date}"
-        r = _git(repo, "worktree", "add", "-b", name, str(wt), commit)
-        if r.returncode == 0 and name != branch:
+    made, name = False, branch
+    try:
+        _git(repo, "worktree", "prune")
+        if tip and tip == commit and \
+                _ok(_git(repo, "rev-parse", "--verify", "--quiet", "refs/heads/" + branch)):
+            r = _git(repo, "worktree", "add", str(wt), branch, timeout=600)
+        else:
+            name = branch or f"sess/moved-{wt.parent.name}"
+            base, n = name, 2
+            while _ok(_git(repo, "rev-parse", "--verify", "--quiet", "refs/heads/" + name)):
+                name, n = (f"{base}-moved-{run.date}" if n == 2
+                           else f"{base}-moved-{run.date}-{n}"), n + 1
+            r = _git(repo, "worktree", "add", "-b", name, str(wt), commit, timeout=600)
+        if r.returncode != 0:
+            raise RuntimeError("git worktree add failed: " + (r.stderr or "").strip()[:200])
+        made = True
+        if name != branch:
             ws = dict(room.get("workspace") or {})
             ws["branch"] = name
             _d.chatroom.patch_room(rid, workspace=ws)
-    if r.returncode != 0:
+    except Exception as e:      # noqa: BLE001 — whatever failed, the folder comes back
+        why = str(e) or repr(e)
         try:
-            if wt.exists():
-                shutil.rmtree(wt, ignore_errors=True)
+            if made or wt.exists():
+                try:
+                    _git(repo, "worktree", "remove", "--force", str(wt))
+                except (OSError, subprocess.SubprocessError):
+                    pass
+                if wt.exists():
+                    shutil.rmtree(wt)
             os.replace(aside, wt)
-        except OSError:
+        except OSError as e2:
+            run.left("worktree", label, f"{why}; and the old folder could not be put back "
+                     f"({e2}): it is {aside}", roomId=rid, aside=str(aside))
+            return
+        try:
+            _git(repo, "worktree", "prune")
+        except (OSError, subprocess.SubprocessError):
             pass
-        run.left("worktree", label, f"git worktree add failed: {(r.stderr or '').strip()[:200]}",
-                 roomId=rid)
+        run.left("worktree", label, f"{why}; the folder is back as it was", roomId=rid)
         return
-    run.fixed("worktree", label, f"made again at {commit[:10]} on {branch or 'a new branch'}; "
-              f"the old folder (git folder {gd}) is kept as {aside}", roomId=rid,
-              aside=str(aside))
+    detail = (f"made again at {commit[:10]} on {name or 'a new branch'}; "
+              f"the old folder (git folder {gd}) is kept as {aside}")
+    if ignored:
+        failed = _copy_ignored(aside, wt, ignored)
+        detail += f"; its {len(ignored)} ignored file(s)/folder(s) copied in"
+        if failed:
+            detail += f", except {', '.join(failed[:5])}{' …' if len(failed) > 5 else ''}"
+    run.fixed("worktree", label, detail, roomId=rid, aside=str(aside))
 
 
 def _check_transcripts(run: _Run, room: dict) -> None:

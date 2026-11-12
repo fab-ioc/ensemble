@@ -69,6 +69,8 @@ def fake_hub(tmp: Path, projects: list, live=()):
         task_label=lambda r: r.get("title", ""),
         ensemble_tools=types.SimpleNamespace(_project_of_room=lambda r: r.get("projectId", "")),
         _room_is_live=lambda r: r["id"] in live,
+        _room_has_live_pty=lambda rid: False,
+        pid_alive=lambda pid: pid == os.getpid(),
         agents=types.SimpleNamespace(get_agent=lambda name: None),
     )
     (tmp / "state").mkdir(parents=True, exist_ok=True)
@@ -106,7 +108,9 @@ class MapOldPath(unittest.TestCase):
             home = Path(t)
             (home / "dev" / "x").mkdir(parents=True)
             self.assertIsNone(mc.mapped_dir(r"C:\Users\u\dev\x", home, home / "EP", git=True))
-            (home / "dev" / "x" / ".git").mkdir()
+            (home / "dev" / "x" / ".git").mkdir()             # empty: not a repository
+            self.assertIsNone(mc.mapped_dir(r"C:\Users\u\dev\x", home, home / "EP", git=True))
+            git(home / "dev" / "x", "init", "-q")
             self.assertEqual(mc.mapped_dir(r"C:\Users\u\dev\x", home, home / "EP", git=True),
                              home / "dev" / "x")
 
@@ -130,9 +134,14 @@ class Gitdir(unittest.TestCase):
         with tempfile.TemporaryDirectory() as t:
             pd = Path(t)
             cwd = "/" + "a" * 250
+            other = "/" + "a" * 240
             self.assertIsNone(mc.claude_dir_for(pd, cwd))
-            (pd / (mc.claude_slug(cwd)[:200] + "-abc123")).mkdir()
-            self.assertEqual(mc.claude_dir_for(pd, cwd).name, mc.claude_slug(cwd)[:200] + "-abc123")
+            d = pd / (mc.claude_slug(cwd)[:200] + "-abc123")
+            d.mkdir()
+            (d / "x.jsonl").write_text(json.dumps({"type": "user", "cwd": other}) + "\n")
+            self.assertIsNone(mc.claude_dir_for(pd, cwd))      # another folder's
+            (d / "x.jsonl").write_text('{"type": "summary"}\n' + json.dumps({"cwd": cwd}) + "\n")
+            self.assertEqual(mc.claude_dir_for(pd, cwd), d)
 
 
 class Check(unittest.TestCase):
@@ -211,6 +220,67 @@ class Check(unittest.TestCase):
         self.assertTrue(Path(item["patch"]).is_file())
 
     @unittest.skipIf(os.name == "nt", "a C:/ git folder exists-check is Windows-shaped there")
+    def test_ignored_files_come_along(self):
+        (self.repo / ".gitignore").write_text(".secret\n")
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-q", "-m", "ignore")
+        hub, chat = fake_hub(self.tmp, [{"id": "p1", "path": str(self.repo)}])
+        wt = self._task(hub, chat, "r7", "sess/seven", files={".secret": "only here\n"})
+        r = mc.run_check(repair=True, notify=False)
+        self.assertEqual([i["kind"] for i in r["repaired"]], ["worktree"])
+        self.assertEqual((wt / ".secret").read_text(), "only here\n")
+        self.assertIn("ignored", r["repaired"][0]["detail"])
+
+    @unittest.skipIf(os.name == "nt", "exec bits")
+    def test_exec_bit_counts_when_not_from_windows(self):
+        hub, chat = fake_hub(self.tmp, [{"id": "p1", "path": str(self.repo)}])
+        wt = self._task(hub, chat, "r8", "sess/eight")
+        (wt / ".git").write_text(f"gitdir: {self.tmp / 'gone' / 'worktrees' / 'repo'}\n")
+        (wt / "a.py").chmod(0o755)
+        item = mc.run_check(repair=False, notify=False)["open"][0]
+        self.assertNotIn("(repairable)", item["detail"])
+
+    def test_another_branchs_commit_is_no_proof(self):
+        git(self.repo, "checkout", "-q", "-b", "other")
+        (self.repo / "o.py").write_text("o\n")
+        git(self.repo, "add", "-A")
+        git(self.repo, "commit", "-q", "-m", "other")
+        git(self.repo, "checkout", "-q", "main")
+        hub, chat = fake_hub(self.tmp, [{"id": "p1", "path": str(self.repo)}])
+        self._task(hub, chat, "r9", "sess/nine", files={"o.py": "o\n"})
+        item = mc.run_check(repair=False, notify=False)["open"][0]
+        self.assertNotIn("(repairable)", item["detail"])
+
+    def test_kept_files_changed_later_get_a_new_patch(self):
+        hub, chat = fake_hub(self.tmp, [{"id": "p1", "path": str(self.repo)}])
+        wt = self._task(hub, chat, "r10", "sess/ten", files={"n.py": "v1\n"})
+        first = mc.run_check(repair=True, notify=False)["open"][0]
+        (wt / "n.py").write_text("v2\n")
+        second = mc.run_check(repair=True, notify=False)["open"][0]
+        self.assertNotEqual(first["patch"], second["patch"])
+        self.assertIn("+v2", Path(second["patch"]).read_text())
+        self.assertNotEqual(first["branch"], second["branch"])
+        self.assertEqual(git(self.repo, "show", f"{second['branch']}:n.py"), "v2")
+
+    def test_a_failure_after_the_folder_went_aside_brings_it_back(self):
+        hub, chat = fake_hub(self.tmp, [{"id": "p1", "path": str(self.repo)}])
+        wt = self._task(hub, chat, "r11", "sess/eleven")
+        real = mc._git
+
+        def boom(repo, *args, **kw):
+            if args[:1] == ("worktree",) and args[1:2] == ("prune",):
+                raise subprocess.TimeoutExpired("git", 1)
+            return real(repo, *args, **kw)
+        mc._git = boom
+        try:
+            r = mc.run_check(repair=True, notify=False)
+        finally:
+            mc._git = real
+        self.assertEqual(r["repaired"], [])
+        self.assertIn("back as it was", r["open"][0]["detail"])
+        self.assertTrue((wt / "a.py").is_file())
+        self.assertFalse(list(wt.parent.glob("repo.moved-*")))
+
     def test_running_task_is_not_touched(self):
         hub, chat = fake_hub(self.tmp, [{"id": "p1", "path": str(self.repo)}], live={"r4"})
         wt = self._task(hub, chat, "r4", "sess/four")
