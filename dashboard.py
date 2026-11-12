@@ -67,6 +67,8 @@ from backends.shared import (
 # Images pasted into a chat box, kept for the agent.
 import attachments
 import project_icon
+# An initiative's icon drawn by an AI model (#335).
+import icon_gen
 # Which Ensemble this is (its version; built app or a checkout), and Update now
 # for the built app (from GitHub Releases).
 import app_version
@@ -8267,6 +8269,33 @@ def set_project_icon(project_id: str, data_url, name: str = "") -> tuple[bool, s
             with contextlib.suppress(OSError):
                 f.unlink()
     return True, "ok", icon
+
+
+def project_icon_about(proj: dict) -> str:
+    """What Generate tells the model a project is about (#335): its roadmap's first prose line."""
+    try:
+        return icon_gen.about_text(read_roadmap(proj).get("text") or "")
+    except OSError:
+        return ""
+
+
+def project_icon_gen_info(project_id: str) -> dict | None:
+    """What the settings show above Generate (#335): which CLI draws, and from what."""
+    proj = find_project(project_id)
+    if proj is None:
+        return None
+    cli = icon_gen.which_cli()
+    return {"agent": cli["agent"] if cli else "", "model": cli["model"] if cli else "",
+            "name": proj.get("name") or "", "about": project_icon_about(proj)}
+
+
+def generate_project_icons(project_id: str) -> tuple[bool, str, dict]:
+    """Four icons for a project, drawn by the CLI the hub runs (#335). Nothing is
+    kept: the page shows them and saves the picked one through /api/projects/icon."""
+    proj = find_project(project_id)
+    if proj is None:
+        return False, "no_such_project", {}
+    return icon_gen.generate(project_id, proj.get("name") or "", project_icon_about(proj))
 
 
 def project_icon_file(project_id: str) -> Path | None:
@@ -18750,6 +18779,18 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/projects/icon":
             self._project_icon_get(u)
             return
+        if p == "/api/projects/icon-gen":
+            # #335: Generate's header: the CLI that draws, the name and what the project is about.
+            why = self._page_refusal()
+            if why:
+                self._send_json(403, {"error": "page_only", "message": why})
+                return
+            info = project_icon_gen_info((parse_qs(u.query).get("id", [""])[0] or "").strip())
+            if info is None:
+                self._send_json(404, {"error": "no_such_project", "message": icon_gen.REFUSALS["no_such_project"]})
+            else:
+                self._send_json(200, info)
+            return
         if p == "/api/room/msg":
             # The message a balloon link points at, for the chip that shows it.
             q = parse_qs(u.query)
@@ -22374,6 +22415,22 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self._send_json(404 if msg == "no_such_project" else (413 if msg == "too_big" else 400),
                                 {"error": msg, "message": refusals.get(msg, msg)})
+            return
+        if p == "/api/projects/icon-gen":
+            # #335: {projectId} -> {ok, svgs[4], agent, model}; nothing is saved.
+            why = self._page_refusal()
+            if why:
+                self._send_json(403, {"error": "page_only", "message": why})
+                return
+            if not isinstance(data, dict):
+                self._send_json(400, {"error": "bad_json"})
+                return
+            ok, code, res = generate_project_icons(str(data.get("projectId") or ""))
+            if ok:
+                self._send_json(200, {"ok": True, **res})
+            else:
+                status = {"no_such_project": 404, "busy": 409, "no_cli": 503, "timeout": 504}.get(code, 502)
+                self._send_json(status, {"error": code, "message": icon_gen.REFUSALS.get(code, code), **res})
             return
         if p == "/api/projects/kind":
             # {projectId, kind: "code" | "documents"}.
