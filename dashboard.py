@@ -13971,7 +13971,24 @@ def update_status() -> dict:
     except (OSError, ValueError):
         out["last"] = None
     out["version"] = app_version.VERSION
+    with _APP_UPDATE_LOCK:
+        out["restart"] = dict(_SRC_UPDATE)
     return out
+
+
+# Where a source update's restart stands, for the page's Update now card:
+# idle | fetching (the page's request pulls the checkout) | checking (the helper starts the new code on a spare port) |
+# restarting (the helper stops this hub) | failed (``error``: this hub runs on).
+_SRC_UPDATE: dict = {"stage": "idle"}
+
+
+def src_update_stage(stage: str, lease: str = "", **more) -> None:
+    """Set it; a lease other than the one under way leaves it as it is."""
+    with _APP_UPDATE_LOCK:
+        if lease and stage != "checking" and _SRC_UPDATE.get("lease") != lease:
+            return
+        _SRC_UPDATE.clear()
+        _SRC_UPDATE.update(stage=stage, at=time.time(), **({"lease": lease} if lease else {}), **more)
 
 
 def _launchd_service() -> dict | None:
@@ -15440,11 +15457,13 @@ def start_boot_restore() -> None:
     threading.Thread(target=run, daemon=True, name="boot-restore").start()
 
 
-def restart_plan(room_id: str = "", drain: bool = False) -> dict:
+def restart_plan(room_id: str = "", drain: bool = False, grace: int | None = None) -> dict:
     """What the helper needs: how this hub was started (to start it again the
     same way), where to preflight, whom to resume and what to tell them.
     ``room_id`` is the calling PO's room; without one (the dashboard page) the
-    restart rooms that have a live terminal are resumed, and nobody is told."""
+    restart rooms that have a live terminal are resumed, and nobody is told.
+    ``grace``: the wait before the stop, in place of ENSEMBLE_RESTART_GRACE /
+    RESTART_GRACE_S (0 for the page's own Update now: nobody's reply needs it)."""
     keep_agents = not drain and pty_host_compatible()
     if room_id and not keep_agents:
         resume = [room_id]
@@ -15474,10 +15493,13 @@ def restart_plan(room_id: str = "", drain: bool = False) -> dict:
             wake += (f" It restarted for {restart_drain.reason_text(st)} after a drain "
                      f"({st.get('outcome') or 'done'}); "
                      f"{restart_drain.po_summary(st)}: each was told where it stopped.")
-    try:
-        grace = max(0, min(300, int(os.environ.get("ENSEMBLE_RESTART_GRACE", RESTART_GRACE_S))))
-    except ValueError:
-        grace = RESTART_GRACE_S
+    if grace is not None:
+        grace = max(0, min(300, int(grace)))
+    else:
+        try:
+            grace = max(0, min(300, int(os.environ.get("ENSEMBLE_RESTART_GRACE", RESTART_GRACE_S))))
+        except ValueError:
+            grace = RESTART_GRACE_S
     logs = DASHBOARD_DIR / "logs"
     return {
         "repo": str(STATIC_DIR),
@@ -15524,7 +15546,7 @@ def _last_helper_step(what: str = "restart") -> str:
 
 
 def _watch_restart_helper(pid: int, lease: str, room_id: str = "", identity: str = "",
-                          what: str = "restart") -> None:
+                          what: str = "restart", purpose: str = "restart") -> None:
     """The helper runs detached from the hub. When it ends with its lease
     still held it stopped before the hub did (ED-227: one ended silently
     after its preflight and the old hub ran on for 19 minutes): say so, let
@@ -15544,6 +15566,9 @@ def _watch_restart_helper(pid: int, lease: str, room_id: str = "", identity: str
             # Finished or gave up, and this hub still runs: its snapshot
             # describes no restart, so no later hub restores from it.
             retire_own_snapshot(lease)
+            if purpose == "update":
+                src_update_stage("failed", lease,
+                                 error="The new code did not start: " + _last_helper_step(what))
             return
         if BACKEND.process_alive(pid):
             continue
@@ -15558,6 +15583,9 @@ def _watch_restart_helper(pid: int, lease: str, room_id: str = "", identity: str
             _update_log(f"HELPER GONE - {why}")
         _drop_restart_lease(lease)
         retire_own_snapshot(lease)
+        if purpose == "update":
+            src_update_stage("failed", lease, error=f"The {what} helper ended without finishing: "
+                                                    + _last_helper_step(what))
         room = chatroom.get_room(room_id) if room_id else None
         if room:
             who = identity or next((p.get("identity", "") for p in room.get("participants") or []), "")
@@ -15568,14 +15596,14 @@ def _watch_restart_helper(pid: int, lease: str, room_id: str = "", identity: str
 
 
 def trigger_restart(room_id: str = "", drain: bool = False, identity: str = "",
-                    purpose: str = "restart") -> dict:
+                    purpose: str = "restart", grace: int | None = None) -> dict:
     """Start a plain restart; returns at once. ``status`` is the HTTP code.
     ``drain``: the restart a drain led to (restart_drain.py): its PO's note
     says why, and who paused. ``identity``: the agent in ``room_id`` that
     asked, told if the helper ends before the restart.
 
     ``purpose``: "update" for a source update's restart (its outcome also
-    goes to update.log).
+    goes to update.log). ``grace``: see restart_plan.
 
     ENSEMBLE_RESTART_DRY_RUN answers with the plan instead of running it."""
     lease, since = _take_restart_lease()
@@ -15585,7 +15613,7 @@ def trigger_restart(room_id: str = "", drain: bool = False, identity: str = "",
                          f"finished — see {DASHBOARD_DIR / 'logs' / 'restart.log'}. "
                          f"Try again after {int(RESTART_BUSY_S - since) + 1}s."}
     try:
-        plan = restart_plan(room_id, drain=drain)
+        plan = restart_plan(room_id, drain=drain, grace=grace)
         plan["leasePath"] = str(_restart_lease_path())
         plan["leaseId"] = lease
         if os.environ.get("ENSEMBLE_RESTART_DRY_RUN"):
@@ -15604,19 +15632,27 @@ def trigger_restart(room_id: str = "", drain: bool = False, identity: str = "",
                                   keep=plan["keepAgents"])
         except Exception as e:      # noqa: BLE001 — the restart goes ahead without it
             print(f"[restart] no snapshot at the request: {e!r}", flush=True)
+        if purpose == "update":
+            src_update_stage("checking", lease)     # before the helper can call back
         result = BACKEND.self_restart(plan)
-    except BaseException:
+    except BaseException as e:
         # No restart: its snapshot must not bring rooms back on a later start.
+        if purpose == "update":
+            src_update_stage("failed", lease, error=f"The restart could not start: {e}")
         retire_own_snapshot(lease)
         _drop_restart_lease(lease)
         raise
     if not result.get("started"):
+        if purpose == "update":
+            src_update_stage("failed", lease, error="The restart could not start: "
+                                                    + str(result.get("error") or "no reason given"))
         retire_own_snapshot(lease)
         _drop_restart_lease(lease)
         return {**result, "status": 500}
     if result.get("helperPid"):
         threading.Thread(target=_watch_restart_helper,
                          args=(int(result["helperPid"]), lease, "" if drain else room_id, identity),
+                         kwargs={"purpose": purpose},
                          daemon=True, name="restart-helper-watch").start()
     return {**result, "status": 202, "leaseId": lease, "graceSeconds": plan["graceSeconds"],
             "keepAgents": plan["keepAgents"],
@@ -22295,6 +22331,8 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 self._send_json(200, preflight_typing_check())
                 return
+            if p in ("/api/restart/snapshot", "/api/restart/prepare") and _LEASE_PURPOSE.get(lease) == "update":
+                src_update_stage("restarting", lease)    # the helper stops this hub now
             if p == "/api/restart/snapshot":
                 snap = take_restart_snapshot(lease)
                 save_restart_caches()

@@ -594,18 +594,29 @@ def request_restart(reason: str, by: dict, action: str = "restart",
     if action == "restart" and not holding() and _d.pty_host_compatible():
         _log(f"hub-only mode by {by.get('label') or 'someone'}: {reason or '(no reason)'}")
         return _d.trigger_restart(by.get("roomId", ""), identity=by.get("identity", ""))
+    if action == "update" and not external and not _d._current_restart_lease():
+        # An earlier attempt's outcome is not this one's, also when this one
+        # joins a drain under way.
+        _d.src_update_stage("idle")
     if action == "update" and not holding() and not external:
         if _d.app_version.packaged():
             _log("packaged update staging; helper will select hub-only or classic mode")
             res = _d.start_app_update()
             return {"status": 202 if res.get("started") else 500, **res}
         if _d.source_update_keeps_host():
+            _d.src_update_stage("fetching")   # a page whose request got no answer sees it under way
             err = _d.pull_checkout()
             if err:
-                return {"status": 500, "started": False, "error": err}
+                _d._restart_log(f"source update not started: {err}")
+                log = str(_d.DASHBOARD_DIR / "logs" / "restart.log")
+                advice = ("Check the connection, then Install now again."
+                          if err.startswith(("git fetch failed", "git reset failed")) else "")
+                _d.src_update_stage("failed", error=err, advice=advice, log=log)
+                return {"status": 500, "started": False, "error": err, "log": log}
             _log("source update: PTY host unchanged; hub-only mode")
+            # The page's own Update now: nobody's reply needs the grace.
             res = _d.trigger_restart(by.get("roomId", ""), identity=by.get("identity", ""),
-                                     purpose="update")
+                                     purpose="update", **({} if by.get("roomId") else {"grace": 0}))
             return {"status": 202 if res.get("started") else 500, **res}
     now = time.time()
     with LOCK:
@@ -781,7 +792,9 @@ def _launch() -> None:
                 if err:
                     end_drain("failed", f"the update could not be fetched: {err}")
                     return
-            res = _d.trigger_restart(wake, drain=True, **({"purpose": "update"} if update else {}))
+            # An update nobody in a room asked for (the page's): no grace.
+            res = _d.trigger_restart(wake, drain=True, **({"purpose": "update"} if update else {}),
+                                     **({"grace": 0} if update and not wake else {}))
     except Exception as e:      # noqa: BLE001 — said, and everything let go
         end_drain("failed", f"{e.__class__.__name__}: {e}")
         return
