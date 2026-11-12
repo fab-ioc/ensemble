@@ -944,11 +944,12 @@ def _summarize(room: dict, po: str | None = None, is_po: bool | None = None) -> 
         "updatedAt": room.get("updatedAt", 0),
         "mode": room.get("mode", ""),
         "folderMissing": room.get("folderMissing") or None,
+        "dealtSince": room.get("dealtSince") or None,
         "owners": cr.owners(room),
         "participants": [
             {k: p.get(k) for k in ("identity", "kind", "agent", "model", "role",
                                    "ptyId", "sessionId", "lastExit", "resumedAt",
-                                   "rotatedAt", "answeredAt", "review")}
+                                   "rotatedAt", "answeredAt", "review", "cwd")}
             for p in room.get("participants", [])
         ],
         "lastMessage": {"from": last.get("from", ""), "to": last.get("to", ""),
@@ -1607,16 +1608,58 @@ def _room_level(room: dict, live_agents: list[str],
     return None
 
 
-# When each (task, state) was first seen, so the tray can say how long a task
-# has been in trouble rather than when its chat last moved. Reset the moment a
-# state clears, so a state that comes back reads as new. An unguarded dict is
+# When each (task, state, cause) was first seen, so the tray can say how long a
+# task has been in trouble rather than when its chat last moved. Reset the
+# moment a state clears, so a state that comes back reads as new; keyed by its
+# cause too, so another trouble in the same state (a permission prompt, then
+# two terminals) is new as well, and a Done in the Inbox (#352) does not hide it. An unguarded dict is
 # safe here because `_items()` has exactly one caller, `snapshot()`, and it
 # runs under `_COMPUTE_LOCK` — keep it that way.
-_FIRST_SEEN: dict[tuple[str, str], float] = {}
+#
+# Done in the Inbox keeps the times of the troubles it set aside on the room
+# (``dealtSince``, "state|cause" -> time, from :func:`first_seen_of`), so the
+# first snapshot after a hub restart dates a trouble that is still there from
+# when it began, not from the restart, and it stays set aside (#352). Kept on
+# the room only while the trouble is: the sweep in ``_items`` drops the rest.
+_FIRST_SEEN: dict[tuple[str, str, str], float] = {}
+_FIRST_RUN = [True]     # no snapshot yet in this process: dealtSince may seed
 
 
-def _first_seen(room_id: str, state: str, now: float) -> float:
-    return _FIRST_SEEN.setdefault((room_id, state), now)
+def _first_seen(room_id: str, state: str, now: float, cause: str = "",
+                stored: dict | None = None) -> float:
+    key = (room_id, state, cause)
+    if key not in _FIRST_SEEN and _FIRST_RUN[0] and isinstance(stored, dict):
+        try:
+            then = float(stored.get(f"{state}|{cause}") or 0)
+        except (TypeError, ValueError):
+            then = 0.0
+        if 0 < then <= now:
+            _FIRST_SEEN[key] = then
+    return _FIRST_SEEN.setdefault(key, now)
+
+
+def _prune_dealt_since(dealt_since: dict, seen_now: set) -> None:
+    """A trouble Done in the Inbox that is over leaves the room's
+    ``dealtSince``: when it comes back, it is new (#352)."""
+    for rid, stored in dealt_since.items():
+        keep = {k: v for k, v in stored.items()
+                if (rid, *k.split("|", 1)) in seen_now}
+        if keep != stored:
+            try:
+                _d.chatroom.patch_room(rid, dealtSince=keep or None)
+            except Exception as e:      # noqa: BLE001 — kept for the next snapshot
+                print(f"[attention] {rid}: dealtSince not updated: {str(e)[:200]}", flush=True)
+
+
+def first_seen_of(room_id: str) -> dict:
+    """A task's troubles now, "state|cause" -> when first seen: what Done in
+    the Inbox keeps on the room as ``dealtSince`` (#352)."""
+    for _ in range(3):
+        try:
+            return {f"{s}|{c}": t for (r, s, c), t in list(_FIRST_SEEN.items()) if r == room_id}
+        except RuntimeError:    # changed while read: read again
+            continue
+    return {}
 
 
 def _stall_seconds() -> int:
@@ -1631,20 +1674,30 @@ def _stall_seconds() -> int:
 _DUP_GRACE_S = 30.0
 
 
-def _folder_missing(room: dict) -> tuple | None:
+def _folder_missing(room: dict, live_agents: list[str] | tuple = ()) -> tuple | None:
     """A start refused because a seat's folder is missing
-    (seat_folders.launch_folder): until its folder is there again or a start
-    succeeds."""
+    (seat_folders.launch_folder): until its folder is there again, a start
+    succeeds, the marked seat is running, or the task's or the seat's folder
+    is no longer the one the refusal was about (the task was moved, #352)."""
     mark = room.get("folderMissing")
     if not isinstance(mark, dict) or not mark.get("reason"):
         return None
     path = mark.get("path") or ""
     if path and mark.get("kind") != "elsewhere" and os.path.isdir(path):
         return None
+    ident = mark.get("identity") or ""
+    if ident and ident in live_agents:
+        return None             # it runs: whatever stopped it is over
     part = next((p for p in room.get("participants", [])
-                 if p.get("identity") == mark.get("identity")), {})
+                 if p.get("identity") == ident), {})
+    # A mark written by #352 or later records the folders it was about.
+    if "roomCwd" in mark and (mark.get("roomCwd") or "") != (room.get("cwd") or ""):
+        return None
+    if "seatCwd" in mark and part and (mark.get("seatCwd") or "") != (part.get("cwd") or ""):
+        return None
     return ("blocked", f"could not start: {mark['reason']}",
-            {"since": float(mark.get("since") or 0), "cause": "folder_missing", "path": path}, part)
+            {"since": float(mark.get("since") or 0), "cause": "folder_missing", "path": path,
+             "folderKind": mark.get("kind") or "missing"}, part)
 
 
 def _duplicate_ptys(room: dict, now: float) -> tuple | None:
@@ -1730,7 +1783,7 @@ def _items() -> list[dict]:
     except Exception:
         keys = {}
     items: list[dict] = []
-    seen_now: set[tuple[str, str]] = set()
+    seen_now: set[tuple[str, str, str]] = set()
     try:
         held_po = _d.po_messages.held_by_room()
     except Exception:
@@ -1752,7 +1805,11 @@ def _items() -> list[dict]:
     except Exception:
         not_back = {}
 
+    dealt_since: dict[str, dict] = {}
     for room in rooms:
+        stored = room.get("dealtSince")
+        if isinstance(stored, dict) and stored:
+            dealt_since[room["id"]] = stored
         if not room.get("launched", True):
             continue               # a draft has no agents to worry about
         agents = [p for p in room["participants"] if p.get("kind") == "agent"]
@@ -1779,7 +1836,7 @@ def _items() -> list[dict]:
             hit = _classify_agent(room, part, ev, stall, now)
             if hit:
                 found.append((*hit, part))
-        missing = _folder_missing(room)
+        missing = _folder_missing(room, live_agents)
         if missing:
             # Its start was refused: its folder is not there (ED-344). That,
             # not "the agent is gone", is what the person has to fix.
@@ -1842,6 +1899,13 @@ def _items() -> list[dict]:
         found.sort(key=lambda f: _SEVERITY.get(f[0], 99))
         state, reason, extra, part = found[0]
         rid = room["id"]
+        for f in found:
+            # Every trouble of the task keeps its own age, also one behind a
+            # worse one, so it reads as old again when it wins again.
+            cause = f[2].get("cause") or ""
+            if not (f[2].get("endedAt") or f[2].get("since")):
+                _first_seen(rid, f[0], now, cause, stored)
+            seen_now.add((rid, f[0], cause))
         pid = links.get(rid) or room.get("projectId") or \
             _d._project_for_cwd(room.get("cwd", ""), all_projects)
         no = room.get("no")
@@ -1869,15 +1933,14 @@ def _items() -> list[dict]:
             # has to mean. Room `updatedAt` would be the last chat message, and
             # would read as 4 minutes for an agent blocked for an hour.
             # An ask the agent reported dates from the report.
-            "since": float(extra.get("endedAt") or extra.get("since") or _first_seen(rid, state, now)),
+            "since": float(extra.get("endedAt") or extra.get("since") or _first_seen(rid, state, now, extra.get("cause") or "", stored)),
             "otherStates": sorted({f[0] for f in found[1:]}),
         }
-        seen_now.add((rid, state))
         if extra.get("since"):
             item["askedAt"] = float(extra["since"])     # the pages say "since 15:55"
         for k in ("quote", "cause", "exitCode", "lastLines", "waitedSeconds", "askId", "askPart",
                   "askKind", "ptyIds", "heldPoMessages", "model", "until", "silentSeconds",
-                  "openAsks", "permission", "permissionKey"):
+                  "openAsks", "permission", "permissionKey", "folderKind"):
             if k in extra and extra[k] not in (None, ""):
                 item[k] = extra[k]
         if extra.get("dismiss"):
@@ -1894,6 +1957,8 @@ def _items() -> list[dict]:
     # reads as new rather than inheriting an old start time.
     for gone in [k for k in _FIRST_SEEN if k not in seen_now]:
         _FIRST_SEEN.pop(gone, None)
+    _FIRST_RUN[0] = False
+    _prune_dealt_since(dealt_since, seen_now)
     items.sort(key=lambda it: (_SEVERITY.get(it["state"], 99), -(it.get("since") or 0)))
     return items
 

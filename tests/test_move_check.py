@@ -392,13 +392,30 @@ class Check(unittest.TestCase):
             {"id": "p2", "name": "Q", "code": r"C:\Users\u\cs\gone"}))
         chat.rooms["r6"] = {"id": "r6", "title": "t6",
                             "cwd": r"C:\Users\u\EnsembleProjects\P\t6",
-                            "taskDir": r"C:\Users\u\EnsembleProjects\P\t6", "participants": []}
+                            "taskDir": r"C:\Users\u\EnsembleProjects\P\t6", "participants": [],
+                            "folderMissing": {"reason": "its folder is missing", "identity": "claude",
+                                              "path": r"C:\Users\u\EnsembleProjects\P\t6"}}
         r = mc.run_check(repair=True, notify=False)
         self.assertEqual(json.loads((home / "project.json").read_text())["code"], str(self.repo))
         self.assertEqual(chat.rooms["r6"]["cwd"], str(home / "t6"))
+        self.assertIsNone(chat.rooms["r6"]["folderMissing"], "a refusal about the old folder goes (#352)")
         self.assertEqual(sorted(i["kind"] for i in r["repaired"]), ["code", "taskFolder"])
         self.assertEqual([(i["kind"], i["what"]) for i in r["open"]], [("code", "Q")])
         self.assertEqual(mc.last()["open"][0]["what"], "Q")
+
+    def test_352_a_repair_of_another_folder_keeps_the_refusal(self):
+        hub, chat = fake_hub(self.tmp, [])
+        home = Path(hub.PROJECTS_ROOT) / "P"
+        (home / "t7").mkdir(parents=True)
+        (home / "project.json").write_text(json.dumps({"id": "p1", "name": "P", "code": str(self.repo)}))
+        mark = {"reason": "codex's folder is missing", "identity": "codex", "path": "/nowhere/repo-linux"}
+        chat.rooms["r7"] = {"id": "r7", "title": "t7", "cwd": "/nowhere/repo-linux",
+                            "participants": [{"identity": "codex", "cwd": "/nowhere/repo-linux"}],
+                            "workspace": {"taskDir": r"C:\Users\u\EnsembleProjects\P\t7"},
+                            "folderMissing": mark}
+        mc.run_check(repair=True, notify=False)
+        self.assertEqual(chat.rooms["r7"]["workspace"]["taskDir"], str(home / "t7"))
+        self.assertEqual(chat.rooms["r7"]["folderMissing"], mark)
 
 
 if __name__ == "__main__":

@@ -190,6 +190,20 @@ class LaunchFolder(_Base):
         self.assertEqual(raw["folderMissing"]["identity"], "claude")
         self.assertIsInstance(dashboard.MissingFolderError("x"), dashboard.StartRoomError)
 
+    def test_352_a_refusal_says_the_full_folder_once_in_the_chat(self):
+        task = self.dir / "task"
+        task.mkdir()
+        rid = self.room(task / "repo", task, mode="inplace")
+        notes = lambda: [m for m in self.full(rid).get("messages", []) if m.get("noticeKind") == "folder"]
+        for _ in range(2):
+            with self.assertRaises(dashboard.MissingFolderError):
+                seat_folders.launch_folder(self.full(rid), "claude", str(task / "repo"))
+        got = notes()
+        self.assertEqual(len(got), 1, got)
+        self.assertIn(str(task / "repo"), got[0]["text"])
+        mark = self.raw(rid)["folderMissing"]
+        self.assertEqual((mark["roomCwd"], mark["seatCwd"]), (str(task / "repo"), str(task / "repo")))
+
     def test_a_folder_that_comes_back_clears_the_mark(self):
         task = self.dir / "task"
         task.mkdir()
@@ -487,6 +501,24 @@ class Repair(_Base):
         self.assertEqual(len(list((self.dir / "backups" / "seat-folders").glob("*.json"))), 1)
         self.assertEqual(seat_folders.repair_at_start(), [])
 
+    def test_352_a_seat_moved_at_hub_start_loses_its_refusal(self):
+        rid, _ = self.damaged()
+        chatroom.patch_room(rid, folderMissing={"reason": "claude's folder is missing",
+                                                "identity": "claude", "path": "/gone"})
+        seat_folders.repair_at_start()
+        stored = json.loads((chatroom.ROOMS_DIR / f"{rid}.json").read_text())
+        self.assertNotIn("folderMissing", stored)
+
+    def test_352_a_hub_start_repair_of_another_seat_keeps_the_refusal(self):
+        rid, task = self.damaged()
+        mark = {"reason": "codex's folder is missing", "identity": "codex",
+                "path": str(task / "repo-linux")}
+        chatroom.patch_room(rid, folderMissing=mark)
+        rows = seat_folders.repair_at_start()
+        self.assertEqual([r["identity"] for r in rows], ["claude"])
+        stored = json.loads((chatroom.ROOMS_DIR / f"{rid}.json").read_text())
+        self.assertEqual(stored["folderMissing"], mark)
+
     def test_at_hub_start_a_live_seat_is_left(self):
         rid, _ = self.damaged()
         chatroom.patch_participant(rid, "claude", {"ptyId": "live-1"})
@@ -515,6 +547,73 @@ class Attention(unittest.TestCase):
             self.assertIsNotNone(attention._folder_missing(self.room(d, kind="elsewhere")))
         self.assertIsNone(attention._folder_missing({"id": "r"}))
 
+
+    def test_352_a_running_seat_or_a_moved_task_is_no_longer_refused(self):
+        r = self.room("/no/such/folder")
+        self.assertIsNone(attention._folder_missing(r, ["claude"]))
+        self.assertIsNotNone(attention._folder_missing(r, ["codex"]))
+        r = self.room("/no/such/folder")
+        r["cwd"] = "/old"
+        r["participants"][0]["cwd"] = "/old"
+        r["folderMissing"].update(roomCwd="/old", seatCwd="/old")
+        self.assertIsNotNone(attention._folder_missing(r))
+        r["cwd"] = "/new"                       # the task moved
+        self.assertIsNone(attention._folder_missing(r))
+        r["cwd"] = "/old"
+        r["participants"][0]["cwd"] = "/new"    # the seat moved
+        self.assertIsNone(attention._folder_missing(r))
+        hit = attention._folder_missing(self.room("/no/such/folder", kind="elsewhere"))
+        self.assertEqual(hit[2]["folderKind"], "elsewhere")
+
+    def test_352_another_cause_in_the_same_state_is_new(self):
+        """Done in the Inbox sets a task's trouble aside until it is new
+        (inbox step 5): a second block of another cause, while the task stays
+        blocked, has its own first-seen time, later than the Done."""
+        attention._FIRST_SEEN.clear()
+        self.addCleanup(attention._FIRST_SEEN.clear)
+        self.assertEqual(attention._first_seen("r", "blocked", 100.0, "permission"), 100.0)
+        dealt_at = 150.0
+        self.assertEqual(attention._first_seen("r", "blocked", 200.0, "permission"), 100.0)
+        later = attention._first_seen("r", "blocked", 200.0, "duplicate_pty")
+        self.assertGreater(later, dealt_at)
+
+    def test_352_a_trouble_done_before_a_restart_stays_set_aside(self):
+        attention._FIRST_SEEN.clear()
+        self.addCleanup(attention._FIRST_SEEN.clear)
+        run = attention._FIRST_RUN[0]
+        self.addCleanup(attention._FIRST_RUN.__setitem__, 0, run)
+        attention._first_seen("r", "blocked", 100.0, "duplicate_pty")
+        attention._first_seen("other", "blocked", 120.0, "permission")
+        kept = attention.first_seen_of("r")          # Done at 150 keeps this on the room
+        self.assertEqual(kept, {"blocked|duplicate_pty": 100.0})
+        attention._FIRST_SEEN.clear()                # the hub restarts
+        attention._FIRST_RUN[0] = True
+        self.assertEqual(attention._first_seen("r", "blocked", 500.0, "duplicate_pty", kept), 100.0)
+        self.assertEqual(attention._first_seen("r", "blocked", 500.0, "permission", kept), 500.0)
+        attention._FIRST_SEEN.clear()                # gone, then back while the hub runs: new
+        attention._FIRST_RUN[0] = False
+        self.assertEqual(attention._first_seen("r", "blocked", 600.0, "duplicate_pty", kept), 600.0)
+
+    def test_352_an_over_trouble_leaves_dealt_since(self):
+        calls = []
+        with mock.patch.object(attention._d.chatroom, "patch_room",
+                               side_effect=lambda rid, **f: calls.append((rid, f))):
+            attention._prune_dealt_since(
+                {"a": {"blocked|duplicate_pty": 1.0, "stalled|silent": 2.0},
+                 "b": {"blocked|": 3.0}},
+                {("a", "blocked", "duplicate_pty"), ("b", "blocked", "")})
+            self.assertEqual(calls, [("a", {"dealtSince": {"blocked|duplicate_pty": 1.0}})])
+            calls.clear()
+            attention._prune_dealt_since({"a": {"stalled|silent": 2.0}}, set())
+            self.assertEqual(calls, [("a", {"dealtSince": None})])
+
+    def test_352_a_move_clears_only_the_refusal_it_is_about(self):
+        mark = {"identity": "codex", "path": "/t/repo-linux", "reason": "x"}
+        self.assertTrue(seat_folders.mark_moved(mark, ["codex"]))
+        self.assertTrue(seat_folders.mark_moved(mark, [], ["/t/repo-linux/"]))
+        self.assertFalse(seat_folders.mark_moved(mark, ["claude"], ["/t/repo", "/t"]))
+        self.assertFalse(seat_folders.mark_moved(None, ["codex"]))
+        self.assertTrue(seat_folders.mark_moved({"path": "/t", "reason": "x"}, [], ["/t"]))
 
 if __name__ == "__main__":
     unittest.main()

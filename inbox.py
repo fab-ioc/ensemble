@@ -29,8 +29,11 @@ thread "needs" only for an open card or a point to try, both rows already.
 
 **Leaving.** Nothing here decides what is open: each source keeps its own
 rules (answered, read where reading clears it, Done with this, older than the
-age-out, task done or stopped). Nothing is stored and nothing is changed: the
-inbox is a view.
+age-out, task done or stopped). One thing is the inbox's own (#352): a
+``waiting`` row (or an answer row from a Needs you item) that Done with this
+does not clear is set aside by Done in the Inbox, the room's ``dealtAt``
+(POST /api/attention/done), until its state is new (``since`` after it).
+Every row says where it goes (``open``) and how it closes (``dismiss``).
 
 **Older questions** (#310). A PO chat's open Ask cards its Decisions no
 longer count (the person wrote past them, they were asked again later, or
@@ -513,9 +516,19 @@ def _build_all(debug: bool = False, now: float | None = None) -> dict:
                     R.drop(roomId=rid, mid=mid, part=part, source=src, why=f"duplicate of row {hit['id']}")
                 continue
             kind = "answer" if it.get("askKind") in ("asks", "question") else "waiting"
+            since = it.get("askedAt") or it.get("since")
+            if not it.get("canDismiss") and float(it.get("since") or 0) <= float(s.get("dealtAt") or 0):
+                # Done in the Inbox (#352): the room's dealtAt, until the
+                # state is new again (a new refusal, a new block).
+                if debug:
+                    R.drop(roomId=rid, mid=mid, part=part, since=since, line=_line(it.get("reason")),
+                           source=src, why="set aside: Done in the Inbox")
+                continue
             line = it.get("quote") or it.get("reason") or ""
-            row(s, kind, src, mid, part, line, it.get("askedAt") or it.get("since"),
-                reason=it.get("reason") or "")
+            reason = it.get("reason") or ""
+            if it.get("cause") == "folder_missing":
+                line, reason = _folder_words(s, it)
+            row(s, kind, src, mid, part, line, since, reason=reason)
         except Exception as e:      # noqa: BLE001
             failed("attention item", e, it.get("roomId", "") if isinstance(it, dict) else "")
 
@@ -544,6 +557,7 @@ def _build_all(debug: bool = False, now: float | None = None) -> dict:
         if not o.get("points"):
             o.pop("points", None)
         _ask_ids(o, now, task_state)
+        _acts(o)
         out_rows.append(o)
     # An older card already a row (a task's own Needs you holds it) is that row.
     shown = {(r["roomId"], r.get("mid"), r.get("part")) for r in out_rows}
@@ -562,6 +576,33 @@ def _build_all(debug: bool = False, now: float | None = None) -> dict:
         out["dropped"] = sorted(R.dropped, key=lambda d: -float(d.get("since") or 0))
         out["errors"] = R.errors
     return out
+
+
+def _acts(o: dict) -> None:
+    """Where a row goes and how it is closed (#352), in place. ``open``:
+    ``message`` (its message in its chat) or ``chat`` (the task's chat, at
+    its latest). ``dismiss``: ``close`` (an Ask card closed by its number),
+    ``done`` (a check: its points or report marked seen), else ``dealt``
+    (Done: the room's ``dealtAt``, POST /api/attention/done, until it is
+    new again)."""
+    o["open"] = "message" if o.get("mid") else "chat"
+    if o.get("kind") == "check":
+        o["dismiss"] = "done"
+    elif o.get("kind") == "answer" and o.get("mid") and isinstance(o.get("n"), int):
+        o["dismiss"] = "close"
+    else:
+        o["dismiss"] = "dealt"
+
+
+def _folder_words(s: dict, it: dict) -> tuple[str, str]:
+    """A refused start in plain words (#352): what happened and what to do.
+    The folder itself is in the task's chat note, not on the card."""
+    who = it.get("ref") or "This task"
+    if it.get("folderKind") == "elsewhere":
+        return (f"{who} could not start: its conversation was recorded in another folder",
+                "Open it to give the seat a fresh session or bring the conversation back, or Done to dismiss.")
+    return (f"{who} could not start: its work folder is missing",
+            "Open it to move the task to another folder, or Done to dismiss.")
 
 
 def _ask_ids(o: dict, now: float, task_state) -> None:

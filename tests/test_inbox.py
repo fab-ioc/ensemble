@@ -383,5 +383,53 @@ class PoFixes(unittest.TestCase):
         self.assertEqual(rows[(PO2, "check")]["line"], "Beta PO: 1 answer to check")
 
 
+    # #352: every row has somewhere to go and a way to close it.
+    def folder_item(self, since=NOW - 600, **kw):
+        return {"roomId": TASK, "state": "blocked", "cause": "folder_missing", "ref": "AL-7",
+                "reason": "could not start: claude's folder /x/y/z is missing (gone)",
+                "since": since, "askedAt": since, **kw}
+
+    def test_352_every_row_has_open_and_dismiss(self):
+        self.w.decisions[PO] = ([{"mid": "m-ask", "n": 0, "question": "Ship?", "ts": NOW, "who": "po"}], [])
+        self.w.ledgers[PO] = {"points": [delivered("P3", "q3", "m-a3")]}
+        self.w.snap = {"items": [
+            self.folder_item(),
+            {"roomId": OTHER, "state": "waiting_for_you", "askKind": "question", "askId": "m-q2",
+             "quote": "Which port?", "reason": "asks", "since": NOW - 30, "canDismiss": True}],
+            "reported": {}}
+        rows = {r["id"]: r for r in self.build()["rows"]}
+        acts = {(r["kind"], r["roomId"]): (r["open"], r["dismiss"]) for r in rows.values()}
+        self.assertEqual(acts, {("answer", PO): ("message", "close"), ("check", PO): ("message", "done"),
+                                ("waiting", TASK): ("chat", "dealt"), ("answer", OTHER): ("message", "dealt")})
+
+    def test_352_folder_missing_says_what_to_do_without_the_path(self):
+        self.w.snap = {"items": [self.folder_item()], "reported": {}}
+        r = self.build()["rows"][0]
+        self.assertEqual(r["line"], "AL-7 could not start: its work folder is missing")
+        self.assertEqual(r["reason"], "Open it to move the task to another folder, or Done to dismiss.")
+        self.assertNotIn("/x/y/z", r["line"] + r["reason"])
+        self.w.snap = {"items": [self.folder_item(folderKind="elsewhere", ref="")], "reported": {}}
+        r = self.build()["rows"][0]
+        self.assertEqual(r["line"], "This task could not start: its conversation was recorded in another folder")
+
+    def test_352_done_sets_it_aside_until_its_state_is_new(self):
+        self.w.snap = {"items": [self.folder_item(since=NOW - 600)], "reported": {}}
+        self.assertEqual(self.build()["count"], 1)
+        self.w.rooms[2]["dealtAt"] = NOW - 300          # Done in the Inbox, after the refusal
+        out = self.build(debug=True)
+        self.assertEqual(out["count"], 0, out["rows"])
+        self.assertIn("set aside: Done in the Inbox", [d["why"] for d in out["dropped"]])
+        self.w.snap = {"items": [self.folder_item(since=NOW - 100)], "reported": {}}    # refused again
+        self.assertEqual(self.build()["count"], 1)
+
+    def test_352_a_dismissible_item_keeps_its_own_rule(self):
+        # canDismiss items are cleared by attention itself (set_aside); the
+        # inbox does not drop them again on its own.
+        self.w.rooms[3]["dealtAt"] = NOW
+        self.w.snap = {"items": [{"roomId": OTHER, "state": "waiting_for_you", "askKind": "question",
+                                  "askId": "m-q2", "reason": "asks", "since": NOW - 30, "canDismiss": True}],
+                       "reported": {}}
+        self.assertEqual(self.build()["count"], 1)
+
 if __name__ == "__main__":
     unittest.main()

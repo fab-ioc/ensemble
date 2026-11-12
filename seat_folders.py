@@ -145,9 +145,20 @@ def recreate_worktree(room: dict) -> tuple[bool, str]:
 # ---------------------------------------------------------------------------
 
 def _mark(room: dict, ident: str, path: str, reason: str, kind: str = "missing") -> None:
+    """The refusal on the room for the person (attention). It records the
+    task's and the seat's folders as they were, so a task moved since reads
+    as no longer refused (#352). A refusal not already marked in the same
+    words is also said in the task's chat, with the full folder: the Inbox
+    card names no path, the opened task does."""
+    part = next((p for p in room.get("participants", []) if p.get("identity") == ident), {})
+    prev = room.get("folderMissing")
     mark = {"path": path, "identity": ident, "reason": reason, "kind": kind,
-            "since": time.time()}
+            "since": time.time(), "roomCwd": room.get("cwd") or "",
+            "seatCwd": part.get("cwd") or ""}
     room["folderMissing"] = mark
+    if not (isinstance(prev, dict) and prev.get("reason") == reason
+            and prev.get("identity") == ident):
+        _note(room, f"Could not start {ident or 'the task'}: {reason}")
     rid = room.get("id", "")
     if not rid:
         return
@@ -156,6 +167,19 @@ def _mark(room: dict, ident: str, path: str, reason: str, kind: str = "missing")
         _d.chatroom.patch_room(rid, folderMissing=mark, updatedAt=time.time())
     except Exception as e:      # noqa: BLE001 — the refusal itself stands
         print(f"[folder] {rid}: mark not written: {str(e)[:200]}", flush=True)
+
+
+def mark_moved(mark, identities=(), paths=()) -> bool:
+    """Whether a move of the seats ``identities`` and the folders ``paths``
+    (their old values) is about the refusal ``mark`` records: its seat or its
+    folder moved. A mark naming no seat goes with any of its paths (#352)."""
+    if not isinstance(mark, dict):
+        return False
+    ident = mark.get("identity") or ""
+    if ident and ident in identities:
+        return True
+    path = os.path.normpath(mark.get("path") or "") if mark.get("path") else ""
+    return bool(path) and path in {os.path.normpath(p) for p in paths if p}
 
 
 def clear_mark(room: dict) -> None:
@@ -464,7 +488,7 @@ def repair_at_start() -> list[dict]:
             room = cr._load(rid)
             if room is None:
                 continue
-            changed = False
+            changed, moved = False, []
             for p in damaged_seats(room):
                 row = {"room": rid, "no": room.get("no"), "identity": p.get("identity", ""),
                        "was": p.get("cwd", ""), "now": room["cwd"]}
@@ -479,10 +503,15 @@ def repair_at_start() -> list[dict]:
                 if not ok:
                     out.append({**row, "skipped": why})
                     continue
+                moved.append(p.get("cwd", ""))
                 p["cwd"] = room["cwd"]
                 changed = True
                 out.append(row)
             if changed:
+                if mark_moved(room.get("folderMissing"), [r["identity"] for r in out
+                                                          if r.get("room") == rid and not r.get("skipped")],
+                              moved):
+                    room.pop("folderMissing", None)     # it named the old folder (#352)
                 cr._write(room)
     return out
 

@@ -92,6 +92,8 @@ import threading
 import time
 from pathlib import Path
 
+import seat_folders
+
 _d = None  # the dashboard module, set by bind()
 
 
@@ -2461,7 +2463,10 @@ def _rotate_marked(s: dict, tr: dict, done, answered: bool, asked: bool,
         lock.release()
     if patched is not None and moved:
         # Only once the participant has its fresh session: the room follows it.
-        _d.chatroom.patch_room(rid, cwd=moved)
+        moved_room = _d.chatroom.patch_room(rid, cwd=moved)
+        if moved_room and seat_folders.mark_moved(moved_room.get("folderMissing"), [ident]):
+            # A refusal about the old folder is over (#352).
+            _d.chatroom.patch_room(rid, folderMissing=None)
     if patched is None:
         _discard_fresh(info, used.get("agent", ""), started, agents_in)
         st["phase"] = "watching"
