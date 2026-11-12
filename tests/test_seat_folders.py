@@ -8,9 +8,10 @@
   fallback to the room folder or ``~/cs`` is gone).
 * ``resume_folder_check``: a Claude conversation recorded under another
   folder is refused, naming that folder.
-* ``repair_rooms`` / ``repair_at_start``: a seat an older hub moved to ``~/cs``
-  gets the task's folder back once, with a backup; a seat in another folder of
-  the task (``repo-linux``) and a running seat are left alone.
+* ``repair_at_start``: a seat an older hub moved to ``~/cs`` gets the task's
+  folder back once, with a backup and its Claude conversation copied first;
+  a seat in another folder of the task (``repo-linux``) and a running seat
+  are left alone.
 * attention: the refused start is a "could not start" item, not "agent gone".
 """
 from __future__ import annotations
@@ -394,6 +395,59 @@ class Repair(_Base):
         # A second checkout inside the task is the seat's own.
         self.assertEqual(seat_folders.launch_folder(room, "codex", str(task / "repo-linux")),
                          str(task / "repo-linux"))
+
+    def test_next_launch_copies_a_claude_conversation_from_the_fallback(self):
+        rid, task = self.damaged()
+        (task / "repo" / "f.txt").write_text("x")
+        old = str(dashboard.CS_ROOT)
+        source = (self.dir / "claude-projects" / dashboard.claude_project_slug(old)
+                  / "sid-claude.jsonl")
+        source.parent.mkdir(parents=True)
+        source.write_text(json.dumps({"cwd": old}) + "\n", encoding="utf-8")
+        target = (self.dir / "claude-projects"
+                  / dashboard.claude_project_slug(str(task / "repo")) / "sid-claude.jsonl")
+        room = self.full(rid)
+        self.assertEqual(seat_folders.launch_folder(room, "claude", old), str(task / "repo"))
+        self.assertEqual(target.read_bytes(), source.read_bytes())
+        seat_folders.resume_folder_check(room, "claude", "sid-claude", str(task / "repo"))
+        target.write_text("existing target\n", encoding="utf-8")
+        self.assertEqual(seat_folders.launch_folder(room, "claude", old), str(task / "repo"))
+        self.assertEqual(target.read_text(encoding="utf-8"), "existing target\n")
+        self.assertTrue(source.exists())
+
+    def test_hub_start_copies_before_it_repairs_the_seat_record(self):
+        rid, task = self.damaged()
+        old = str(dashboard.CS_ROOT)
+        source = (self.dir / "claude-projects" / dashboard.claude_project_slug(old)
+                  / "sid-claude.jsonl")
+        source.parent.mkdir(parents=True)
+        source.write_text(json.dumps({"cwd": old}) + "\n", encoding="utf-8")
+        target = (self.dir / "claude-projects"
+                  / dashboard.claude_project_slug(str(task / "repo")) / "sid-claude.jsonl")
+        rows = seat_folders.repair_at_start()
+        self.assertEqual([r["identity"] for r in rows], ["claude"])
+        self.assertEqual(self.seat(self.full(rid), "claude")["cwd"], str(task / "repo"))
+        self.assertEqual(target.read_bytes(), source.read_bytes())
+        seat_folders.resume_folder_check(self.full(rid), "claude", "sid-claude",
+                                         str(task / "repo"))
+        self.assertTrue(source.exists())
+        self.assertEqual(seat_folders.repair_at_start(), [])
+
+    def test_hub_start_keeps_the_old_folder_when_the_copy_fails(self):
+        rid, task = self.damaged()
+        old = str(dashboard.CS_ROOT)
+        source = (self.dir / "claude-projects" / dashboard.claude_project_slug(old)
+                  / "sid-claude.jsonl")
+        source.parent.mkdir(parents=True)
+        source.write_text(json.dumps({"cwd": old}) + "\n", encoding="utf-8")
+        target = (self.dir / "claude-projects"
+                  / dashboard.claude_project_slug(str(task / "repo")) / "sid-claude.jsonl")
+        with mock.patch.object(seat_folders.os, "link", side_effect=OSError("copy failed")):
+            rows = seat_folders.repair_at_start()
+        self.assertIn("could not copy Claude conversation", rows[0]["skipped"])
+        self.assertEqual(self.seat(self.full(rid), "claude")["cwd"], old)
+        self.assertTrue(source.exists())
+        self.assertFalse(target.exists())
 
     def test_at_hub_start_through_the_room_store(self):
         rid, task = self.damaged()

@@ -27,7 +27,8 @@ A seat an older hub moved to its fallback folder (a worktree task's seat
 recorded outside the task's own folder) starts in the task's folder again at
 its next launch, and ``repair_at_start`` writes the task's folder back on
 every stopped one when the hub starts (``tools/repair_seat_folders.py``
-lists them, read only).
+lists them, read only). A Claude transcript stored only under that fallback
+folder is copied to the task's folder slug before either repair changes cwd.
 """
 from __future__ import annotations
 
@@ -35,6 +36,7 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 
@@ -202,7 +204,8 @@ def launch_folder(room: dict, ident: str, cwd: str, scratch: str = "",
                f"The task records no folder for its worktree, so {ident} has no folder to "
                f"start in: move the task to a folder that exists, then start it again. "
                f"The hub does not start an agent in another folder.")
-    if not moved and outside_task(room, cwd):
+    fallback_cwd = cwd if not moved and outside_task(room, cwd) else ""
+    if fallback_cwd:
         # An older hub's fallback recorded as the seat's folder: it starts in
         # its task's folder again (the caller records that), never there.
         print(f"[folder] {room.get('id', '')}/{ident}: {cwd} is outside the task's folder; "
@@ -212,6 +215,7 @@ def launch_folder(room: dict, ident: str, cwd: str, scratch: str = "",
     # An empty folder at a worktree's place: an older hub made it for an
     # agent that found the worktree gone. git adds a worktree into it.
     if os.path.isdir(cwd) and not (worktree_path and _empty_dir(room_cwd)):
+        _copy_before_launch(room, ident, fallback_cwd, cwd)
         clear_mark(room)
         return cwd
     if worktree_path:
@@ -222,6 +226,7 @@ def launch_folder(room: dict, ident: str, cwd: str, scratch: str = "",
                   flush=True)
             _note(room, f"The task's folder `{room_cwd}` was missing: the hub made its "
                         f"worktree again there, on its branch `{branch}`.")
+            _copy_before_launch(room, ident, fallback_cwd, cwd)
             clear_mark(room)
             return cwd
         refuse(room, ident, cwd, refusal_text(room, ident, cwd, why or "not made again"))
@@ -269,6 +274,65 @@ def _transcripts(sid: str) -> list[Path]:
         except OSError:
             pass
     return out
+
+
+def _copy_repaired_transcript(room: dict, ident: str, old: str,
+                              target: str) -> tuple[bool, str]:
+    """Keep a Claude seat's conversation when an older hub put it in ``old``.
+
+    Only a session found under ``old`` and absent under ``target`` is copied.
+    The original stays in place. Publish the copy atomically, without ever
+    replacing a transcript that another process or repair already put there.
+    """
+    if not old or not target or _same(old, target):
+        return True, ""
+    part = next((p for p in room.get("participants") or []
+                 if p.get("identity") == ident and p.get("kind") in (None, "agent")), None)
+    if not part or part.get("agent") != "claude":
+        return True, ""
+    sid = (part.get("sessionId") or "").strip()
+    if not sid or any(c in sid for c in "*?[]/\\"):
+        return True, ""
+    hits = _transcripts(sid)
+    source = next((h for h in hits if _slug_matches(h.parent.name, old)), None)
+    if source is None:
+        return True, ""
+    if any(h.parent.parent == source.parent.parent
+           and _slug_matches(h.parent.name, target) for h in hits):
+        return True, ""
+    slug = _d.claude_project_slug(target)
+    if len(slug) > _SLUG_MAX:
+        return False, f"could not name Claude's shortened conversation folder for {target}"
+    dest = source.parent.parent / slug / f"{sid}.jsonl"
+    temp = ""
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        fd, temp = tempfile.mkstemp(prefix=f".{sid}.", suffix=".tmp", dir=dest.parent)
+        os.close(fd)
+        shutil.copy2(source, temp)
+        try:
+            os.link(temp, dest)  # fails without replacing an existing transcript
+        except FileExistsError:
+            return True, ""
+    except OSError as e:
+        return False, f"could not copy Claude conversation to {target}: {e}"
+    finally:
+        if temp:
+            try:
+                os.unlink(temp)
+            except OSError:
+                pass
+    print(f"[folder] {room.get('id', '')}/{ident}: copied Claude conversation "
+          f"from {old} to {target}", flush=True)
+    return True, ""
+
+
+def _copy_before_launch(room: dict, ident: str, old: str, target: str) -> None:
+    if not old:
+        return
+    ok, why = _copy_repaired_transcript(room, ident, old, target)
+    if not ok:
+        refuse(room, ident, target, why)
 
 
 def _recorded_cwd(path: Path) -> str:
@@ -391,6 +455,11 @@ def repair_at_start() -> list[dict]:
                 if not changed and not _backup(rid):
                     out.append({**row, "skipped": "no backup could be made"})
                     break
+                ok, why = _copy_repaired_transcript(room, p.get("identity", ""),
+                                                     p.get("cwd", ""), room["cwd"])
+                if not ok:
+                    out.append({**row, "skipped": why})
+                    continue
                 p["cwd"] = room["cwd"]
                 changed = True
                 out.append(row)
