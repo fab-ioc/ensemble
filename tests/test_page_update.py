@@ -234,13 +234,16 @@ class SharedBlock(unittest.TestCase):
         # #330: on the new hub the page reloads by itself, through the update
         # block's reload (which keeps the place), never location.reload().
         src = read("index.html")
-        fn = src[src.index("async function triggerUpdate("):src.index("function renderRuntimeConfig(")]
+        fn = src[src.index("function triggerUpdate("):src.index("function renderRuntimeConfig(")]
         self.assertIn("ensUpd.hold = true", fn)
         self.assertNotIn("location.reload()", fn, "the update block's reload, which keeps the place")
         self.assertIn("ensUpd.reload();", fn)
         self.assertEqual(fn.count("ensUpd.hold = false"), 2,
                          "stop() (refused, cancelled, failed) and just before the reload")
-        self.assertIn("if (UPDATE_IN_PROGRESS || ensUpd.reloading) return;", fn)
+        # #345: a press while the page reloads, or while an update runs, says
+        # why or shows the card it already has; never returns silently.
+        self.assertIn("if (ensUpd.reloading) return 'The page is reloading, try again in a moment.';", fn)
+        self.assertIn("if (UPDATE_IN_PROGRESS) { if (!updCardUp()) updCardShow(", fn)
 
 
 # ---- the rules, in Node --------------------------------------------------------

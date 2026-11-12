@@ -354,7 +354,7 @@ class Page(unittest.TestCase):
 
     def test_a_retry_starts_from_the_normal_dialog(self):
         html = (ROOT / "index.html").read_text(encoding="utf-8")
-        body = html[html.index("async function triggerUpdate()"):html.index("function resetUpdateModal()")]
+        body = html[html.index("function triggerUpdate()"):html.index("function resetUpdateModal()")]
         self.assertIn("resetUpdateModal();", body)
         reset = html[html.index("function resetUpdateModal()"):html.index("function showUpdateFailed(")]
         for undo in ("classList.remove('is-failed')", "'Updating Ensemble'",

@@ -175,8 +175,8 @@ async function main() {
       await sleep(5000);                  // a new hub answers 3 s after the failure
       R.newPid = await ev(`fetch('/api/config').then(r => r.json()).then(c => c.pid)`);
       R.markAfter = await ev('window.__mark330 || 0'); }
-    // 6. The hub does not answer before the request (stale failures on it):
-    //    no request goes out, the dialog says so, Update now is there again.
+    // 6. The hub does not answer before the request: no request goes out,
+    //    What's new opens again and says why Install now did not start.
     { const R = out.noBaseline = {};
       await open();
       await ev(`(() => { const f = window.fetch; window.__posts = 0;
@@ -185,10 +185,11 @@ async function main() {
           if (p === '/api/update' && o && o.method === 'POST') window.__posts++;
           return f(u, o); }; return true; })()`);
       await install();
-      await watch(R, {});
-      R.dialog = await dialog();
+      await until(`document.getElementById('wn-dialog').open && document.getElementById('wn-msg').textContent === 'The hub could not be reached, try again.'`, 100);
+      R.dialogOpen = await ev(`document.getElementById('wn-dialog').open`);
+      R.message = await ev(`document.getElementById('wn-msg').textContent`);
       R.posts = await ev('window.__posts');
-      await click('#update-close');
+      await click('#wn-later');
       R.bannerAfter = await ev(offered); }
     // 7. A browser without AbortSignal.timeout still gives up on a hung request.
     { const R = out.hang = {};
@@ -449,9 +450,8 @@ class UpdateCard(unittest.TestCase):
 
     def test_a_hub_that_does_not_answer_first_gets_no_request(self):
         g = self.got["noBaseline"]
-        self.assertTrue(g.get("failed"), g)
-        self.assertEqual(g["dialog"]["stage"], "The hub did not answer")
-        self.assertIn("Check the connection", g["dialog"]["hint"])
+        self.assertTrue(g["dialogOpen"], g)
+        self.assertEqual(g["message"], "The hub could not be reached, try again.")
         self.assertEqual(g["posts"], 0)
 
     def test_a_hung_request_ends_without_abortsignal_timeout(self):
