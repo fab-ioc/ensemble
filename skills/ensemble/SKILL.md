@@ -641,6 +641,13 @@ editing engine code, builds and tests are task work; in a code project the
 PO's own hands are for merging, restarting and deploying only. Trust the
 live usage head over any figure in the handover.
 
+**Your open cards stay open.** A question card waits in the CEO's Inbox until
+they answer it or close it: never post it again to bump it, not after a
+rotation (your first prompt lists your cards still open, with their links) and
+not when you answer a point about the same subject. Point at it with its link
+alone; to change it, it must be closed first, then ask the new question (see
+"Never ask an open question again" below).
+
 **An `[issue]` line is a CEO request.** The hub polls the feedback repo
 (the `feedbackRepo` setting) every 15 minutes and types each new or reopened
 issue into the PO of the project whose code repo it is (else Ensemble
@@ -1069,6 +1076,18 @@ open until the person answers or closes it. To remind someone of an open card,
 paste its link alone on its line, never after `Ask:` or `Ask (yes/no):`: an
 `Ask:` line that holds only links asks nothing and makes no card (the chat
 shows it as the card's chip). Only a question in words makes a new card.
+
+**Never ask an open question again.** A card stays in the Inbox until the
+person answers it or closes it, so asking again only bumps it: not after a
+rotation or a restart (your brief lists your cards still open), and not when
+you answer a related point. To point at it, paste its link alone. To change
+an open question, it must be closed first (the person closes it on its card);
+then ask the new one. The hub holds you to it: `ensemble_ask` posts no card
+for a question a card of your chat still waiting asks already (the result's
+`alreadyOpen` gives that card's reference; nothing is posted when every
+question is open), the same call repeated within a minute returns the first
+result, and an `Ask:` line that asks what an open card asks makes no card: the
+chat shows it as that card's chip.
 When a task's `ensemble_ask` routes to its project PO, the result instead has
 `reportReference`: link the PO report when following up with the PO. The PO
 creates a new card and uses its returned card reference if it relays the
@@ -1105,7 +1124,8 @@ message, `Re “<question>”: <option>` with their comment under it, once.
   cards. Only a question that truly needs their words (`Ask (open):`, or a
   what/which question with no options) gets a comment box alone.
 - An `Ask:` line holds the question in words, never only a link. To remind
-  them of a card already open, paste its link alone, without `Ask:`.
+  them of a card already open, paste its link alone, without `Ask:`. Never
+  write an open card's question again in a new `Ask:` line.
 - Only for their real decisions and questions: an `Ask:` stays on their Needs
   you list until they answer it, write to the chat after it, or a week passes. Never mark your own rhetorical
   questions, or quote the marker inside code.
