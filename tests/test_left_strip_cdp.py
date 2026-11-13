@@ -6,10 +6,13 @@ over CDP, against a hub in a thread serving the pages.
 Three projects: Motors (a PO with an answer to check, so one Inbox row),
 Wheels (a PO) and Alpha (none), a task and a session in no project. Checked:
 
-* at 1440x900 and 1728x1117 a fresh browser shows Inbox then Projects on the
-  left strip, both pinned, the Inbox in front at x 52, 260 wide; the PO dock
-  has no Inbox; the bar's Inbox button gives way; the strip button carries the
-  count;
+* at 1440x900 and 1728x1117 a fresh browser shows the Inbox pinned at x 0,
+  260 wide: open and pinned, it gives back the left strip's width, so no strip
+  shows and its heading carries the count (#358); the PO dock has no Inbox;
+  the bar's Inbox button gives way;
+* − puts the Inbox away: the strip comes back with its icon and the count, the
+  same as the heading's; the icon opens it again, without the strip; a reload
+  keeps either; floating, in its window or unpinned, the strip stays;
 * the Projects button puts the Projects panel in the Inbox's place: All, every
   project with its count, the task in no project as its own row; the Inbox
   button brings the Inbox back;
@@ -156,7 +159,7 @@ const GEOM = `(() => {
     wantRooms: (() => { try { const lp = ibxLdPid(); return [...new Set(ibxRows(IBX.data, IBX.scope === 'all' || !lp ? 'all' : 'project', lp).map(r => r.roomId))].sort(); } catch (e) { return ['x:' + e.message]; } })(),
     scope: (typeof IBX !== 'undefined' && IBX.scope) || '',
     panelText: ((document.getElementById('ld-inbox') || {}).innerText || '') + '|' + ((document.querySelector('#list-dock .dk-strip-left') || {}).innerText || ''),
-    strip: R(document.querySelector('#list-dock .dk-strip-left')), stored: get('cd-list-dock'), pdStored: get('cd-tool-strip') };
+    strip: R(document.querySelector('#list-dock .dk-strip-left')), ibxOpen: document.body.classList.contains('ld-ibx-open'), stored: get('cd-list-dock'), pdStored: get('cd-tool-strip') };
 })()`;
 async function main() {
   const { ch, ws } = await launch();
@@ -519,6 +522,11 @@ async function main() {
         left: [...document.querySelectorAll('#list-dock .dk-strip-left .dk-strip-btn')].map(b => b.dataset.dkAuto),
         right: [...document.querySelectorAll('#po-dock .dk-strip-right .dk-strip-btn')].map(b => b.dataset.dkAuto),
         fly: LD.dock.flyOpen() || PD.dock.flyOpen(), ldIbx: document.body.classList.contains('ld-ibx'),
+        ibxOpen: document.body.classList.contains('ld-ibx-open'), ldInbox: R(document.getElementById('ld-inbox')),
+        ibxTitle: ((document.querySelector('#ld-ibx-body .ibx-title') || {}).textContent || '').trim(),
+        badge: ((sb('#list-dock', 'inbox') || document).querySelector('.dk-strip-badge') || { textContent: '' }).textContent.trim(),
+        icon: R((sb('#list-dock', 'inbox') || document.createElement('i')).querySelector('svg')),
+        W: document.documentElement.clientWidth, scrollW: document.documentElement.scrollWidth,
         stored: localStorage.getItem('cd-list-dock') };
     })()`;
     const HIDE = (dk, id) => `document.querySelector('${dk} .dk-stack:has([data-dk-tab="${id}"]) .dk-head [data-dk-act="hide"]')`;
@@ -575,6 +583,28 @@ async function main() {
       out.away.reloaded = await a.evalIn(AWAY);
       await a.click(LBTN('inbox')); await sleep(500);
       out.away.reloadedBack = await a.evalIn(AWAY);
+      // open (no strip), then a reload: still open, still no strip (#358)
+      await a.evalIn('location.reload(); 0'); await sleep(1500);
+      await a.until('window.ensBooted === true && !!LD.dock', 30000);
+      await toPo(a, P.Motors);
+      out.away.reopened = await a.evalIn(AWAY);
+      // back and forth: away, open, away, open
+      out.away.toggle = [];
+      for (let i = 0; i < 2; i++) {
+        await a.click(HIDE('#list-dock', 'inbox')); await sleep(500);
+        out.away.toggle.push(await a.evalIn(AWAY));
+        await a.click(LBTN('inbox')); await sleep(500);
+        out.away.toggle.push(await a.evalIn(AWAY));
+      }
+      // 1140 and 800 wide, open and away: nothing overflows
+      out.away.narrow = {};
+      for (const [w, h] of [[1140, 800], [800, 600]]) {
+        await a.evalIn('0'); await c.send('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: 1, mobile: false }, a.sessionId); await sleep(900);
+        out.away.narrow[w + 'open'] = await a.evalIn(AWAY);
+        await a.click(HIDE('#list-dock', 'inbox')); await sleep(500);
+        out.away.narrow[w + 'away'] = await a.evalIn(AWAY);
+        await a.click(LBTN('inbox')); await sleep(500);
+      }
       await a.close();
       // a layout saved with the Inbox and Projects minimised (before #326): put away
       const seed = JSON.parse(keys);
@@ -860,7 +890,7 @@ class LeftStripInChrome(unittest.TestCase):
         self.assertLessEqual(g["scrollW"], g["W"])
         self.assertEqual(g["wide"], 0, g["wideWhat"])
 
-    def assertOnePanel(self, g, x=52):
+    def assertOnePanel(self, g, x=0):
         """The list on top, the divider, the Inbox under it, all in the one panel."""
         ib, li, sp, bo = g["ldInbox"], g["ldList"], g["split"], g["ibxBody"]
         self.assertEqual(li["x"], ib["x"])
@@ -882,14 +912,16 @@ class LeftStripInChrome(unittest.TestCase):
                 self.assertEqual(g["ghost"], 0)
                 self.assertIsNone(g["list"], "no task list")
                 self.assertEqual(g["inboxMode"], "pinned")
-                self.assertEqual(g["ldInbox"]["x"], 52, "docked right of the strip")
+                self.assertEqual(g["ldInbox"]["x"], 0, "open and pinned: at the left edge, no strip (#358)")
+                self.assertIsNone(g["strip"], "no left strip while the Inbox is open")
+                self.assertTrue(g["ibxOpen"])
                 self.assertEqual(g["ldInbox"]["w"], 260)
                 self.assertOnePanel(g)
                 self.assertFalse(g["pdInbox"], "the PO dock has no Inbox on a computer")
                 self.assertIsNone(g["pdInboxEl"])
                 self.assertFalse(g["pdInboxTab"])
                 self.assertIsNone(g["bar"], "the bar's Inbox gives way")
-                self.assertEqual(g["badge"], "1", "the strip button carries the count")
+                self.assertTrue(g["ibxTitle"].endswith(" · 1"), "the heading carries the count: " + g["ibxTitle"])
                 self.assertFalse(g["tabBadge"], "the panel's head says only Inbox")
                 self.assertGreater(g["rows"], 0)
                 self.assertGreaterEqual(g["chat"]["x"], g["ldInbox"]["r"])
@@ -1054,7 +1086,8 @@ class LeftStripInChrome(unittest.TestCase):
                 self.assertEqual(g["inboxMode"], mode)
                 self.assertIsNotNone(g["ldInbox"])
                 if mode == "pinned":
-                    self.assertEqual(g["ldInbox"]["x"], 52)
+                    self.assertEqual(g["ldInbox"]["x"], 0)
+                self.assertEqual(g["ibxOpen"], mode == "pinned")
                 self.assertNoOverflow(g)
 
     def test_a_task_in_no_project_opens_its_conversation(self):
@@ -1138,6 +1171,8 @@ class LeftStripInChrome(unittest.TestCase):
         u = self.g("unpinned")
         self.assertEqual(u["inboxMode"], "unpinned")
         self.assertEqual(u["left"], both)
+        self.assertFalse(u["ibxOpen"])
+        self.assertIsNotNone(u["strip"], "unpinned: the strip stays (#358)")
         f = self.g("inboxFly")
         self.assertIsNone(f["ldInbox"], "back on its strip")
         self.assertEqual(f["chat"]["x"], 52, "the conversation takes the column")
@@ -1145,15 +1180,21 @@ class LeftStripInChrome(unittest.TestCase):
         fl = self.g("float")
         self.assertEqual(fl["inboxMode"], "float")
         self.assertIsNotNone(fl["ldInbox"])
+        self.assertFalse(fl["ibxOpen"])
+        self.assertIsNotNone(fl["strip"], "floating: the strip stays (#358)")
         pi = self.g("pinned")
         self.assertEqual(pi["inboxMode"], "pinned")
-        self.assertEqual(pi["ldInbox"]["x"], 52)
+        self.assertEqual(pi["ldInbox"]["x"], 0)
+        self.assertTrue(pi["ibxOpen"])
+        self.assertIsNone(pi["strip"])
         self.assertEqual(pi["chat"]["x"], self.g("fresh")["chat"]["x"])
         wn = self.g("window")
         self.assertEqual(wn["inboxMode"], "window")
         self.assertTrue(wn["inboxOut"])
         self.assertIsNone(wn["ldInbox"])
         self.assertIsNotNone(wn["bar"], "in its window: the bar's Inbox is back")
+        self.assertFalse(wn["ibxOpen"])
+        self.assertIsNotNone(wn["strip"], "in its window: the strip stays (#358)")
         self.assertEqual(self.g("popIn")["inboxMode"], "pinned")
         r = self.g("right")
         self.assertEqual((r["left"], r["right"]), ([], ["inbox"]))
@@ -1173,11 +1214,35 @@ class LeftStripInChrome(unittest.TestCase):
         self.assertEqual(g["left"], ["inbox"])
         self.assertEqual(g["right"], ["changes", "workspace", "board", "spec"])
         self.assertTrue(g["ldIbx"])   # the bar's Inbox still gives way to the strip's
+        self.assertFalse(g["ibxOpen"])
+
+    def assertAwayInbox(self, g):
+        """#358: the Inbox put away; the strip with its icon and the heading's count."""
+        self.assertEqual(g["inbox"], "hidden")
+        self.assertIsNotNone(g["ls"])
+        self.assertEqual(g["chat"]["x"], g["ls"]["r"])
+        self.assertIsNotNone(g["icon"], "the strip shows the Inbox icon")
+        self.assertTrue(g["badge"], "the strip shows the count")
+        n = self.g("away")["open"]["ibxTitle"].rsplit(" · ", 1)[-1]
+        self.assertEqual(g["badge"], n, "the strip's count is the heading's")
+
+    def assertOpenInbox(self, g):
+        """#358: the Inbox pinned and open; no strip, the panel at the left edge."""
+        self.assertEqual((g["inbox"], g["inboxP"]), ("pinned", True))
+        self.assertTrue(g["ibxOpen"])
+        self.assertIsNone(g["ls"], "no left strip")
+        self.assertEqual(g["ldInbox"]["x"], 0)
+        self.assertRegex(g["ibxTitle"], r"^Inbox · Motors · \d+$")
+        self.assertEqual(g["chat"]["x"], self.g("away")["open"]["chat"]["x"])
 
     def test_minimising_a_pinned_left_panel_puts_it_away(self):
         a = self.g("away")
         self.assertEqual((a["open"]["inbox"], a["open"]["inboxP"]), ("pinned", True))
-        self.assertGreater(a["open"]["chat"]["x"], a["open"]["ls"]["r"] + 200)
+        self.assertIsNone(a["open"]["ls"], "open and pinned: no strip (#358)")
+        self.assertGreater(a["open"]["chat"]["x"], 200)
+        self.assertOpenInbox(a["open"])
+        self.assertAwayInbox(a["inboxAway"])
+        self.assertOpenInbox(a["inboxBack"])
         for k, closed in (("inboxAway", ("inbox",)),):
             with self.subTest(k=k):
                 g = a[k]
@@ -1211,6 +1276,28 @@ class LeftStripInChrome(unittest.TestCase):
         self.assertAway(a["reloaded"])
         self.assertEqual((a["reloaded"]["inbox"], a["reloaded"]["inboxP"]), ("hidden", False))
         self.assertEqual((a["reloadedBack"]["inbox"], a["reloadedBack"]["inboxP"]), ("pinned", True))
+        self.assertAwayInbox(a["reloaded"])
+        self.assertOpenInbox(a["reloadedBack"])
+        self.assertOpenInbox(a["reopened"])
+
+    def test_the_inbox_goes_away_and_comes_back_without_the_strip(self):
+        t = self.g("away")["toggle"]
+        self.assertEqual(len(t), 4)
+        for i, g in enumerate(t):
+            with self.subTest(i=i):
+                (self.assertAwayInbox if i % 2 == 0 else self.assertOpenInbox)(g)
+
+    def test_open_or_away_nothing_overflows_narrower(self):
+        for k, g in self.g("away")["narrow"].items():
+            with self.subTest(k=k):
+                self.assertLessEqual(g["scrollW"], g["W"])
+                self.assertEqual(g["ibxOpen"], k.endswith("open"))
+                if k.endswith("open"):
+                    self.assertIsNone(g["ls"])
+                    self.assertEqual(g["ldInbox"]["x"], 0)
+                else:
+                    self.assertIsNotNone(g["icon"])
+                    self.assertEqual(g["chat"]["x"], g["ls"]["r"])
 
     def test_a_saved_minimised_pinned_stack_opens_put_away(self):
         a = self.g("away")
@@ -1248,7 +1335,8 @@ class LeftStripInChrome(unittest.TestCase):
         r = self.g("reset")
         self.assertEqual(r["left"], ["inbox"])
         self.assertEqual(r["inboxMode"], "pinned")
-        self.assertEqual(r["ldInbox"]["x"], 52)
+        self.assertEqual(r["ldInbox"]["x"], 0)
+        self.assertTrue(r["ibxOpen"])
         self.assertEqual(r["chat"]["x"], self.got["fresh"]["chat"]["x"])
 
     def test_a_layout_saved_before_moves_onto_the_strip(self):

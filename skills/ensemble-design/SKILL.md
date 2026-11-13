@@ -1396,6 +1396,13 @@ self-contained component, so a later layout can host it elsewhere.
   `ldDefaults()` pins both from the strip after a fresh start and after Reset layout. The stack's
   head shows only its active title (Inbox or Projects) with ⋯ and −: the left strip switches
   panels, and Dock has no headless stack.
+  **The open Inbox gives back the strip's width** (#358, its drawing's option A): while the Inbox is
+  pinned and shown and the left strip holds only its button, `ldInboxMark()` sets
+  `body.ld-ibx-open` and the strip is `display: none`, so the panel starts at x 0. Its count is
+  then the heading's `INBOX · <where> · N`; − puts it away and the strip comes back with the icon
+  and the red count, whose click opens it again. Floating, in its window, unpinned (slid out) or
+  put away, the strip shows: its button is the way back. A reload keeps either state through
+  Dock's layout. Do not add a second count or a control in the Inbox's head for this.
   The Projects panel: a PROJECTS heading (`.ldp-title`, as `.ph`), then `nav#ld-projs.ldp`
   (`ldpModel` / `ldpHtml` / `ldpPaint`): **All**, then every project newest first (`LDP_N` = 9, then
   "N more projects"), each with an 8px swatch (`.ldp-sw`; projects have no colour of their own, so
