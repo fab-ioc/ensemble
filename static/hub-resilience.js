@@ -218,4 +218,53 @@
       });
     }
   } catch {}
+  // Notifications (ED-359): while this page is in front of the person, the
+  // hub is told so every FRONT_EVERY_MS, and holds this device's notifications
+  // back (they would only repeat what the page shows). Leaving the page, or
+  // the window losing focus, says so at once. Only a subscribed browser speaks.
+  try {
+    if (window.isSecureContext && window.top === window && 'serviceWorker' in navigator
+        && 'PushManager' in window) {
+      const FRONT_EVERY_MS = 15000;
+      let endpoint = '', timer = 0, front = false;
+      const say = isFront => {
+        if (!endpoint) return;
+        window.fetch('/api/notify/seen', {method: 'POST', keepalive: true,
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({endpoint, front: isFront})}).catch(() => {});
+      };
+      const inFront = () => document.visibilityState === 'visible' && document.hasFocus();
+      const check = () => {
+        const now = inFront();
+        if (now) say(true);
+        else if (front) say(false);
+        front = now;
+        clearTimeout(timer);
+        if (endpoint && now) timer = setTimeout(check, FRONT_EVERY_MS);
+      };
+      const reread = async () => {
+        let next = '';
+        try {
+          const reg = await navigator.serviceWorker.ready;
+          const sub = await reg.pushManager.getSubscription();
+          next = (sub && sub.endpoint) || '';
+        } catch {}
+        // A replaced or removed subscription says it left the front while its
+        // endpoint is still the one the hub knows.
+        if (next !== endpoint) {
+          if (front) say(false);
+          front = false;
+        }
+        endpoint = next;
+        check();
+      };
+      document.addEventListener('visibilitychange', check);
+      window.addEventListener('focus', check);
+      window.addEventListener('blur', () => setTimeout(check, 0));
+      window.addEventListener('pagehide', () => { if (front) say(false); front = false; clearTimeout(timer); });
+      window.addEventListener('pageshow', check);
+      window.addEventListener('ensemble-notify-changed', reread);
+      window.addEventListener('load', reread);
+    }
+  } catch {}
 })();

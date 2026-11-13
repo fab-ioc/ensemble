@@ -529,9 +529,11 @@ def _build_all(debug: bool = False, now: float | None = None) -> dict:
                 continue
             line = it.get("quote") or it.get("reason") or ""
             reason = it.get("reason") or ""
+            extra = {}
             if it.get("cause") == "folder_missing":
                 line, reason = _folder_words(s, it)
-            row(s, kind, src, mid, part, line, since, reason=reason)
+                extra["cause"] = "folder_missing"   # a could-not-start card (notify.py names it so)
+            row(s, kind, src, mid, part, line, since, reason=reason, **extra)
         except Exception as e:      # noqa: BLE001
             failed("attention item", e, it.get("roomId", "") if isinstance(it, dict) else "")
 

@@ -102,3 +102,50 @@ self.addEventListener('fetch', event => {
     }
   })());
 });
+
+/* Notifications (ED-359): the hub's pushes (notify.py) shown on this device,
+   and the card, chat or Inbox they name opened when one is tapped. */
+
+// Only a path on this hub is opened: a notification never sends you elsewhere.
+// The parsed address must still be this origin: "/\evil.example/x" starts
+// with one slash, yet a URL parser reads it as another host.
+function hubUrl(path) {
+  const home = new URL('/', self.location.origin).href;
+  if (typeof path !== 'string' || !path.startsWith('/')) return home;
+  try {
+    const u = new URL(path, self.location.origin);
+    return u.origin === self.location.origin ? u.href : home;
+  } catch (e) { return home; }
+}
+
+self.addEventListener('push', event => {
+  let a = {};
+  try { a = event.data ? event.data.json() : {}; } catch (e) { a = {}; }
+  // Every push shows something: Safari ends a subscription that stays silent.
+  event.waitUntil(self.registration.showNotification(a.title || 'Ensemble', {
+    body: a.body || '',
+    tag: a.tag || undefined,
+    renotify: !!a.tag,
+    icon: '/static/icons/icon-192.png',
+    data: { url: hubUrl(a.path) },
+  }));
+});
+
+self.addEventListener('notificationclick', event => {
+  event.notification.close();
+  const url = (event.notification.data && event.notification.data.url) || hubUrl('/');
+  event.waitUntil((async () => {
+    const wins = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    const same = wins.find(c => c.url === url);
+    if (same) return same.focus();
+    // Reuse an open hub window: take it to the place, then bring it forward.
+    const hub = wins.find(c => new URL(c.url).origin === self.location.origin && 'navigate' in c);
+    if (hub) {
+      try {
+        const went = await hub.navigate(url);
+        if (went) return went.focus();
+      } catch (e) { /* not controlled by this worker: open a new window */ }
+    }
+    if (self.clients.openWindow) return self.clients.openWindow(url);
+  })());
+});

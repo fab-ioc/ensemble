@@ -83,6 +83,8 @@ import agents
 import agent_models
 # What each Claude agent last said about itself through its hooks.
 import agent_hooks
+# Notifications on the person's devices (Web Push, #359).
+import notify
 # A Claude model at its own limit: seen, remembered, seated around (ED-159).
 import model_limit
 import provider_retry
@@ -231,6 +233,7 @@ points.bind(sys.modules[__name__])
 asks.bind(sys.modules[__name__])
 threads.bind(sys.modules[__name__])
 inbox.bind(sys.modules[__name__])
+notify.bind(sys.modules[__name__])
 sends.bind(sys.modules[__name__])
 restart_drain.bind(sys.modules[__name__])
 # Capture each agent terminal's dying screen onto its task, before the reaper
@@ -19635,6 +19638,11 @@ class Handler(BaseHTTPRequestHandler):
                    "more": max(0, len(text) - message_refs.QUOTE_MAX)}
             self._send_json(200, ref)
             return
+        if p == "/api/notify":
+            # Whether this hub can notify, its key, and the devices it
+            # notifies (never their push addresses): notify.py, #359.
+            self._send_json(200, notify.status())
+            return
         if p == "/api/room/topics":
             q = parse_qs(u.query)
             rid = (q.get("id", [""])[0] or "").strip()
@@ -22710,6 +22718,42 @@ class Handler(BaseHTTPRequestHandler):
         finally:
             invalidate_session_listing()
 
+    def _push_post(self, p: str, data) -> None:
+        """/api/notify/{status,subscribe,unsubscribe,remove,test,seen}: this
+        browser's notifications, keyed by its push address (notify.py, #359).
+        Only the dashboard page, never a task's agent: an agent could
+        otherwise silence the person's devices or send them its own words."""
+        if not isinstance(data, dict):
+            self._send_json(400, {"error": "expected_object"})
+            return
+        if p not in ("/api/notify/status", "/api/notify/subscribe", "/api/notify/unsubscribe",
+                     "/api/notify/remove", "/api/notify/test", "/api/notify/seen"):
+            self._send_json(404, {"error": "not_found"})
+            return
+        why = self._page_refusal()
+        if why:
+            self._send_json(403, {"error": "page_only", "message": why})
+            return
+        endpoint = data.get("endpoint")
+        if p == "/api/notify/status":
+            self._send_json(200, notify.status(endpoint))
+        elif p == "/api/notify/seen":
+            self._send_json(200, {"ok": notify.seen(endpoint, bool(data.get("front")))})
+        elif p == "/api/notify/subscribe":
+            label = " ".join(str(data.get("label") or "").split())[:40]
+            if label and self._is_local():
+                label += " (the hub machine)"
+            rec, why = notify.subscribe(data.get("subscription"), label)
+            self._send_json(200 if rec else 400, {"device": rec, "message": why,
+                                                  **(notify.status(endpoint) if rec else {})})
+        elif p == "/api/notify/unsubscribe":
+            self._send_json(200, {"removed": notify.unsubscribe(endpoint), **notify.status(endpoint)})
+        elif p == "/api/notify/remove":
+            self._send_json(200, {"removed": notify.remove(data.get("id")), **notify.status(endpoint)})
+        else:
+            res = notify.send_test(endpoint)
+            self._send_json(200 if res.get("ok") else 502, res)
+
     def _agent_hook(self) -> None:
         """POST /api/agent/hook — a Claude agent's hook (agent_hook.py) saying
         what it is doing: ``{room, identity, ptyId, at, event}``. This machine
@@ -23741,6 +23785,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if p == "/api/room/notify":
             self._room_notify(data)
+            return
+        if p.startswith("/api/notify/"):
+            self._push_post(p, data)
             return
         if p == "/api/room/points/decisions":
             # Clear all on Needs you's Decisions (#279): {roomId, action:
@@ -24895,6 +24942,12 @@ def main():
 
     # The PO's rotation: a fresh session from its handover when it gets long.
     rotation.start_scheduler()
+
+    # Notifications on the person's devices: new Inbox cards, PO replies (#359).
+    try:
+        notify.start()
+    except Exception as e:      # noqa: BLE001 — the hub runs without them
+        print(f"notify off: {e!r}", flush=True)
 
     # Goals for the tasks that have none, written once from their specs (#316).
     task_brief.start_backfill()
