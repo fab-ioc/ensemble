@@ -33,7 +33,7 @@ LIVE_CWD = "/home/fab/EnsembleProjects/Tasse-Ticino/code"
 
 def forget() -> None:
     for d in (dashboard._TRANSCRIPT_PATHS, dashboard._TRANSCRIPT_MISSES, dashboard._TRANSCRIPT_COPIES,
-              dashboard._TRANSCRIPT_GROWTH):
+              dashboard._TRANSCRIPT_GROWTH, dashboard._SESSION_INPUT_CONTEXT_CACHE):
         d.clear()
     dashboard._TRANSCRIPT_INDEX = ("", 0.0, {})
     dashboard.CLAUDE_FILES.forget()
@@ -55,7 +55,9 @@ class Copies(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.proj = Path(self.temp.name) / "projects"
         self.proj.mkdir()
-        self.patches = [mock.patch.object(dashboard, "PROJ_DIR", self.proj)]
+        # No room holds the id here (the real rooms folder may: it is a real id).
+        self.patches = [mock.patch.object(dashboard, "PROJ_DIR", self.proj),
+                        mock.patch.object(dashboard, "_session_input_context", lambda sid: ("", ""))]
         for p in self.patches:
             p.start()
         forget()
@@ -135,6 +137,27 @@ class Copies(unittest.TestCase):
         self.assertEqual(sum(SID in str(c) for c in said.call_args_list), 1)
         self.assertTrue(self.stale.exists() and self.live.exists())
 
+    def test_a_warm_index_naming_the_stale_copy_is_listed_again_before_its_first_hit(self):
+        # The last hub saved an index that named the stale copy (it was newer then).
+        cached = {"sessions": {}, "transcripts": {SID: self.stale},
+                  "threads": {"index": {}, "threadSaves": {}, "pointSaves": {}}}
+        with mock.patch.object(dashboard.warm_cache, "load", return_value=cached), \
+                mock.patch.object(dashboard, "_restart_log"), \
+                mock.patch.object(dashboard, "_SESS_CACHE", {}), mock.patch.object(dashboard, "_SESS_BOOT", set()):
+            dashboard._load_restart_caches()
+        with mock.patch("builtins.print"):
+            self.assertEqual(dashboard.find_transcript(SID), self.live)
+        self.assertEqual(dashboard._TRANSCRIPT_PATHS[SID], self.live)
+        # Listed once: the next lookup of another id trusts the listing.
+        self.assertGreater(dashboard._TRANSCRIPT_INDEX[1], 0.0)
+
+    def test_stats_compare_copies_a_millisecond_apart_by_their_raw_times(self):
+        older, newer = self.stale, self.live
+        rows = {str(older): (1000.0001, 5, 0), str(newer): (1000.0002, 9, 0)}
+        with mock.patch.object(dashboard.CLAUDE_FILES, "files", return_value=rows), \
+                mock.patch.object(dashboard.agents, "get_agent", return_value=None):
+            self.assertEqual(dashboard.transcript_stats()[SID], [9, 1000.0])
+
     def test_lost_sessions_other_folder_takes_the_newest(self):
         other = Path(self.temp.name) / "claude-config"
         old = write(other / "projects" / "a" / f"{SID}.jsonl", [], time.time() - 500)
@@ -154,11 +177,12 @@ MESSAGES = [
 class TypedAgain(Harness):
     """The message-delivered check reads the live copy: nothing typed again."""
 
-    def _setup(self, remembered_stale: bool):
+    def _setup(self, remembered_stale: bool, tie: bool = False):
         rid = self.room(agents=("claude",))
         room = chatroom.get_room(rid, public=False)
         part = next(p for p in room["participants"] if p.get("kind") == "agent")
         part["sessionId"] = SID
+        part["cwd"] = LIVE_CWD
         chatroom.update_room(room)
         proj = Path(self.temp.name) / "projects"
         epoch = dashboard._turn_epoch
@@ -174,6 +198,14 @@ class TypedAgain(Harness):
         p = mock.patch.object(dashboard, "PROJ_DIR", proj)
         p.start()
         self.extra.append(p)
+        if tie:
+            # Both copies written in the same instant, the stale one listed first.
+            os.utime(stale, (epoch(MESSAGES[-1][2]),) * 2)
+            listing = dashboard.CLAUDE_FILES.files
+            q = mock.patch.object(dashboard.CLAUDE_FILES, "files", lambda *a, **k: dict(
+                sorted(listing(*a, **k).items(), key=lambda kv: STALE_DIR not in kv[0])))
+            q.start()
+            self.extra.append(q)
         forget()
         if remembered_stale:
             dashboard._TRANSCRIPT_PATHS[SID] = stale
@@ -182,8 +214,8 @@ class TypedAgain(Harness):
         sends._SCANNED.clear()
         return rid, live
 
-    def _check(self, remembered_stale: bool):
-        rid, live = self._setup(remembered_stale)
+    def _check(self, remembered_stale: bool, tie: bool = False):
+        rid, live = self._setup(remembered_stale, tie)
         with mock.patch.object(points, "_session_stat", REAL_SESSION_STAT), \
                 mock.patch.object(dashboard, "read_session_turns", REAL_READ_SESSION_TURNS), \
                 mock.patch.object(dashboard, "find_transcript", REAL_FIND), \
@@ -203,6 +235,10 @@ class TypedAgain(Harness):
 
     def test_a_hub_that_remembered_the_stale_copy_moves_to_the_live_one(self):
         self._check(remembered_stale=True)
+
+    def test_copies_written_at_the_same_time_read_the_one_in_the_seat_folder(self):
+        # No caller passes a cwd here: the room's seat gives it.
+        self._check(remembered_stale=False, tie=True)
 
 
 if __name__ == "__main__":

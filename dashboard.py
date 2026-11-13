@@ -1348,10 +1348,11 @@ def transcript_stats() -> dict[str, list]:
     that ended: a live one is looked at. A Claude id held in several folders
     is its newest copy (ED-355)."""
     out: dict[str, list] = {}
+    newest: dict[str, float] = {}       # raw times: copies a millisecond apart
     for p, (mtime, size, _ns) in CLAUDE_FILES.files(fresh_s=10.0).items():
         sid = filetable.as_path(p).stem
-        st = out.get(sid)
-        if st is None or round(mtime, 3) > st[1]:
+        if sid not in newest or mtime > newest[sid]:
+            newest[sid] = mtime
             out[sid] = [size, round(mtime, 3)]
     cx = agents.get_agent("codex")
     root = cx.sessions_dir() if cx is not None and hasattr(cx, "sessions_dir") else None
@@ -1390,11 +1391,29 @@ def _in_cwd_folder(path: Path, cwd: str) -> bool:
     return name == slug or (len(slug) > 200 and name.startswith(slug[:200]))
 
 
+def _seat_cwd(session_id: str) -> str:
+    """The folder of the seat whose conversation ``session_id`` is (its room's
+    participant), or "" when no room holds it."""
+    try:
+        room_id, identity = _session_input_context(session_id)
+        room = chatroom.get_room(room_id, public=False, copy_room=False, messages=False) if room_id else None
+    except Exception:       # noqa: BLE001 — the newest copy is read instead
+        return ""
+    for part in chatroom.agent_participants(room or {}):
+        if part.get("identity") == identity:
+            return str(part.get("cwd") or "").strip()
+    return ""
+
+
 def _prefer_cwd(session_id: str, chosen: Path, cwd: str) -> Path:
     """The copy in ``cwd``'s project folder, when the id has several and that
-    one is at least as new as ``chosen`` (ED-355)."""
-    copies = _TRANSCRIPT_COPIES.get(session_id) if cwd else None
-    if not copies or _in_cwd_folder(chosen, cwd):
+    one is at least as new as ``chosen`` (ED-355). Without ``cwd``, the folder
+    of the seat whose conversation it is: so a room's turns and its delivery
+    check read the copy its seat writes."""
+    copies = _TRANSCRIPT_COPIES.get(session_id)
+    if copies and not cwd:
+        cwd = _seat_cwd(session_id)
+    if not copies or not cwd or _in_cwd_folder(chosen, cwd):
         return chosen
     mine = next((c for c in copies if c != chosen and _in_cwd_folder(c, cwd)), None)
     if mine is None:
@@ -1451,7 +1470,9 @@ def find_transcript(session_id: str, *, immediate: bool = True, cwd: str = "") -
     miss_key = (str(PROJ_DIR), session_id)
     if not immediate and _TRANSCRIPT_MISSES.get(miss_key, 0.0) > time.monotonic():
         return None
-    found = _transcript_index().get(session_id)
+    # An index the last hub left (warm cache, time 0) is listed again before
+    # its first hit is trusted: a copy may have been written since.
+    found = _transcript_index(fresh=_TRANSCRIPT_INDEX[1] == 0.0).get(session_id)
     if found is None or not found.exists():
         found = _transcript_index(fresh=True).get(session_id)
     if immediate and (found is None or not found.exists()):
@@ -12553,7 +12574,7 @@ def load_live() -> list[dict]:
             live = live_cwd_of_pid(d.get("pid", 0))
             if live:
                 d = {**d, "cwd": live}
-        tpath = find_transcript(sid)
+        tpath = find_transcript(sid, cwd=d.get("cwd", "") or "")
         first = last = ""
         turns = 0
         idle = None
