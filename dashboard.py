@@ -811,6 +811,8 @@ def _annotate_room_liveness(room: dict, with_points: bool = False, first: bool =
     just started, looking for new answers took ~0.9 s); the poll after it
     looks."""
     room["live"] = _room_is_live(room)
+    # Its refused start stands (P324): the pop-out offers Stop, as the panel.
+    room["couldNotStart"] = not room["live"] and _could_not_start(room)
     # What was sent while it was stopped and is still on its way in (a resume
     # in flight), or could not be delivered: the page shows those as pending.
     pending = pending_input(room.get("id", ""))
@@ -13835,6 +13837,9 @@ def _load_sessions_uncached(n: int = 200, progress_key: str = "") -> list[dict]:
                 # room's own lifecycle (active / paused / waiting_human) and
                 # whether a resume is under way, as the pop-out reads them.
                 "roomStatus": rm.get("status", ""),
+                # Its start was refused and its Inbox card shows (P324): the
+                # action bar offers Stop although nothing runs.
+                "couldNotStart": not live and _could_not_start(rm),
                 "resuming": bool(pend) and pend.get("state") != "failed",
                 "updatedAt": rm.get("updatedAt", rm.get("createdAt", 0)),
                 "startedAt": rm.get("createdAt", 0),
@@ -17697,15 +17702,54 @@ def _record_stopped_states(rid: str, room: dict) -> None:
         chatroom.patch_participant(rid, part.get("identity", ""), {"stoppedState": state})
 
 
+def _could_not_start(room: dict) -> bool:
+    """Whether a task's refused start still stands, as its Inbox card reads it."""
+    if not room.get("folderMissing"):
+        return False
+    try:
+        return attention._folder_missing(room) is not None
+    except Exception:       # noqa: BLE001 — a row never fails for it
+        return False
+
+
 def stop_task(rid: str) -> bool:
     """End a task's agents (kill their PTYs) but KEEP the room, so it stays one
     row with its spec and chat and can be resumed.
+
+    It does the same for a task with no live terminal (P324): it is recorded
+    as stopped (a cold start leaves it), and its refused start and recorded
+    deaths go.
 
     Stopping is also how the product owner says "I've seen this and dealt with
     it", so it clears any recorded death: an agent that had already died on its
     own would otherwise keep its `agent_gone` notification forever — Stop can't
     relabel a record that was written once, at death, so it removes it.
     """
+    # A rotation under way is told first, so it ends its fresh terminal itself
+    # rather than hold the launch lock against this Stop.
+    rotation.note_stopped(rid)
+    # Then under the room's launch lock (P324 review): a start or resume under
+    # way records its terminals before this Stop reads the room, so they are
+    # ended here, and its write and its `note_started` cannot land after this
+    # Stop's. Reentrant: a rotation that holds it stops the task itself. Bounded,
+    # so a stuck launcher cannot hold a Stop forever; past it, the Stop goes on.
+    lock = rotation.launch_lock(rid)
+    locked = lock.acquire(timeout=STOP_LAUNCH_WAIT_S)
+    if not locked:
+        print(f"stop_task {rid}: a start held the task's launch lock for "
+              f"{STOP_LAUNCH_WAIT_S:.0f}s; stopping without it", file=sys.stderr, flush=True)
+    try:
+        return _stop_task_locked(rid)
+    finally:
+        if locked:
+            lock.release()
+
+
+STOP_LAUNCH_WAIT_S = 60.0
+
+
+def _stop_task_locked(rid: str) -> bool:
+    """``stop_task`` once the room's launch lock is held (or waited for)."""
     # Under the rotation's gate, the room read inside it: a rotation under way
     # is told and ends its fresh terminal itself, and one that has already put
     # its fresh terminal on the room is seen here.
@@ -17727,7 +17771,9 @@ def stop_task(rid: str) -> bool:
             ptyrun.forget_death(pid)
     # Cleared through the room lock, and only after the kills: writing the room
     # we read before a slow kill loop would drop a chat message posted during it.
-    chatroom.patch_room(rid, stoppedAt=time.time())
+    # A refused start goes with it (P324): a stopped task is not asked to run,
+    # and a later Start checks its folder again.
+    chatroom.patch_room(rid, stoppedAt=time.time(), folderMissing=None)
     pacing.cancel_hold(room)            # a task waiting for the brake stays stopped
     chatroom.clear_exits(rid)
     running_rooms.note_stopped(rid)     # stopped on purpose: a cold start leaves it

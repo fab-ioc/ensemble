@@ -5918,7 +5918,7 @@ function actionState(r, isLive) {
     archived: !!r.archived, members: r.members || [],
     makePo: r.makePo, currentTheme: r.currentTheme || '',
     chatSchemeOn: !!(r.cwd && CHAT_SCHEME_ON[r.cwd]),
-    keepAgents: !!r.keepAgents,
+    keepAgents: !!r.keepAgents, couldNotStart: !!r.couldNotStart,
   };
 }
 function actionEnv() {
@@ -24916,7 +24916,10 @@ document.addEventListener('click', async (ev) => {
   const roomEnd = ev.target.closest('.room-end');
   if (roomEnd) {
     ev.stopPropagation();
-    if (!confirm('End this session and stop its agent(s)? (Kept in the list; Resume or Dismiss later.)')) return;
+    // A task that is not running (its start was refused, P324) has nothing to
+    // end: its Stop only records that nobody wants it run, so it asks nothing.
+    const endRow = ALL_ROWS.find(x => x.roomId === roomEnd.dataset.room);
+    if ((!endRow || endRow.isLive) && !confirm('End this session and stop its agent(s)? (Kept in the list; Resume or Dismiss later.)')) return;
     try {
       await api('/api/room/close', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ roomId: roomEnd.dataset.room }) });
       await refresh(); updateRoomsBadge();

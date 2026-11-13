@@ -129,6 +129,7 @@ disabled with that reason.
 |---|---|---|---|---|---|
 | Show terminals (hub) / Terminal + Hide terminal (other computer) | – | – | ✓ | – | – |
 | Pause / Resume | – | – | ✓ | – | – |
+| Stop (`room-end`, P324) | – | – | – | ✓ while its refused start stands (`couldNotStart`: its Inbox card shows; the pop-out reads it from `/api/room`), not for a draft; asks nothing, and the pop-out stays open | – |
 | Focus (when not primary) | off: “Only on the hub's own screen” / “{T} windows can't be raised here” | – | – | – | – |
 | Send | ✓ with `features.send`, else off: “Typing into a terminal session isn't supported here” | – | – | – | – |
 | Open in a {T} window (hub) / Resume here with its terminal | – | ✓ with cwd, else off: “No working folder recorded” | – | – | – |
