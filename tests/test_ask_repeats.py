@@ -218,6 +218,19 @@ class PlainAskLine(_Repeats):
         self.assertEqual(list(asks.repeats_of(room, fresh=True)), [again])
         self.assertEqual([c["mid"] for c in asks.open_cards(room)], [third])
 
+    def test_a_failed_repeat_read_keeps_the_card_until_it_reads_again(self):
+        rid = self.team_room()
+        first = self.post(rid, self.ASK)
+        with mock.patch.object(asks, "_find_repeats", side_effect=OSError("transcript busy")):
+            again = self.post(rid, self.ASK)
+            room = chatroom.get_room(rid)
+            # Never hide a question: while it cannot be told, the line is a card.
+            self.assertEqual(sorted(c["mid"] for c in asks.open_cards(room)), sorted([first, again]))
+            self.assertEqual(asks.repeats_of(room, fresh=True), {})
+        room = chatroom.get_room(rid)
+        self.assertEqual(asks.repeats_of(room, fresh=True), {again: [[0, 1, [[first, 0]]]]}, "worked out again")
+        self.assertEqual([c["mid"] for c in asks.open_cards(room)], [first])
+
     def test_lines_from_before_the_rule_keep_their_cards(self):
         rid = self.team_room()
         first = self.post(rid, self.ASK)

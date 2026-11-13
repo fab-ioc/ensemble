@@ -1029,11 +1029,17 @@ def _room_cards(summary: dict) -> tuple[dict, set]:
                 src[mid] = text
     try:
         _REPS[rid] = _find_repeats(rid, cards, src, room)
+        failed = False
     except Exception as e:      # noqa: BLE001 — the cards still show, as written
+        # Never hide a question: while the repeats cannot be worked out every
+        # Ask: line keeps its card (a rare second one). Not kept, so the next
+        # read works them out again and a repeat becomes its chip.
         print(f"[asks] {rid}: repeats not worked out: {e!r}", flush=True)
         _REPS[rid] = {}
+        failed = True
     out = (cards, set(texts) | {s for s, _w in sids})
-    _CARDS[rid] = (sig, out)
+    if not failed:
+        _CARDS[rid] = (sig, out)
     return out
 
 
