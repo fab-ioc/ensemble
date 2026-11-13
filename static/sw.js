@@ -107,9 +107,15 @@ self.addEventListener('fetch', event => {
    and the card, chat or Inbox they name opened when one is tapped. */
 
 // Only a path on this hub is opened: a notification never sends you elsewhere.
+// The parsed address must still be this origin: "/\evil.example/x" starts
+// with one slash, yet a URL parser reads it as another host.
 function hubUrl(path) {
-  const p = typeof path === 'string' && path.startsWith('/') && !path.startsWith('//') ? path : '/';
-  return new URL(p, self.location.origin).href;
+  const home = new URL('/', self.location.origin).href;
+  if (typeof path !== 'string' || !path.startsWith('/')) return home;
+  try {
+    const u = new URL(path, self.location.origin);
+    return u.origin === self.location.origin ? u.href : home;
+  } catch (e) { return home; }
 }
 
 self.addEventListener('push', event => {

@@ -17,10 +17,14 @@
 """
 from __future__ import annotations
 
+import json
 import os
+import shutil
 import stat
+import subprocess
 import time
 import unittest
+from pathlib import Path
 from unittest import mock
 
 import dashboard  # noqa: E402
@@ -130,6 +134,40 @@ class Store(_Notify):
                          "See the plan in … now")
         self.assertEqual(notify.clip("**Done**\nsecond line", 80), "Done")
         self.assertEqual(notify.clip("a" * 50, 10), "a" * 9 + "…")
+
+    def test_clip_keeps_addresses_markup_paths_and_tokens_off_a_lock_screen(self):
+        cases = {
+            "open https://example.org/private?token=secret now": "open … now",
+            "see www.example.org/x first": "see … first",
+            "<b>secret</b> here": "secret here",
+            "read notes/private/file.txt please": "read … please",
+            "edit src/app.py and/or main": "edit … and/or main",
+            "token=abc123 and password: hunter2x": "token=… and password=…",
+            "send Bearer eyJhbGciOiJFUzI1NiJ9abc": "send Bearer …",
+            "key ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4 used": "key … used",
+            # Ordinary words stay.
+            "commit 3273e44 merged; 1/2 done": "commit 3273e44 merged; 1/2 done",
+            "the auth flow and the token are ready": "the auth flow and the token are ready",
+        }
+        for text, want in cases.items():
+            self.assertEqual(notify.clip(text, 200), want, text)
+
+    def test_a_first_device_right_after_the_last_went_sends_no_backlog(self):
+        # Removed and re-added within one watcher interval: tick() never saw
+        # the empty list, so subscribe() itself marks the next look a seed.
+        self.look([])
+        a = self.device()
+        notify._RESEED = False
+        self.assertTrue(notify.remove(a["id"]))
+        self.device(EP2)
+        self.assertTrue(notify._RESEED)
+        with mock.patch.object(dashboard.inbox, "snapshot") as snap, \
+                mock.patch.object(notify, "deliver") as deliver:
+            snap.return_value = {"rows": [self.card(n=1)]}         # made while off
+            self.assertEqual(notify.tick(self.now), [])
+        deliver.assert_not_called()
+        self.device(EP1)                                          # a second device: no reseed
+        self.assertFalse(notify._RESEED)
 
 
 class Cards(_Notify):
@@ -365,6 +403,26 @@ class Routes(_Notify):
             self.assertEqual(http("/api/notify/nope", {})[0], 404)
             status, r = http("/api/notify/unsubscribe", {"endpoint": EP1})
             self.assertEqual((status, r["removed"], r["devices"]), (200, True, []))
+
+
+@unittest.skipUnless(shutil.which("node"), "needs Node")
+class WorkerLinks(unittest.TestCase):
+    """sw.js hubUrl: a tap opens only a page of this hub."""
+
+    def test_only_this_origin(self):
+        src = (Path(dashboard.__file__).parent / "static" / "sw.js").read_text(encoding="utf-8")
+        fn = src[src.index("function hubUrl("):]
+        fn = fn[:fn.index("\n}\n") + 2]
+        js = ("const self = { location: { origin: 'https://hub.example' } };\n" + fn
+              + "\nconsole.log(JSON.stringify(JSON.parse(process.argv[1]).map(hubUrl)));")
+        paths = ["/session?room=r&msg=m", "/?inbox=p", "/\\evil.example/x", "//evil.example/x",
+                 "https://evil.example/", "/\\\\evil.example", "javascript:alert(1)", None, ""]
+        out = subprocess.run(["node", "-e", js, json.dumps(paths)], capture_output=True, encoding="utf-8", timeout=30)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        home = "https://hub.example/"
+        self.assertEqual(json.loads(out.stdout), ["https://hub.example/session?room=r&msg=m",
+                                                  "https://hub.example/?inbox=p",
+                                                  home, home, home, home, home, home, home])
 
 
 if __name__ == "__main__":

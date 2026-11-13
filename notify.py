@@ -237,6 +237,7 @@ def endpoint_problem(endpoint) -> str:
 
 def subscribe(sub, label: str = "") -> tuple[dict | None, str]:
     """Add or update this browser's subscription. (record, "") or (None, why)."""
+    global _RESEED
     if _vapid() is None:
         return None, f"Notifications are off on this hub: {_UNAVAILABLE}"
     if not isinstance(sub, dict):
@@ -259,6 +260,10 @@ def subscribe(sub, label: str = "") -> tuple[dict | None, str]:
         old = next((x for x in devs if x.get("id") == did), None)
         if old is None and len(devs) >= DEVICES_MAX:
             return None, f"This hub already notifies {DEVICES_MAX} devices: remove one first."
+        if not devs:
+            # The first device of a hub that had none (however quickly after
+            # the last one went): its first look only takes note, no backlog.
+            _RESEED = True
         rec = {"id": did, "endpoint": endpoint,
                "keys": {"p256dh": str(keys["p256dh"]), "auth": str(keys["auth"])},
                "label": label, "createdAt": (old or {}).get("createdAt") or time.time()}
@@ -411,15 +416,32 @@ def send_test(endpoint) -> dict:
 # ---------------------------------------------------------------------------
 
 _LINK = re.compile(r"\[([^\]]*)\]\([^)]*\)")
-_PATHISH = re.compile(r"(?:(?<=\s)|^)(?:~|[A-Za-z]:)?[/\\][^\s]*[/\\][^\s]*")
+_TAG = re.compile(r"</?[A-Za-z][^>]*>")
+# An address (with a scheme, or www.): a link's destination, a token in a query.
+_URL = re.compile(r"(?i)\b(?:[a-z][a-z0-9+.-]*://|www\.)\S+")
+# A path, absolute (/x/y, ~/x, C:\x) or relative with two separators or a
+# file name after one (notes/private/file.txt, src/app.py); "and/or" stays.
+_PATHISH = re.compile(r"(?:(?<=[\s(\"'])|^)(?:~|[A-Za-z]:)?[/\\][^\s]*[/\\][^\s]*"
+                      r"|(?:(?<=[\s(\"'])|^)[\w.~-]+(?:[/\\][\w.~-]*){2,}"
+                      r"|(?:(?<=[\s(\"'])|^)[\w.~-]+[/\\][\w~-]*\.[A-Za-z0-9]{1,8}\b")
+# A secret named as one (token=…, password: …, Bearer …) keeps its name only.
+_SECRET = re.compile(r"(?i)\b(?:(token|secret|password|passwd|pwd|api[_-]?key|access[_-]?key|auth)"
+                     r"(\s*[=:]\s*)|(bearer)(\s+))(?=\S*[0-9A-Za-z])\S+")
+# An opaque string long enough to be a key or token: letters and digits mixed.
+_OPAQUE = re.compile(r"\b(?=[A-Za-z0-9_\-+/=]*[0-9])(?=[A-Za-z0-9_\-+/=]*[A-Za-z])[A-Za-z0-9_\-+/=]{24,}")
 _MARKS = re.compile(r"\*\*|__|`")
 
 
 def clip(text: str, n: int) -> str:
-    """One short line: the first line, links as their words, no file path."""
+    """One short line for a lock screen: the first line, links as their words,
+    no markup, no address, no file path, no token."""
     text = str(text or "").strip().split("\n", 1)[0]
     text = _LINK.sub(r"\1", text)
+    text = _TAG.sub("", text)
+    text = _URL.sub("…", text)
     text = _PATHISH.sub("…", text)
+    text = _SECRET.sub(lambda m: (m.group(1) + "=" if m.group(1) else m.group(3) + " ") + "…", text)
+    text = _OPAQUE.sub("…", text)
     text = " ".join(_MARKS.sub("", text).split())
     return text if len(text) <= n else text[:n - 1].rstrip() + "…"
 
