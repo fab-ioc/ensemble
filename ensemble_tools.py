@@ -1410,9 +1410,10 @@ def _ask_once(ctx, args, handler):
     fresh_room = _d.chatroom.get_room(room["id"], public=False) or room
     try:
         waiting = _d.asks.open_cards(fresh_room)
-    except Exception as e:      # noqa: BLE001 — ask as written
+    except Exception as e:      # noqa: BLE001 — never post blind: it could be a second card
         print(f"[ensemble_ask] {room['id']}: open cards not read: {e!r}", flush=True)
-        waiting = []
+        raise ToolError("the room's open cards could not be read, so nothing was posted "
+                        "(a question already open is never posted again); try again in a moment") from e
     plan, fresh, already = [], [], []
     for ask in questions:
         card = next((c for c in waiting if _d.asks.same_ask(ask["question"], c["question"])), None)

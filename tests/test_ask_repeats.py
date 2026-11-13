@@ -120,6 +120,19 @@ class EnsembleAsk(_Repeats):
         self.assertFalse(third["posted"])
         self.assertEqual(self.n_messages(rid), before)
 
+    def test_open_cards_that_cannot_be_read_post_nothing(self):
+        rid = self.team_room()
+        self.ask(rid, [self.Q], "First time.")
+        before = self.n_messages(rid)
+        ensemble_tools._ASK_RECENT.clear()
+        with mock.patch.object(asks, "open_cards", side_effect=OSError("ledger busy")):
+            with self.assertRaisesRegex(ensemble_tools.ToolError, "nothing was posted"):
+                self.ask(rid, [self.Q], "Asked again.")
+        self.assertEqual(self.n_messages(rid), before, "no blind second card")
+        self.assertEqual(ensemble_tools._ASK_RECENT, {})
+        again = self.ask(rid, [self.Q], "Asked again.")
+        self.assertFalse(again["posted"])
+
     def test_an_error_is_not_kept_for_the_retry(self):
         rid = self.team_room()
         bad = [{"question": "Which?", "options": [{"label": "A", "recommended": True},
@@ -281,6 +294,7 @@ class Brief(_Repeats):
         self.assertIn("Your open cards stay open", skill)
         self.assertIn("never ask an open question again", dashboard.ASK_NOTE)
         self.assertIn("closed first", dashboard.ASK_NOTE)
+        self.assertIn("not after a restart or a rotation", dashboard.ASK_NOTE)
         tool = next(t for t in ensemble_tools.TOOLS if t["name"] == "ensemble_ask") \
             if hasattr(ensemble_tools, "TOOLS") else None
         if tool:

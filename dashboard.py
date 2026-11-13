@@ -3092,8 +3092,8 @@ ASK_NOTE = (
     "Copy link control provides one too. To remind them of an open card, paste "
     "its link alone on its line, never after Ask: (that line asks nothing). "
     "A card stays open until it is answered or closed: never ask an open "
-    "question again (not after a restart, not when answering a related "
-    "point); to change one, have it closed first, then ask the new question.")
+    "question again (not after a restart or a rotation, not when answering "
+    "a related point); to change one, have it closed first, then ask the new question.")
 
 # How a task is named in text (P166): its number, never its room id.
 TASK_NAME_NOTE = (
