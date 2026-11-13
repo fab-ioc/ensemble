@@ -372,12 +372,20 @@ def _pool():
         return _POOL
 
 
-def deliver(ev: dict, now: float | None = None, wait: bool = False) -> list[str]:
-    """Send one notification to every device not in front. Returns the device
-    ids it went to (sent off this thread; ``wait`` for tests)."""
+def _since_key(dev: dict) -> tuple:
+    """A device as it was added: removed and added again is another one."""
+    return (dev.get("id"), dev.get("createdAt"))
+
+
+def deliver(ev: dict, now: float | None = None, wait: bool = False,
+            only: set | None = None) -> list[str]:
+    """Send one notification to every device not in front (of ``only``, the
+    devices a look began with, when given). Returns the device ids it went
+    to (sent off this thread; ``wait`` for tests)."""
     now = time.time() if now is None else now
     with _LOCK:
-        devs = [x for x in _devices() if not in_front(x["id"], now)]
+        devs = [x for x in _devices() if not in_front(x["id"], now)
+                and (only is None or _since_key(x) in only)]
     futs = [_pool().submit(_send_one, dev, ev) for dev in devs]
     if wait:
         concurrent.futures.wait(futs, timeout=TEST_WAIT_S)
@@ -421,14 +429,26 @@ _TAG = re.compile(r"</?[A-Za-z][^>]*>")
 _URL = re.compile(r"(?i)\b(?:[a-z][a-z0-9+.-]*://|www\.)\S+")
 # A path, absolute (/x/y, ~/x, C:\x) or relative with two separators or a
 # file name after one (notes/private/file.txt, src/app.py); "and/or" stays.
-_PATHISH = re.compile(r"(?:(?<=[\s(\"'])|^)(?:~|[A-Za-z]:)?[/\\][^\s]*[/\\][^\s]*"
+_PATHISH = re.compile(r"(?:(?<=[\s(\"'])|^)(?:~|[A-Za-z]:)[/\\][^\s]*"
+                      r"|(?:(?<=[\s(\"'])|^)[/\\][^\s]*[/\\][^\s]*"
                       r"|(?:(?<=[\s(\"'])|^)[\w.~-]+(?:[/\\][\w.~-]*){2,}"
                       r"|(?:(?<=[\s(\"'])|^)[\w.~-]+[/\\][\w~-]*\.[A-Za-z0-9]{1,8}\b")
-# A secret named as one (token=…, password: …, Bearer …) keeps its name only.
-_SECRET = re.compile(r"(?i)\b(?:(token|secret|password|passwd|pwd|api[_-]?key|access[_-]?key|auth)"
-                     r"(\s*[=:]\s*)|(bearer)(\s+))(?=\S*[0-9A-Za-z])\S+")
-# An opaque string long enough to be a key or token: letters and digits mixed.
-_OPAQUE = re.compile(r"\b(?=[A-Za-z0-9_\-+/=]*[0-9])(?=[A-Za-z0-9_\-+/=]*[A-Za-z])[A-Za-z0-9_\-+/=]{24,}")
+# A secret named as one (token=…, API key: "…", Bearer …) keeps its name
+# only; a quoted value goes whole. "Bearer" takes only a value that looks
+# like one (a digit in it, or 20 characters), so "Bearer in mind" stays.
+_SECRET = re.compile(r"(?i)\b(?:((?:api|access|private|secret)[\s_-]?key|token|secret|password|passwd|pwd|passphrase|auth)"
+                     r"\s*[=:]\s*(?:\"[^\"]*\"?|'[^']*'?|\S+)"
+                     r"|(bearer)\s+(?=\S*\d|\S{20})\S+)")
+# An opaque string long enough to be a key or token: 24 characters or more
+# in which letters and digits alternate at least 3 times (a random key does;
+# "2026NovemberReleaseSchedule" does not).
+_OPAQUE = re.compile(r"\b[A-Za-z0-9_\-+/=]{24,}")
+_SWITCH = re.compile(r"(?<=[A-Za-z])(?=\d)|(?<=\d)(?=[A-Za-z])")
+
+
+def _opaque(m) -> str:
+    w = m.group(0)
+    return "…" if sum(1 for _ in _SWITCH.finditer(w)) >= 3 else w
 _MARKS = re.compile(r"\*\*|__|`")
 
 
@@ -440,8 +460,8 @@ def clip(text: str, n: int) -> str:
     text = _TAG.sub("", text)
     text = _URL.sub("…", text)
     text = _PATHISH.sub("…", text)
-    text = _SECRET.sub(lambda m: (m.group(1) + "=" if m.group(1) else m.group(3) + " ") + "…", text)
-    text = _OPAQUE.sub("…", text)
+    text = _SECRET.sub(lambda m: (m.group(1) + "=" if m.group(1) else m.group(2) + " ") + "…", text)
+    text = _OPAQUE.sub(_opaque, text)
     text = " ".join(_MARKS.sub("", text).split())
     return text if len(text) <= n else text[:n - 1].rstrip() + "…"
 
@@ -665,13 +685,17 @@ def tick(now: float | None = None) -> list[dict]:
     if _vapid() is None:
         return []
     with _LOCK:
-        if not _devices():
+        devs = _devices()
+        if not devs:
             _RESEED = True
             return []
         reseed, _RESEED = _RESEED, False
+        # A device added while this look reads and sends is not sent its
+        # finds: they may be backlog to it (its own first look takes note).
+        began = {_since_key(x) for x in devs}
     shown = bursts(events(now, reseed=reseed), now)
     for ev in shown:
-        deliver(ev, now)
+        deliver(ev, now, only=began)
     return shown
 
 

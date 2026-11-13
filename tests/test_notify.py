@@ -145,6 +145,13 @@ class Store(_Notify):
             "token=abc123 and password: hunter2x": "token=… and password=…",
             "send Bearer eyJhbGciOiJFUzI1NiJ9abc": "send Bearer …",
             "key ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4 used": "key … used",
+            "See ~/secret now": "See … now",
+            "Use C:\\secret now": "Use … now",
+            "API key: hunter2x": "API key=…",
+            'token: "abc 123" ok': "token=… ok",
+            "private key = abc": "private key=…",
+            "Bearer in mind": "Bearer in mind",
+            "2026NovemberReleaseSchedule ok": "2026NovemberReleaseSchedule ok",
             # Ordinary words stay.
             "commit 3273e44 merged; 1/2 done": "commit 3273e44 merged; 1/2 done",
             "the auth flow and the token are ready": "the auth flow and the token are ready",
@@ -168,6 +175,39 @@ class Store(_Notify):
         deliver.assert_not_called()
         self.device(EP1)                                          # a second device: no reseed
         self.assertFalse(notify._RESEED)
+
+    def test_a_device_added_during_a_look_gets_none_of_its_finds(self):
+        # tick() has read the device list (A) and cleared the reseed; A goes
+        # and B comes while it reads the Inbox: B is not sent that backlog.
+        self.look([])
+        a = self.device(EP1)
+        notify._RESEED = False
+        row = self.card(n=1)
+
+        def mid_look(now, reseed=False, **_kw):
+            notify.remove(a["id"])
+            self.device(EP2)
+            return [e for e in notify.row_events([row])]
+
+        with mock.patch.object(notify, "events", side_effect=mid_look):
+            shown = notify.tick(self.now)
+        self.assertEqual(len(shown), 1)
+        notify._pool().submit(lambda: None).result(timeout=5)
+        self.assertEqual(self.sent, [])
+        self.assertTrue(notify._RESEED)                            # B's first look takes note
+        # A device there from the start is sent what the look found.
+        notify._RESEED = False
+        notify._BURSTS.clear()
+
+        def found(now, reseed=False, **_kw):
+            return notify.row_events([self.card(rid="room-aaaa0002", n=2)])
+
+        with mock.patch.object(notify, "events", side_effect=found):
+            notify.tick(self.now + 60)
+        t = time.time()
+        while not self.sent and time.time() - t < 5:
+            time.sleep(0.02)
+        self.assertEqual([e for e, _p, _t in self.sent], [EP2])
 
 
 class Cards(_Notify):
