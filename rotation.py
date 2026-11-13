@@ -1812,6 +1812,9 @@ def first_prompt(project: dict, room: dict, old_sid: str, tokens,
     pts = _open_points(room)
     if pts:
         parts.append(pts)
+    cards = _open_cards(room)
+    if cards:
+        parts.append(cards)
     carried = _carried_line(room)
     if carried:
         parts.append(carried)
@@ -1840,6 +1843,16 @@ def _open_points(room: dict) -> str:
         return _d.points.prompt_block(room.get("id", ""))
     except Exception as e:      # the prompt goes without them
         _log(f"{room.get('id')}: open points not listed: {str(e)[:200]}")
+        return ""
+
+
+def _open_cards(room: dict) -> str:
+    """The session's question cards still open (asks.py, P325): a fresh
+    session that does not know them asks them again."""
+    try:
+        return _d.asks.prompt_block(room)
+    except Exception as e:      # the prompt goes without them
+        _log(f"{room.get('id')}: open cards not listed: {str(e)[:200]}")
         return ""
 
 
@@ -1893,6 +1906,9 @@ def task_first_prompt(room: dict, old_sid: str, tokens, hp: Path, solo: bool,
         ]
         if not solo:
             parts.append("Read any messages that arrived meanwhile with chat_read first.")
+        cards = _open_cards(room)
+        if cards:
+            parts.append(cards)
         return "\n\n".join(parts)
     parts += [
         f"Your state is {hp}: the handover your previous session wrote "
@@ -1918,6 +1934,9 @@ def task_first_prompt(room: dict, old_sid: str, tokens, hp: Path, solo: bool,
     pts = _open_points(room)
     if pts:
         parts.append(pts)
+    cards = _open_cards(room)
+    if cards:
+        parts.append(cards)
     carried = _carried_line(room)
     if carried:
         parts.append(carried)

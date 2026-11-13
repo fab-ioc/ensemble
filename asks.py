@@ -45,9 +45,11 @@ from __future__ import annotations
 
 import functools
 import re
+import os
 import threading
 import time
-from urllib.parse import parse_qs, urlsplit
+from pathlib import Path
+from urllib.parse import parse_qs, quote, urlsplit
 
 _d = None   # the dashboard module (bind)
 
@@ -848,12 +850,15 @@ def open_in(summary: dict, now: float | None = None) -> list[dict]:
         settled = max(settled, *(float(p.get("answeredAt") or 0)
                                   for p in summary.get("participants", []) if p.get("kind") == "agent"))
     past = moved_past(summary, led)
+    reps = _reps(summary)
     out = []
     for mid, ts, qs, who in marked:
         if ts and ts < max(settled, past):
             continue
         if _d.attention.read_and_old(summary, ts, now) or _d.attention.set_aside(summary, ts):
             continue
+        if mid in reps:
+            qs = reps[mid]["qs"]
         got = done.get(mid) or {}
         for n, q in enumerate(qs):
             if str(n) in got:
@@ -882,8 +887,9 @@ _RE_POINT = re.compile(r"^(?:[ \t]*[-*+][ \t]+|[ ]{0,3})(?:[-*+][ \t]+|#{1,6}[ \
                        r"(P\d{1,5}[a-z]?(?:[ \t]*(?:,|&|/|and)[ \t]*P\d{1,5}[a-z]?)*)(?![\w])", re.I)
 _POINT_ID = re.compile(r"P\d{1,5}[a-z]?", re.I)
 _CARDS: dict[str, tuple] = {}   # room id → (signature, {mid: (ts, [questions], {pid: [n]})})
-_SID_CARDS: dict[str, tuple] = {}   # sid → (stat, [(mid, ts, [questions], {pid: [n]})])
+_SID_CARDS: dict[str, tuple] = {}   # sid → (stat, [(mid, ts, [questions], {pid: [n]}, text)])
 _OPEN: dict[str, tuple] = {}    # room id → (key, open_cards' list)
+_REPS: dict[str, dict] = {}     # room id → {mid: {"lines": [[line, end, [[mid, n]]]], "qs": [...]}} (P325)
 
 
 def _room_of(summary: dict | None) -> dict | None:
@@ -963,7 +969,7 @@ def _session_cards(room: dict, sid: str, who: str, current: bool = True) -> list
         text = t.get("text") or ""
         x = _marked(mid, _d._turn_epoch(t.get("timestamp")), text, who)
         if x:
-            found.append((mid, x[1], x[2], _asks_by_point(text, x[2])))
+            found.append((mid, x[1], x[2], _asks_by_point(text, x[2]), text))
     _SID_CARDS[sid] = (st, found)
     return found
 
@@ -1008,15 +1014,32 @@ def _room_cards(summary: dict) -> tuple[dict, set]:
     if sids:
         _d.note_session_owners(room)
     texts = {m.get("id"): m.get("text") or "" for m in room.get("messages") or []}
-    cards = {}
+    stored = {m.get("id") for m in room.get("messages") or [] if isinstance(m.get("asks"), list)}
+    cards, src = {}, {}     # src: the words of a card its Ask: lines make (not an ensemble_ask's)
     for mid, ts, qs, _who in message_asks(room):
-        cards.setdefault(mid, (ts, qs, _asks_by_point(texts.get(mid) or "", qs)))
+        if mid not in cards:
+            cards[mid] = (ts, qs, _asks_by_point(texts.get(mid) or "", qs))
+            if mid not in stored:
+                src[mid] = texts.get(mid) or ""
     now = set(_current)
     for sid, who in sids:
-        for mid, ts, qs, by_point in _session_cards(room, sid, who, sid in now):
-            cards.setdefault(mid, (ts, qs, by_point))
+        for mid, ts, qs, by_point, text in _session_cards(room, sid, who, sid in now):
+            if mid not in cards:
+                cards[mid] = (ts, qs, by_point)
+                src[mid] = text
+    try:
+        _REPS[rid] = _find_repeats(rid, cards, src, room)
+        failed = False
+    except Exception as e:      # noqa: BLE001 — the cards still show, as written
+        # Never hide a question: while the repeats cannot be worked out every
+        # Ask: line keeps its card (a rare second one). Not kept, so the next
+        # read works them out again and a repeat becomes its chip.
+        print(f"[asks] {rid}: repeats not worked out: {e!r}", flush=True)
+        _REPS[rid] = {}
+        failed = True
     out = (cards, set(texts) | {s for s, _w in sids})
-    _CARDS[rid] = (sig, out)
+    if not failed:
+        _CARDS[rid] = (sig, out)
     return out
 
 
@@ -1113,17 +1136,10 @@ def _open_cards(rid: str, room: dict, led: dict | None) -> list[dict]:
     done, approved = led.get("asks") or {}, led.get("approvals") or {}
     pts = led.get("points") or []
     by_id = {p.get("id"): p for p in pts}
-    typed: dict[str, float] = {}        # a card's balloon → when a point last answered it in words
-    for q in pts:
-        mids = set(_d.points.balloon_refs(q.get("text") or "", rid))
-        up = by_id.get(q.get("replyTo") or "")
-        if up:
-            mids |= {a["mid"] for a in up.get("answers") or [] if a.get("mid")}
-        for m in mids:
-            typed[m] = max(typed.get(m, 0.0), float(q.get("createdAt") or 0))
+    typed = _typed_times(rid, led)
     out = []
     for mid, (ts, qs, by_point) in cards.items():
-        if mid in typed and typed[mid] >= float(ts or 0):
+        if mid in typed and typed[mid][-1] >= float(ts or 0):
             continue
         got = done.get(mid) or {}
         for n, q in enumerate(qs):
@@ -1211,6 +1227,272 @@ def decisions(summary: dict, led: dict | None = None, now: float | None = None) 
     return waiting, older
 
 
+# ---------------------------------------------------------------------------
+# An open question asked again (P325)
+# ---------------------------------------------------------------------------
+#
+# A card stays in the Inbox until the person answers or closes it, so asking
+# it again only posts it twice (the opTen PO asked the same question at 02:11
+# and, from a fresh session, at 07:04). ensemble_ask posts no second card
+# (ensemble_tools._ask), and a plain ``Ask:`` line whose question a card of the
+# same room still waiting at that moment asks already (:func:`_same_ask`)
+# makes no card: its lines show as that card's chip, like a pasted reference
+# (#351). Worked out from what the hub keeps (when each card was put, answered
+# or closed), so the same at every read; the page draws the lines the hub
+# names (``askRepeats``) the same way. A line written before the hub had the
+# rule (:func:`repeats_since`) keeps its card.
+
+REPEATS_SINCE_NAME = "ask-repeats-since"
+_SINCE: dict[str, float] = {}
+
+
+def same_ask(a: str, b: str) -> bool:
+    """:func:`_same_ask`, for the hub's other modules."""
+    return _same_ask(a, b)
+
+
+def mark_repeats_since() -> float:
+    """At hub start, before any card is read: the moment this hub first ran
+    with the rule (P325), written once to its folder and kept. A preflight
+    hub (#348) writes nothing."""
+    p = Path(_d.DASHBOARD_DIR) / REPEATS_SINCE_NAME
+    if not p.exists() and not os.environ.get("ENSEMBLE_PTY_PREFLIGHT"):
+        try:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(f"{time.time():.3f}\n", encoding="utf-8")
+        except OSError as e:
+            print(f"[asks] {REPEATS_SINCE_NAME} not written: {e!r}", flush=True)
+    return repeats_since()
+
+
+def repeats_since() -> float:
+    """From when an ``Ask:`` line that repeats an open card makes none, as
+    :func:`mark_repeats_since` keeps it, so the repeats stored before it keep
+    showing as they did. Only read here: with no mark (a preflight hub on a
+    folder no hub with the rule has run on), no line counts as a repeat."""
+    p = Path(_d.DASHBOARD_DIR) / REPEATS_SINCE_NAME
+    hit = _SINCE.get(str(p))
+    if hit is not None:
+        return hit
+    try:
+        at = float(p.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return float("inf")
+    _SINCE[str(p)] = at
+    return at
+
+
+def card_url(room_id: str, mid: str, n: int, base: str = "") -> str:
+    """The link to ask ``n`` of a card (what ensemble_ask returns and the
+    card's Copy link gives)."""
+    base = base or f"http://127.0.0.1:{getattr(_d, 'HUB_PORT', 0) or 8765}"
+    return f"{base}/session?room={quote(room_id, safe='')}&msg={quote(mid, safe='')}&part=ask:{int(n)}"
+
+
+def shown_text(text: str, lines: list, room_id: str = "") -> str:
+    """A message's words as the chat shows them, its repeated ``Ask:`` lines
+    (``[[line, end, [[mid, n], …]], …]``, :func:`parse`'s lines) each the
+    link to the card it repeats, on a line of its own: no ask is left in
+    them. session.html's askRepeatText does the same."""
+    rows = _OTHER_SPACE.sub(" ", _LINE_BREAKS.sub("\n", text or "")).split("\n")
+    for line, end, refs in sorted(lines, key=lambda r: -int(r[0])):
+        rows[int(line):int(end)] = ["", " ".join(card_url(room_id, m, n, "http://hub") for m, n in refs), ""]
+    return "\n".join(rows)
+
+
+def _typed_times(rid: str, led: dict) -> dict[str, list[float]]:
+    """When the person's points answered each card's balloon in words (a
+    point linking to it, or following up an answer it is), oldest first."""
+    pts = led.get("points") or []
+    by_id = {p.get("id"): p for p in pts}
+    out: dict[str, list[float]] = {}
+    for q in pts:
+        mids = set(_d.points.balloon_refs(q.get("text") or "", rid))
+        up = by_id.get(q.get("replyTo") or "")
+        if up:
+            mids |= {a["mid"] for a in up.get("answers") or [] if a.get("mid")}
+        for m in mids:
+            out.setdefault(m, []).append(float(q.get("createdAt") or 0))
+    for v in out.values():
+        v.sort()
+    return out
+
+
+def _closed_at(done: dict, approved: dict, typed: dict, mid: str, n: int, ts: float,
+               settles=None) -> float | None:
+    """When ask ``n`` of the card put at ``ts`` stopped waiting (answered,
+    closed, answered in words), None while it waits. An answer without a
+    time reads as long closed; an approval settles only an ask it says yes
+    to (``settles(n)``, as :func:`open_cards` has it), at the time it keeps."""
+    times = []
+    got = (done.get(mid) or {}).get(str(n))
+    if got is not None:
+        try:
+            times.append(float(got.get("at") or 0) if isinstance(got, dict) else 0.0)
+        except (TypeError, ValueError):
+            times.append(0.0)
+    if mid in approved and (settles is None or settles(n)):
+        try:
+            times.append(float(approved[mid] or 0))
+        except (TypeError, ValueError):
+            times.append(0.0)
+    t = next((x for x in typed.get(mid, ()) if x >= ts), None)
+    if t is not None:
+        times.append(t)
+    return min(times) if times else None
+
+
+def _find_repeats(rid: str, cards: dict, src: dict, room: dict | None = None) -> dict:
+    """The ``Ask:`` lines of a room's cards that ask again what a card of
+    the room still waiting then already asks: ``{mid: {"lines": [[line, end,
+    [[mid, n], …]]], "qs": [questions left]}}``. A line repeats when every
+    ask it makes does; its card's questions become those of its words with
+    the line a link (:func:`shown_text`), changed in ``cards`` in place. Only
+    a line written since :func:`repeats_since`, and only its own room's
+    cards, put before it."""
+    since = repeats_since()
+    cand = {m for m, t in src.items() if t and float(cards[m][0] or 0) >= since}
+    if not cand:
+        return {}
+    led = _d.points.load(rid, shared=True) if _d.points.exists(rid) else {}
+    done, approved = led.get("asks") or {}, led.get("approvals") or {}
+    typed = _typed_times(rid, led)
+    last = max(float(cards[m][0] or 0) for m in cand)
+    live: list[tuple] = []      # (closed at or None, ts, mid, n, question): waiting at the sweep's time
+    out = {}
+    for mid, (ts, qs, by_point) in sorted(cards.items(), key=lambda kv: (float(kv[1][0] or 0), kv[0])):
+        ts = float(ts or 0)
+        if ts > last:
+            break
+        live = [c for c in live if c[0] is None or c[0] > ts]
+        if mid in cand:
+            found = parse(src[mid])
+            groups: dict[tuple, list] = {}
+            for a in found:
+                groups.setdefault((a["line"], a["end"]), []).append(a)
+            reps = []
+            for (line, end), group in groups.items():
+                refs: list | None = []
+                for a in group:
+                    hit = next(((c[2], c[3]) for c in reversed(live)
+                                if c[1] < ts and _same_ask(a["question"], c[4])), None)
+                    if hit is None:
+                        refs = None
+                        break
+                    if list(hit) not in refs:
+                        refs.append(list(hit))
+                if refs:
+                    reps.append([line, end, refs])
+            if reps:
+                shown = shown_text(src[mid], reps, rid)
+                qs = [a["question"] for a in parse(shown)]
+                by_point = _asks_by_point(shown, qs)
+                cards[mid] = (ts, qs, by_point)
+                out[mid] = {"lines": reps, "qs": qs}
+        settles = None
+        if mid in approved:
+            # What the approval says yes to, read as the chat shows the card
+            # (balloon_asks; its repeated lines as worked out in this sweep).
+            if mid in src:
+                text = src[mid]
+                found = parse(shown_text(text, out[mid]["lines"], rid)) if mid in out \
+                    else (parse(text) or safety(text))
+            else:
+                found = balloon_asks(rid, mid, room)
+            settles = lambda n, found=found: n < len(found) and found[n]["recommended"] >= 0  # noqa: E731
+        for n, q in enumerate(qs):
+            live.append((_closed_at(done, approved, typed, mid, n, ts, settles), ts, mid, n, q))
+    return out
+
+
+def repeats_of(summary: dict, fresh: bool = False) -> dict:
+    """``{mid: [[line, end, [[mid, n], …]], …]}``: the room's ``Ask:`` lines
+    that repeat an open card, as last worked out (:func:`_room_cards`), for
+    the chat page."""
+    return {mid: r["lines"] for mid, r in _reps(summary, fresh).items()}
+
+
+def _reps(summary: dict, fresh: bool = False) -> dict:
+    """The room's repeated ``Ask:`` lines (:func:`_find_repeats`), worked out
+    now when that reads no transcript (or ``fresh``), else as last worked out."""
+    rid = (summary or {}).get("id", "")
+    if not rid:
+        return {}
+    if not cards_ready(summary):
+        room = _room_of(summary)
+        if room is not None and (fresh or not _cards_sig(room)[0]):
+            _room_cards(summary)
+    return _REPS.get(rid) or {}
+
+
+BRIEF_CARDS_MAX = 10
+NOTE_PREFIX = "[asks] "     # dashboard.HUB_INPUT_KINDS
+NOTE_MAX = 900              # a typed line (points._WAKE_MAX)
+ASK_AGAIN_RULE = ("These are still open in the Inbox; do not ask them again: not after a "
+                  "rotation or a restart, and not when you answer a related point. A card stays "
+                  "there until the person answers or closes it. To point at one, paste its link "
+                  "alone on its line. To change one, have it closed first, then ask the new question.")
+
+
+def _own_open(room: dict, identity: str = "") -> list[dict]:
+    """The open cards of ``room`` its seat ``identity`` put (all when none),
+    newest first, one asked again before the rule listed once."""
+    cards = [c for c in open_cards(room) if not identity or not c.get("who") or c.get("who") == identity]
+    reps = _repeats(tuple(c["question"] for c in cards)) if cards else frozenset()
+    return [c for i, c in enumerate(cards) if i not in reps]
+
+
+def _age(ts: float, now: float) -> str:
+    s = max(0, int(now - float(ts or now)))
+    return f"{s // 60} min" if s < 3600 else f"{s // 3600} h" if s < 86400 else f"{s // 86400} d"
+
+
+def _card_line(rid: str, c: dict, now: float, width: int) -> str:
+    q = " ".join(title(c["question"], c.get("who") or "").split())
+    if len(q) > width:
+        q = q[:width - 1] + "…"
+    return f"“{q}” {card_url(rid, c['mid'], c['n'])} (open {_age(c['ts'], now)})"
+
+
+def prompt_block(room: dict, identity: str = "", now: float | None = None) -> str:
+    """A fresh session's own cards still open, for its first prompt (P325):
+    the question in a line, its link and its age, newest first, at most
+    :data:`BRIEF_CARDS_MAX`, then "+N more". Empty when none is open."""
+    now = time.time() if now is None else now
+    rid = (room or {}).get("id", "")
+    cards = _own_open(room, identity)
+    if not cards:
+        return ""
+    lines = ["Your question cards still open in the Inbox, newest first. " + ASK_AGAIN_RULE]
+    lines += [f"- {_card_line(rid, c, now, 160)}" for c in cards[:BRIEF_CARDS_MAX]]
+    if len(cards) > BRIEF_CARDS_MAX:
+        lines.append(f"- +{len(cards) - BRIEF_CARDS_MAX} more")
+    return "\n".join(lines)
+
+
+def note_line(room: dict, identity: str = "", now: float | None = None) -> str:
+    """The same in one typed line, for the note a resumed or restarted
+    session gets: ``[asks] Your question cards still open …: “…” <link>
+    (open 3 h); …``. Empty when none is open."""
+    now = time.time() if now is None else now
+    rid = (room or {}).get("id", "")
+    cards = _own_open(room, identity)
+    if not cards:
+        return ""
+    head = f"{NOTE_PREFIX}Your question cards still open in the Inbox, newest first. {ASK_AGAIN_RULE} "
+    bits, used = [], len(head)
+    shown = cards[:BRIEF_CARDS_MAX]
+    for i, c in enumerate(shown):
+        b = _card_line(rid, c, now, 60)
+        if used + len(b) + 2 > NOTE_MAX - 20 and bits:
+            break
+        bits.append(b)
+        used += len(b) + 2
+    if len(cards) > len(bits):
+        bits.append(f"+{len(cards) - len(bits)} more")
+    return head + "; ".join(bits) + "."
+
+
 def cards_ready(summary: dict) -> bool:
     """The room's cards are read and still current (:func:`_room_cards` would
     not read a transcript)."""
@@ -1258,6 +1540,9 @@ def balloon_asks(room_id: str, mid: str, room: dict | None = None) -> list[dict]
                     or message.get("rang") or (message.get("to") or "").lower() not in ("", "all", "user") \
                     or message.get("askAudience") == "po" or (has_po and message.get("askAudience") != "user"):
                 return []
+            rep = (_REPS.get(room_id) or {}).get(mid)
+            if rep:
+                return parse(shown_text(message.get("text") or "", rep["lines"], room_id))
             return of_message(message)
     if has_po:
         return []
@@ -1265,6 +1550,9 @@ def balloon_asks(room_id: str, mid: str, room: dict | None = None) -> list[dict]
         text = _d.points._balloon_text(room_id, mid, {})
     except Exception:       # noqa: BLE001
         return []
+    rep = (_REPS.get(room_id) or {}).get(mid)
+    if rep:
+        return parse(shown_text(text or "", rep["lines"], room_id))
     return of_message({"text": text or ""})
 
 
