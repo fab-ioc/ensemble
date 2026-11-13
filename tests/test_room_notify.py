@@ -76,6 +76,7 @@ class Notify(unittest.TestCase):
             mock.patch.dict(dashboard._NOTIFY_KEYS, clear=True),
             mock.patch.dict(dashboard._NOTIFY_SENT, clear=True),
             mock.patch.dict(dashboard._NOTIFY_UNSTORED, clear=True),
+            mock.patch.object(dashboard, "_NOTIFY_INFLIGHT", set()),
         ]
         for p in patches:
             p.start()
@@ -301,6 +302,35 @@ class Notify(unittest.TestCase):
                                             room_id=self.rid, identity="codex", session_id="sid-1")
         self.assertNotEqual(other.get("kind"), "external")
 
+    def _stamp(self, at):
+        return time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(at))
+
+    def test_a_journalled_outside_turn_claims_its_line(self):
+        self.assertEqual(self.notify("hi")[0], 200)
+        line = f"[{SENDER}] hi"
+        input_provenance.record(self.rid, "claude", line, dashboard._input_sender_info(
+            line, {"kind": "external", "senderLabel": SENDER}), session_id="sid-1")
+        now = time.time()
+        turns = dashboard.classify_turns(
+            [{"role": "user", "text": line, "timestamp": self._stamp(now)},
+             {"role": "user", "text": line, "timestamp": self._stamp(now + 1200)}],
+            room_id=self.rid, identity="claude", session_id="sid-1")
+        self.assertEqual([t["kind"] for t in turns], ["external", "human"],
+                         "the person's same words twenty minutes on are theirs")
+
+    def test_no_line_claims_a_turn_from_before_it_was_typed(self):
+        before = time.time() - 30
+        self.assertEqual(self.notify("hi")[0], 200)
+        input_provenance.record(self.rid, "claude", "other", dashboard._input_sender_info("other"),
+                                session_id="sid-1")
+        line = f"[{SENDER}] hi"
+        turns = dashboard.classify_turns(
+            [{"role": "user", "text": line, "timestamp": self._stamp(before)},
+             {"role": "user", "text": line, "timestamp": self._stamp(time.time() + 1)}],
+            room_id=self.rid, identity="claude", session_id="sid-1")
+        self.assertEqual([t["kind"] for t in turns], ["human", "external"],
+                         "the person's turn 30 s before leaves the line to the real one")
+
     def test_a_line_never_typed_claims_no_turn(self):
         self.running = False
         self.assertEqual(self.notify("hi")[1]["typed"], False)
@@ -327,6 +357,32 @@ class Notify(unittest.TestCase):
         self.assertEqual(dashboard._NOTIFY_SENT[(self.rid, SENDER.lower())].__len__(), 1,
                          "the one that went nowhere gave its slot back")
         self.assertEqual(self.notify(key="q-2")[0], 200, "and its key")
+
+    def test_a_retry_while_the_first_is_being_stored_is_not_told_it_was(self):
+        import threading
+        entered, release = threading.Event(), threading.Event()
+
+        def slow_fail(*a, **k):
+            entered.set()
+            release.wait(10)
+            raise OSError("disk full")
+        first: list = []
+        with mock.patch.object(chatroom, "post_notice", side_effect=slow_fail):
+            th = threading.Thread(target=lambda: first.append(self.notify(key="q-1")))
+            th.start()
+            self.assertTrue(entered.wait(10))
+            status, r = self.notify(key="q-1")
+            self.assertEqual((status, r["error"]), (409, "in_flight"),
+                             "never a duplicate before the first was stored")
+            release.set()
+            th.join(10)
+        self.assertEqual((first[0][0], first[0][1]["error"]), (500, "not_stored"))
+        status, r = self.notify(key="q-1")
+        self.assertEqual((status, r["error"], r["duplicate"]), (500, "not_stored", True))
+        self.assertEqual(len(self.typed), 1)
+        self.assertEqual(dashboard._NOTIFY_INFLIGHT, set())
+        self.assertEqual(self.notify(key="q-2")[0], 200)
+        self.assertEqual(self.notify(key="q-2")[1].get("duplicate"), True, "a stored key")
 
     # ---- what is refused ----
 
@@ -387,9 +443,27 @@ console.log(JSON.stringify([withHubRows(turns, { messages: [ext('u', 200, false)
         # A new one redraws an open chat (its transcript did not change).
         self.assertIn("const hubRows = (room.messages || []).filter(m => isHubRow(m) || isPoMsg(m) || isCmdRow(m)"
                       " || (m.kind === 'notice' && m.noticeKind === 'external' && !m.typed)).length;", src)
-        # With no session yet, the chat shows those lines, not nothing.
-        self.assertIn("if (!SOLO_SID) { CHAT_DRAWN = true; renderBubbles(((ROOM_OBJ && ROOM_OBJ.messages) || [])"
-                      ".filter(m => m.kind === 'notice' && m.noticeKind === 'external' && !m.typed)); return; }", src)
+
+    @unittest.skipUnless(shutil.which("node"), "node not found")
+    def test_a_chat_with_no_session_redraws_only_when_its_lines_change(self):
+        src = (ROOT / "session.html").read_text(encoding="utf-8").replace("\r\n", "\n")
+        at = src.index("async function checkSolo() {")
+        js = ("let SOLO_SID = '', CHAT_DRAWN = false, ROOM_OBJ = null; const drawn = [];\n"
+              "const renderBubbles = rows => drawn.push(rows.map(m => m.id).join(','));\n"
+              + src[at:src.index("\n}\n", at) + 3] + """
+const ext = (id, typed) => ({ id, kind: 'notice', noticeKind: 'external', typed });
+(async () => {
+  ROOM_OBJ = { messages: [] }; await checkSolo();
+  ROOM_OBJ = { messages: [ext('a', false), ext('t', true)] }; await checkSolo(); await checkSolo();
+  ROOM_OBJ = { messages: [ext('a', false), ext('t', true), { id: 'n', kind: 'msg' }] }; await checkSolo();
+  ROOM_OBJ = { messages: [ext('a', false), ext('b', false)] }; await checkSolo(); await checkSolo();
+  console.log(JSON.stringify(drawn));
+})();
+""")
+        r = subprocess.run([shutil.which("node"), "-e", js], capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        # Drawn first (nothing yet), then on each new untyped line, never on an unchanged poll.
+        self.assertEqual(json.loads(r.stdout), ["", "a", "a,b"])
 
 if __name__ == "__main__":
     unittest.main()

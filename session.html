@@ -6560,7 +6560,14 @@ function soloWantFailed(w) {
 // and light (the full transcript is fetched only on a real change).
 async function checkSolo() {
   // No session yet: only the outside lines it was not typed (#357) to show.
-  if (!SOLO_SID) { CHAT_DRAWN = true; renderBubbles(((ROOM_OBJ && ROOM_OBJ.messages) || []).filter(m => m.kind === 'notice' && m.noticeKind === 'external' && !m.typed)); return; }
+  // Drawn again only when those rows changed, never on an unchanged poll.
+  if (!SOLO_SID) {
+    const rows = ((ROOM_OBJ && ROOM_OBJ.messages) || []).filter(m => m.kind === 'notice' && m.noticeKind === 'external' && !m.typed);
+    const sig = rows.map(m => m.id).join(',');
+    if (sig === checkSolo.noSidSig && CHAT_DRAWN) return;
+    checkSolo.noSidSig = sig; CHAT_DRAWN = true; renderBubbles(rows); return;
+  }
+  checkSolo.noSidSig = null;   // a session drew the chat: a later no-session state draws again
   if (checkSolo.busy) return;   // one stat request at a time
   checkSolo.busy = true;
   try {
