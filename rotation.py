@@ -2220,13 +2220,16 @@ def awaiting_handover(room_id: str, identity: str) -> bool:
                for st in [*list(_STATE.values()), *list(_TASK_STATE.values())])
 
 
-def hold_wake(room_id: str, identity: str, wake: str) -> bool:
+def hold_wake(room_id: str, identity: str, wake: str, provenance: dict | None = None) -> bool:
     """Hold a doorbell for an agent being rotated (True); it is typed into the
-    fresh session. A caller that also sends holds GATE across both."""
+    fresh session. A caller that also sends holds GATE across both.
+    ``provenance``: who the line is from when its prefix does not say (an
+    outside sender's, #357), kept with it as {"wake", "provenance"}."""
     with GATE:
         if (room_id, identity) not in _ROTATING:
             return False
-        _HELD.setdefault((room_id, identity), []).append(wake)
+        _HELD.setdefault((room_id, identity), []).append(
+            {"wake": wake, "provenance": dict(provenance)} if provenance else wake)
         return True
 
 
@@ -2347,7 +2350,9 @@ def _replay(rid: str, ident: str, wakes: list) -> None:
                 quiet = bool(tail) and time.time() - sess.last_output >= IDLE_S
                 if (quiet and not _d.attention.looks_like_prompt(tail)) or time.time() > end:
                     break
-            if isinstance(wake, dict):
+            if isinstance(wake, dict) and "wake" in wake:
+                _d._type_input(sess, wake["wake"], wake.get("provenance"))
+            elif isinstance(wake, dict):
                 _type_sends(rid, ident, sess, wake)
             else:
                 _d._type_input(sess, wake)

@@ -6387,7 +6387,8 @@ document.addEventListener('click', e => {
 // A channel's own (``hub``, its hubRows: those of the time its pages span)
 // spare fetching the room's older pages to find them (#247). An outside
 // sender's line (#357) is a turn once typed; one the agent was not running
-// for (typed false) is only in the room, so it goes in from there.
+// for (typed false) is only in the room, so it goes in from there, by its
+// time even above the first turn (it is no turn of any page of them).
 function withHubRows(items, room, hub) {
   if (!hub && room === ROOM_OBJ && roomHasOlder() && items.length) {
     const first = items.find(m => m.ts), oldest = (room.messages || [])[0];
@@ -6403,7 +6404,7 @@ function withHubRows(items, room, hub) {
   const out = items.slice();
   for (const r of rows) {
     const first = out.find(m => m.ts);
-    if (!first || r.ts < first.ts) continue;
+    if ((!first || r.ts < first.ts) && !(r.noticeKind === 'external' && !r.typed)) continue;
     let at = out.length;
     for (let i = out.length - 1; i >= 0; i--) { if (out[i].ts && out[i].ts > r.ts) at = i; }
     out.splice(at, 0, r);
@@ -6558,7 +6559,8 @@ function soloWantFailed(w) {
 // grows. Reliable (catches every new turn, even while the agent is still working)
 // and light (the full transcript is fetched only on a real change).
 async function checkSolo() {
-  if (!SOLO_SID) { CHAT_DRAWN = true; renderBubbles([]); return; }
+  // No session yet: only the outside lines it was not typed (#357) to show.
+  if (!SOLO_SID) { CHAT_DRAWN = true; renderBubbles(((ROOM_OBJ && ROOM_OBJ.messages) || []).filter(m => m.kind === 'notice' && m.noticeKind === 'external' && !m.typed)); return; }
   if (checkSolo.busy) return;   // one stat request at a time
   checkSolo.busy = true;
   try {

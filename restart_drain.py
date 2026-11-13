@@ -1117,7 +1117,8 @@ def _deliver(h, it: dict) -> str:
             h._start_review(rid, it.get("identity", ""), msg, restore=True)
         elif kind == "wake":
             # An agent that is not running is not woken: as without a drain.
-            h._ring(rid, [it.get("identity", "")], it.get("text", ""))
+            h._ring(rid, [it.get("identity", "")], it.get("text", ""),
+                    provenance=it.get("provenance") if isinstance(it.get("provenance"), dict) else None)
         _log(f"let go: {kind} for {rid}" + (f"/{it['identity']}" if it.get("identity") else ""))
         return ""
     except Exception as e:      # noqa: BLE001 — one item never stops the rest

@@ -4634,7 +4634,7 @@ def _menu_drain(sess) -> None:
             with _MENU_LOCK:
                 left = _MENU_HELD.pop(pid, [])
                 _MENU_WHO.pop(pid, None)
-            kept = [it for it in left if rid and ident and rotation.hold_wake(rid, ident, it[0])]
+            kept = [it for it in left if rid and ident and rotation.hold_wake(rid, ident, it[0], it[1])]
             # The rest wait for the seat's next terminal (a resume), as after a restart.
             rest = [it for it in left if not any(it is k for k in kept)]
             with _MENU_LOCK:
@@ -4664,7 +4664,7 @@ def _menu_drain(sess) -> None:
             head = items[0]
         text, provenance, record, parts, now = head
         ok = _type_input_now(sess, text, provenance, record=record, parts=parts, now=now)
-        if not ok and rid and ident and rotation.hold_wake(rid, ident, text):
+        if not ok and rid and ident and rotation.hold_wake(rid, ident, text, provenance):
             ok = True               # typed into the fresh session once it settles
         tries = 0 if ok else tries + 1
         if not ok and tries < MENU_TRIES:
@@ -5696,6 +5696,19 @@ def note_answer(room_id: str, identity: str) -> bool:
         return False
 
 
+def _outside_lines(room_id: str) -> dict[str, str]:
+    """{"[<sender>] <text>": sender} for the outside senders' lines stored in
+    this room (#357): how the agent was typed each of them."""
+    try:
+        room = chatroom.get_room(room_id, public=False) or {}
+    except Exception:       # noqa: BLE001 — unread: no outside lines known
+        return {}
+    return {f"[{m.get('senderLabel')}] {m.get('text') or ''}".strip(): str(m.get("senderLabel"))
+            for m in room.get("messages") or []
+            if m.get("kind") == "notice" and m.get("noticeKind") == NOTICE_EXTERNAL
+            and m.get("senderLabel")}
+
+
 def classify_turns(turns: list[dict], *, room_id: str = "", identity: str = "",
                    session_id: str = "") -> list[dict]:
     """The chat's turns with ``kind`` on every user turn and ``answers`` (the
@@ -5741,9 +5754,18 @@ def classify_turns(turns: list[dict], *, room_id: str = "", identity: str = "",
                 out.append({**t, "text": rest})
         else:
             out.append({**t, **(input_provenance.public(rec) if rec else {})})
+    outside = _outside_lines(room_id) if room_id and any(
+        t.get("role") == "user" and "kind" not in t for t in out) else {}
     last = None
     for t in out:
         if t.get("role") == "user":
+            if "kind" not in t and (t.get("text") or "").strip() in outside:
+                # An outside sender's line (#357) the journal does not hold
+                # (its write failed): read from the room's stored line, never
+                # the person's.
+                label = outside[(t.get("text") or "").strip()]
+                t.update(_input_sender_info(t.get("text") or "",
+                                            {"kind": NOTICE_EXTERNAL, "senderLabel": label}))
             if "kind" not in t:
                 if modern_session:
                     # A contemporary journal proves this session uses explicit
@@ -5969,6 +5991,8 @@ def _notify_unreserve(rid: str, sender: str, key: str, now: float) -> None:
             sent.remove(now)
         if key and _NOTIFY_KEYS.get((rid, key)) == now:
             del _NOTIFY_KEYS[(rid, key)]
+
+
 # The brief is the agent's first prompt, passed on its command line, so it is
 # kept well under Windows' 32k limit: a diff is inlined only when small, the
 # log and the spec are cut to their newest / first part (the files hold all).
@@ -20077,21 +20101,35 @@ class Handler(BaseHTTPRequestHandler):
                                              f"'{sender}' into this room; this one was not posted. "
                                              f"Try again later."})
             return
-        ident = chatroom.po_identity(room_full)
-        line = f"[{sender}] {text}"
-        woken = False
-        if ident:
-            try:
-                woken = bool(self._ring(rid, [ident], line, provenance={
-                    "kind": NOTICE_EXTERNAL, "senderLabel": sender}))
-            except Exception as e:      # noqa: BLE001 — the line is kept anyway
-                print(f"[notify] {rid}: {ident} not woken: {e!r}", flush=True)
-        msg = chatroom.post_notice(rid, rotation.SENDER, text,
-                                   {"noticeKind": NOTICE_EXTERNAL, "senderLabel": sender,
-                                    "typed": woken, **({"agent": ident} if ident else {})})
+        ident, woken, failed = "", False, None
+        try:
+            ident = chatroom.po_identity(room_full)
+            if ident:
+                try:
+                    woken = bool(self._ring(rid, [ident], f"[{sender}] {text}", provenance={
+                        "kind": NOTICE_EXTERNAL, "senderLabel": sender}))
+                except Exception as e:      # noqa: BLE001 — the line is kept anyway
+                    print(f"[notify] {rid}: {ident} not woken: {e!r}", flush=True)
+            msg = chatroom.post_notice(rid, rotation.SENDER, text,
+                                       {"noticeKind": NOTICE_EXTERNAL, "senderLabel": sender,
+                                        "typed": woken, **({"agent": ident} if ident else {})})
+        except Exception as e:      # noqa: BLE001 — answered, never a dropped request
+            print(f"[notify] {rid}: not stored: {e!r}", flush=True)
+            msg, failed = None, e
         if msg is None:
-            _notify_unreserve(rid, sender, key, now)
-            self._send_json(404, {"error": "no_such_room"})
+            # A line the agent was typed counts (its key and its slot): a retry
+            # would type it again. One that went nowhere leaves no trace.
+            if not woken:
+                _notify_unreserve(rid, sender, key, now)
+            if failed is None and not woken:
+                self._send_json(404, {"error": "no_such_room"})
+            else:
+                self._send_json(500, {
+                    "error": "not_stored", "typed": woken, "agent": ident,
+                    "message": ("The agent was typed the line, but it could not be kept in "
+                                "the chat; do not send it again." if woken else
+                                "The line could not be kept in the chat and was not typed; "
+                                "it can be sent again.")})
             return
         self._send_json(200, {"ok": True, "message": msg, "typed": woken, "agent": ident,
                               **({} if woken else {"note": "The agent is not running: the line "
@@ -20262,7 +20300,8 @@ class Handler(BaseHTTPRequestHandler):
             # An agent at its safe point while a restart drains is not woken:
             # the wake waits for after the restart (restart_drain.py).
             if restart_drain.holding() and restart_drain.try_hold(
-                    {"kind": "wake", "roomId": room_id, "identity": ident, "text": wake},
+                    {"kind": "wake", "roomId": room_id, "identity": ident, "text": wake,
+                     **({"provenance": dict(provenance)} if provenance else {})},
                     ready_only=(room_id, ident)):
                 rung.append(ident)
                 continue
@@ -20273,7 +20312,7 @@ class Handler(BaseHTTPRequestHandler):
             sess = None
             pty_id = None
             with rotation.GATE:
-                if rotation.hold_wake(room_id, ident, wake):
+                if rotation.hold_wake(room_id, ident, wake, provenance):
                     rung.append(ident)
                     continue
                 part = chatroom.participant(chatroom.get_room(room_id) or room, ident)

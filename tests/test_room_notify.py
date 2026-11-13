@@ -62,6 +62,7 @@ class Notify(unittest.TestCase):
         (base / "state").mkdir()
         self.typed: list[tuple] = []
         self.running = True
+        self.real_hold_wake = dashboard.rotation.hold_wake
         patches = [
             mock.patch.object(dashboard, "DASHBOARD_DIR", base / "state"),
             mock.patch.object(chatroom, "ROOMS_DIR", base / "rooms"),
@@ -233,6 +234,75 @@ class Notify(unittest.TestCase):
         self.notify("typed one")
         self.assertFalse(dashboard._hub_row(self.externals()[-1]), "typed: the turn shows it, not the row")
 
+    # ---- held, replayed, or not journalled: still the outside sender's ----
+
+    def test_a_wake_held_for_a_restart_keeps_its_sender(self):
+        held = []
+        with mock.patch.object(dashboard.restart_drain, "holding", lambda: True), \
+                mock.patch.object(dashboard.restart_drain, "try_hold",
+                                  lambda item, ready_only=None: held.append(item) or True):
+            status, r = self.notify("hi")
+        self.assertEqual((status, r["typed"]), (200, True))
+        (item,) = held
+        self.assertEqual(item["provenance"], {"kind": "external", "senderLabel": SENDER})
+        rang = []
+        h = SimpleNamespace(_ring=lambda rid, idents, text, provenance=None: rang.append(
+            (idents, text, provenance)) or idents)
+        self.assertEqual(dashboard.restart_drain._deliver(h, item), "")
+        self.assertEqual(rang, [(["claude"], f"[{SENDER}] hi",
+                                 {"kind": "external", "senderLabel": SENDER})])
+
+    def test_a_wake_held_for_a_rotation_keeps_its_sender(self):
+        key = (self.rid, "claude")
+        rot = dashboard.rotation
+        with mock.patch.dict(rot._ROTATING, {key: {}}), mock.patch.dict(rot._HELD, clear=True), \
+                mock.patch.object(rot, "hold_wake", self.real_hold_wake):
+            status, r = self.notify("hi")
+            self.assertEqual((status, r["typed"]), (200, True))
+            (w,) = rot._HELD[key]
+        self.assertEqual(w, {"wake": f"[{SENDER}] hi",
+                             "provenance": {"kind": "external", "senderLabel": SENDER}})
+        sess = SimpleNamespace(tail=lambda: "> ", last_output=0.0, meta={"identity": "claude"})
+        with mock.patch.object(rot, "_pty", lambda part: sess), \
+                mock.patch.object(rot, "IDLE_S", 0.0), \
+                mock.patch.object(rot._d.attention, "looks_like_prompt", lambda tail: False), \
+                mock.patch.dict(rot._REPLAYING, {key: [w]}):
+            rot._replay(self.rid, "claude", [w])
+            deadline = time.time() + 10
+            while not self.typed and time.time() < deadline:
+                time.sleep(0.1)
+        self.assertEqual(self.typed[-1][1:], (f"[{SENDER}] hi",
+                                              {"kind": "external", "senderLabel": SENDER}))
+
+    def test_a_turn_the_journal_missed_still_reads_as_the_outside_senders(self):
+        self.assertEqual(self.notify("hi")[0], 200)
+        # Another input of this session is journalled, so an unmatched turn
+        # would be the person's.
+        input_provenance.record(self.rid, "claude", "other", dashboard._input_sender_info("other"),
+                                session_id="sid-1")
+        stamp = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime())
+        (turn,) = dashboard.classify_turns([{"role": "user", "text": f"[{SENDER}] hi", "timestamp": stamp}],
+                                           room_id=self.rid, identity="claude", session_id="sid-1")
+        self.assertEqual((turn["kind"], turn["senderLabel"]), ("external", SENDER))
+        (mine,) = dashboard.classify_turns([{"role": "user", "text": "hi", "timestamp": stamp}],
+                                           room_id=self.rid, identity="claude", session_id="sid-1")
+        self.assertEqual(mine["kind"], "human")
+
+    def test_a_line_that_cannot_be_stored_is_answered_and_its_key_is_kept_once_typed(self):
+        with mock.patch.object(chatroom, "post_notice", side_effect=OSError("disk full")):
+            status, r = self.notify(key="q-1")
+        self.assertEqual((status, r["error"], r["typed"]), (500, "not_stored", True))
+        self.assertEqual(len(self.typed), 1)
+        self.assertEqual(self.notify(key="q-1")[1].get("duplicate"), True, "a retry types it no second time")
+        self.assertEqual(len(self.typed), 1)
+        self.running = False
+        with mock.patch.object(chatroom, "post_notice", side_effect=OSError("disk full")):
+            status, r = self.notify(key="q-2")
+        self.assertEqual((status, r["error"], r["typed"]), (500, "not_stored", False))
+        self.assertEqual(dashboard._NOTIFY_SENT[(self.rid, SENDER.lower())].__len__(), 1,
+                         "the one that went nowhere gave its slot back")
+        self.assertEqual(self.notify(key="q-2")[0], 200, "and its key")
+
     # ---- what is refused ----
 
     def test_a_bad_sender_label_is_refused(self):
@@ -280,12 +350,18 @@ class ThePage(unittest.TestCase):
         js = code + """
 const turns = [{ id: 't1', ts: 100 }, { id: 't2', ts: 300 }];
 const ext = (id, ts, typed) => ({ id, ts, from: 'ensemble', kind: 'notice', noticeKind: 'external', senderLabel: 'Tester', text: 'hi', typed });
-console.log(JSON.stringify(withHubRows(turns, { messages: [ext('u', 200, false), ext('y', 250, true)] }).map(m => m.id)));
+console.log(JSON.stringify([withHubRows(turns, { messages: [ext('u', 200, false), ext('y', 250, true)] }).map(m => m.id),
+  withHubRows(turns, { messages: [ext('e', 50, false), { id: 'd', from: 'ensemble', kind: 'notice', noticeKind: 'due', ts: 60 }] }).map(m => m.id)]));
 """
         r = subprocess.run([shutil.which("node"), "-e", js], capture_output=True, text=True, timeout=60)
         self.assertEqual(r.returncode, 0, r.stderr)
         # The untyped line goes in by its time; a typed one is already a turn.
-        self.assertEqual(json.loads(r.stdout), ["t1", "u", "t2"])
+        # One older than the first turn (posted before the first session)
+        # stays, above it.
+        self.assertEqual(json.loads(r.stdout), [["t1", "u", "t2"], ["e", "t1", "t2"]])
+        # With no session yet, the chat shows those lines, not nothing.
+        self.assertIn("if (!SOLO_SID) { CHAT_DRAWN = true; renderBubbles(((ROOM_OBJ && ROOM_OBJ.messages) || [])"
+                      ".filter(m => m.kind === 'notice' && m.noticeKind === 'external' && !m.typed)); return; }", src)
 
 if __name__ == "__main__":
     unittest.main()
