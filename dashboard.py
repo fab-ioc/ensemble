@@ -14884,6 +14884,29 @@ def pruned_refusal(room: dict) -> dict:
                         f"from its spec.")}
 
 
+def seat_token(room_full: dict, ident: str) -> str:
+    """The seat's bearer token for the Ensemble MCP server, for a launch or a
+    resume. Every hub-started agent needs it: without one each /mcp call is a
+    401 and the agent runs with no ensemble_* or chat tools at all, while
+    looking healthy (ED-356: a PO switch passed the room's public view, which
+    has no tokens). A room passed without it is looked up as stored; a seat
+    with no token there either is never started."""
+    def of(room: dict | None) -> str:
+        return next((t for t, i in ((room or {}).get("tokens") or {}).items()
+                     if i == ident), "")
+    token = of(room_full)
+    if token:
+        return token
+    rid = room_full.get("id") or ""
+    token = of(chatroom.get_room(rid, public=False)) if rid else ""
+    if token:
+        print(f"[launch] {rid}/{ident}: the room passed to the launch had no tokens; "
+              f"the seat's stored token is used", flush=True)
+        return token
+    raise RuntimeError(f"{ident} was not started: its seat has no chat token, so it "
+                       f"would run without its Ensemble tools.")
+
+
 def prune_state() -> dict:
     s = PRUNE_JOB.snapshot()
     s["autoDays"] = int(load_settings().get("pruneDoneAfterDays") or 0)
@@ -20242,8 +20265,7 @@ class Handler(BaseHTTPRequestHandler):
         briefing + task. Returns {sessionId, cwd, launch}."""
         ident = part["identity"]
         agent_key = part["agent"]
-        token = next((t for t, i in room_full.get("tokens", {}).items()
-                      if i == ident), "")
+        token = seat_token(room_full, ident)
         url = self._mcp_url()
         cwd, scratch = self._seat_folder(room_full, ident)
         cwd = seat_folders.launch_folder(room_full, ident, cwd, scratch)
@@ -20366,8 +20388,7 @@ class Handler(BaseHTTPRequestHandler):
         agent_key = part["agent"]
         # The seat's model, else the one Settings chose for its kind.
         model, effort = hub_launch_model(agent_key, part.get("model"))
-        token = next((t for t, i in room_full.get("tokens", {}).items()
-                      if i == ident), "")
+        token = seat_token(room_full, ident)
         default, scratch = self._seat_folder(room_full, ident)
         # The folder asked for, else the seat's own recorded folder (a fresh
         # session of a seat moved to a second checkout stays there), else the
@@ -20455,8 +20476,7 @@ class Handler(BaseHTTPRequestHandler):
         model, effort = (((part.get("model") or "").strip(), "")
                          if human or _conversation_as_found(room_full, part)
                          else hub_launch_model(agent_key, part.get("model")))
-        token = next((t for t, i in room_full.get("tokens", {}).items()
-                      if i == ident), "")
+        token = seat_token(room_full, ident)
         default, scratch = self._seat_folder(room_full, ident)
         recorded_cwd = (part.get("cwd") or "").strip()
         # It resumes where its conversation is: its recorded folder. An

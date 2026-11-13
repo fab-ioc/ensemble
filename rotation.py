@@ -1170,6 +1170,10 @@ def _switch_po(project: dict, room: dict, part: dict, other: str, model: str,
         if (_SWITCHING.get(rid) or {}).get("flags", {}).get("stopped"):
             return {"result": "cancelled", "reason": "the PO was stopped"}
         _ROTATING[key] = flags
+    # The launch works from the room as stored, tokens included: ``_po`` reads
+    # the public view, and a seat launched from it got an empty CHAT_TOKEN and
+    # no Ensemble tools (ED-356).
+    room = current_room
     name = _d._agent_kind_name
     hp = handover_path(project)
     info, started, committed = None, time.time(), None
