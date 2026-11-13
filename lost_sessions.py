@@ -196,7 +196,8 @@ def _claude_transcript(sid: str, immediate: bool = True):
         hits = [p for p in projects.glob(f"*/{sid}.jsonl")] if re.fullmatch(r"[\w-]+", sid) else []
     except OSError:
         return None
-    return hits[0] if hits else None
+    # The most recently written copy of an id held in several folders (ED-355).
+    return _d._newest(hits)
 
 
 _SID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)

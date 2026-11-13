@@ -388,7 +388,8 @@ def _transcript_of(part: dict):
         cx = _d.agents.get_agent("codex")
         files = cx.rollouts_for_session(sid) if (cx and sid) else []
         return (files[-1] if files else None), read_rollout
-    return _d.find_transcript(sid), read_transcript
+    # The seat's own folder's copy when its id is held in several (ED-355).
+    return _d.find_transcript(sid, cwd=(part.get("cwd") or "").strip()), read_transcript
 
 
 # ---------------------------------------------------------------------------

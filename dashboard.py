@@ -1282,27 +1282,59 @@ CLAUDE_FILES = filetable.FileTable(lambda: PROJ_DIR, 1, lambda name: name.endswi
 _TRANSCRIPT_INDEX: tuple[str, float, dict[str, Path]] = ("", 0.0, {})
 _TRANSCRIPT_INDEX_TTL_S = 2.0
 _TRANSCRIPT_INDEX_LOCK = threading.Lock()
+# One session id held in several project folders (ED-355: a Windows-era copy
+# of a PO's conversation beside the one Claude writes now). The last listing's
+# copies of each such id, so a lookup with a seat's folder can prefer that
+# folder's copy, and each id is logged once.
+_TRANSCRIPT_COPIES: dict[str, list[Path]] = {}
+_TRANSCRIPT_COPIES_LOGGED: set[str] = set()
+# A remembered transcript that has not grown for this long is checked against
+# the listing (itself listed again when older than this): another copy may be
+# the one written now. A file that grows is kept without a look.
+_TRANSCRIPT_RECHECK_S = 30.0
+_TRANSCRIPT_GROWTH: dict[str, tuple[int, float]] = {}   # sid -> (size, when last seen to change)
 
 
-def _transcript_index(fresh: bool = False) -> dict[str, Path]:
-    """{session id: transcript}, the first in listing order for an id held in
-    several folders (as the glob for one id gave). ``fresh`` lists again unless
-    the listing is younger than _TRANSCRIPT_INDEX_TTL_S; one caller lists, the
-    others wait for it."""
+def _transcript_index(fresh: bool = False, ttl: float | None = None) -> dict[str, Path]:
+    """{session id: transcript}, the most recently written for an id held in
+    several folders (ED-355; the listing's own times, no stat). ``fresh``
+    lists again unless the listing is younger than ``ttl``
+    (_TRANSCRIPT_INDEX_TTL_S); one caller lists, the others wait for it. A
+    listing drops a remembered transcript of an id that another copy now
+    outdates."""
     global _TRANSCRIPT_INDEX
     with _TRANSCRIPT_INDEX_LOCK:
         root = str(PROJ_DIR)
         was, at, idx = _TRANSCRIPT_INDEX
         if was != root:
             at, idx = 0.0, {}
-        if fresh and time.time() - at >= _TRANSCRIPT_INDEX_TTL_S:
+        if fresh and time.time() - at >= (_TRANSCRIPT_INDEX_TTL_S if ttl is None else ttl):
             at = time.time()
-            idx = {}
+            best: dict[str, tuple[float, Path]] = {}
+            copies: dict[str, list[Path]] = {}
             # The task list's own walk when it is a second old: a refresh walks once.
-            for p in CLAUDE_FILES.files(fresh_s=_TRANSCRIPT_INDEX_TTL_S / 2):
+            for p, (mtime, _size, _ns) in CLAUDE_FILES.files(fresh_s=_TRANSCRIPT_INDEX_TTL_S / 2).items():
                 f = filetable.as_path(p)
-                idx.setdefault(f.stem, f)
+                had = best.get(f.stem)
+                if had is None:
+                    best[f.stem] = (mtime, f)
+                    continue
+                copies.setdefault(f.stem, [had[1]]).append(f)
+                if mtime > had[0]:
+                    best[f.stem] = (mtime, f)
+            idx = {sid: f for sid, (_m, f) in best.items()}
             _TRANSCRIPT_INDEX = (root, at, idx)
+            _TRANSCRIPT_COPIES.clear()
+            _TRANSCRIPT_COPIES.update(copies)
+            for sid, paths in copies.items():
+                kept = _TRANSCRIPT_PATHS.get(sid)
+                if kept is not None and kept != idx[sid] and kept in paths:
+                    _TRANSCRIPT_PATHS.pop(sid, None)
+                if sid not in _TRANSCRIPT_COPIES_LOGGED:
+                    _TRANSCRIPT_COPIES_LOGGED.add(sid)
+                    print(f"[transcripts] session {sid} is in {len(paths)} project folders "
+                          f"({', '.join(sorted(q.parent.name for q in paths))}); the hub reads "
+                          f"the newest, {idx[sid].parent.name}. Nothing is moved.", flush=True)
         return idx
 
 
@@ -1313,10 +1345,14 @@ def transcript_stats() -> dict[str, list]:
     past session's file is not stat'ed one by one (#228: a PO's 165 sessions
     on every points sync), nor looked for when it has none (#265: a Codex
     PO's 156 ended sessions, a glob each, 2 s of every sync). For sessions
-    that ended: a live one is looked at."""
+    that ended: a live one is looked at. A Claude id held in several folders
+    is its newest copy (ED-355)."""
     out: dict[str, list] = {}
     for p, (mtime, size, _ns) in CLAUDE_FILES.files(fresh_s=10.0).items():
-        out.setdefault(filetable.as_path(p).stem, [size, round(mtime, 3)])
+        sid = filetable.as_path(p).stem
+        st = out.get(sid)
+        if st is None or round(mtime, 3) > st[1]:
+            out[sid] = [size, round(mtime, 3)]
     cx = agents.get_agent("codex")
     root = cx.sessions_dir() if cx is not None and hasattr(cx, "sessions_dir") else None
     if root is not None and root.exists():
@@ -1329,13 +1365,87 @@ def transcript_stats() -> dict[str, list]:
     return out
 
 
-def find_transcript(session_id: str, *, immediate: bool = True) -> Path | None:
+def _mtime(p: Path) -> float | None:
+    try:
+        return p.stat().st_mtime
+    except OSError:
+        return None
+
+
+def _newest(paths) -> Path | None:
+    """The most recently written of ``paths`` that still exist."""
+    best, at = None, None
+    for p in paths:
+        m = _mtime(p)
+        if m is not None and (at is None or m > at):
+            best, at = p, m
+    return best
+
+
+def _in_cwd_folder(path: Path, cwd: str) -> bool:
+    """``path`` is in the project folder Claude keeps ``cwd``'s conversations
+    in (a slug over 200 characters is cut and given a hash of Claude's own)."""
+    slug = claude_project_slug(cwd)
+    name = path.parent.name
+    return name == slug or (len(slug) > 200 and name.startswith(slug[:200]))
+
+
+def _prefer_cwd(session_id: str, chosen: Path, cwd: str) -> Path:
+    """The copy in ``cwd``'s project folder, when the id has several and that
+    one is at least as new as ``chosen`` (ED-355)."""
+    copies = _TRANSCRIPT_COPIES.get(session_id) if cwd else None
+    if not copies or _in_cwd_folder(chosen, cwd):
+        return chosen
+    mine = next((c for c in copies if c != chosen and _in_cwd_folder(c, cwd)), None)
+    if mine is None:
+        return chosen
+    m, c = _mtime(mine), _mtime(chosen)
+    return mine if m is not None and (c is None or m >= c) else chosen
+
+
+def _quiet_too_long(session_id: str, size: int) -> bool:
+    """The remembered transcript has kept ``size`` for _TRANSCRIPT_RECHECK_S:
+    time to ask whether another copy is the one written now. Each such answer
+    starts the wait again."""
+    now = time.monotonic()
+    seen = _TRANSCRIPT_GROWTH.get(session_id)
+    if seen is None or seen[0] != size:
+        if len(_TRANSCRIPT_GROWTH) > 8192:
+            _TRANSCRIPT_GROWTH.clear()
+        _TRANSCRIPT_GROWTH[session_id] = (size, now)
+        return False
+    if now - seen[1] < _TRANSCRIPT_RECHECK_S:
+        return False
+    _TRANSCRIPT_GROWTH[session_id] = (size, now)
+    return True
+
+
+def find_transcript(session_id: str, *, immediate: bool = True, cwd: str = "") -> Path | None:
     """A session's transcript. Remembered once found, so the task list does not
     glob every project folder for every live session on every refresh; checked
-    for existence on each use, so a deleted transcript is looked up afresh."""
+    for existence on each use, so a deleted transcript is looked up afresh.
+
+    An id held in several project folders (ED-355) is its most recently
+    written copy, or the copy in ``cwd``'s folder (the seat's) when that one
+    is at least as new. A remembered copy is given up when a listing finds
+    another newer, and is checked against the listing once it has not grown
+    for _TRANSCRIPT_RECHECK_S: so a lookup stats one file, as before."""
     hit = _TRANSCRIPT_PATHS.get(session_id)
-    if hit is not None and hit.exists():
-        return hit
+    if hit is not None:
+        try:
+            size = hit.stat().st_size
+        except OSError:
+            size = None
+        if size is not None:
+            if _quiet_too_long(session_id, size):
+                # The copies the listing knows (a stat each), else a listing
+                # at most _TRANSCRIPT_RECHECK_S old: a copy made since.
+                listed = _transcript_index(fresh=True, ttl=_TRANSCRIPT_RECHECK_S).get(session_id)
+                newest = _newest([hit, *(_TRANSCRIPT_COPIES.get(session_id) or ()),
+                                  *([listed] if listed is not None else [])])
+                if newest is not None and newest != hit and (_mtime(newest) or 0.0) > (_mtime(hit) or 0.0):
+                    hit = _TRANSCRIPT_PATHS[session_id] = newest
+            return _prefer_cwd(session_id, hit, cwd)
     if not session_id or any(c in session_id for c in "*?[]/\\"):
         return None
     miss_key = (str(PROJ_DIR), session_id)
@@ -1347,12 +1457,11 @@ def find_transcript(session_id: str, *, immediate: bool = True) -> Path | None:
     if immediate and (found is None or not found.exists()):
         # A listing younger than its TTL may predate the file: the glob for
         # this one id, as before, so a lookup never misses a transcript.
-        hits = list(PROJ_DIR.glob(f"*/{session_id}.jsonl"))
-        found = hits[0] if hits else None
+        found = _newest(PROJ_DIR.glob(f"*/{session_id}.jsonl"))
     if found is not None:
         _TRANSCRIPT_MISSES.pop(miss_key, None)
         _TRANSCRIPT_PATHS[session_id] = found
-        return found
+        return _prefer_cwd(session_id, found, cwd)
     _TRANSCRIPT_PATHS.pop(session_id, None)
     # A missing retired session may be checked by every attention poll. Avoid
     # walking every project directory for the same miss until the index expires.
