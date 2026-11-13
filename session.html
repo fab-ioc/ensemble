@@ -3622,9 +3622,32 @@ function parseAsks(text) {
   }
   return out;
 }
+// An Ask: line asking again what a card still open asks (the hub's
+// askRepeats: { mid: [[line, end, [[mid, n], ...]], ...] }, asks.py
+// shown_text): each such line shows as the link to that card, on a line of
+// its own, so it draws as the card's chip and makes no card (P325).
+function askRepeatText(text, reps) {
+  const rows = askLines(text);
+  const url = (mid, n) => location.origin + '/session?room=' + encodeURIComponent(ROOM) + '&msg=' + encodeURIComponent(mid) + '&part=ask:' + n;
+  [...reps].sort((a, b) => b[0] - a[0]).forEach(([line, end, refs]) => {
+    rows.splice(+line, +end - +line, '', refs.map(([mid, n]) => url(mid, n)).join(' '), '');
+  });
+  return rows.join('\n');
+}
+const ASK_SHOWN = new Map();
+function askShown(m) {
+  if (!m || m.askShown || !m.id || typeof ROOM_OBJ === 'undefined' || !ROOM_OBJ || !ROOM_OBJ.askRepeats) return m;
+  const reps = ROOM_OBJ.askRepeats[m.id];
+  if (!Array.isArray(reps) || !reps.length) return m;
+  const k = m.id + '\u0000' + (m.text || '') + '\u0000' + JSON.stringify(reps);
+  let t = ASK_SHOWN.get(k);
+  if (t == null) { t = askRepeatText(m.text || '', reps); ASK_SHOWN.set(k, t); if (ASK_SHOWN.size > 200) ASK_SHOWN.delete(ASK_SHOWN.keys().next().value); }
+  return { ...m, text: t, askShown: true };
+}
 // Parsed once per text: every poll draws the same balloons.
 const ASK_CACHE = new Map();
 function asksOf(m) {
+  m = askShown(m);
   if (!m || !m.id || m.from === 'user' || m.from === 'ensemble' || m.divider || m.kind === 'pomsg' || m.kind === 'notice' || m.askAudience === 'po') return [];
   if (typeof ROOM_OBJ !== 'undefined' && ROOM_OBJ && Array.isArray(ROOM_OBJ.participants)) {
     const sender = ROOM_OBJ.participants.find(p => p.identity === m.from);
@@ -3637,7 +3660,7 @@ function asksOf(m) {
   if (m.kind === 'report') return [];
   const t = String(m.text || '');
   let a = ASK_CACHE.get(t);
-  if (!a) { a = parseAsks(t); if (!a.length) a = safetyAsk(t); ASK_CACHE.set(t, a); if (ASK_CACHE.size > 500) ASK_CACHE.delete(ASK_CACHE.keys().next().value); }
+  if (!a) { a = parseAsks(t); if (!a.length && !m.askShown) a = safetyAsk(t); ASK_CACHE.set(t, a); if (ASK_CACHE.size > 500) ASK_CACHE.delete(ASK_CACHE.keys().next().value); }
   return a;
 }
 function safetyAsk(text) {
@@ -4850,6 +4873,7 @@ function renderBubbles(items, opt = {}) {
   const firstFull = plan.indexOf('full');
   const keys = [], decKeys = [];
   const balloon = (m, i) => {
+    m = askShown(m);
     const k = foldKey(m, i);
     keys.push(k);
     if (isDecision(m)) decKeys.push(k);

@@ -850,12 +850,15 @@ def open_in(summary: dict, now: float | None = None) -> list[dict]:
         settled = max(settled, *(float(p.get("answeredAt") or 0)
                                   for p in summary.get("participants", []) if p.get("kind") == "agent"))
     past = moved_past(summary, led)
+    reps = _reps(summary)
     out = []
     for mid, ts, qs, who in marked:
         if ts and ts < max(settled, past):
             continue
         if _d.attention.read_and_old(summary, ts, now) or _d.attention.set_aside(summary, ts):
             continue
+        if mid in reps:
+            qs = reps[mid]["qs"]
         got = done.get(mid) or {}
         for n, q in enumerate(qs):
             if str(n) in got:
@@ -1372,51 +1375,92 @@ def _find_repeats(rid: str, cards: dict, src: dict) -> dict:
     return out
 
 
-def repeats_of(summary: dict) -> dict:
+def repeats_of(summary: dict, fresh: bool = False) -> dict:
     """``{mid: [[line, end, [[mid, n], …]], …]}``: the room's ``Ask:`` lines
     that repeat an open card, as last worked out (:func:`_room_cards`), for
     the chat page."""
+    return {mid: r["lines"] for mid, r in _reps(summary, fresh).items()}
+
+
+def _reps(summary: dict, fresh: bool = False) -> dict:
+    """The room's repeated ``Ask:`` lines (:func:`_find_repeats`), worked out
+    now when that reads no transcript (or ``fresh``), else as last worked out."""
     rid = (summary or {}).get("id", "")
-    return {mid: r["lines"] for mid, r in (_REPS.get(rid) or {}).items()}
-
-
-def _repeated_qs(rid: str, mid: str):
-    r = (_REPS.get(rid) or {}).get(mid)
-    return r["qs"] if r else None
+    if not rid:
+        return {}
+    if not cards_ready(summary):
+        room = _room_of(summary)
+        if room is not None and (fresh or not _cards_sig(room)[0]):
+            _room_cards(summary)
+    return _REPS.get(rid) or {}
 
 
 BRIEF_CARDS_MAX = 10
+NOTE_PREFIX = "[asks] "     # dashboard.HUB_INPUT_KINDS
+NOTE_MAX = 900              # a typed line (points._WAKE_MAX)
+ASK_AGAIN_RULE = ("These are still open in the Inbox; do not ask them again: not after a "
+                  "rotation or a restart, and not when you answer a related point. A card stays "
+                  "there until the person answers or closes it. To point at one, paste its link "
+                  "alone on its line. To change one, have it closed first, then ask the new question.")
+
+
+def _own_open(room: dict, identity: str = "") -> list[dict]:
+    """The open cards of ``room`` its seat ``identity`` put (all when none),
+    newest first, one asked again before the rule listed once."""
+    cards = [c for c in open_cards(room) if not identity or not c.get("who") or c.get("who") == identity]
+    reps = _repeats(tuple(c["question"] for c in cards)) if cards else frozenset()
+    return [c for i, c in enumerate(cards) if i not in reps]
+
+
+def _age(ts: float, now: float) -> str:
+    s = max(0, int(now - float(ts or now)))
+    return f"{s // 60} min" if s < 3600 else f"{s // 3600} h" if s < 86400 else f"{s // 86400} d"
+
+
+def _card_line(rid: str, c: dict, now: float, width: int) -> str:
+    q = " ".join(title(c["question"], c.get("who") or "").split())
+    if len(q) > width:
+        q = q[:width - 1] + "…"
+    return f"“{q}” {card_url(rid, c['mid'], c['n'])} (open {_age(c['ts'], now)})"
 
 
 def prompt_block(room: dict, identity: str = "", now: float | None = None) -> str:
     """A fresh session's own cards still open, for its first prompt (P325):
     the question in a line, its link and its age, newest first, at most
-    :data:`BRIEF_CARDS_MAX`. One asked again before the rule is listed once.
-    Empty when none is open."""
+    :data:`BRIEF_CARDS_MAX`, then "+N more". Empty when none is open."""
     now = time.time() if now is None else now
     rid = (room or {}).get("id", "")
-    cards = [c for c in open_cards(room) if not identity or not c.get("who") or c.get("who") == identity]
+    cards = _own_open(room, identity)
     if not cards:
         return ""
-    reps = _repeats(tuple(c["question"] for c in cards))
-    cards = [c for i, c in enumerate(cards) if i not in reps]
-
-    def age(ts: float) -> str:
-        s = max(0, int(now - float(ts or now)))
-        return (f"{s // 60} min" if s < 3600 else f"{s // 3600} h" if s < 86400 else f"{s // 86400} d")
-    lines = ["Your question cards still open in the Inbox (newest first). These are still open "
-             "in the Inbox; do not ask them again: not after this rotation, and not when you answer "
-             "a related point. A card stays there until the person answers or closes it. To point "
-             "at one, paste its link alone on its line. To change one, ask the person to close it "
-             "first, then ask the new question."]
-    for c in cards[:BRIEF_CARDS_MAX]:
-        q = " ".join(title(c["question"], c.get("who") or "").split())
-        if len(q) > 160:
-            q = q[:159] + "…"
-        lines.append(f"- {q} — {card_url(rid, c['mid'], c['n'])} (open {age(c['ts'])})")
+    lines = ["Your question cards still open in the Inbox, newest first. " + ASK_AGAIN_RULE]
+    lines += [f"- {_card_line(rid, c, now, 160)}" for c in cards[:BRIEF_CARDS_MAX]]
     if len(cards) > BRIEF_CARDS_MAX:
         lines.append(f"- +{len(cards) - BRIEF_CARDS_MAX} more")
     return "\n".join(lines)
+
+
+def note_line(room: dict, identity: str = "", now: float | None = None) -> str:
+    """The same in one typed line, for the note a resumed or restarted
+    session gets: ``[asks] Your question cards still open …: “…” <link>
+    (open 3 h); …``. Empty when none is open."""
+    now = time.time() if now is None else now
+    rid = (room or {}).get("id", "")
+    cards = _own_open(room, identity)
+    if not cards:
+        return ""
+    head = f"{NOTE_PREFIX}Your question cards still open in the Inbox, newest first. {ASK_AGAIN_RULE} "
+    bits, used = [], len(head)
+    shown = cards[:BRIEF_CARDS_MAX]
+    for i, c in enumerate(shown):
+        b = _card_line(rid, c, now, 60)
+        if used + len(b) + 2 > NOTE_MAX - 20 and bits:
+            break
+        bits.append(b)
+        used += len(b) + 2
+    if len(cards) > len(bits):
+        bits.append(f"+{len(cards) - len(bits)} more")
+    return head + "; ".join(bits) + "."
 
 
 def cards_ready(summary: dict) -> bool:
@@ -1466,6 +1510,9 @@ def balloon_asks(room_id: str, mid: str, room: dict | None = None) -> list[dict]
                     or message.get("rang") or (message.get("to") or "").lower() not in ("", "all", "user") \
                     or message.get("askAudience") == "po" or (has_po and message.get("askAudience") != "user"):
                 return []
+            rep = (_REPS.get(room_id) or {}).get(mid)
+            if rep:
+                return parse(shown_text(message.get("text") or "", rep["lines"], room_id))
             return of_message(message)
     if has_po:
         return []
@@ -1473,6 +1520,9 @@ def balloon_asks(room_id: str, mid: str, room: dict | None = None) -> list[dict]
         text = _d.points._balloon_text(room_id, mid, {})
     except Exception:       # noqa: BLE001
         return []
+    rep = (_REPS.get(room_id) or {}).get(mid)
+    if rep:
+        return parse(shown_text(text or "", rep["lines"], room_id))
     return of_message({"text": text or ""})
 
 

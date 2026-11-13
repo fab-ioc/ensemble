@@ -206,7 +206,10 @@ _ALL_TOOLS = [
             "Give every question its answers: 2-6 options (one may be recommended), "
             "or yesno: true. A question without options gets Yes and No when it is a "
             "yes/no question; any other comes back with a warning, and its card is a "
-            "comment box only."
+            "comment box only. A card stays open until the person answers or closes it: "
+            "a question one of your chat's open cards already asks is not posted again "
+            "(alreadyOpen gives that card's reference), and the same call repeated "
+            "within a minute returns the first one's result."
         ),
         "inputSchema": {"type": "object", "properties": {
             "questions": {"type": "array", "minItems": 1, "maxItems": 10,
@@ -1331,7 +1334,38 @@ def _report(ctx, args, handler, *, structured_asks=None):
                      "was not woken — it will see the report when it next reads")}
 
 
+_ASK_LOCKS: dict[str, threading.Lock] = {}
+_ASK_LOCKS_GUARD = threading.Lock()
+_ASK_RECENT: dict[tuple, tuple] = {}    # (room id, identity, args) → (when, result) (P325)
+ASK_RETRY_S = 60.0
+
+
 def _ask(ctx, args, handler):
+    """ensemble_ask, once per question (P325): the same call again within
+    :data:`ASK_RETRY_S` (a retry after a timeout) returns what the first
+    returned, and a question a card of the room still waiting asks already
+    is not posted again: its reference comes back instead."""
+    rid, identity = ctx["room"]["id"], ctx["identity"]
+    try:
+        key = (rid, identity, json.dumps(args, sort_keys=True, default=str))
+    except (TypeError, ValueError):
+        key = None
+    with _ASK_LOCKS_GUARD:
+        lock = _ASK_LOCKS.setdefault(rid, threading.Lock())
+    with lock:
+        now = time.time()
+        for k in [k for k, (at, _r) in _ASK_RECENT.items() if now - at > ASK_RETRY_S]:
+            _ASK_RECENT.pop(k, None)
+        hit = _ASK_RECENT.get(key) if key else None
+        if hit is not None:
+            return {**hit[1], "repeated": True}
+        result = _ask_once(ctx, args, handler)
+        if key:
+            _ASK_RECENT[key] = (time.time(), result)
+        return result
+
+
+def _ask_once(ctx, args, handler):
     try:
         warnings: list[str] = []
         questions = _d.asks.validated(args.get("questions"), warnings)
@@ -1367,21 +1401,51 @@ def _ask(ctx, args, handler):
         return {**routed, "questions": len(questions), "note": "Question sent to your PO for a decision or relay. Paste reportReference as it is when following up with the PO: it shows as the message's chip.",
                 **({"reportReference": ref} if ref else {}),
                 **({"warnings": warnings} if warnings else {})}
-    result = _d.chatroom.post_message(room["id"], identity, context.strip() or "Questions for you.", to="user",
-                                      structured_asks=questions, ask_audience="user")
-    if result is None:
-        raise ToolError("your room no longer exists")
-    handler._ring_recipients(room["id"], result)
-    _d.asks.forget()
-    mid = result["message"]["id"]
     headers = getattr(handler, "headers", {}) or {}
     host = headers.get("Host", "127.0.0.1:8765")
     scheme = "https" if headers.get("X-Forwarded-Proto") == "https" else "http"
-    refs = [f"{scheme}://{host}/session?room={room['id']}&msg={mid}&part=ask:{a['n']}"
-            for a in questions]
-    return {"ok": True, "deliveredTo": "user", "messageId": result["message"]["id"],
-            "questions": len(questions), "references": refs,
-            "note": "Paste the matching reference as it is (not in a code span or a [label](link)) whenever you mention an open card: it shows as the card's chip. The card is waiting for the user's answer.",
+    base = f"{scheme}://{host}"
+    # A question a card of this room still waiting asks already is not
+    # posted again (P325): its card's reference stands for it.
+    fresh_room = _d.chatroom.get_room(room["id"], public=False) or room
+    try:
+        waiting = _d.asks.open_cards(fresh_room)
+    except Exception as e:      # noqa: BLE001 — ask as written
+        print(f"[ensemble_ask] {room['id']}: open cards not read: {e!r}", flush=True)
+        waiting = []
+    plan, fresh, already = [], [], []
+    for ask in questions:
+        card = next((c for c in waiting if _d.asks.same_ask(ask["question"], c["question"])), None)
+        if card is None:
+            plan.append(("new", len(fresh)))
+            fresh.append({**ask, "n": len(fresh)})
+        else:
+            ref = _d.asks.card_url(room["id"], card["mid"], card["n"], base)
+            since = time.strftime("%m-%d %H:%M", time.localtime(float(card.get("ts") or 0)))
+            plan.append(("old", ref))
+            already.append({"question": ask["question"], "reference": ref, "openSince": since})
+    mid = ""
+    if fresh:
+        result = _d.chatroom.post_message(room["id"], identity, context.strip() or "Questions for you.", to="user",
+                                          structured_asks=fresh, ask_audience="user")
+        if result is None:
+            raise ToolError("your room no longer exists")
+        handler._ring_recipients(room["id"], result)
+        _d.asks.forget()
+        mid = result["message"]["id"]
+    refs = [f"{base}/session?room={room['id']}&msg={mid}&part=ask:{x}" if kind == "new" else x
+            for kind, x in plan]
+    note = ("Paste the matching reference as it is (not in a code span or a [label](link)) whenever you mention "
+            "an open card: it shows as the card's chip. The card is waiting for the user's answer.")
+    if already:
+        note = ("; ".join(f"“{a['question'][:80]}” is already open since {a['openSince']}" for a in already)
+                + ": not posted again; paste its reference if you need to point to it. A card stays open "
+                  "until the user answers or closes it. " + (note if fresh else ""))
+    return {"ok": True, "deliveredTo": "user", "posted": bool(fresh),
+            **({"messageId": mid} if mid else {}),
+            "questions": len(fresh), "references": refs,
+            **({"alreadyOpen": already} if already else {}),
+            "note": note.strip(),
             **({"warnings": warnings} if warnings else {})}
 
 

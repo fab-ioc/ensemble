@@ -856,6 +856,14 @@ def _annotate_room_liveness(room: dict, with_points: bool = False, first: bool =
         except Exception as e:  # noqa: BLE001
             print(f"[asks] {room.get('id')}: cards not listed: {e!r}", flush=True)
             room["openCards"] = _LAST_OPEN_CARDS.get(room.get("id", ""), [])
+        # An Ask: line asking again what an open card asks shows as that
+        # card's chip, not a second card (P325).
+        try:
+            reps = asks.repeats_of(room)
+            if reps:
+                room["askRepeats"] = reps
+        except Exception as e:  # noqa: BLE001
+            print(f"[asks] {room.get('id')}: repeats not listed: {e!r}", flush=True)
     # The person's points (points.py), on the poll the chat already makes.
     if with_points:
         try:
@@ -3082,7 +3090,10 @@ ASK_NOTE = (
     "reviewers ask the owner. Never mention an open card without its link: "
     "ensemble_ask returns a reference to paste, and a plain Ask card's "
     "Copy link control provides one too. To remind them of an open card, paste "
-    "its link alone on its line, never after Ask: (that line asks nothing).")
+    "its link alone on its line, never after Ask: (that line asks nothing). "
+    "A card stays open until it is answered or closed: never ask an open "
+    "question again (not after a restart, not when answering a related "
+    "point); to change one, have it closed first, then ask the new question.")
 
 # How a task is named in text (P166): its number, never its room id.
 TASK_NAME_NOTE = (
@@ -5523,7 +5534,7 @@ def _relay_wake(sender: str) -> str:
 # the kind to fold hub traffic and to say what each reply answers; it keeps no
 # list of its own. A [word] not listed here is a person's (they type brackets).
 HUB_INPUT_KINDS = (
-    ("[asks] ", "asks"),              # a card was closed or reopened without an answer
+    ("[asks] ", "asks"),              # a card was closed or reopened without an answer; its open cards (asks.note_line)
     ("[board] ", "board"),
     ("[digest] ", "digest"),            # digest.py: the PO's progress check
     ("[due] ", "due"),                  # due.py: what its handover says is due now
@@ -5715,10 +5726,11 @@ def classify_turns(turns: list[dict], *, room_id: str = "", identity: str = "",
             rest = text[len(note):].strip()
             # The person's open points follow the note on one line of their
             # own (points.note_line): the hub's too, before what they sent.
-            if rest.startswith(points.PREFIX):
-                line, _, rest = rest.partition("\n\n")
-                out.append({**t, "text": line.strip(), **_input_sender_info(line.strip())})
-                rest = rest.strip()
+            for prefix in (points.PREFIX, asks.NOTE_PREFIX):
+                if rest.startswith(prefix):
+                    line, _, rest = rest.partition("\n\n")
+                    out.append({**t, "text": line.strip(), **_input_sender_info(line.strip())})
+                    rest = rest.strip()
             if rest:
                 out.append({**t, "text": rest})
         else:
@@ -21397,6 +21409,14 @@ class Handler(BaseHTTPRequestHandler):
                     line = ""
                 if line:
                     typed_parts.append((line, _input_sender_info(line)))
+                # And its question cards still open, so it asks none again (P325).
+                try:
+                    line = asks.note_line(chatroom.get_room(room_id) or {"id": room_id}, ident)
+                except Exception as e:      # noqa: BLE001 — the note goes in anyway
+                    print(f"[asks] {room_id}/{ident}: open cards not listed: {e!r}", flush=True)
+                    line = ""
+                if line:
+                    typed_parts.append((line, _input_sender_info(line)))
             if solo:
                 typed_parts += [
                     (with_message_refs(it["text"], room_id, ref_project(it)),
@@ -22126,8 +22146,21 @@ class Handler(BaseHTTPRequestHandler):
                                            ask_audience="po" if po else "")
             if result is None:
                 return err(-32000, "room no longer exists")
+            repeated = ""
             if fallback or asks.parse(text):
                 asks.forget()
+                # An Ask: line whose question an open card asks already makes
+                # no card: it shows as that card's chip (P325).
+                try:
+                    lines = asks.repeats_of(chatroom.get_room(room_id, public=False) or {"id": room_id},
+                                            fresh=True).get(result["message"]["id"])
+                except Exception as e:      # noqa: BLE001
+                    print(f"[asks] {room_id}: repeats not worked out: {e!r}", flush=True)
+                    lines = None
+                if lines:
+                    repeated = (" Your Ask: line asks what a card of this chat still open asks "
+                                "already: it made no new card and shows as that card's link. A card "
+                                "stays open until the person answers or closes it; do not ask it again.")
             self._ring_recipients(room_id, result)
             _history_nudge(room_id, "turn")
             status = result["status"]
@@ -22147,6 +22180,7 @@ class Handler(BaseHTTPRequestHandler):
                 note += (" No teammate was woken: a message to everyone wakes only "
                          "the task's owner. To wake a reviewer or another "
                          "specialist, address it with `to` or @mention it.")
+            note += repeated
             return ok({"content": [{"type": "text", "text": note}],
                        "isError": False})
         if name == "chat_read":
