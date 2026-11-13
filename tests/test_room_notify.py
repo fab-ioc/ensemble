@@ -75,6 +75,7 @@ class Notify(unittest.TestCase):
             mock.patch.object(dashboard, "operator_name", lambda: "Pat"),
             mock.patch.dict(dashboard._NOTIFY_KEYS, clear=True),
             mock.patch.dict(dashboard._NOTIFY_SENT, clear=True),
+            mock.patch.dict(dashboard._NOTIFY_UNSTORED, clear=True),
         ]
         for p in patches:
             p.start()
@@ -287,13 +288,37 @@ class Notify(unittest.TestCase):
         (mine,) = dashboard.classify_turns([{"role": "user", "text": "hi", "timestamp": stamp}],
                                            room_id=self.rid, identity="claude", session_id="sid-1")
         self.assertEqual(mine["kind"], "human")
+        # Typed once: a second identical turn is not the outside sender's.
+        two = dashboard.classify_turns([{"role": "user", "text": f"[{SENDER}] hi", "timestamp": stamp}] * 2,
+                                       room_id=self.rid, identity="claude", session_id="sid-1")
+        self.assertEqual([t["kind"] for t in two], ["external", "human"])
+        # Nor one long before it, or another agent's.
+        old = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(time.time() - 3600))
+        (early,) = dashboard.classify_turns([{"role": "user", "text": f"[{SENDER}] hi", "timestamp": old}],
+                                            room_id=self.rid, identity="claude", session_id="sid-1")
+        self.assertEqual(early["kind"], "human")
+        (other,) = dashboard.classify_turns([{"role": "user", "text": f"[{SENDER}] hi", "timestamp": stamp}],
+                                            room_id=self.rid, identity="codex", session_id="sid-1")
+        self.assertNotEqual(other.get("kind"), "external")
+
+    def test_a_line_never_typed_claims_no_turn(self):
+        self.running = False
+        self.assertEqual(self.notify("hi")[1]["typed"], False)
+        input_provenance.record(self.rid, "claude", "other", dashboard._input_sender_info("other"),
+                                session_id="sid-1")
+        stamp = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime())
+        (turn,) = dashboard.classify_turns([{"role": "user", "text": f"[{SENDER}] hi", "timestamp": stamp}],
+                                           room_id=self.rid, identity="claude", session_id="sid-1")
+        self.assertEqual(turn["kind"], "human", "the person typed it: the line went to no one")
 
     def test_a_line_that_cannot_be_stored_is_answered_and_its_key_is_kept_once_typed(self):
         with mock.patch.object(chatroom, "post_notice", side_effect=OSError("disk full")):
             status, r = self.notify(key="q-1")
         self.assertEqual((status, r["error"], r["typed"]), (500, "not_stored", True))
         self.assertEqual(len(self.typed), 1)
-        self.assertEqual(self.notify(key="q-1")[1].get("duplicate"), True, "a retry types it no second time")
+        status, r = self.notify(key="q-1")
+        self.assertEqual((status, r["error"], r["typed"], r["duplicate"]), (500, "not_stored", True, True),
+                         "a retry is told it is still not in the chat, and types it no second time")
         self.assertEqual(len(self.typed), 1)
         self.running = False
         with mock.patch.object(chatroom, "post_notice", side_effect=OSError("disk full")):
@@ -359,6 +384,9 @@ console.log(JSON.stringify([withHubRows(turns, { messages: [ext('u', 200, false)
         # One older than the first turn (posted before the first session)
         # stays, above it.
         self.assertEqual(json.loads(r.stdout), [["t1", "u", "t2"], ["e", "t1", "t2"]])
+        # A new one redraws an open chat (its transcript did not change).
+        self.assertIn("const hubRows = (room.messages || []).filter(m => isHubRow(m) || isPoMsg(m) || isCmdRow(m)"
+                      " || (m.kind === 'notice' && m.noticeKind === 'external' && !m.typed)).length;", src)
         # With no session yet, the chat shows those lines, not nothing.
         self.assertIn("if (!SOLO_SID) { CHAT_DRAWN = true; renderBubbles(((ROOM_OBJ && ROOM_OBJ.messages) || [])"
                       ".filter(m => m.kind === 'notice' && m.noticeKind === 'external' && !m.typed)); return; }", src)

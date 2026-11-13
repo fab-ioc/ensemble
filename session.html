@@ -8136,7 +8136,7 @@ function refreshShow(room, ticket, sendsGen) {
     SOLO_ROT = SOLO_ROTS.slice(-1)[0] || null;
     // What the hub holds for it changed (sent, delivered, failed): draw again.
     // …or the hub put a row of its own in the room (it was restarted).
-    const hubRows = (room.messages || []).filter(m => isHubRow(m) || isPoMsg(m) || isCmdRow(m)).length;
+    const hubRows = (room.messages || []).filter(m => isHubRow(m) || isPoMsg(m) || isCmdRow(m) || (m.kind === 'notice' && m.noticeKind === 'external' && !m.typed)).length;
     const rowsChanged = hubRows !== HUB_ROWS_N;
     HUB_ROWS_N = hubRows;
     const cpNow = cpSig(room.checkpoints), cpChanged = cpNow !== CP_SIG;

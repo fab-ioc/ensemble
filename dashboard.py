@@ -5696,17 +5696,34 @@ def note_answer(room_id: str, identity: str) -> bool:
         return False
 
 
-def _outside_lines(room_id: str) -> dict[str, str]:
-    """{"[<sender>] <text>": sender} for the outside senders' lines stored in
-    this room (#357): how the agent was typed each of them."""
+OUTSIDE_TYPED_WITHIN_S = 24 * 3600     # a held line is typed this long after, at most
+
+
+def _outside_lines(room_id: str, identity: str) -> list[dict]:
+    """The outside senders' lines of this room (#357) its agent ``identity``
+    was typed: {"line": how it was typed, "label", "ts"}, oldest first."""
     try:
         room = chatroom.get_room(room_id, public=False) or {}
     except Exception:       # noqa: BLE001 — unread: no outside lines known
-        return {}
-    return {f"[{m.get('senderLabel')}] {m.get('text') or ''}".strip(): str(m.get("senderLabel"))
+        return []
+    return [{"line": f"[{m.get('senderLabel')}] {m.get('text') or ''}".strip(),
+             "label": str(m.get("senderLabel")), "ts": float(m.get("ts") or 0)}
             for m in room.get("messages") or []
             if m.get("kind") == "notice" and m.get("noticeKind") == NOTICE_EXTERNAL
-            and m.get("senderLabel")}
+            and m.get("typed") and m.get("senderLabel")
+            and (not identity or not m.get("agent") or m.get("agent") == identity)]
+
+
+def _outside_turn(lines: list[dict], text: str, at: float | None) -> str:
+    """The label of the typed outside line this unrecorded turn is (taken
+    from ``lines``, so it claims no second turn), or "": the same text, and
+    typed from just before it was stored (it is typed first) to a day on."""
+    text = (text or "").strip()
+    for i, ln in enumerate(lines):
+        if ln["line"] == text and at and ln["ts"] - 60 <= at <= ln["ts"] + OUTSIDE_TYPED_WITHIN_S:
+            del lines[i]
+            return ln["label"]
+    return ""
 
 
 def classify_turns(turns: list[dict], *, room_id: str = "", identity: str = "",
@@ -5754,16 +5771,17 @@ def classify_turns(turns: list[dict], *, room_id: str = "", identity: str = "",
                 out.append({**t, "text": rest})
         else:
             out.append({**t, **(input_provenance.public(rec) if rec else {})})
-    outside = _outside_lines(room_id) if room_id and any(
-        t.get("role") == "user" and "kind" not in t for t in out) else {}
+    outside = _outside_lines(room_id, identity) if room_id and any(
+        t.get("role") == "user" and "kind" not in t for t in out) else []
     last = None
     for t in out:
         if t.get("role") == "user":
-            if "kind" not in t and (t.get("text") or "").strip() in outside:
+            label = (_outside_turn(outside, t.get("text") or "", _turn_epoch(t.get("timestamp")))
+                     if "kind" not in t and outside else "")
+            if label:
                 # An outside sender's line (#357) the journal does not hold
                 # (its write failed): read from the room's stored line, never
                 # the person's.
-                label = outside[(t.get("text") or "").strip()]
                 t.update(_input_sender_info(t.get("text") or "",
                                             {"kind": NOTICE_EXTERNAL, "senderLabel": label}))
             if "kind" not in t:
@@ -5927,6 +5945,9 @@ NOTIFY_WINDOW_S = 3600
 _NOTIFY_LOCK = threading.Lock()
 _NOTIFY_KEYS: dict = {}         # (room, key) -> when posted; kept a day like _SAY_KEYS
 _NOTIFY_SENT: dict = {}         # (room, sender lowercased) -> [when posted]
+_NOTIFY_UNSTORED: dict = {}     # (room, key) -> when: typed to the agent, not kept in the chat
+_NOTIFY_UNSTORED_TEXT = ("The agent was typed the line, but it could not be kept in the chat; "
+                         "do not send it again.")
 # Labels that would read as the hub's own words or the person's.
 _NOTIFY_RESERVED = {"user", "you", "me", "ensemble", "hub", "ceo", "po", "product owner",
                     "system", "relay"}
@@ -5968,6 +5989,8 @@ def _notify_reserve(rid: str, sender: str, key: str, now: float) -> str:
     "limited" past NOTIFY_PER_HOUR for the room and sender."""
     for k in [k for k, at in _NOTIFY_KEYS.items() if now - at > _SAY_KEY_TTL]:
         del _NOTIFY_KEYS[k]
+    for k in [k for k in _NOTIFY_UNSTORED if k not in _NOTIFY_KEYS]:
+        del _NOTIFY_UNSTORED[k]
     for k in list(_NOTIFY_SENT):
         _NOTIFY_SENT[k] = [t for t in _NOTIFY_SENT[k] if now - t < NOTIFY_WINDOW_S]
         if not _NOTIFY_SENT[k]:
@@ -20093,6 +20116,12 @@ class Handler(BaseHTTPRequestHandler):
         with _NOTIFY_LOCK:
             held = _notify_reserve(rid, sender, key, now)
         if held == "duplicate":
+            with _NOTIFY_LOCK:
+                unstored = (rid, key) in _NOTIFY_UNSTORED
+            if unstored:
+                self._send_json(500, {"error": "not_stored", "typed": True, "duplicate": True,
+                                      "message": _NOTIFY_UNSTORED_TEXT})
+                return
             self._send_json(200, {"ok": True, "duplicate": True})
             return
         if held == "limited":
@@ -20121,13 +20150,15 @@ class Handler(BaseHTTPRequestHandler):
             # would type it again. One that went nowhere leaves no trace.
             if not woken:
                 _notify_unreserve(rid, sender, key, now)
+            elif key:
+                with _NOTIFY_LOCK:
+                    _NOTIFY_UNSTORED[(rid, key)] = now
             if failed is None and not woken:
                 self._send_json(404, {"error": "no_such_room"})
             else:
                 self._send_json(500, {
                     "error": "not_stored", "typed": woken, "agent": ident,
-                    "message": ("The agent was typed the line, but it could not be kept in "
-                                "the chat; do not send it again." if woken else
+                    "message": (_NOTIFY_UNSTORED_TEXT if woken else
                                 "The line could not be kept in the chat and was not typed; "
                                 "it can be sent again.")})
             return
