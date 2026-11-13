@@ -33,7 +33,7 @@ LIVE_CWD = "/home/fab/EnsembleProjects/Tasse-Ticino/code"
 
 def forget() -> None:
     for d in (dashboard._TRANSCRIPT_PATHS, dashboard._TRANSCRIPT_MISSES, dashboard._TRANSCRIPT_COPIES,
-              dashboard._TRANSCRIPT_GROWTH, dashboard._SESSION_INPUT_CONTEXT_CACHE):
+              dashboard._TRANSCRIPT_GROWTH, dashboard._SESSION_INPUT_CONTEXT_CACHE, dashboard._SEAT_CWD_CACHE):
         d.clear()
     dashboard._TRANSCRIPT_INDEX = ("", 0.0, {})
     dashboard.CLAUDE_FILES.forget()
@@ -121,7 +121,9 @@ class Copies(unittest.TestCase):
         # Quiet past the wait: the listing is asked and the newer copy taken.
         size, at = dashboard._TRANSCRIPT_GROWTH[SID]
         dashboard._TRANSCRIPT_GROWTH[SID] = (size, at - dashboard._TRANSCRIPT_RECHECK_S - 1)
-        with mock.patch.object(dashboard, "_TRANSCRIPT_INDEX_TTL_S", 0.0), mock.patch("builtins.print"):
+        # The other copy is stat'ed; the projects folder is not listed again.
+        with mock.patch.object(dashboard, "_transcript_index",
+                               side_effect=AssertionError("listed by the quiet re-check")):
             self.assertEqual(dashboard.find_transcript(SID), self.live)
         self.assertEqual(dashboard._TRANSCRIPT_PATHS[SID], self.live)
 
@@ -150,6 +152,34 @@ class Copies(unittest.TestCase):
         self.assertEqual(dashboard._TRANSCRIPT_PATHS[SID], self.live)
         # Listed once: the next lookup of another id trusts the listing.
         self.assertGreater(dashboard._TRANSCRIPT_INDEX[1], 0.0)
+
+    def test_a_quiet_single_copy_transcript_is_one_stat_and_never_lists(self):
+        one = write(self.proj / LIVE_DIR / "only-one.jsonl", [turn("user", "hi", "2026-11-13T08:00:00Z")],
+                    time.time() - 600)
+        with mock.patch("builtins.print"):
+            self.assertEqual(dashboard.find_transcript("only-one"), one)
+        self.assertEqual(dashboard.find_transcript("only-one"), one)     # remembered
+        self.assertNotIn("only-one", dashboard._TRANSCRIPT_GROWTH)
+        with mock.patch.object(dashboard, "_transcript_index", side_effect=AssertionError("listed")), \
+                mock.patch.object(dashboard, "_newest_at", side_effect=AssertionError("copies stat'ed")), \
+                mock.patch.object(time, "monotonic", return_value=time.monotonic() + 3600):
+            self.assertEqual(dashboard.find_transcript("only-one"), one)
+
+    def test_an_id_no_room_owns_scans_the_rooms_once(self):
+        at = self.live.stat().st_mtime
+        os.utime(self.stale, (at, at))
+        with mock.patch.object(dashboard, "_session_input_context", return_value=("", "")) as ctx, \
+                mock.patch("builtins.print"):
+            for _ in range(5):
+                dashboard.find_transcript(SID)
+        self.assertEqual(ctx.call_count, 1)
+
+    def test_stats_break_a_tie_with_the_seat_folder_as_lookups_do(self):
+        rows = {str(self.stale): (1000.0, 5, 0), str(self.live): (1000.0, 9, 0)}
+        with mock.patch.object(dashboard.CLAUDE_FILES, "files", return_value=rows), \
+                mock.patch.object(dashboard.agents, "get_agent", return_value=None), \
+                mock.patch.object(dashboard, "_seat_cwd", return_value=LIVE_CWD):
+            self.assertEqual(dashboard.transcript_stats()[SID], [9, 1000.0])
 
     def test_stats_compare_copies_a_millisecond_apart_by_their_raw_times(self):
         older, newer = self.stale, self.live
@@ -208,6 +238,9 @@ class TypedAgain(Harness):
             self.extra.append(q)
         forget()
         if remembered_stale:
+            # Found by a listing when it was the newer copy (so both are known).
+            with mock.patch("builtins.print"):
+                dashboard._transcript_index(fresh=True)
             dashboard._TRANSCRIPT_PATHS[SID] = stale
             dashboard._TRANSCRIPT_GROWTH[SID] = (stale.stat().st_size,
                                                  time.monotonic() - dashboard._TRANSCRIPT_RECHECK_S - 1)

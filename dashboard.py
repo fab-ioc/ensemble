@@ -1359,7 +1359,9 @@ def transcript_stats() -> dict[str, list]:
     newest: dict[str, float] = {}       # raw times: copies a millisecond apart
     for p, (mtime, size, _ns) in CLAUDE_FILES.files(fresh_s=10.0).items():
         sid = filetable.as_path(p).stem
-        if sid not in newest or mtime > newest[sid]:
+        if sid not in newest or mtime > newest[sid] or (
+                mtime == newest[sid] and _in_cwd_folder(filetable.as_path(p), _seat_cwd(sid))):
+            # Equal times: the seat's folder, as find_transcript chooses.
             newest[sid] = mtime
             out[sid] = [size, round(mtime, 3)]
     cx = agents.get_agent("codex")
@@ -1381,36 +1383,58 @@ def _mtime(p: Path) -> float | None:
         return None
 
 
-def _newest(paths) -> Path | None:
-    """The most recently written of ``paths`` that still exist."""
+def _newest_at(paths) -> tuple[Path | None, float | None]:
+    """The most recently written of ``paths`` that still exist, and its time
+    (a stat each)."""
     best, at = None, None
     for p in paths:
         m = _mtime(p)
         if m is not None and (at is None or m > at):
             best, at = p, m
-    return best
+    return best, at
+
+
+def _newest(paths) -> Path | None:
+    """The most recently written of ``paths`` that still exist."""
+    return _newest_at(paths)[0]
 
 
 def _in_cwd_folder(path: Path, cwd: str) -> bool:
     """``path`` is in the project folder Claude keeps ``cwd``'s conversations
     in (a slug over 200 characters is cut and given a hash of Claude's own)."""
+    if not cwd:
+        return False
     slug = claude_project_slug(cwd)
     name = path.parent.name
     return name == slug or (len(slug) > 200 and name.startswith(slug[:200]))
 
 
+_SEAT_CWD_CACHE: dict[tuple[str, str], tuple[str, float]] = {}   # (rooms dir, sid) -> (cwd, until)
+_SEAT_CWD_TTL_S = 30.0
+
+
 def _seat_cwd(session_id: str) -> str:
     """The folder of the seat whose conversation ``session_id`` is (its room's
-    participant), or "" when no room holds it."""
+    participant), or "" when no room holds it. Kept _SEAT_CWD_TTL_S, a miss
+    too: an id no room owns would scan every room on every lookup."""
+    key, now = (str(chatroom.ROOMS_DIR), session_id), time.monotonic()
+    hit = _SEAT_CWD_CACHE.get(key)
+    if hit is not None and hit[1] > now:
+        return hit[0]
+    cwd = ""
     try:
         room_id, identity = _session_input_context(session_id)
         room = chatroom.get_room(room_id, public=False, copy_room=False, messages=False) if room_id else None
+        for part in chatroom.agent_participants(room or {}):
+            if part.get("identity") == identity:
+                cwd = str(part.get("cwd") or "").strip()
+                break
     except Exception:       # noqa: BLE001 — the newest copy is read instead
-        return ""
-    for part in chatroom.agent_participants(room or {}):
-        if part.get("identity") == identity:
-            return str(part.get("cwd") or "").strip()
-    return ""
+        cwd = ""
+    if len(_SEAT_CWD_CACHE) > 4096:
+        _SEAT_CWD_CACHE.clear()
+    _SEAT_CWD_CACHE[key] = (cwd, now + _SEAT_CWD_TTL_S)
+    return cwd
 
 
 def _prefer_cwd(session_id: str, chosen: Path, cwd: str) -> Path:
@@ -1455,22 +1479,23 @@ def find_transcript(session_id: str, *, immediate: bool = True, cwd: str = "") -
     An id held in several project folders (ED-355) is its most recently
     written copy, or the copy in ``cwd``'s folder (the seat's) when that one
     is at least as new. A remembered copy is given up when a listing finds
-    another newer, and is checked against the listing once it has not grown
-    for _TRANSCRIPT_RECHECK_S: so a lookup stats one file, as before."""
+    another newer; one of an id held in several folders is checked against
+    its other copies once it has not grown for _TRANSCRIPT_RECHECK_S. So a
+    lookup stats one file, as before, and lists nothing."""
     hit = _TRANSCRIPT_PATHS.get(session_id)
     if hit is not None:
         try:
-            size = hit.stat().st_size
+            st = hit.stat()
         except OSError:
-            size = None
-        if size is not None:
-            if _quiet_too_long(session_id, size):
-                # The copies the listing knows (a stat each), else a listing
-                # at most _TRANSCRIPT_RECHECK_S old: a copy made since.
-                listed = _transcript_index(fresh=True, ttl=_TRANSCRIPT_RECHECK_S).get(session_id)
-                newest = _newest([hit, *(_TRANSCRIPT_COPIES.get(session_id) or ()),
-                                  *([listed] if listed is not None else [])])
-                if newest is not None and newest != hit and (_mtime(newest) or 0.0) > (_mtime(hit) or 0.0):
+            st = None
+        if st is not None:
+            copies = _TRANSCRIPT_COPIES.get(session_id)
+            if copies and _quiet_too_long(session_id, st.st_size):
+                # The other copies the last listing found, a stat each. A copy
+                # made since is found by the next listing (any lookup's miss),
+                # which drops a remembered path it outdates.
+                newest, at = _newest_at(c for c in copies if c != hit)
+                if newest is not None and at > st.st_mtime:
                     hit = _TRANSCRIPT_PATHS[session_id] = newest
             return _prefer_cwd(session_id, hit, cwd)
     if not session_id or any(c in session_id for c in "*?[]/\\"):
