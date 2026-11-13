@@ -196,7 +196,8 @@ class Brief(unittest.TestCase):
     def test_launch_and_seeded_resume_get_brief_once(self):
         prompts = []
         part = dict(identity='codex', agent='codex', kind='agent', sessionId='', cwd=self.tmp.name)
-        room = dict(id='po', title='PO', cwd=self.tmp.name, sharedCwd=True, participants=[part])
+        room = dict(id='po', title='PO', cwd=self.tmp.name, sharedCwd=True, participants=[part],
+                    tokens={'tok': 'codex'})
         h = d.Handler.__new__(d.Handler)
         h.server = SimpleNamespace(server_address=('127.0.0.1', 8791))
         with (mock.patch.object(d, 'load_projects', return_value=[self.project]),

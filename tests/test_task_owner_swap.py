@@ -87,7 +87,7 @@ class TaskOwnerSwap(unittest.TestCase):
     def test_missing_recorded_cwd_refuses_resume_without_falling_back(self):
         missing = self.root / "removed"
         room = {"id": "room-test", "title": "task", "cwd": str(self.worktree),
-                "sharedCwd": True, "tokens": {}, "participants": []}
+                "sharedCwd": True, "tokens": {"tok": "claude"}, "participants": []}
         part = {"identity": "claude", "agent": "claude", "kind": "agent",
                 "model": "", "sessionId": "prior-session", "cwd": str(missing)}
         used = []
