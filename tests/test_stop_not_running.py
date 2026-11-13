@@ -170,6 +170,75 @@ class StopNotRunning(unittest.TestCase):
         self.assertGreater(room["folderMissing"]["since"], float(room["stoppedAt"]))
         self.assertEqual(len(self.waiting(rid)), 1, "someone asked it to run: its card is back")
 
+    def test_the_room_read_says_whether_its_refused_start_stands(self):
+        rid = self.task()
+        self.assertIs(self.get(f"/api/room?id={rid}&lite=1")["couldNotStart"], True,
+                      "the pop-out offers Stop from this")
+        self.tool("ensemble_stop_task", {"taskId": f"#{self.n}"})
+        self.assertIs(self.get(f"/api/room?id={rid}&lite=1")["couldNotStart"], False)
+
+    # --- A Stop and a start under way (review 1) ------------------------------
+
+    def test_a_stop_waits_for_a_start_under_way_and_ends_what_it_started(self):
+        rid = self.task()
+        lock = dashboard.rotation.launch_lock(rid)
+        held, release = threading.Event(), threading.Event()
+
+        def launcher():         # a start: holds the lock to its write of the room
+            with lock:
+                held.set()
+                release.wait(20)
+                chatroom.patch_participant(rid, "claude", {"ptyId": "pty-started"})
+
+        killed = []
+        with mock.patch.object(dashboard.ptyrun, "kill", lambda pid: killed.append(pid)), \
+                mock.patch.object(dashboard, "room_ptys", lambda r: []):
+            lt = threading.Thread(target=launcher, daemon=True)
+            lt.start()
+            self.assertTrue(held.wait(10))
+            done = []
+            st = threading.Thread(target=lambda: done.append(dashboard.stop_task(rid)), daemon=True)
+            st.start()
+            st.join(0.5)
+            self.assertTrue(st.is_alive(), "the Stop waits for the start")
+            self.assertTrue(chatroom.get_room(rid, public=False).get("folderMissing"))
+            release.set()
+            st.join(20)
+            lt.join(20)
+        self.assertEqual(done, [True])
+        self.assertIn("pty-started", killed, "the terminal the start recorded is ended")
+        self.assertFalse(chatroom.get_room(rid, public=False).get("folderMissing"))
+
+    def test_a_stop_goes_on_when_a_start_holds_the_lock_too_long(self):
+        rid = self.task()
+        lock = dashboard.rotation.launch_lock(rid)
+        held, release = threading.Event(), threading.Event()
+
+        def stuck():
+            with lock:
+                held.set()
+                release.wait(20)
+
+        t = threading.Thread(target=stuck, daemon=True)
+        t.start()
+        self.assertTrue(held.wait(10))
+        try:
+            with mock.patch.object(dashboard, "STOP_LAUNCH_WAIT_S", 0.2), \
+                    mock.patch.object(dashboard, "room_ptys", lambda r: []):
+                self.assertTrue(dashboard.stop_task(rid))
+        finally:
+            release.set()
+            t.join(20)
+        self.assertFalse(chatroom.get_room(rid, public=False).get("folderMissing"))
+
+    def test_a_stop_from_the_thread_that_holds_the_lock_does_not_wait(self):
+        rid = self.task()
+        with dashboard.rotation.launch_lock(rid), \
+                mock.patch.object(dashboard, "room_ptys", lambda r: []):
+            t0 = time.monotonic()
+            self.assertTrue(dashboard.stop_task(rid))       # a rotation stopping its task
+            self.assertLess(time.monotonic() - t0, 5)
+
     # --- No card for a task nobody asked to run -----------------------------
 
     def test_a_paused_task_makes_no_card(self):
@@ -221,6 +290,15 @@ class StopItem(unittest.TestCase):
         self.assertIn(["Stop", "room-end"], got[1:])
         self.assertNotIn(["Stop", "room-end"], self.labels()[1:])
         self.assertNotIn(["Stop", "room-end"], self.labels(couldNotStart=True, draft=True)[1:])
+
+
+    def test_the_pop_out_reads_it_and_stays_open_for_a_not_running_task(self):
+        page = (ROOT / "session.html").read_text(encoding="utf-8")
+        state = page[page.index("function actionState()"):page.index("function actionEnv()")]
+        self.assertIn("couldNotStart: room.couldNotStart === true", state)
+        end = page[page.index("  async end() {"):]
+        end = end[:end.index("window.close()")]
+        self.assertIn("ROOM_OBJ.live === false", end, "a not-running task's Stop keeps the window")
 
 
 if __name__ == "__main__":

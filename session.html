@@ -10320,7 +10320,7 @@ function actionState() {
     live: room.live !== false, draft: room.launched === false, status: room.status || '',
     members: (room.participants || []).filter(p => p.kind === 'agent').map(p => ({ agent: p.agent })),
     makePo: room.makePo, currentTheme: '', chatSchemeOn: SCHEME_ON, resuming: ROOM_RESUMING,
-    keepAgents: room.keepAgents === true,
+    keepAgents: room.keepAgents === true, couldNotStart: room.couldNotStart === true,
   };
 }
 function actionEnv() {
@@ -10382,6 +10382,14 @@ const ACTS = {
   start: startOrResume,
   resume: startOrResume,
   async end() {
+    // A task that is not running (its start was refused, P324) is stopped and
+    // stays open here: nothing of it was running in this window to close.
+    if (ROOM_OBJ && ROOM_OBJ.live === false) {
+      try { await jpost('/api/room/close', { roomId: ROOM }); } catch(e) {}
+      ACTIONS_HTML = '';
+      await refresh();
+      return;
+    }
     if (!confirm('End this session and stop the agent(s)?')) return;
     try { await jpost('/api/room/close', { roomId: ROOM }); } catch(e) {}
     window.close();
