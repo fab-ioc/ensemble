@@ -958,6 +958,8 @@ def _summarize(room: dict, po: str | None = None, is_po: bool | None = None) -> 
         "specAt": room.get("specAt", 0),
         "workflow": room.get("workflow", ""),
         "stoppedAt": room.get("stoppedAt", 0),
+        "mergedAt": room.get("mergedAt") or 0,
+        "mergedHead": room.get("mergedHead") or "",
         "po": po,
         "isPo": bool(is_po),
         "seenAt": seen_at(room),
@@ -1678,9 +1680,18 @@ def _folder_missing(room: dict, live_agents: list[str] | tuple = ()) -> tuple | 
     """A start refused because a seat's folder is missing
     (seat_folders.launch_folder): until its folder is there again, a start
     succeeds, the marked seat is running, or the task's or the seat's folder
-    is no longer the one the refusal was about (the task was moved, #352)."""
+    is no longer the one the refusal was about (the task was moved, #352).
+    Nor for a task nobody asks to run (P324): stopped since the refusal,
+    paused, or Done with its work merged."""
     mark = room.get("folderMissing")
     if not isinstance(mark, dict) or not mark.get("reason"):
+        return None
+    if float(room.get("stoppedAt") or 0) >= float(mark.get("since") or 0):
+        return None             # stopped after it: a later Start refuses anew
+    if room.get("status") == "paused":
+        return None
+    workflow = _d.normalize_workflow(room.get("workflow")) if _d is not None else room.get("workflow")
+    if workflow == "done" and (room.get("mergedHead") or room.get("mergedAt")):
         return None
     path = mark.get("path") or ""
     if path and mark.get("kind") != "elsewhere" and os.path.isdir(path):

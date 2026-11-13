@@ -5918,7 +5918,7 @@ function actionState(r, isLive) {
     archived: !!r.archived, members: r.members || [],
     makePo: r.makePo, currentTheme: r.currentTheme || '',
     chatSchemeOn: !!(r.cwd && CHAT_SCHEME_ON[r.cwd]),
-    keepAgents: !!r.keepAgents,
+    keepAgents: !!r.keepAgents, couldNotStart: !!r.couldNotStart,
   };
 }
 function actionEnv() {

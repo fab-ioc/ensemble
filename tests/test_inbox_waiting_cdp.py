@@ -6,8 +6,9 @@ One project, Motors, with its PO and a task, Screen rewrite, whose seat's
 folder is gone (the room's ``folderMissing``, as seat_folders.refuse writes
 it). Checked at 1440x900:
 
-* the card says what happened and what to do, without the folder's path,
-  and has Done;
+* the card says what happened and what to do (Done, or Stop the task),
+  without the folder's path, and has Done; the task's actions offer Stop
+  although nothing runs (P324);
 * a click on it opens the task in the middle; a second click while it is
   open there tells its chat it is shown (so it goes to its latest);
 * Done shows "Done · Undo" in its place; let run, the hub keeps it (the
@@ -76,6 +77,8 @@ async function main() {
         text: r.textContent, done: [...r.querySelectorAll('[data-ibx-done]')].map(b => b.textContent.trim()),
         other: [...r.querySelectorAll('.ibx-acts .ibx-btn:not([data-ibx-done])')].map(b => b.textContent.trim()) }; })()`);
     out.card = await card();
+    // The task's own actions offer Stop although nothing runs (P324).
+    out.menu = await evalIn(`(() => { const r = ALL_ROWS.find(x => x.roomId === ${JSON.stringify(A.task)}); const m = SessionActions.sessionActions(actionState(r, !!r.isLive), actionEnv()); return { primary: m.primary && m.primary.label, items: m.groups.flat().map(i => i.label), couldNotStart: !!r.couldNotStart }; })()`);
     { const [x, y] = await at(ROW); await c.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y }, sessionId); await sleep(200); }
     await shot('waiting-card-1440');
     out.api = await evalIn(`(async () => { const d = await (await fetch('/api/inbox', { cache: 'no-store' })).json(); return d.rows.filter(r => r.kind === 'waiting').map(r => ({ id: r.id, open: r.open, dismiss: r.dismiss, line: r.line })); })()`);
@@ -192,11 +195,17 @@ class WaitingCardInChrome(unittest.TestCase):
         c = self.got["card"]
         self.assertIsNotNone(c, self.got)
         self.assertRegex(c["line"], r"^(#|[A-Z]+-)12 could not start: its work folder is missing$")
-        self.assertIn("Open it to move the task to another folder, or Done to dismiss.", c["reason"])
+        self.assertIn("Its agent cannot start because its folder was removed. Press Done, or open the task and Stop it.", c["reason"])
         self.assertNotIn(self.gone_path, c["text"])
         self.assertEqual(c["done"], ["Done"], c)
         self.assertNotIn("Done with this", c["other"], "one Done, not two")
         self.assertEqual([(r["open"], r["dismiss"]) for r in self.got["api"]], [("chat", "dealt")])
+
+    def test_the_task_offers_stop_although_nothing_runs(self):
+        m = self.got["menu"]
+        self.assertTrue(m["couldNotStart"], m)
+        self.assertEqual(m["primary"], "Resume")
+        self.assertIn("Stop", m["items"])
 
     def test_a_click_opens_the_task_and_again_takes_its_chat_to_the_latest(self):
         self.assertNotEqual(self.got["before"], self.task)

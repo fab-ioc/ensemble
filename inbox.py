@@ -604,8 +604,9 @@ def _folder_words(s: dict, it: dict) -> tuple[str, str]:
     if it.get("folderKind") == "elsewhere":
         return (f"{who} could not start: its conversation was recorded in another folder",
                 "Open it to give the seat a fresh session or bring the conversation back, or Done to dismiss.")
+    # P324: plain words: what happened, and what the person can do now.
     return (f"{who} could not start: its work folder is missing",
-            "Open it to move the task to another folder, or Done to dismiss.")
+            "Its agent cannot start because its folder was removed. Press Done, or open the task and Stop it.")
 
 
 def _ask_ids(o: dict, now: float, task_state) -> None:
