@@ -285,7 +285,7 @@ class Hub(unittest.TestCase):
         dashboard._MENU_HELD["pty-claude"] = [("one", None, True, None, ""), ("two", None, True, None, "")]
         with mock.patch.object(dashboard, "_type_input_now", return_value=False), \
              mock.patch.object(dashboard.rotation, "hold_wake",
-                               lambda r, i, text: held.append((r, i, text)) or True):
+                               lambda r, i, text, provenance=None: held.append((r, i, text)) or True):
             dashboard._menu_drain(pty)       # refused: the terminal is being handed over
         self.assertEqual(held, [(rid, "claude", "one"), (rid, "claude", "two")])
         self.assertNotIn("pty-claude", dashboard._MENU_HELD)
@@ -293,7 +293,7 @@ class Hub(unittest.TestCase):
         dashboard._MENU_HELD["pty-claude"] = [("three", None, True, None, "")]
         pty._alive = False
         with mock.patch.object(dashboard.rotation, "hold_wake",
-                               lambda r, i, text: held.append((r, i, text)) or True):
+                               lambda r, i, text, provenance=None: held.append((r, i, text)) or True):
             dashboard._menu_drain(pty)       # the old terminal stopped first
         self.assertEqual(held, [(rid, "claude", "three")])
 
