@@ -4232,6 +4232,8 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .row-expanded.ldp-expanded { font-family: var(--ldp-font); }
   .ldp-row.row-expanded:not([data-cur]) { background: linear-gradient(var(--hover), var(--hover)), var(--surface); }
   #list-dock .dk-strip-left { padding: 8px 0; gap: 8px; align-items: center; }
+  /* #358: no strip while the Inbox is pinned and open (ldInboxMark); the panel starts at the left edge */
+  body.ld-ibx-open #list-dock > .dk-strip-left { display: none; }
   #list-dock .dk-strip-btn.dk-strip-icon-btn { aspect-ratio: auto; width: auto; flex-direction: column; gap: 1px; padding: 0; border: 0; border-radius: 0;
     background: transparent; color: var(--fg-muted); font: 9px/1.4 var(--ldp-font); }
   #list-dock .dk-strip-icon-btn .dk-strip-icon { width: 32px; height: 30px; padding: 4px 5px; box-sizing: border-box; border-radius: var(--r-200); }
@@ -22002,6 +22004,14 @@ function ldListShown() {
 function ldInboxMark() {
   const d = LD.dock;
   document.body.classList.toggle('ld-ibx', !!(d && (d.isVisible('inbox') || dockOnStrip(d, 'inbox')) && d.viewMode('inbox') !== 'window'));
+  // #358 (its drawing's option A): the Inbox pinned and open beside the page
+  // gives back the left strip's width; its count is the Inbox's heading, and −
+  // puts it away to the strip, which comes back with its icon and count. Only a
+  // strip that holds nothing but the Inbox's button goes; floating, in its
+  // window or slid out, the button is the way back and the strip stays.
+  const strip = d ? [...LD_ROOT.querySelectorAll(':scope > .dk-strip-left [data-dk-auto]')] : [];
+  document.body.classList.toggle('ld-ibx-open', !!d && d.viewMode('inbox') === 'pinned' && d.isShown('inbox')
+    && strip.every(b => b.dataset.dkAuto === 'inbox'));
 }
 // A panel with a strip button (Dock keeps one for a pinned panel too, by default;
 // from v0.24.0 − on a pinned one puts it away to that button, P292).
@@ -22098,7 +22108,7 @@ function ldDrop() {
     document.getElementById('list-dock-panels').appendChild(el);
   }
   LD_ROOT.hidden = true;
-  document.body.classList.remove('ld-on', 'ld-ibx');
+  document.body.classList.remove('ld-on', 'ld-ibx', 'ld-ibx-open');
   ['--list-w', '--list-r', '--list-t', '--list-b'].forEach(v => document.body.style.removeProperty(v));
   LD.insets = '';
   barPaint();
