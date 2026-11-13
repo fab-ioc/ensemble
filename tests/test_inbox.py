@@ -420,7 +420,7 @@ class PoFixes(unittest.TestCase):
         self.w.snap = {"items": [self.folder_item()], "reported": {}}
         r = self.build()["rows"][0]
         self.assertEqual(r["line"], "AL-7 could not start: its work folder is missing")
-        self.assertEqual(r["reason"], "Open it to move the task to another folder, or Done to dismiss.")
+        self.assertEqual(r["reason"], "Its agent cannot start because its folder was removed. Press Done, or open the task and Stop it.")
         self.assertNotIn("/x/y/z", r["line"] + r["reason"])
         self.w.snap = {"items": [self.folder_item(folderKind="elsewhere", ref="")], "reported": {}}
         r = self.build()["rows"][0]

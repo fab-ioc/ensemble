@@ -2044,8 +2044,14 @@ def _stop_task(ctx, args, handler):
     _check_write_scope(ctx, _project_of_room(room), "stop_task")
     _not_self(ctx, room, "stop")
     if not _d._room_is_live(room):
-        if room.get("paceHold"):
+        # Stopped all the same (P324): recorded so the hub does not bring it
+        # back, and its refused start and other troubles are cleared.
+        held = bool(room.get("paceHold"))
+        if held:
             _d.pacing.cancel_hold(room)
+        if room.get("launched", True):      # a draft has nothing to stop
+            _d.stop_task(room["id"])
+        if held:
             return {"ok": True, "taskId": room["id"], "status": _status(room),
                     "note": "it was waiting for the pacing brake: it will not start by itself now"}
         return {"ok": True, "taskId": room["id"], "status": _status(room),

@@ -104,6 +104,10 @@ function sessionActions(s, env) {
     else if (live) primary = { id: 'end', label: 'End', variant: 'default', cls: 'room-end', data: room, title: 'Stop the agent(s) and keep the session' };
     else primary = { id: 'resume', label: 'Resume', variant: 'primary', cls: 'room-resume-inline', data: room, title: 'Relaunch the agent(s) with their conversation' };
     if (s.resuming && !live) primary = { ...primary, disabled: true, reason: 'Starting up…' };
+    // Its start was refused (its folder is missing, P324): Stop says nobody
+    // wants it run, so the hub tries no more and its Inbox card goes.
+    if (!live && !s.draft && s.couldNotStart) run.push({ id: 'end', label: 'Stop', cls: 'room-end', data: room,
+      title: 'Its agent could not start. Stop it: nothing tries to start it again until you start it' });
     if (live) {
       // On the hub this shows or hides the agents' terminals. From another
       // computer it is Terminal: the terminal the hub captures, brought to the
