@@ -11,8 +11,10 @@ from __future__ import annotations
 
 import json
 import sys
+import threading
 import unittest
 import urllib.error
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -139,6 +141,44 @@ class Send(unittest.TestCase):
             raise urllib.error.URLError("no route")
         self.assertEqual(w.send(self.vapid, self.sub, b"x", opener=gone), 410)
         self.assertEqual(w.send(self.vapid, self.sub, b"x", opener=down), 0)
+
+    def test_a_redirect_is_a_failed_send_not_followed(self):
+        hits = []
+
+        class Elsewhere(BaseHTTPRequestHandler):
+            def do_POST(self):
+                hits.append(self.path)
+                self.send_response(201)
+                self.end_headers()
+
+            def log_message(self, *a):
+                pass
+
+        there = ThreadingHTTPServer(("127.0.0.1", 0), Elsewhere)
+        threading.Thread(target=there.serve_forever, daemon=True).start()
+        self.addCleanup(there.server_close)
+        self.addCleanup(there.shutdown)
+        target = f"http://127.0.0.1:{there.server_address[1]}/stolen"
+
+        class Push(BaseHTTPRequestHandler):
+            def do_POST(self):
+                self.rfile.read(int(self.headers.get("Content-Length") or 0))
+                self.send_response(int(self.path.rsplit("/", 1)[-1]))
+                self.send_header("Location", target)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+
+            def log_message(self, *a):
+                pass
+
+        push = ThreadingHTTPServer(("127.0.0.1", 0), Push)
+        threading.Thread(target=push.serve_forever, daemon=True).start()
+        self.addCleanup(push.server_close)
+        self.addCleanup(push.shutdown)
+        for code in (301, 302, 307, 308):
+            sub = dict(self.sub, endpoint=f"http://127.0.0.1:{push.server_address[1]}/send/{code}")
+            self.assertEqual(w.send(self.vapid, sub, b"x", timeout=5), code)
+        self.assertEqual(hits, [])
 
 
 if __name__ == "__main__":

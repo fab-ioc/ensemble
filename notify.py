@@ -20,7 +20,9 @@ hub notice, no agent-to-agent traffic):
   the PO's message.
 
 **Once.** An Inbox row is keyed by its id and its ``since`` (a state that is
-new again is a new key); keys are kept on disk while listed and
+new again is a new key); a waiting row by its id and cause, since its
+``since`` restarts with the hub, and it is over once unlisted for
+:data:`GONE_S` while the hub runs. Keys are kept on disk while listed and
 :data:`KEEP_S` after, so a restart re-sends nothing. The very first run only
 takes note of what is listed. A row first seen long after it began (a chat's
 cards read late after a start) is not news: :func:`_fresh`.
@@ -80,6 +82,7 @@ FRONT_EVERY_S = 15.0            # how often a page in front says so (the page's 
 FRESH_S = 600.0                 # a row first seen this long after it began is not news
 MAX_AGE_S = 6 * 3600.0          # nothing older than this notifies
 KEEP_S = 4 * 86400.0            # keys remembered this long after they were last listed
+GONE_S = 300.0                  # a waiting row unlisted this long (hub running) is over
 PO_REREAD_S = 30.0              # a PO transcript still being written: read at most this often
 SEND_TIMEOUT_S = 8.0
 TEST_WAIT_S = 12.0
@@ -104,6 +107,7 @@ _STARTED = 0.0
 _FRONT: dict[str, float] = {}   # device id → in front until
 _BURSTS: dict[str, dict] = {}   # project id → {start, tag, count, name}
 _PO_SEEN: dict[str, dict] = {}  # PO room → {sig, changedAt, readAt}: when to read its transcript
+_ABSENT: dict[str, float] = {}  # waiting row key → first whole look of this process without it
 _POOL = None
 _RESEED = False                 # no device at the last look: the next one only takes note
 _sender = None                  # webpush.send; tests put a fake here
@@ -506,7 +510,13 @@ def row_events(rows: list[dict]) -> list[dict]:
                             "kind": kind, "body": clip(it.get("line") or it.get("reason") or "", BODY_MAX),
                             "path": _msg_path(rid, it.get("mid") or "")})
             continue
-        out.append({**base, "key": f"{r.get('id', '')}|{int(float(r.get('since') or 0))}",
+        # A waiting row's since is when this hub process first saw the
+        # trouble (attention._first_seen, in memory): a restart moves it. Its
+        # id names the trouble (its state, or the message it points at), so
+        # the key is the id and the cause; events() lets it go once over.
+        key = (f"{r.get('id', '')}|w|{r.get('cause') or ''}" if kind in ("waiting", "could_not_start")
+               else f"{r.get('id', '')}|{int(float(r.get('since') or 0))}")
+        out.append({**base, "key": key,
                     "mid": r.get("mid") or "", "since": float(r.get("since") or 0), "kind": kind,
                     "body": clip(r.get("line") or r.get("reason") or "", BODY_MAX),
                     "path": _msg_path(rid, r.get("mid") or "", r.get("part") or "")})
@@ -615,7 +625,20 @@ def events(now: float | None = None, snap: dict | None = None, reseed: bool = Fa
             mids[f"{ev['roomId']}|{ev['mid']}"] = now
         keys = st.setdefault("rows", {})
         failed = bool(snap.get("error"))
-        for ev in ([] if failed else row_events(snap.get("rows") or [])):
+        evs = [] if failed else row_events(snap.get("rows") or [])
+        if not failed and not snap.get("pending"):
+            # A trouble is over once whole looks of this process have not
+            # listed it for GONE_S; it notifies again if it comes back. Not
+            # across a restart: a new process starts the count again.
+            listed = {ev["key"] for ev in evs}
+            for k in [k for k in keys if "|w|" in k and k not in listed]:
+                first = _ABSENT.setdefault(k, now)
+                if now - first >= GONE_S:
+                    keys.pop(k, None)
+                    _ABSENT.pop(k, None)
+            for k in listed:
+                _ABSENT.pop(k, None)
+        for ev in evs:
             k = ev["key"]
             if k in keys:
                 keys[k] = now

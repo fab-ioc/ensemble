@@ -51,6 +51,7 @@ class _Notify(_World):
         notify._FRONT.clear()
         notify._BURSTS.clear()
         notify._PO_SEEN.clear()
+        notify._ABSENT.clear()
         notify._RESEED = False
         notify._STARTED = time.time() - 3600
         self.sent: list[tuple[str, dict, str]] = []
@@ -271,8 +272,38 @@ class Cards(_Notify):
         titles = [e["title"] for e in self.look(rows)]
         self.assertEqual(titles, ["Motors · Question", "Motors · Ready for your check",
                                   "Motors · Waiting on you", "Motors · Could not start"])
-        again = dict(rows[2], since=self.now + 30)
+        # A check made new again (a new since) is a new key.
+        again = dict(rows[1], since=self.now + 30)
         self.assertEqual(len(self.look([again], at=self.now + 40)), 1)
+
+    def test_a_waiting_trouble_across_a_restart_notifies_once(self):
+        # attention._first_seen is in memory: after a restart the same
+        # trouble comes back with a new since. It is not news again.
+        self.look([])
+        trouble = self.card(rid="room-aaaa0003", n=3, kind="waiting", line="Blocked on a decision")
+        self.assertEqual(len(self.look([trouble])), 1)
+        notify._ABSENT.clear()                                   # a new hub process
+        notify._BURSTS.clear()
+        notify._STARTED = self.now + 100
+        later = dict(trouble, since=self.now + 100)
+        self.assertEqual(self.look([later], at=self.now + 110), [])
+        self.assertEqual(self.look([], at=self.now + 120), [])      # the restarting hub's look without it
+        self.assertEqual(self.look([later], at=self.now + 130), [])
+        stuck = dict(trouble, cause="folder_missing", since=self.now + 140)
+        self.assertEqual(len(self.look([stuck], at=self.now + 150)), 1)   # another cause: news
+
+    def test_a_waiting_trouble_that_is_over_and_comes_back_notifies_again(self):
+        self.look([])
+        trouble = self.card(rid="room-aaaa0003", n=3, kind="waiting", line="Blocked on a decision")
+        self.assertEqual(len(self.look([trouble])), 1)
+        t = self.now + 10
+        self.assertEqual(self.look([], at=t), [])
+        self.assertEqual(self.look([], at=t + notify.GONE_S), [])        # over
+        back = dict(trouble, since=t + notify.GONE_S + 5)
+        self.assertEqual(len(self.look([back], at=t + notify.GONE_S + 10)), 1)
+        # Back within GONE_S of going: the same trouble, not news.
+        self.assertEqual(self.look([], at=t + notify.GONE_S + 20), [])
+        self.assertEqual(self.look([dict(back, since=t + notify.GONE_S + 40)], at=t + notify.GONE_S + 50), [])
 
     def test_an_old_card_first_seen_late_is_not_news(self):
         self.look([])

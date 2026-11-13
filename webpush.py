@@ -200,11 +200,24 @@ class Vapid:
         return f"vapid t={tok}, k={self.public_b64}"
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """A push service answers; it never sends the message elsewhere. A 3xx
+    is the answer (a failed send), not an address to post the payload and
+    the VAPID token to."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
 def send(vapid: Vapid, sub: dict, payload: bytes, ttl: int = 43200,
          urgency: str = "high", topic: str = "", timeout: float = 8.0, opener=None) -> int:
     """POST one encrypted message to a subscription's push service. Returns
     the HTTP status (201 when accepted; 404 or 410 when the subscription is
-    gone), 0 when the service could not be reached. Never retries."""
+    gone; a 3xx as is, never followed), 0 when the service could not be
+    reached. Never retries."""
     keys = sub.get("keys") or {}
     body = encrypt(payload, b64u_dec(keys.get("p256dh", "")), b64u_dec(keys.get("auth", "")))
     headers = {
@@ -220,7 +233,7 @@ def send(vapid: Vapid, sub: dict, payload: bytes, ttl: int = 43200,
         headers["Topic"] = topic
     req = urllib.request.Request(sub["endpoint"], data=body, method="POST", headers=headers)
     try:
-        with (opener or urllib.request.urlopen)(req, timeout=timeout) as resp:
+        with (opener or _OPENER.open)(req, timeout=timeout) as resp:
             return resp.status
     except urllib.error.HTTPError as e:
         return e.code
