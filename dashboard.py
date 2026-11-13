@@ -24181,6 +24181,9 @@ def main():
     # start, also without a remote listener: `tailscale serve` exposes a
     # loopback-only hub too (ED-341).
     ACCESS_TOKEN = _load_access_token()
+    # From when an Ask: line asking an open card's question again makes no
+    # card (P325): fixed now, before the first card is read.
+    asks.mark_repeats_since()
 
     def _announce_remote(ip: str) -> None:
         print(f"ensemble [{BACKEND.os_name}]: http://{ip}:{port} (remote)", flush=True)

@@ -171,6 +171,40 @@ class PlainAskLine(_Repeats):
         self.assertEqual(asks.repeats_of(room), {})
         self.assertEqual([c["mid"] for c in asks.open_cards(room)], [again])
 
+    def approve(self, rid, mid, at):
+        led = points.load(rid)
+        led.setdefault("approvals", {})[mid] = at
+        points._save(rid, led)
+        asks._CARDS.clear()
+        asks.forget()
+
+    def test_an_approval_that_settles_nothing_leaves_the_card_waiting(self):
+        rid = self.team_room()
+        first = self.post(rid, self.ASK)        # yes/no, no recommendation: Go ahead answers nothing
+        self.approve(rid, first, ensemble_tools.time.time())
+        again = self.post(rid, self.ASK)
+        room = chatroom.get_room(rid)
+        self.assertEqual([c["mid"] for c in asks.open_cards(room)], [first])
+        self.assertEqual(asks.repeats_of(room, fresh=True), {again: [[0, 1, [[first, 0]]]]})
+
+    def test_an_approval_after_the_repeat_keeps_the_line_a_repeat(self):
+        rid = self.team_room()
+        ask = "Ask: Which chain should Run C use?\n- 189 DTE (recommended)\n- 30 DTE"
+        first = self.post(rid, ask)
+        again = self.post(rid, ask)
+        self.assertEqual(list(asks.repeats_of(chatroom.get_room(rid), fresh=True)), [again])
+        ensemble_tools.time.sleep(0.01)
+        self.approve(rid, first, ensemble_tools.time.time())
+        room = chatroom.get_room(rid)
+        self.assertEqual(list(asks.repeats_of(room, fresh=True)), [again], "approved after the line")
+        self.assertEqual(asks.open_cards(room), [])
+        # Approved before a line: that line asks again, and is a card.
+        ensemble_tools.time.sleep(0.01)
+        third = self.post(rid, ask)
+        room = chatroom.get_room(rid)
+        self.assertEqual(list(asks.repeats_of(room, fresh=True)), [again])
+        self.assertEqual([c["mid"] for c in asks.open_cards(room)], [third])
+
     def test_lines_from_before_the_rule_keep_their_cards(self):
         rid = self.team_room()
         first = self.post(rid, self.ASK)
@@ -183,14 +217,23 @@ class PlainAskLine(_Repeats):
         self.assertEqual(asks.repeats_of(room), {})
         self.assertEqual(sorted(c["mid"] for c in asks.open_cards(room)), sorted([first, again]))
 
-    def test_the_mark_is_written_once(self):
+    def test_the_mark_is_written_once_at_hub_start_and_reads_never_write(self):
         p = Path(dashboard.DASHBOARD_DIR) / asks.REPEATS_SINCE_NAME
         p.unlink()
         asks._SINCE.clear()
-        at = asks.repeats_since()
+        rid = self.team_room()
+        self.post(rid, self.ASK)
+        self.post(rid, self.ASK)
+        room = chatroom.get_room(rid)
+        asks.open_cards(room)
+        asks.repeats_of(room, fresh=True)
+        self.assertEqual(asks.repeats_since(), float("inf"))
+        self.assertFalse(p.exists(), "a read writes no mark")
+        at = asks.mark_repeats_since()
         self.assertEqual(float(p.read_text()), round(at, 3))
         asks._SINCE.clear()
-        self.assertEqual(round(asks.repeats_since(), 3), round(at, 3))
+        self.assertEqual(asks.mark_repeats_since(), round(at, 3), "kept, not written again")
+        self.assertIn("asks.mark_repeats_since()", (ROOT / "dashboard.py").read_text(encoding="utf-8"))
 
     def test_chat_send_says_the_line_made_no_card(self):
         rid = self.team_room()

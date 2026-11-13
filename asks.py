@@ -1028,7 +1028,7 @@ def _room_cards(summary: dict) -> tuple[dict, set]:
                 cards[mid] = (ts, qs, by_point)
                 src[mid] = text
     try:
-        _REPS[rid] = _find_repeats(rid, cards, src)
+        _REPS[rid] = _find_repeats(rid, cards, src, room)
     except Exception as e:      # noqa: BLE001 — the cards still show, as written
         print(f"[asks] {rid}: repeats not worked out: {e!r}", flush=True)
         _REPS[rid] = {}
@@ -1245,11 +1245,25 @@ def same_ask(a: str, b: str) -> bool:
     return _same_ask(a, b)
 
 
+def mark_repeats_since() -> float:
+    """At hub start, before any card is read: the moment this hub first ran
+    with the rule (P325), written once to its folder and kept. A preflight
+    hub (#348) writes nothing."""
+    p = Path(_d.DASHBOARD_DIR) / REPEATS_SINCE_NAME
+    if not p.exists() and not os.environ.get("ENSEMBLE_PTY_PREFLIGHT"):
+        try:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(f"{time.time():.3f}\n", encoding="utf-8")
+        except OSError as e:
+            print(f"[asks] {REPEATS_SINCE_NAME} not written: {e!r}", flush=True)
+    return repeats_since()
+
+
 def repeats_since() -> float:
-    """From when an ``Ask:`` line that repeats an open card makes none: the
-    first time this hub ran with the rule, kept in its folder, so the repeats
-    stored before it keep showing as they did. A preflight hub (#348) writes
-    nothing: it reads the mark, or takes now."""
+    """From when an ``Ask:`` line that repeats an open card makes none, as
+    :func:`mark_repeats_since` keeps it, so the repeats stored before it keep
+    showing as they did. Only read here: with no mark (a preflight hub on a
+    folder no hub with the rule has run on), no line counts as a repeat."""
     p = Path(_d.DASHBOARD_DIR) / REPEATS_SINCE_NAME
     hit = _SINCE.get(str(p))
     if hit is not None:
@@ -1257,13 +1271,7 @@ def repeats_since() -> float:
     try:
         at = float(p.read_text(encoding="utf-8").strip())
     except (OSError, ValueError):
-        at = time.time()
-        if not os.environ.get("ENSEMBLE_PTY_PREFLIGHT"):
-            try:
-                p.parent.mkdir(parents=True, exist_ok=True)
-                p.write_text(f"{at:.3f}\n", encoding="utf-8")
-            except OSError:
-                pass
+        return float("inf")
     _SINCE[str(p)] = at
     return at
 
@@ -1304,10 +1312,12 @@ def _typed_times(rid: str, led: dict) -> dict[str, list[float]]:
     return out
 
 
-def _closed_at(done: dict, approved: dict, typed: dict, mid: str, n: int, ts: float) -> float | None:
+def _closed_at(done: dict, approved: dict, typed: dict, mid: str, n: int, ts: float,
+               settles=None) -> float | None:
     """When ask ``n`` of the card put at ``ts`` stopped waiting (answered,
     closed, answered in words), None while it waits. An answer without a
-    time, or an old approval (no time kept), reads as long closed."""
+    time reads as long closed; an approval settles only an ask it says yes
+    to (``settles(n)``, as :func:`open_cards` has it), at the time it keeps."""
     times = []
     got = (done.get(mid) or {}).get(str(n))
     if got is not None:
@@ -1315,15 +1325,18 @@ def _closed_at(done: dict, approved: dict, typed: dict, mid: str, n: int, ts: fl
             times.append(float(got.get("at") or 0) if isinstance(got, dict) else 0.0)
         except (TypeError, ValueError):
             times.append(0.0)
-    if mid in approved:
-        times.append(0.0)
+    if mid in approved and (settles is None or settles(n)):
+        try:
+            times.append(float(approved[mid] or 0))
+        except (TypeError, ValueError):
+            times.append(0.0)
     t = next((x for x in typed.get(mid, ()) if x >= ts), None)
     if t is not None:
         times.append(t)
     return min(times) if times else None
 
 
-def _find_repeats(rid: str, cards: dict, src: dict) -> dict:
+def _find_repeats(rid: str, cards: dict, src: dict, room: dict | None = None) -> dict:
     """The ``Ask:`` lines of a room's cards that ask again what a card of
     the room still waiting then already asks: ``{mid: {"lines": [[line, end,
     [[mid, n], …]]], "qs": [questions left]}}``. A line repeats when every
@@ -1370,8 +1383,19 @@ def _find_repeats(rid: str, cards: dict, src: dict) -> dict:
                 by_point = _asks_by_point(shown, qs)
                 cards[mid] = (ts, qs, by_point)
                 out[mid] = {"lines": reps, "qs": qs}
+        settles = None
+        if mid in approved:
+            # What the approval says yes to, read as the chat shows the card
+            # (balloon_asks; its repeated lines as worked out in this sweep).
+            if mid in src:
+                text = src[mid]
+                found = parse(shown_text(text, out[mid]["lines"], rid)) if mid in out \
+                    else (parse(text) or safety(text))
+            else:
+                found = balloon_asks(rid, mid, room)
+            settles = lambda n, found=found: n < len(found) and found[n]["recommended"] >= 0  # noqa: E731
         for n, q in enumerate(qs):
-            live.append((_closed_at(done, approved, typed, mid, n, ts), ts, mid, n, q))
+            live.append((_closed_at(done, approved, typed, mid, n, ts, settles), ts, mid, n, q))
     return out
 
 
