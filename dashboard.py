@@ -3871,6 +3871,10 @@ def _input_sender_info(text: str, forced: dict | None = None) -> dict:
                     fromProjectName=info.get("fromProject") or "")
     elif kind == "po":
         info.update(senderType="po", senderId="po", senderLabel="PO")
+    elif kind == NOTICE_EXTERNAL:
+        # An outside sender's line (/api/room/notify): its own label.
+        info.update(senderType="external", senderId="external",
+                    senderLabel=str(info.get("senderLabel") or "Outside sender"))
     else:
         info.update(senderType="hub", senderId="ensemble", senderLabel="Hub")
     return info
@@ -5882,6 +5886,89 @@ def _say_key_seen(rid: str, key: str) -> bool:
     for k in [k for k, at in _SAY_KEYS.items() if now - at > _SAY_KEY_TTL]:
         del _SAY_KEYS[k]
     return (rid, key) in _SAY_KEYS
+
+
+# A line from an outside sender (#357, POST /api/room/notify): a program on
+# this machine (a bot that relays a tester's answers) posts a labelled line
+# into a room. It is stored as a hub notice (noticeKind "external", from the
+# hub, the label in senderLabel), never as the person's: it makes no point and
+# settles no ask. The room's agent is typed "[<sender>] <text>" through the
+# same doorbell as a task's report (_ring), recorded as an outside sender's
+# input (input provenance kind "external"), so the chat never draws it as the
+# person's own. A stopped agent is not started for it: the line stays in the
+# chat for the person, and the answer says it was not typed.
+NOTICE_EXTERNAL = "external"
+NOTIFY_SENDER_MAX = 40
+NOTIFY_TEXT_MAX = 2000
+NOTIFY_PER_HOUR = 20            # per room and sender
+NOTIFY_WINDOW_S = 3600
+_NOTIFY_LOCK = threading.Lock()
+_NOTIFY_KEYS: dict = {}         # (room, key) -> when posted; kept a day like _SAY_KEYS
+_NOTIFY_SENT: dict = {}         # (room, sender lowercased) -> [when posted]
+# Labels that would read as the hub's own words or the person's.
+_NOTIFY_RESERVED = {"user", "you", "me", "ensemble", "hub", "ceo", "po", "product owner",
+                    "system", "relay"}
+
+
+def notify_sender_refusal(sender) -> str:
+    """Why ``sender`` cannot label an outside line, or "" when it can: 1 to
+    NOTIFY_SENDER_MAX printable characters, no brackets, and nothing the hub
+    or the person goes by (a hub line's own prefix, the operator's name)."""
+    if not isinstance(sender, str) or not sender.strip():
+        return "The sender label is empty."
+    if sender != sender.strip():
+        return "The sender label starts or ends with a space."
+    if len(sender) > NOTIFY_SENDER_MAX:
+        return f"The sender label is longer than {NOTIFY_SENDER_MAX} characters."
+    if not sender.isprintable():
+        return "The sender label holds a control or non-printing character."
+    if any(c in sender for c in "[]"):
+        return "The sender label holds a bracket."
+    low = " ".join(sender.lower().split())
+    if low in _NOTIFY_RESERVED or low == operator_name().strip().lower() \
+            or hub_input_kind(f"[{sender}] x")["kind"] != "human" or low.startswith("from the"):
+        return "The sender label is one the hub or the person goes by."
+    return ""
+
+
+def notify_text(text) -> str:
+    """The line's words on one line: whitespace flattened, other control
+    characters (a terminal's escapes, a paste's end) dropped."""
+    if not isinstance(text, str):
+        return ""
+    flat = " ".join(text.split())
+    return "".join(c for c in flat if c.isprintable())
+
+
+def _notify_reserve(rid: str, sender: str, key: str, now: float) -> str:
+    """Under _NOTIFY_LOCK: "" when the line may go (counted for the hourly
+    limit, its key marked), "duplicate" for a key already posted in the room,
+    "limited" past NOTIFY_PER_HOUR for the room and sender."""
+    for k in [k for k, at in _NOTIFY_KEYS.items() if now - at > _SAY_KEY_TTL]:
+        del _NOTIFY_KEYS[k]
+    for k in list(_NOTIFY_SENT):
+        _NOTIFY_SENT[k] = [t for t in _NOTIFY_SENT[k] if now - t < NOTIFY_WINDOW_S]
+        if not _NOTIFY_SENT[k]:
+            del _NOTIFY_SENT[k]
+    if key and (rid, key) in _NOTIFY_KEYS:
+        return "duplicate"
+    sent = _NOTIFY_SENT.setdefault((rid, sender.lower()), [])
+    if len(sent) >= NOTIFY_PER_HOUR:
+        return "limited"
+    sent.append(now)
+    if key:
+        _NOTIFY_KEYS[(rid, key)] = now
+    return ""
+
+
+def _notify_unreserve(rid: str, sender: str, key: str, now: float) -> None:
+    """The line was not posted after all: its count and key are given back."""
+    with _NOTIFY_LOCK:
+        sent = _NOTIFY_SENT.get((rid, sender.lower())) or []
+        if now in sent:
+            sent.remove(now)
+        if key and _NOTIFY_KEYS.get((rid, key)) == now:
+            del _NOTIFY_KEYS[(rid, key)]
 # The brief is the agent's first prompt, passed on its command line, so it is
 # kept well under Windows' 32k limit: a diff is inlined only when small, the
 # log and the spec are cut to their newest / first part (the files hold all).
@@ -12879,8 +12966,11 @@ def room_pm_index(messages: list[dict], before_id: str) -> list[dict]:
 def _hub_row(m: dict) -> bool:
     """A room message a one-agent chat shows among its transcript's turns
     (session.html withHubRows): a restart notice, a PO's message, a card,
-    a slash command the person ran and its output (#253)."""
+    a slash command the person ran and its output (#253), an outside
+    sender's line its agent was not running for (#357)."""
     return ((m.get("kind") == "notice" and m.get("noticeKind") == "restart")
+            or (m.get("kind") == "notice" and m.get("noticeKind") == NOTICE_EXTERNAL
+                and not m.get("typed"))
             or m.get("kind") == "pomsg" or isinstance(m.get("asks"), list)
             or chatroom.is_command_record(m))
 
@@ -19933,6 +20023,81 @@ class Handler(BaseHTTPRequestHandler):
             print(f"[threads] {room_full.get('id')}: reply not marked: {e!r}", flush=True)
             return text
 
+    def _room_notify(self, data) -> None:
+        """POST /api/room/notify {roomId, sender, text, key?}: a line from an
+        outside sender (#357; see NOTICE_EXTERNAL). Only a program on this
+        machine may post one, never through a proxy (_is_local, the rule of
+        #341), not with the access token either: the token is the person's,
+        who writes in the chat. Not a page on another site, nor a task's agent
+        (it would put words in an outsider's mouth)."""
+        if not self._is_local():
+            self._send_json(403, {"error": "local_only",
+                                  "message": "Only a program on the hub's machine can post an "
+                                             "outside line; the access token does not open it."})
+            return
+        if self.headers.get("Origin") and not self._same_origin_request():
+            self._send_json(403, {"error": "cross_origin",
+                                  "message": "The request came from another site."})
+            return
+        why = self._agent_peer()
+        if why:
+            self._send_json(403, {"error": "agent", "message": f"An agent cannot post an outside line: {why}."})
+            return
+        if not isinstance(data, dict):
+            self._send_json(400, {"error": "bad_request", "message": "The body is a JSON object."})
+            return
+        rid = str(data.get("roomId") or "").strip()
+        sender = data.get("sender")
+        text = notify_text(data.get("text"))
+        key = str(data.get("key") or "").strip()[:200]
+        if not rid or not text:
+            self._send_json(400, {"error": "missing_fields", "message": "roomId, sender and text are needed."})
+            return
+        bad = notify_sender_refusal(sender)
+        if bad:
+            self._send_json(400, {"error": "bad_sender", "message": bad})
+            return
+        if len(text) > NOTIFY_TEXT_MAX:
+            self._send_json(400, {"error": "text_too_long",
+                                  "message": f"The text is longer than {NOTIFY_TEXT_MAX} characters."})
+            return
+        room_full = chatroom.get_room(rid, public=False)
+        if room_full is None:
+            self._send_json(404, {"error": "no_such_room"})
+            return
+        now = time.time()
+        with _NOTIFY_LOCK:
+            held = _notify_reserve(rid, sender, key, now)
+        if held == "duplicate":
+            self._send_json(200, {"ok": True, "duplicate": True})
+            return
+        if held == "limited":
+            self._send_json(429, {"error": "rate_limited",
+                                  "message": f"At most {NOTIFY_PER_HOUR} lines an hour from "
+                                             f"'{sender}' into this room; this one was not posted. "
+                                             f"Try again later."})
+            return
+        ident = chatroom.po_identity(room_full)
+        line = f"[{sender}] {text}"
+        woken = False
+        if ident:
+            try:
+                woken = bool(self._ring(rid, [ident], line, provenance={
+                    "kind": NOTICE_EXTERNAL, "senderLabel": sender}))
+            except Exception as e:      # noqa: BLE001 — the line is kept anyway
+                print(f"[notify] {rid}: {ident} not woken: {e!r}", flush=True)
+        msg = chatroom.post_notice(rid, rotation.SENDER, text,
+                                   {"noticeKind": NOTICE_EXTERNAL, "senderLabel": sender,
+                                    "typed": woken, **({"agent": ident} if ident else {})})
+        if msg is None:
+            _notify_unreserve(rid, sender, key, now)
+            self._send_json(404, {"error": "no_such_room"})
+            return
+        self._send_json(200, {"ok": True, "message": msg, "typed": woken, "agent": ident,
+                              **({} if woken else {"note": "The agent is not running: the line "
+                                                           "is in the chat, not typed, and the "
+                                                           "agent is not started for it."})})
+
     def _take_points(self, room_full: dict, text: str, to: str, key: str) -> tuple[str, list]:
         """The person's message as its agent gets it, with its points
         (points.take); as it was when the ledger cannot be written."""
@@ -20081,12 +20246,14 @@ class Handler(BaseHTTPRequestHandler):
               f"(told {', '.join(rung) or 'nobody'}{', and the PO' if po_told else ''})", flush=True)
         return {"limited": True, "n": 0, "rounds": rounds, "limit": limit, "told": rung}
 
-    def _ring(self, room_id: str, idents: list, wake: str, ways: dict | None = None) -> list[str]:
+    def _ring(self, room_id: str, idents: list, wake: str, ways: dict | None = None,
+              provenance: dict | None = None) -> list[str]:
         """Type ``wake`` into each named agent's terminal and submit it — the
         one thing that wakes an agent, and every wake re-sends its whole
         conversation, so callers ring as few as they can. Returns the
         identities actually rung (a stopped agent cannot be). ``ways``: Send
-        now, as in ``_ring_recipients``."""
+        now, as in ``_ring_recipients``. ``provenance``: who the line is
+        from, when its prefix does not say (an outside sender's)."""
         room = chatroom.get_room(room_id)
         if not room:
             return []
@@ -20118,8 +20285,8 @@ class Handler(BaseHTTPRequestHandler):
                     sess = ptyrun.get(pty_id)
             if pty_id:
                 way = send_now_way(part) if ways is not None else ""
-                if sess and sess.alive() and (_type_input(sess, wake, now=way) if way
-                                              else _type_input(sess, wake)):
+                if sess and sess.alive() and (_type_input(sess, wake, provenance, now=way) if way
+                                              else _type_input(sess, wake, provenance)):
                     rung.append(ident)         # typed + discrete Enter, and it took
                     if way:
                         ways[ident] = way
@@ -20136,7 +20303,7 @@ class Handler(BaseHTTPRequestHandler):
                         try:
                             with _INPUT_WRITE_LOCK:
                                 input_provenance.record(
-                                    room_id, ident, wake, _input_sender_info(wake),
+                                    room_id, ident, wake, _input_sender_info(wake, provenance),
                                     session_id=str(part.get("sessionId") or ""))
                         except Exception as exc:  # noqa: BLE001 - delivery succeeded
                             print(f"[input-provenance] visible wake not recorded: {exc!r}",
@@ -23297,6 +23464,9 @@ class Handler(BaseHTTPRequestHandler):
             _settle_asks(rid, text, key)
             self._ring_recipients(rid, result)
             self._send_json(200, {"ok": True, "result": result})
+            return
+        if p == "/api/room/notify":
+            self._room_notify(data)
             return
         if p == "/api/room/points/decisions":
             # Clear all on Needs you's Decisions (#279): {roomId, action:

@@ -183,6 +183,18 @@ py dashboard.py --bind tailscale        # or --bind <an IP of this machine>; ENS
 
 State stays in `~/.ensemble` on the hub's machine. Every device sees the same projects, chats and settings.
 
+**A line from a local program, `POST /api/room/notify`.** A program on the hub's machine (a bot relaying an outside tester's answers, a script) can post a labelled line into a room. The chat shows it as a hub line with the sender's label, never as yours; it makes no point and answers no open card. The room's agent is typed `[<sender>] <text>` if it is running; a stopped agent is not started, and the line waits in the chat.
+
+- **Local only.** Only a request from this machine is taken, over loopback and not through a proxy; one from another device is refused even with the token, and so is one from a web page of another site or from an agent's own process.
+- **Fields.** `roomId`; `sender`, the label (up to 40 characters, no brackets or control characters, not a name the hub or you go by); `text`, one line of up to 2,000 characters (line breaks become spaces, control characters are dropped); `key`, optional: a line with a key already posted to that room in the last 24 hours is not posted again.
+- **Limit.** 20 lines an hour per room and sender; more get `429`.
+- **Answer.** `{"ok": true, "message": …, "typed": true|false}`; `typed` is false when the agent was not running.
+
+```bash
+curl -s -X POST http://127.0.0.1:8765/api/room/notify -H 'Content-Type: application/json' \
+  -d '{"roomId":"room-…","sender":"Tester (Discord)","text":"answered \"Ship it?\": Yes","key":"q-1"}'
+```
+
 ### Ensemble as an app
 
 Installed as an app, Ensemble runs in a window of its own with its own icon in the dock or taskbar and no address bar, and so do the PO screen's pop-out panels. The hub serves a web manifest (`/manifest.webmanifest`, icons in `static/icons/`, drawn by `tools/make_app_icons.py`); no service worker is needed.
