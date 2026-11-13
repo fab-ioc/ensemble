@@ -3312,6 +3312,23 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   #settings-agents .agent-row { margin: 4px 0; font-size: 13px; }
   #settings-agents .agent-row a { color: var(--link); }
   #settings-app .autostart-row { display: flex; align-items: center; gap: 8px; font-size: 13px; margin-top: 8px; }
+  /* Notifications (#359): a switch for this device, a test, the devices. */
+  #settings-panel .nt-on { display: flex; align-items: center; gap: var(--s-200); font-size: var(--fs-300); font-weight: 500; color: var(--fg); cursor: pointer; }
+  #settings-panel .nt-on input { width: 16px; height: 16px; margin: 0; accent-color: var(--accent); }
+  #settings-panel .nt-on:has(input:disabled) { color: var(--fg-muted); cursor: default; }
+  #settings-panel .nt-what { margin: var(--s-100) 0 0 calc(16px + var(--s-200)); font-size: var(--fs-200); color: var(--fg-subtle); line-height: 1.5; }
+  #settings-panel .nt-why { margin: var(--s-200) 0 0; font-size: var(--fs-300); color: var(--fg); line-height: 1.5; }
+  #settings-panel .nt-test { display: flex; align-items: center; gap: var(--s-300); margin: var(--s-400) 0 0 calc(16px + var(--s-200)); flex-wrap: wrap; }
+  #settings-panel .nt-test .nt-st { font-size: var(--fs-200); color: var(--fg-subtle); }
+  #settings-panel .nt-devs { list-style: none; margin: 0; padding: 0; border: 1px solid var(--border); border-radius: var(--r-200); }
+  #settings-panel .nt-devs li { display: flex; align-items: center; gap: var(--s-300); padding: var(--s-200) var(--s-300); min-height: 44px; }
+  #settings-panel .nt-devs li + li { border-top: 1px solid var(--border); }
+  #settings-panel .nt-dev { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  #settings-panel .nt-dev b { font-size: var(--fs-300); font-weight: 500; color: var(--fg); }
+  #settings-panel .nt-dev small { font-size: var(--fs-200); color: var(--fg-muted); }
+  #settings-panel .nt-me { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; padding: 1px 6px; border-radius: 3px; background: var(--c-neutral-bg); color: var(--c-neutral-fg); margin-left: var(--s-200); vertical-align: 1px; }
+  #settings-panel .nt-devs .rm-btn { height: 28px; }
+  @media (max-width: 640px) { #settings-panel .nt-devs li { min-height: var(--touch-min); } #settings-panel .nt-devs .rm-btn { height: var(--touch-min); } #settings-panel .nt-test .po-btn { min-height: var(--touch-min); } }
   /* The panels (the Dock) not loading (pdBanner): a warning, with Reload.
      #wide-banner: a phone drawing the page wider than its screen (wideBanner). */
   #dock-banner, #wide-banner {
@@ -4887,6 +4904,11 @@ window.DOC_LISTENERS_PAUSED = false;
             title="A window of its own, with its own icon in the dock or taskbar, and no address bar; its pop-out panels too">Install app</button>
     <p class="cfg-hint" id="install-app-hint" aria-live="polite"></p>
     <label class="autostart-row" hidden><input type="checkbox" id="autostart-toggle"> Start Ensemble when I sign in</label>
+  </div>
+  <!-- Notifications on this device (#359): drawn by ntPaint from /api/notify. -->
+  <div class="settings-section" id="settings-notify">
+    <h4>Notifications</h4>
+    <div id="nt-body"></div>
   </div>
   <!-- First run: which coding agents this machine has (/api/app/agents). -->
   <div class="settings-section" id="settings-agents">
@@ -23472,6 +23494,7 @@ queueMicrotask(() => {
 const SP_TAB_KEY = 'cd-settings-tab';
 const SP_ICONS = {
   app: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18"/>',
+  notify: '<path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15z"/><path d="M10 20a2 2 0 0 0 4 0"/>',
   agents: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 10 3 2-3 2M12 15h5"/>',
   feedback: '<path d="M4 5h16v11H9l-5 4z"/>',
   models: '<rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/>',
@@ -23531,6 +23554,7 @@ function openSettings(tab, opener) {
   if (focus) focus.focus();
   loadAgentModels();            // what the agents offer may have changed
   loadMoveCheck();
+  ntRefresh();                  // this device's notifications (#359)
 }
 // The move check's open items (#331): one list in "This instance", only when there is one.
 async function loadMoveCheck() {
@@ -23775,6 +23799,181 @@ function appThemeColor() {
 }
 window.addEventListener('cd-theme', appThemeColor);
 appThemeColor();
+
+// ---- Notifications (Settings, #359) ----------------------------------------
+// The hub notifies this device of a new Inbox card for the person, or a PO's
+// message to them, even when no Ensemble page is open: Web Push (notify.py)
+// shown by the service worker at /sw.js. Where this device cannot have them,
+// the tab says why and what to do. The page's heartbeat (hub-resilience.js)
+// holds them back while Ensemble is in front here.
+const NT = { hub: null, reg: null, sub: null, busy: false, status: '' };
+const ntStandalone = () => (window.matchMedia && matchMedia('(display-mode: standalone)').matches) || navigator.standalone === true;
+const ntPush = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+const ntSafari = () => /Safari\//.test(navigator.userAgent) && !/Chrome\/|Chromium\/|Edg\//.test(navigator.userAgent);
+// Why this device cannot have notifications: { tab } for an iPhone's Safari
+// tab (no switch at all), { why } for a switch that cannot be turned on.
+function ntBlocker() {
+  if (!window.isSecureContext) {
+    const there = TAILNET_HOST_RE.test(location.hostname) && !/^100\./.test(location.hostname)
+      ? `https://${location.hostname}/` : 'the hub’s https address (README, “Ensemble as an app”)';
+    return { why: `Notifications need the https address. Open ${there} and turn them on there.` };
+  }
+  if (isIosDevice() && !ntStandalone()) {
+    return { tab: 'On an iPhone, notifications work only in the Home Screen app: tap Share › Add to Home Screen,'
+      + ' then open Ensemble from its icon (iOS 16.4 or later).' };
+  }
+  if (!ntPush()) return { why: 'This browser cannot show notifications from a closed page.' };
+  if (Notification.permission === 'denied') {
+    return { why: ntSafari()
+      ? 'Safari blocks notifications for this site. Allow them in Safari › Settings › Websites › Notifications, then come back here.'
+      : 'This browser blocks notifications for this site. Allow them in its site settings, then come back here.' };
+  }
+  if (NT.hub && !NT.hub.available) return { why: 'The hub cannot send notifications: ' + (NT.hub.reason || 'no reason given') + '.' };
+  return null;
+}
+// How the device reads in the list: "Mac · Safari app", "iPhone · Home Screen app".
+function ntLabel() {
+  const ua = navigator.userAgent;
+  const os = isIosDevice() ? (/iPad/.test(ua) || /Macintosh/.test(ua) ? 'iPad' : 'iPhone')
+    : /Mac/.test(ua) ? 'Mac' : /Windows/.test(ua) ? 'Windows' : /Android/.test(ua) ? 'Android'
+    : /Linux/.test(ua) ? 'Linux' : 'Device';
+  if (isIosDevice()) return `${os} · Home Screen app`;
+  const br = /Edg\//.test(ua) ? 'Edge' : /Firefox\//.test(ua) ? 'Firefox' : /Chrome\//.test(ua) ? 'Chrome'
+    : /Safari\//.test(ua) ? 'Safari' : 'browser';
+  return `${os} · ${br}${ntStandalone() ? ' app' : ''}`;
+}
+function ntBytes(b64) {
+  const s = atob(b64.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - b64.length % 4) % 4));
+  return Uint8Array.from(s, c => c.charCodeAt(0));
+}
+// A subscription made with another key (the hub's key file was lost) gets nothing.
+function ntSameKey(sub, key) {
+  const k = sub && sub.options && sub.options.applicationServerKey;
+  if (!k) return true;
+  const a = new Uint8Array(k), b = ntBytes(key);
+  return a.length === b.length && a.every((x, i) => x === b[i]);
+}
+async function ntPost(path, body) {
+  const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ endpoint: NT.sub ? NT.sub.endpoint : '', ...body }) });
+  let j = {};
+  try { j = await r.json(); } catch (e) { /* no body */ }
+  if (r.status === 403) throw new Error(j.message || 'only the dashboard page can do this');
+  return { ok: r.ok, status: r.status, data: j };
+}
+const ntChanged = () => { try { window.dispatchEvent(new Event('ensemble-notify-changed')); } catch (e) { /* none listening */ } };
+async function ntRefresh() {
+  if (!NT.busy) NT.status = '';
+  NT.sub = null;
+  if (window.isSecureContext && ntPush()) {
+    try {
+      NT.reg = await navigator.serviceWorker.getRegistration('/');
+      NT.sub = NT.reg ? await NT.reg.pushManager.getSubscription() : null;
+    } catch (e) { NT.sub = null; }
+  }
+  try { NT.hub = (await ntPost('/api/notify/status', {})).data; } catch (e) { NT.hub = null; }
+  ntPaint();
+}
+function ntWhen(t) {
+  const d = new Date(t * 1000), now = new Date();
+  return d.toDateString() === now.toDateString()
+    ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    : d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+}
+function ntDevLine(d) {
+  const added = 'Added ' + new Date((d.createdAt || 0) * 1000).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+  if (d.lastError) return `${added} · the last notification failed: ${d.lastError}`;
+  return d.lastOkAt ? `${added} · last notified ${ntWhen(d.lastOkAt)}` : `${added} · not notified yet`;
+}
+function ntPaint() {
+  const box = document.getElementById('nt-body');
+  if (!box) return;
+  const hub = NT.hub || { devices: [], here: '' };
+  const block = ntBlocker();
+  const here = NT.sub ? hub.here : '';
+  const on = !!here && !block;
+  const devs = hub.devices || [];
+  let body;
+  if (block && block.tab) {
+    body = `<p class="nt-why">${esc(block.tab)}</p>`;
+  } else if (block) {
+    body = '<label class="nt-on"><input type="checkbox" id="nt-on" disabled> Notifications on this device</label>'
+      + `<p class="nt-why">${esc(block.why)}</p>`;
+  } else {
+    body = `<label class="nt-on"><input type="checkbox" id="nt-on"${on ? ' checked' : ''}${NT.busy || !NT.hub ? ' disabled' : ''}> Notifications on this device</label>`
+      + '<p class="nt-what">A new Inbox card for you, or a PO’s message to you, shows on this device even when Ensemble is closed. Not while you are looking at Ensemble here.</p>'
+      + `<div class="nt-test"><button type="button" class="po-btn def" id="nt-test"${on && !NT.busy ? '' : ' disabled'}>Send a test</button>`
+      + (NT.status ? `<span class="nt-st" role="status">${esc(NT.status)}</span>` : '<span class="nt-st" role="status"></span>') + '</div>';
+  }
+  if (devs.length) {
+    body += '<h5 class="sp-sub">Devices that get notifications</h5><ul class="nt-devs">' + devs.map(d => {
+      const mine = d.id === here;
+      return `<li><span class="nt-dev"><b>${esc(d.label || 'A device')}${mine ? '<span class="nt-me">This device</span>' : ''}</b>`
+        + `<small>${esc(ntDevLine(d))}</small></span>`
+        + (mine ? '' : `<button type="button" class="rm-btn" data-nt-remove="${esc(d.id)}"${NT.busy ? ' disabled' : ''}>Remove</button>`) + '</li>';
+    }).join('') + '</ul><p class="cfg-hint">Remove stops notifications to that device at once. A device whose browser no longer accepts them leaves the list by itself.</p>';
+  }
+  if (box.innerHTML !== body) box.innerHTML = body;
+}
+async function ntBusy(fn) {
+  if (NT.busy) return;
+  NT.busy = true; ntPaint();
+  let msg;
+  try { msg = await fn(); } catch (e) { msg = 'Not done: ' + e.message; }
+  NT.busy = false; NT.status = msg || '';
+  ntPaint();
+}
+async function ntTurnOn() {
+  // First, while this is still the click: Safari asks only from a gesture.
+  const perm = await Notification.requestPermission();
+  if (perm !== 'granted') return 'Not turned on: this browser did not allow notifications for Ensemble.';
+  if (!NT.hub || !NT.hub.available) return 'The hub cannot send notifications.';
+  NT.reg = await navigator.serviceWorker.register('/sw.js', { scope: '/' });
+  await navigator.serviceWorker.ready;
+  let sub = await NT.reg.pushManager.getSubscription();
+  if (sub && !ntSameKey(sub, NT.hub.publicKey)) { await sub.unsubscribe(); sub = null; }
+  if (!sub) sub = await NT.reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: ntBytes(NT.hub.publicKey) });
+  NT.sub = sub;
+  const r = await ntPost('/api/notify/subscribe', { subscription: sub.toJSON(), label: ntLabel() });
+  if (!r.ok) return 'Not turned on: ' + (r.data.message || `the hub answered ${r.status}`) + '.';
+  NT.hub = r.data;
+  ntChanged();
+  return 'On. Send a test to check it arrives.';
+}
+async function ntTurnOff() {
+  const sub = NT.sub;
+  if (sub) {
+    const r = await ntPost('/api/notify/unsubscribe', {});
+    if (r.ok) NT.hub = r.data;
+    try { await sub.unsubscribe(); } catch (e) { /* the hub has forgotten it anyway */ }
+  }
+  NT.sub = null;
+  ntChanged();
+  return 'Off: this device gets no notifications.';
+}
+document.getElementById('settings-notify').addEventListener('change', ev => {
+  if (ev.target.id !== 'nt-on') return;
+  const want = ev.target.checked;
+  NT.status = '';
+  ntBusy(() => want ? ntTurnOn() : ntTurnOff());
+});
+document.getElementById('settings-notify').addEventListener('click', ev => {
+  const rm = ev.target.closest('[data-nt-remove]');
+  if (rm) {
+    ntBusy(async () => {
+      const r = await ntPost('/api/notify/remove', { id: rm.dataset.ntRemove });
+      if (r.ok) NT.hub = r.data;
+      return r.ok ? '' : `Not removed: the hub answered ${r.status}.`;
+    });
+    return;
+  }
+  if (ev.target.closest('#nt-test')) {
+    ntBusy(async () => {
+      const r = await ntPost('/api/notify/test', {});
+      return r.data.message || (r.ok ? 'Sent.' : `Not sent (${r.status}).`);
+    });
+  }
+});
 
 // Jira link add/remove (in the detail panel)
 document.addEventListener('click', async (ev) => {
@@ -25812,9 +26011,21 @@ window.ensUpdPlace = () => ({
     else if (msg) openMsgLink(deepRoom, msg, part);
     else ibxOpenRoom(deepRoom);
   }
+  // /?inbox=<project id> (#359): a tapped notification for several new cards
+  // in one project opens the Inbox on that project's cards.
+  const deepInbox = !deepTask && !deepRoom && /^[\w-]+$/.test(deepQs.get('inbox') || '') ? deepQs.get('inbox') : '';
+  if (deepInbox) {
+    history.replaceState(null, '', location.pathname);
+    if (!PROJECTS) await refreshProjects();
+    ldpScope('project');
+    if (projectById(deepInbox)) { ldSelSet(deepInbox); projPick(deepInbox); }
+    ibxRepaint();
+    if (phoneNow() && !document.body.classList.contains('po-dock')) { if (PH_PANE !== 'inbox') phPane('inbox'); }
+    else ibxOpen();
+  }
   // Back where it was after the page reloaded itself for an update: the same
   // project and tab, the same open task, the same scroll place.
-  const back = deepTask || deepRoom ? null : ensUpd.restore();
+  const back = deepTask || deepRoom || deepInbox ? null : ensUpd.restore();
   if (back && typeof back === 'object') {
     if (back.proj) {
       if (!PROJECTS) await refreshProjects();
@@ -25838,7 +26049,7 @@ window.ensUpdPlace = () => ({
     if (back.top) (document.scrollingElement || document.documentElement).scrollTop = back.top;
     // A page saved on the retired Needs you page comes back to the list's (#135).
     if (back.sb === 'needsyou') { if (!PROJECTS) await refreshProjects(); swShowNeeds(); }
-  } else if (deepRoom) {
+  } else if (deepRoom || deepInbox) {
     // Opened above.
   } else if (location.hash === '#needs') {
     // #needs: the retired Needs you page's address, now the list's (#135).

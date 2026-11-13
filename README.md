@@ -218,6 +218,18 @@ Installed as an app, Ensemble runs in a window of its own with its own icon in t
 
 A request that reaches the hub through a proxy on its own machine (one with a forwarding header such as `X-Forwarded-For` or `Tailscale-User-Login`, or a `Host` other than `127.0.0.1`/`localhost`) needs the token like any remote request. The proxy's https origin passes the hub's same-origin checks.
 
+### Notifications on your devices
+
+A new Inbox card for you (a question, answers to check, a finished report, a task waiting on you or one that could not start) or a PO's reply to you pops up on every device where you turned it on, even with no Ensemble page open. It is standard Web Push: the hub sends through the browser vendor's push service, so the device needs internet, not the tailnet.
+
+- **Turn it on per device:** avatar menu › **Settings** › **Notifications** › **Notifications on this device**, then allow them when the browser asks. **Send a test** checks the path end to end. The same section lists every device that has it on, with **Remove**.
+- **The page must be on https or on this machine** (`http://127.0.0.1:8765`, `http://localhost:8765`). Browsers offer push only to a secure page, so on another device use the `tailscale serve` address above, not `http://<host>:8765`.
+- **Mac:** Safari 16 or later, or Chrome. In System Settings › Notifications, allow the browser (or the app added to the Dock).
+- **iPhone or iPad:** iOS or iPadOS 16.4 or later, and only from the Home Screen app: first Safari › Share › **Add to Home Screen** (from the https address), open Ensemble from that icon, then turn notifications on there. A Safari tab cannot.
+- **What a tap opens:** the card itself, or the PO chat at the message. Several items from one project within 30 seconds become one notification ("3 new in Motors") that opens the Inbox filtered to that project.
+- **Not while you look:** a device whose Ensemble page is in front and focused gets no notification; it would only repeat what the page shows. A device locked within about 45 seconds of that may miss one notification.
+- **Needs** the Python `cryptography` package on the hub's machine. Without it the section says notifications are unavailable, and the rest of the hub works as before. The hub's signing key and the devices' push addresses are kept in `~/.ensemble/notify/` (mode 600).
+
 **Backup.** In Settings, set **Backup of your projects**. The hub keeps `~/EnsembleProjects` as a git repository: it exports each task's chat to `chat.json`, commits on a schedule (hourly by default), and pushes to the remote you give. Only the remote URL is stored. Authentication is the machine's own git credential manager or SSH key. Task worktrees (`repo/`) and file history (`.history/`) are not included.
 
 **Security. Read this before you run it.**
@@ -294,6 +306,7 @@ Each project keeps its own files in its folder: `project.json`, `ROADMAP.md`, `P
 | `ensemble_tools.py` | The `ensemble_*` MCP tools and their role checks |
 | `digest.py` | The PO's progress check |
 | `rotation.py` | Handovers and fresh sessions past the token limit |
+| `notify.py`, `webpush.py` | Notifications on your devices: what notifies, the devices, Web Push encryption and signing |
 | `due.py` | What a handover's `## Due` section names for a time, typed into its idle agent then |
 | `attention.py` | Needs you: blocked, stalled, dead or waiting tasks |
 | `agent_hooks.py`, `agent_hook.py` | What each Claude agent says it is doing, through its Claude Code hooks; `attention.py` reads it before the agent's screen |
