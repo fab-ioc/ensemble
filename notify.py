@@ -427,9 +427,9 @@ _LINK = re.compile(r"\[([^\]]*)\]\([^)]*\)")
 _TAG = re.compile(r"</?[A-Za-z][^>]*>")
 # An address (with a scheme, or www.): a link's destination, a token in a query.
 _URL = re.compile(r"(?i)\b(?:[a-z][a-z0-9+.-]*://|www\.)\S+")
-# A path, absolute (/x/y, ~/x, C:\x) or relative with two separators or a
+# A path, absolute (/x/y, ~/x, C:\x, ./x, ../x) or relative with two separators or a
 # file name after one (notes/private/file.txt, src/app.py); "and/or" stays.
-_PATHISH = re.compile(r"(?:(?<=[\s(\"'])|^)(?:~|[A-Za-z]:)[/\\][^\s]*"
+_PATHISH = re.compile(r"(?:(?<=[\s(\"'])|^)(?:~|[A-Za-z]:|\.{1,2})[/\\][^\s]*"
                       r"|(?:(?<=[\s(\"'])|^)[/\\][^\s]*[/\\][^\s]*"
                       r"|(?:(?<=[\s(\"'])|^)[\w.~-]+(?:[/\\][\w.~-]*){2,}"
                       r"|(?:(?<=[\s(\"'])|^)[\w.~-]+[/\\][\w~-]*\.[A-Za-z0-9]{1,8}\b")
@@ -437,7 +437,7 @@ _PATHISH = re.compile(r"(?:(?<=[\s(\"'])|^)(?:~|[A-Za-z]:)[/\\][^\s]*"
 # only; a quoted value goes whole. "Bearer" takes only a value that looks
 # like one (a digit in it, or 20 characters), so "Bearer in mind" stays.
 _SECRET = re.compile(r"(?i)\b(?:((?:api|access|private|secret)[\s_-]?key|token|secret|password|passwd|pwd|passphrase|auth)"
-                     r"\s*[=:]\s*(?:\"[^\"]*\"?|'[^']*'?|\S+)"
+                     r"[\"']?\s*[=:]\s*(?:\"[^\"]*\"?|'[^']*'?|\S+)"
                      r"|(bearer)\s+(?=\S*\d|\S{20})\S+)")
 # An opaque string long enough to be a key or token: 24 characters or more
 # in which letters and digits alternate at least 3 times (a random key does;

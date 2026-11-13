@@ -159,6 +159,18 @@ class Store(_Notify):
         for text, want in cases.items():
             self.assertEqual(notify.clip(text, 200), want, text)
 
+    def test_clip_hides_a_credential_in_json(self):
+        self.assertEqual(notify.clip('{"token": "abc 123"}', 200), '{"token=…}')
+        self.assertEqual(notify.clip("{'api_key': 'k9x'} set", 200), "{'api_key=…} set")
+        self.assertEqual(notify.clip('got {"password":"hunter2"} back', 200), 'got {"password=…} back')
+
+    def test_clip_hides_an_explicit_relative_path(self):
+        self.assertEqual(notify.clip("open ./secret now", 200), "open … now")
+        self.assertEqual(notify.clip("open ../secret now", 200), "open … now")
+        self.assertEqual(notify.clip("run .\\build.ps1 then", 200), "run … then")
+        # Dots that are not a path stay.
+        self.assertEqual(notify.clip("well... v2.0 done. See . and ..", 200), "well... v2.0 done. See . and ..")
+
     def test_a_first_device_right_after_the_last_went_sends_no_backlog(self):
         # Removed and re-added within one watcher interval: tick() never saw
         # the empty list, so subscribe() itself marks the next look a seed.
