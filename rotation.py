@@ -388,7 +388,8 @@ def _transcript_of(part: dict):
         cx = _d.agents.get_agent("codex")
         files = cx.rollouts_for_session(sid) if (cx and sid) else []
         return (files[-1] if files else None), read_rollout
-    return _d.find_transcript(sid), read_transcript
+    # The seat's own folder's copy when its id is held in several (ED-355).
+    return _d.find_transcript(sid, cwd=(part.get("cwd") or "").strip()), read_transcript
 
 
 # ---------------------------------------------------------------------------
@@ -1170,6 +1171,10 @@ def _switch_po(project: dict, room: dict, part: dict, other: str, model: str,
         if (_SWITCHING.get(rid) or {}).get("flags", {}).get("stopped"):
             return {"result": "cancelled", "reason": "the PO was stopped"}
         _ROTATING[key] = flags
+    # The launch works from the room as stored, tokens included: ``_po`` reads
+    # the public view, and a seat launched from it got an empty CHAT_TOKEN and
+    # no Ensemble tools (ED-356).
+    room = current_room
     name = _d._agent_kind_name
     hp = handover_path(project)
     info, started, committed = None, time.time(), None

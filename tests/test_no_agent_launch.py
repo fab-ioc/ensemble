@@ -282,7 +282,7 @@ class SignedIn(unittest.TestCase):
         part = {"identity": "codex", "agent": "codex", "kind": "agent", "sessionId": "",
                 "model": "", "role": "engineer"}
         room = {"id": "room-x", "title": "t", "cwd": str(self.root), "sharedCwd": True,
-                "projectId": "", "mode": "collab", "tokens": {}, "participants": [part]}
+                "projectId": "", "mode": "collab", "tokens": {"tok": "codex"}, "participants": [part]}
         with mock.patch.object(dashboard, "DASHBOARD_DIR", self.root), \
                 mock.patch.object(dashboard, "load_projects", return_value=[]), \
                 mock.patch.object(dashboard, "_rtk_task_wiring", return_value=([], {}, "")), \
