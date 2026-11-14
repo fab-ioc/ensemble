@@ -52,7 +52,8 @@ class BalloonStamp(unittest.TestCase):
     def test_row_and_balloon_headers_carry_it(self):
         fn = SRC[SRC.index("function foldBalloonHtml("):]
         fn = fn[:fn.index("\n}\n")]
-        self.assertIn("whoHtml(m) + stampHtml(m.ts)", fn)
+        # #361: a full balloon's label opens its hover; a row's does not.
+        self.assertIn("whoHtml(m, CHAT_NAMES, { pop: how !== 'row' }) + stampHtml(m.ts)", fn)
         self.assertEqual(fn.count("${who}"), 2)
 
 

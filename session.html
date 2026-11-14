@@ -3343,7 +3343,8 @@ function seatRole(id) {
 // { cls, text, note }: the label a message's sender takes.
 function roleLabel(m, N = CHAT_NAMES) {
   const st = m.senderType || '';
-  if (st === 'external') return { cls: 'outside', text: String(m.senderLabel || 'Outside sender'), note: 'outside line' };
+  // A line from outside (POST /api/room/notify) carries noticeKind 'external'; a PO view's copy, senderType.
+  if (st === 'external' || (m.kind === 'notice' && m.noticeKind === 'external')) return { cls: 'outside', text: String(m.senderLabel || 'Outside sender'), note: 'outside line' };
   if (isPoMsg(m) || st === 'po') return { cls: 'po', text: senderName(m, N) };
   const t = taskReport(m);
   if (t) return { cls: reportBase(m) === 'review' ? 'reviewer' : 'engineer', text: senderName(m, N) };
@@ -4401,6 +4402,7 @@ function foldBalloonHtml(m, i, how, o) {
 // A reply (#361): the person's words starting "Re <link to a message>:" show
 // the link as a strip on top of the balloon, "↩ replying to PO · 09:09
 // “…” ↑", and go on without it. null until the hub has resolved the link.
+const REPLY_QUOTE_HEAD_RE = /^\s*re\s+(?:P\d+[a-z]?(?:\s*\([^)]*\))?|https?:\/\/[^\s<>]+?)\s*:\s*/i;
 const REPLY_HEAD_RE = /^\s*re\s+(https?:\/\/[^\s<>]+?):(?=\s|$)\s*/i;
 function replyStrip(m) {
   const t = String(m.text || ''), x = t.match(REPLY_HEAD_RE);
@@ -4408,7 +4410,8 @@ function replyStrip(m) {
   if (!ref) return null;
   const r = refInfo(ref.room, ref.msg);
   if (!r || r.state !== 'ok') return null;
-  const prev = refPreview(r), when = hhmm(r.ts);
+  // The quote drops the replied-to message's own "Re P12:" / "Re <link>:" head.
+  const prev = refPreview({ ...r, text: String(r.text || '').replace(REPLY_QUOTE_HEAD_RE, '') }), when = hhmm(r.ts);
   return { text: t.slice(x[0].length), html: `<a class="ref-chip reply-strip" href="${esc(refHref(ref.room, ref.msg, ref.part))}" data-ref-room="${esc(ref.room)}" data-ref-msg="${esc(ref.msg)}" data-ref-part="${esc(ref.part)}"`
     + ` title="Go to the message you replied to"><span class="rs-arrow" aria-hidden="true">↩</span><b>${esc('replying to ' + [refWho(r), when].filter(Boolean).join(' · '))}</b>`
     + `${prev ? `<span class="q">“${esc(prev)}”</span>` : ''}<span class="up" aria-hidden="true">↑</span></a>` };
@@ -4831,8 +4834,10 @@ function ptStateHtml(p, P, href) {
       : st('working', (w ? dot + 'working on it' : 'in progress') + ' — ' + go('see the plan ↓', 'Go to the plan')), up, drop, ptNowHtml(w));
   } else if (p.state === 'delivered') {
     const c = curAnswer(p), asks = P.askMids;
-    if (asks && ((c && asks.has(c.mid)) || (a && asks.has(a.mid)))) bits.push(st('waiting', 'waiting for you — ' + go('answer the question ↓', 'Go to the question')), up);
-    else if (ptStillWorking(p, P)) bits.push(st('working', dot + 'working on it'), up, ptNowHtml(ptWorker(P, c.mid)));
+    // Waiting while the answer holds a question card still open, wherever the Inbox files it.
+    const card = mid => { const m = mid && ((P.drawn || []).find(x => x && x.id === mid)); return !!m && openAsks(m, P).length > 0; };
+    if ((asks && ((c && asks.has(c.mid)) || (a && asks.has(a.mid)))) || card(c && c.mid) || card(a && a.mid)) bits.push(st('waiting', 'waiting for you — ' + go('answer the question ↓', 'Go to the question')), up);
+    else if (ptStillWorking(p, P)) bits.push(st('working', dot + 'working on it'), up, drop, ptNowHtml(ptWorker(P, c.mid)));
     else bits.push(st('done', 'done — ' + go('see the answer ↓', 'Go to the answer')), up);
   } else if (p.state === 'acked') {
     bits.push(st('done', 'done — ' + go('see the answer ↓', 'Go to the answer')), quiet('acknowledged'), up, reopen);

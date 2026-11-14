@@ -436,7 +436,8 @@ class HubTrafficAndAnswers(unittest.TestCase):
     def test_rows_say_what_they_are(self):
         row = self.r["hubRow"]
         self.assertIn('class="msg-fold user hub"', row)
-        self.assertIn('<span class="who">docs claude</span>', row)
+        # #361: a task's report is its engineer's, by role.
+        self.assertIn('<span class="who rl engineer">docs claude</span>', row)
         self.assertIn('<span class="hub-kind" title="Docs">Completed</span>', row)
         self.assertIn('<span class="fl">merged and tested — read it in full</span>', row)
         self.assertIn('<span class="answers"', self.r["agentRow"])

@@ -136,8 +136,11 @@ class WhoWritesToWhom(unittest.TestCase):
         self.assertEqual(self.r["senders"], ["sam", "#26 claude", "#26 claude · review 1", "PO", "11112222 claude",
                                              "Hub", "#26 claude · review 2", "Hub", "#26 claude", "sam", "#26 claude"])
         self.assertEqual(self.r["recipients"], ["PO", "PO", "PO", "#26 claude", "PO", "PO", "PO", "PO", "PO", "PO", "PO"])
-        self.assertEqual(self.r["head"][0], '<span class="who">#26 claude</span> <span class="to">→ PO</span>')
-        self.assertEqual(self.r["head"][1], '<span class="who hub-who">Hub</span> <span class="to">→ PO</span>')
+        # #361: one label by role; in a PO's room every message is between the
+        # person and the PO, so the header names no recipient.
+        self.assertEqual(self.r["head"][0], '<span class="who rl engineer">#26 claude</span>')
+        self.assertEqual(self.r["head"][1], '<span class="who rl hub hub-who">Hub</span>')
+        self.assertEqual(self.r["head"][2], '<span class="who rl person">sam</span>')
         self.assertNotIn("@", "".join(self.r["head"]))
 
     def test_names(self):
@@ -161,6 +164,131 @@ class WhoWritesToWhom(unittest.TestCase):
         self.assertEqual(self.r["soloLabel"], ["Approved", "Completed", "Progress check"])
         # A review, the PO's reply and the completed report: the completed one stays.
         self.assertEqual(self.r["soloGroups"], [{"task": "#60", "hidden": [0, 1], "stand": 2}])
+
+
+LABELS_JS = r"""
+const vm = require('vm');
+const { code } = JSON.parse(require('fs').readFileSync(0, 'utf8'));
+const ctx = { esc: s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])),
+  ROOM_OBJ: { participants: [{ identity: 'claude', kind: 'agent', role: 'engineer: owns the task' },
+                             { identity: 'codex', kind: 'agent', role: 'reviewer' },
+                             { identity: 'gemini', kind: 'agent', role: 'designer: draws it' }] } };
+vm.createContext(ctx);
+vm.runInContext(code + `
+  globalThis.t = { CHAT_NAMES, whoHtml, roleWord, roleCls, seatRole, roleLabel, roleTo, seatHistory, kindWord, hhmm, seatPopHtml,
+    setHist: items => { SEAT_HIST = seatHistory(items); } };`, ctx);
+const T = ctx.t;
+const out = {};
+Object.assign(T.CHAT_NAMES, { operator: 'sam', po: '' });
+// A task's chat: three parties, so each header says to whom.
+const task = {
+  eng: { id: 't1', from: 'claude', to: 'user', text: 'Done.' },
+  rev: { id: 't2', from: 'codex', to: 'claude', text: 'One finding.' },
+  all: { id: 't3', from: 'claude', to: 'all', text: 'Hi.' },
+  person: { id: 't4', from: 'user', to: 'codex', text: 'Look again.' },
+  hub: { id: 't5', from: 'ensemble', to: 'claude', kind: 'report', reportKind: 'digest', text: 'Progress' },
+  outside: { id: 't6', from: 'mail-1', senderType: 'external', senderLabel: 'Dana (email)', to: 'claude', text: 'Hello' },
+  // A line from outside as the room keeps it (POST /api/room/notify): a notice, no senderType.
+  notice: { id: 't10', from: 'user', kind: 'notice', noticeKind: 'external', senderLabel: 'CI (webhook)', to: 'claude', text: 'Build red' },
+  designer: { id: 't7', from: 'gemini', to: 'user', text: 'Drawn.' },
+  stranger: { id: 't8', from: 'qwen', to: 'user', text: '?' },
+  // The seat's role when it wrote, kept on the message, wins over today's.
+  wasReviewer: { id: 't9', from: 'claude', to: 'user', seat: { agent: 'claude', role: 'reviewer' }, text: 'x' },
+};
+out.task = Object.fromEntries(Object.entries(task).map(([k, m]) => [k, T.whoHtml(m)]));
+out.labels = Object.fromEntries(Object.entries(task).map(([k, m]) => [k, T.roleLabel(m)]));
+out.words = [T.roleWord('engineer: owns it'), T.roleWord(' reviewer '), T.roleWord(null), T.roleCls('PO'), T.roleCls('engineer'),
+  T.roleCls('reviewer'), T.roleCls('designer'), T.seatRole('claude'), T.seatRole('nobody'), T.kindWord('codex'), T.kindWord('')];
+// A PO's room: everyone is the person or the PO; no recipient.
+Object.assign(T.CHAT_NAMES, { po: 'claude' });
+out.po = [T.whoHtml({ from: 'claude', to: 'user', text: 'x' }), T.whoHtml({ from: 'codex-2', to: 'user', text: 'x' }),
+  T.whoHtml({ from: 'user', to: 'claude', text: 'x' }),
+  T.whoHtml({ from: 'claude@room-x', kind: 'pomsg', fromProjectName: 'Dock', to: 'claude', text: 'x' }),
+  T.whoHtml({ from: 'claude@room-0804cfef', to: 'claude', kind: 'report', reportKind: 'review', taskId: 'room-0804cfef', text: 'x' })];
+out.poTo = T.roleTo({ from: 'claude', to: 'user' });
+// The hover: who sat in the seat for this message, and the kind before a handover.
+Object.assign(T.CHAT_NAMES, { po: '' });
+const seated = [
+  { id: 's1', from: 'claude', to: 'user', ts: 1789552800, seat: { agent: 'codex', model: 'gpt-5.5', role: 'engineer' }, text: 'a' },
+  { id: 's2', from: 'claude', to: 'user', ts: 1789553400, seat: { agent: 'codex', model: 'gpt-5.5', role: 'engineer' }, text: 'b' },
+  { id: 's3', from: 'claude', to: 'user', ts: 1789556400, seat: { agent: 'claude', model: 'opus', role: 'engineer' }, text: 'c' },
+  { id: 's4', from: 'codex', to: 'claude', ts: 1789556500, seat: { agent: 'codex', role: 'reviewer' }, text: 'd' },
+  { id: 's5', from: 'claude', to: 'user', ts: 1789556600, text: 'from before #361' },
+];
+T.setHist(seated);
+out.hist = [...T.seatHistory(seated)].map(([k, v]) => [k, v.map(x => x.id + ':' + x.agent)]);
+out.pop = seated.map(m => T.seatPopHtml(m, 'engineer'));
+out.full = seated.map(m => T.whoHtml(m, T.CHAT_NAMES, { pop: true }));
+out.row = T.whoHtml(seated[2]);
+out.hhmm = [T.hhmm(1789552800), T.hhmm(0)];
+console.log(JSON.stringify(out));
+"""
+
+
+@unittest.skipUnless(NODE, "node is not installed")
+class RoleLabels(unittest.TestCase):
+    """#361: a balloon names its sender by role (PO, engineer, reviewer,
+    another role), the person by name, an outside sender as such, the hub
+    quietly; "→ recipient" only in a task's chat; the hover says who sat in
+    the seat, and which kind sat there before."""
+
+    @classmethod
+    def setUpClass(cls):
+        out = subprocess.run([NODE, "-e", LABELS_JS], input=json.dumps({"code": NOUN + fold_block(SRC)}), capture_output=True,
+                             text=True, encoding="utf-8", timeout=60, env={**__import__("os").environ, "TZ": "UTC"})
+        if out.returncode != 0:
+            raise AssertionError(out.stderr)
+        cls.r = json.loads(out.stdout)
+
+    def test_a_tasks_chat_names_each_seat_by_role_and_says_to_whom(self):
+        t = self.r["task"]
+        self.assertEqual(t["eng"], '<span class="who rl engineer">engineer</span> <span class="to">→ <b>you</b></span>')
+        self.assertEqual(t["rev"], '<span class="who rl reviewer">reviewer</span> <span class="to">→ <b>engineer</b></span>')
+        self.assertEqual(t["all"], '<span class="who rl engineer">engineer</span>', "to all: no recipient")
+        self.assertEqual(t["person"], '<span class="who rl person">sam</span> <span class="to">→ <b>reviewer</b></span>')
+        self.assertEqual(t["hub"], '<span class="who rl hub hub-who">Hub</span> <span class="to">→ <b>engineer</b></span>')
+        self.assertEqual(t["outside"], '<span class="who rl outside">Dana (email)</span><span class="rl-note">outside line</span>'
+                                       ' <span class="to">→ <b>engineer</b></span>')
+        self.assertEqual(t["designer"], '<span class="who rl other">designer</span> <span class="to">→ <b>you</b></span>')
+        self.assertEqual(t["stranger"], '<span class="who rl other">qwen</span> <span class="to">→ <b>you</b></span>', "no role known: its name")
+        self.assertEqual(self.r["labels"]["wasReviewer"], {"cls": "reviewer", "text": "reviewer"})
+        self.assertEqual(self.r["labels"]["notice"], {"cls": "outside", "text": "CI (webhook)", "note": "outside line"},
+                         "an outside line kept as a notice is the outside sender's, not the person's or the hub's")
+        self.assertTrue(t["notice"].startswith('<span class="who rl outside">CI (webhook)</span><span class="rl-note">outside line</span>'))
+        self.assertEqual(self.r["words"], ["engineer", "reviewer", "", "po", "engineer", "reviewer", "other", "engineer", "", "Codex", ""])
+
+    def test_a_po_room_has_the_po_and_the_person_and_no_recipient(self):
+        self.assertEqual(self.r["po"], [
+            '<span class="who rl po">PO</span>',
+            '<span class="who rl po">PO</span>',
+            '<span class="who rl person">sam</span>',
+            '<span class="who rl po">Dock PO</span>',
+            # A task's review report is the reviewer's, named by its task.
+            '<span class="who rl reviewer">0804cfef claude</span>',
+        ])
+        self.assertNotIn("→", "".join(self.r["po"]))
+        self.assertEqual(self.r["poTo"], "")
+
+    def test_the_hover_says_who_sat_in_the_seat(self):
+        pop = self.r["pop"]
+        self.assertEqual(self.r["hist"], [["claude", ["s1:codex", "s2:codex", "s3:claude"]], ["codex", ["s4:codex"]]])
+        self.assertEqual(pop[0], '<span class="rl-pop" role="tooltip"><span class="t">engineer</span><br>This message: Codex · gpt-5.5 · claude</span>')
+        self.assertNotIn("Earlier", pop[1], "the same kind before: nothing to say")
+        self.assertEqual(pop[2], '<span class="rl-pop" role="tooltip"><span class="t">engineer</span><br>This message: Claude · opus · claude'
+                                 '<br><span class="m">Earlier in this seat: Codex · gpt-5.5, until 10:10</span></span>',
+                         "the kind before the handover, until its last message")
+        self.assertEqual(pop[3], '<span class="rl-pop" role="tooltip"><span class="t">engineer</span><br>This message: Codex · codex</span>')
+        self.assertEqual(pop[4], "", "a message from before #361 has no seat: the role only")
+        self.assertEqual(self.r["hhmm"], ["10:00", ""])
+
+    def test_only_a_full_balloon_with_a_seat_opens_a_hover(self):
+        full = self.r["full"]
+        self.assertTrue(full[2].startswith('<span class="who rl engineer" tabindex="0">engineer<span class="rl-pop" role="tooltip">'), full[2])
+        self.assertIn("Earlier in this seat: Codex · gpt-5.5", full[2])
+        self.assertTrue(full[3].startswith('<span class="who rl reviewer" tabindex="0">reviewer<span class="rl-pop"'))
+        self.assertEqual(full[4], '<span class="who rl engineer">engineer</span> <span class="to">→ <b>you</b></span>')
+        self.assertNotIn("rl-pop", self.r["row"], "a folded row is a button: no hover of its own")
+        self.assertNotIn("tabindex", self.r["row"])
 
 
 @unittest.skipUnless(NODE, "node is not installed")
