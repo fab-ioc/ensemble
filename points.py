@@ -433,6 +433,9 @@ def _clean(led: dict, room_id: str) -> dict:
         out["dones"] = led["dones"]
     if isinstance(led.get("asks"), dict):
         out["asks"] = led["asks"]
+    if isinstance(led.get("turnEnds"), dict):          # #361: each agent's last turn end
+        out["turnEnds"] = {k: float(v) for k, v in led["turnEnds"].items()
+                           if isinstance(k, str) and isinstance(v, (int, float))}
     out["asksKeys"] = led["asksKeys"] if isinstance(led.get("asksKeys"), int) else 1
     out["migrated"] = led["migrated"] if isinstance(led.get("migrated"), int) else 0
     try:
@@ -1444,6 +1447,28 @@ def act(room_id: str, pid: str, action: str, now: float | None = None,
         return dict(p)
 
 
+def turn_ended(room_id: str, identity: str, now: float | None = None) -> None:
+    """An agent's turn ended (its Stop hook, #361 Q2): an "on it" answer it
+    wrote before now is done, no longer "working on it", on every device and
+    after a reload. Kept as the identity's last turn end; the chat compares it
+    with the answer's time (``turnEnds`` in the view)."""
+    if not room_id or not identity:
+        return
+    # A room the hub keeps: never a ledger for an id the hook names and no room has.
+    if not _ROOM_ID.fullmatch(room_id) or _d.chatroom.get_room(room_id, copy_room=False) is None:
+        return
+    now = time.time() if now is None else now
+    with _LOCK:
+        led = load(room_id)
+        ends = led.setdefault("turnEnds", {})
+        if not isinstance(ends, dict):
+            ends = led["turnEnds"] = {}
+        if float(ends.get(identity) or 0) >= now:
+            return
+        ends[identity] = now
+        _save(room_id, led)
+
+
 def answer_ask(room_id: str, mid: str, n: int, answer: dict, now: float | None = None) -> dict | None:
     """One ask of a balloon answered (asks.py): recorded once, from any
     device. None when it is new; the answer recorded before when it was
@@ -2116,6 +2141,7 @@ def view(room_id: str, room: dict | None = None, quick: bool = False) -> dict:
             "dones": sorted(led.get("dones") or {}),
             "asks": json.loads(json.dumps(led.get("asks") or {})),
             "asksSettledAt": float(led.get("asksSettledAt") or 0),
+            "turnEnds": {k: float(v) for k, v in (led.get("turnEnds") or {}).items() if isinstance(v, (int, float))},
             "needs": {} if quick else _needs_view(room_id, room, led)}
 
 

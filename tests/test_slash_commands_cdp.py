@@ -283,7 +283,8 @@ class SlashCommandsPage(unittest.TestCase):
     def test_command_balloons_and_hidden_turns(self):
         for w, _m, theme, o in self.each():
             texts = [b["text"] for b in o["balloons"]]
-            self.assertTrue(any(t.startswith("Copy link sam → claude") and t.endswith("/cost") for t in texts), texts)
+            # #361: a task's chat names the seat by its role, not its agent kind.
+            self.assertTrue(any(t.startswith("Copy link sam → engineer") and t.endswith("/cost") for t in texts), texts)
             out = [b for b in o["balloons"] if "Total cost" in b["text"]]
             self.assertEqual(len(out), 1, texts)
             self.assertTrue(out[0]["pre"], "the terminal's text, as such")

@@ -759,8 +759,8 @@
     color:var(--fg-muted); font-size:var(--fs-100); font-weight:400; text-transform:none; letter-spacing:0; line-height:16px; }
   .msg .from .fold-btn:hover { background:var(--hover); color:var(--fg); }
   /* The whole header of an opened balloon folds it again (#333); the Fold button stays for the keyboard. */
-  .msg > .from.fold-head { cursor:pointer; border-radius:var(--r-200); margin-inline:calc(-1 * var(--s-100)); padding-inline:var(--s-100); }
-  .msg > .from.fold-head:hover { background:var(--hover); }
+  .msg > .from.fold-head, .msg > .bal > .from.fold-head { cursor:pointer; border-radius:var(--r-200); margin-inline:calc(-1 * var(--s-100)); padding-inline:var(--s-100); }
+  .msg > .from.fold-head:hover, .msg > .bal > .from.fold-head:hover { background:var(--hover); }
   /* Copy link: a link to this balloon, to paste into another chat. It takes its
      place in the header at rest (nothing moves on hover) and shows on hover or
      keyboard focus; on a phone it always shows (below). */
@@ -1122,6 +1122,67 @@
   /* --fg-muted there measured 4.25:1 in Light (12px): the bar's words on the
      person's balloon are --fg-subtle. */
   .msg.user .pt-bar, .msg.user .pt-chip:not(.delivered) { color:var(--fg-subtle); }
+  /* #361: the person's balloon with its requests' state under it, as a
+     caption (option B). The balloon's look moves onto .bal; the outer box is
+     transparent and holds the balloon, then the caption at its end. */
+  .msg.user.has-under { padding:0; border:0; background:transparent; display:flex; flex-direction:column; align-items:flex-end; gap:var(--s-100); }
+  .msg.user.has-under > .bal { max-width:100%; min-width:0; box-sizing:border-box; padding:8px 10px; border:1px solid var(--border);
+    border-left:3px solid var(--border); border-radius:var(--r-300); background:var(--hover); }
+  .msg.has-under.landed, .msg.has-under.ibx-landed { animation:none; box-shadow:none; background:transparent; }
+  .msg.has-under.landed > .bal { animation:landed 2.4s ease-out; }
+  .msg.has-under.ibx-landed > .bal { animation:ibx-landed var(--ibx-fade, 1s) linear var(--ibx-hold, 2.5s) both; }
+  .pt-under { max-width:100%; min-width:0; margin:0 var(--s-100); }
+  .msg .pt-under .pt-bar { justify-content:flex-end; margin-top:0; padding-top:0; border-top:0; }
+  .msg.user .pt-under .pt-bar, .msg.user .pt-under .pt-chip { color:var(--fg-muted); }
+  .msg.user .pt-under .pt-bar a.pt-link { color:inherit; }
+  /* A request's state: a pill in its colour (received neutral, working blue,
+     waiting amber, done green); its link underlined in the pill's colour. */
+  .pt-st { display:inline-flex; align-items:center; gap:6px; padding:1px 8px; border-radius:var(--r-full); font-weight:600; white-space:nowrap; }
+  .msg.user .pt-bar .pt-st a.pt-link, .pt-st a.pt-link, .pt-st a.pt-task { color:inherit; text-decoration:underline; }
+  .pt-st .dot { width:7px; height:7px; border-radius:50%; background:currentColor; }
+  .pt-st.received { background:var(--c-neutral-bg); color:var(--c-neutral-fg); font-weight:500; }
+  .pt-st.working { background:var(--c-progress-bg); color:var(--c-progress-fg); }
+  .pt-st.waiting { background:var(--c-warning-bg); color:var(--c-warning-fg); }
+  .pt-st.done { background:var(--c-success-bg); color:var(--c-success-fg); }
+  .msg.user .pt-chip.pt-id { color:var(--fg-subtle); }
+  /* now: the agent's step on its terminal, and how long ago it last changed. */
+  .pt-now { flex-basis:100%; display:flex; justify-content:flex-end; gap:6px; align-items:baseline; min-width:0; color:var(--fg-muted); }
+  .pt-now .now, .pt-now .ago { color:var(--fg-subtle); white-space:nowrap; }
+  .pt-now .ln { font-family:var(--font-mono); font-size:0.92em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; }
+  .pt-items .pt-now { justify-content:flex-start; }
+  /* The message a reply answers: a strip on top of the balloon. */
+  .msg a.ref-chip.reply-strip { display:flex; gap:6px; align-items:baseline; margin:2px 0 6px; padding:4px 8px; border:0;
+    border-left:3px solid var(--border-strong); border-radius:var(--r-100); background:var(--surface); color:var(--fg-muted);
+    font-size:var(--fs-200); text-decoration:none; max-width:100%; box-sizing:border-box; overflow:hidden; }
+  .msg a.ref-chip.reply-strip:hover { background:var(--surface-sunken); }
+  .reply-strip b { color:var(--fg); font-weight:600; white-space:nowrap; }
+  .reply-strip .q { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; }
+  .reply-strip .up { color:var(--link); white-space:nowrap; }
+  /* #361: who sent it, one label by role. Filled in the role's colour (PO,
+     engineer, reviewer, another role), the person outlined, an outside
+     sender amber with "outside line", the hub quiet text. The hover or a tap
+     says who sat in the seat for this message. */
+  .msg .from .rl, .msg-fold .from .rl { display:inline-flex; align-items:center; height:20px; padding:0 8px; border-radius:var(--r-100);
+    font-weight:700; font-size:var(--fs-200); line-height:1; color:var(--surface); white-space:nowrap; position:relative; vertical-align:middle; }
+  .msg-fold .from .rl { height:16px; padding:0 6px; font-size:var(--fs-100); }
+  .msg .from .rl.po, .msg-fold .from .rl.po { background:var(--c-discovery-fg); color:var(--surface); }
+  .msg .from .rl.engineer, .msg-fold .from .rl.engineer { background:var(--c-progress-fg); color:var(--surface); }
+  .msg .from .rl.reviewer, .msg-fold .from .rl.reviewer { background:var(--c-success-fg); color:var(--surface); }
+  .msg .from .rl.other, .msg-fold .from .rl.other { background:var(--c-neutral-fg); color:var(--surface); }
+  .msg .from .rl.person, .msg-fold .from .rl.person { background:transparent; color:var(--fg); box-shadow:inset 0 0 0 1.5px var(--fg-muted); }
+  .msg .from .rl.outside, .msg-fold .from .rl.outside { background:var(--c-warning-bg); color:var(--c-warning-fg); box-shadow:inset 0 0 0 1.5px var(--c-warning-bold); }
+  .msg .from .rl.hub, .msg-fold .from .rl.hub { height:auto; padding:0; background:transparent; color:var(--fg-muted); font-weight:500; }
+  .rl-note { margin-left:var(--s-100); color:var(--fg-subtle); font-weight:400; text-transform:none; letter-spacing:0; }
+  .msg .from .to, .msg-fold .from .to { color:var(--fg-muted); font-weight:400; }
+  .msg .from .to b, .msg-fold .from .to b { font-weight:600; }
+  .rl[tabindex] { cursor:default; }
+  .rl[tabindex]:focus-visible { outline:none; box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  .rl-pop { display:none; position:absolute; left:0; top:calc(100% + 6px); z-index:50; min-width:240px; padding:8px 12px; border-radius:var(--r-200);
+    background:var(--surface-overlay); color:var(--fg); font-weight:400; font-size:var(--fs-200); line-height:1.45; letter-spacing:0;
+    text-transform:none; white-space:nowrap; box-shadow:var(--e-200), 0 0 0 1px var(--border); }
+  .rl:hover > .rl-pop, .rl:focus > .rl-pop { display:block; }
+  .rl-pop .t { font-weight:700; }
+  .rl-pop .m { color:var(--fg-muted); }
   /* An ask in an agent's balloon (askCardHtml): its question, a button per
      answer (Default buttons, the recommended one marked by a neutral lozenge,
      never by colour), and a comment. Answered, the buttons settle. */
@@ -1500,12 +1561,8 @@
     .msg:not(.user) { border-color:transparent; background:transparent; }
     .msg .from { font-size:var(--fs-200); font-weight:400; text-transform:none; letter-spacing:0; color:var(--fg-muted); margin-bottom:var(--s-100); }
     .msg.claude .from, .msg.codex .from { color:var(--fg-muted); }
-    .msg .from .who { color:var(--fg-subtle); font-weight:500; }
-    .msg.claude:not(.user) > .from::before, .msg.codex:not(.user) > .from::before {
-      display:inline-grid; place-items:center; width:20px; height:20px; margin-right:var(--s-200); vertical-align:middle;
-      border-radius:var(--r-full); font-size:var(--fs-100); font-weight:600; line-height:1; }
-    .msg.claude:not(.user) > .from::before { content:"C"; background:var(--agent-claude-bg); color:var(--agent-claude-fg); }
-    .msg.codex:not(.user) > .from::before { content:"X"; background:var(--agent-codex-bg); color:var(--agent-codex-fg); }
+    .msg.user.has-under:not(.hub) { border:0; background:transparent; }
+    .msg.user.has-under > .bal { border:1px solid transparent; }
   }
   /* ---- Phone (SKILL.md §8) ---------------------------------------------
      Keyed on a touch screen, not on width: on a desktop this page sits in the
@@ -3269,11 +3326,82 @@ function recipientName(m, N = CHAT_NAMES) {
   if (m.to && m.to !== 'all') return whoName(m.to, N);
   return N.po && (m.from === 'user' || m.from === 'ensemble') ? 'PO' : '';
 }
-function whoHtml(m, N = CHAT_NAMES) {
-  const hub = m.from === 'ensemble' || (isHubInput(m) && !taskReport(m));
-  const to = recipientName(m, N);
-  return `<span class="who${hub ? ' hub-who' : ''}">${esc(senderName(m, N))}</span>`
-    + (to ? ` <span class="to">→ ${esc(to)}</span>` : '');
+// Who sent a message, as one label (#361): the role, filled in its colour
+// (PO, engineer, reviewer, another role), the person outlined by name, an
+// outside sender in amber with "outside line", the hub quiet. A task's
+// agents are named by role, never by agent kind: a handover can move a seat
+// from one kind to another, and the hover says who sat in it (m.seat, which
+// the hub records on each message from #361 on; older ones show the role).
+const roleWord = r => String(r || '').split(':')[0].trim();
+const roleCls = r => r === 'PO' ? 'po' : (r === 'engineer' || r === 'reviewer') ? r : 'other';
+// A seat's role now, from the room's participants ('' when not known).
+function seatRole(id) {
+  const room = typeof ROOM_OBJ !== 'undefined' && ROOM_OBJ;
+  const p = room && Array.isArray(room.participants) ? room.participants.find(x => x.identity === id) : null;
+  return p ? roleWord(p.role) : '';
+}
+// { cls, text, note }: the label a message's sender takes.
+function roleLabel(m, N = CHAT_NAMES) {
+  const st = m.senderType || '';
+  // A line from outside (POST /api/room/notify) carries noticeKind 'external'; a PO view's copy, senderType.
+  if (st === 'external' || (m.kind === 'notice' && m.noticeKind === 'external')) return { cls: 'outside', text: String(m.senderLabel || 'Outside sender'), note: 'outside line' };
+  if (isPoMsg(m) || st === 'po') return { cls: 'po', text: senderName(m, N) };
+  const t = taskReport(m);
+  // A report: its sender's role in the label; the task and the review round beside it, quiet.
+  if (t) { const rev = reportBase(m) === 'review', r = rev ? reviewRound(m) : 0;
+    return { cls: rev ? 'reviewer' : 'engineer', text: rev ? 'reviewer' : 'engineer', note: taskName(t, N) + (r ? ' · review ' + r : '') }; }
+  if (m.from === 'ensemble' || isHubInput(m)) return { cls: 'hub', text: senderName(m, N) };
+  if (m.from === 'user') return { cls: 'person', text: N.operator };
+  if (N.po && (m.from === N.po || SEAT_ID_RE.test(String(m.from || '')))) return { cls: 'po', text: 'PO' };
+  const role = roleWord(m.seat && m.seat.role) || seatRole(m.from);
+  if (TASK_ADDR_RE.test(String(m.from || ''))) return { cls: role ? roleCls(role) : 'other', text: whoName(m.from, N) };
+  return role ? { cls: roleCls(role), text: role } : { cls: 'other', text: whoName(m.from, N) };
+}
+// The recipient's word in a task chat ("you", "reviewer"); none in a PO's room,
+// where every message is between the person and the PO.
+function roleTo(m, N = CHAT_NAMES) {
+  if (N.po || isPoMsg(m) || !m.to || m.to === 'all') return '';
+  if (m.to === 'user') return 'you';
+  return seatRole(m.to) || whoName(m.to, N);
+}
+// The agents each seat held, in the drawn order (seatHistory): from → [{agent, model, ts}].
+let SEAT_HIST = new Map();
+function seatHistory(items) {
+  const h = new Map();
+  for (const m of items || []) {
+    if (!m || !m.seat || !m.seat.agent) continue;
+    const l = h.get(m.from) || [];
+    l.push({ id: m.id, agent: m.seat.agent, model: m.seat.model || '', ts: m.ts || 0 });
+    h.set(m.from, l);
+  }
+  return h;
+}
+const kindWord = a => { a = String(a || ''); return a ? a[0].toUpperCase() + a.slice(1) : ''; };
+const hhmm = ts => ts ? new Date(ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }) : '';
+// The hover of a label: the role, who wrote this message, and the kind that
+// sat in the seat before, until when ('' without a seat on the message).
+function seatPopHtml(m, role, hist = SEAT_HIST) {
+  const s = m.seat;
+  if (!s || !s.agent) return '';
+  const lines = [`<span class="t">${esc(role)}</span>`,
+    `This message: ${esc([kindWord(s.agent), s.model, m.from].filter(Boolean).join(' · '))}`];
+  const l = hist.get(m.from) || [];
+  const i = l.findIndex(x => x.id === m.id);
+  for (let j = (i < 0 ? l.length : i) - 1; j >= 0; j--) {
+    if (l[j].agent === s.agent) continue;
+    lines.push(`<span class="m">Earlier in this seat: ${esc([kindWord(l[j].agent), l[j].model].filter(Boolean).join(' · '))}${l[j].ts ? ', until ' + esc(hhmm(l[j].ts)) : ''}</span>`);
+    break;
+  }
+  return `<span class="rl-pop" role="tooltip">${lines.join('<br>')}</span>`;
+}
+// o.pop: a full balloon, whose label opens its hover (a folded row is a button: none).
+function whoHtml(m, N = CHAT_NAMES, o = {}) {
+  const r = roleLabel(m, N);
+  const pop = o.pop ? seatPopHtml(m, r.text) : '';
+  const to = roleTo(m, N);
+  return `<span class="who rl ${r.cls}${r.cls === 'hub' ? ' hub-who' : ''}"${pop ? ' tabindex="0"' : ''}>${esc(r.text)}${pop}</span>`
+    + (r.note ? `<span class="rl-note">${esc(r.note)}</span>` : '')
+    + (to ? ` <span class="to">→ <b>${esc(to)}</b></span>` : '');
 }
 // The agent kind a balloon is coloured by: codex-2@room-… is a codex.
 const agentClass = id => String(id || '').split('@')[0].replace(/-\d+$/, '');
@@ -4248,7 +4376,7 @@ function foldBalloonHtml(m, i, how, o) {
   const key = esc(foldKey(m, i));
   const hub = isHubInput(m);
   const cls = (m.from === 'user' ? 'user' : esc(agentClass(m.from))) + (hub ? ' hub' : '');
-  const who = whoHtml(m) + stampHtml(m.ts) + (hub ? '' : sendHowHtml(m));
+  const who = whoHtml(m, CHAT_NAMES, { pop: how !== 'row' }) + stampHtml(m.ts) + (hub ? '' : sendHowHtml(m));
   if (how === 'row') {
     const chips = foldChips(m, o.un, o.idle, o.superseded);
     // o.plain: the line's words as the reader sees them (a balloon link as its chip's words).
@@ -4259,10 +4387,40 @@ function foldBalloonHtml(m, i, how, o) {
   const fb = o.open ? '<button type="button" class="fold-btn" title="Fold this message again" aria-expanded="true">Fold</button>' : '';
   // o.act: the balloon's own action in its header (Copy link).
   // o.pts: the bar of the person's points it holds or answers (pointBarHtml).
-  // o.body: the text and its bars drawn otherwise (a message of numbered points).
-  const body = (o.body && o.body(m)) || `<div class="text md">${o.md(m.text)}</div>${o.pts ? o.pts(m) : ''}`;
+  // o.body: the text and its bars drawn otherwise (an agent's asks), or, for
+  // the person's numbered points, { html, under }: the items, and their states.
+  // The person's own balloon keeps the state of its points under it, as a
+  // caption (#361, option B): the balloon is .bal, the caption .pt-under; a
+  // reply's "Re <link>:" is a strip on top (replyStrip).
+  const mine = m.from === 'user' && !hub;
+  const rs = mine ? replyStrip(m) : null;
+  const own = o.body && o.body(rs ? { ...m, text: rs.text } : m);
+  const items = mine && own && typeof own === 'object' ? own : null;
+  const under = items ? items.under : mine && o.pts ? o.pts(m) : '';
+  const body = items ? (rs ? rs.html : '') + items.html
+    : (!mine && typeof own === 'string' && own) || `${rs ? rs.html : ''}<div class="text md">${o.md(rs ? rs.text : m.text)}</div>${!mine && o.pts ? o.pts(m) : ''}`;
   // o.reacts: the person's quick reactions to it (reactRowHtml).
-  return `<div class="msg ${cls}" data-mid="${esc(m.id || '')}" data-key="${key}" data-from="${esc(m.from || '')}"><div class="from${fb ? ' fold-head" title="Fold this message again' : ''}">${fb}${o.act ? o.act(m) : ''}${who}${chips}</div>${body}${o.reacts ? o.reacts(m) : ''}</div>`;
+  const inner = `<div class="from${fb ? ' fold-head" title="Fold this message again' : ''}">${fb}${o.act ? o.act(m) : ''}${who}${chips}</div>${body}${o.reacts ? o.reacts(m) : ''}`;
+  const attrs = `data-mid="${esc(m.id || '')}" data-key="${key}" data-from="${esc(m.from || '')}"`;
+  return under ? `<div class="msg ${cls} has-under" ${attrs}><div class="bal">${inner}</div><div class="pt-under">${under}</div></div>`
+    : `<div class="msg ${cls}" ${attrs}>${inner}</div>`;
+}
+// A reply (#361): the person's words starting "Re <link to a message>:" show
+// the link as a strip on top of the balloon, "↩ replying to PO · 09:09
+// “…” ↑", and go on without it. null until the hub has resolved the link.
+const REPLY_QUOTE_HEAD_RE = /^\s*re\s+(?:P\d+[a-z]?(?:\s*\([^)]*\))?|https?:\/\/[^\s<>]+?)\s*:\s*/i;
+const REPLY_HEAD_RE = /^\s*re\s+(https?:\/\/[^\s<>]+?):(?=\s|$)\s*/i;
+function replyStrip(m) {
+  const t = String(m.text || ''), x = t.match(REPLY_HEAD_RE);
+  const ref = x && refOfUrl(x[1]);
+  if (!ref) return null;
+  const r = refInfo(ref.room, ref.msg);
+  if (!r || r.state !== 'ok') return null;
+  // The quote drops the replied-to message's own "Re P12:" / "Re <link>:" head.
+  const prev = refPreview({ ...r, text: String(r.text || '').replace(REPLY_QUOTE_HEAD_RE, '') }), when = hhmm(r.ts);
+  return { text: t.slice(x[0].length), html: `<a class="ref-chip reply-strip" href="${esc(refHref(ref.room, ref.msg, ref.part))}" data-ref-room="${esc(ref.room)}" data-ref-msg="${esc(ref.msg)}" data-ref-part="${esc(ref.part)}"`
+    + ` title="Go to the message you replied to"><span class="rs-arrow" aria-hidden="true">↩</span><b>${esc('replying to ' + [refWho(r), when].filter(Boolean).join(' · '))}</b>`
+    + `${prev ? `<span class="q">“${esc(prev)}”</span>` : ''}<span class="up" aria-hidden="true">↑</span></a>` };
 }
 // ---- A task's older messages fold under its latest -------------------------
 // Between two of the person's own messages, what belongs to one task (its
@@ -4562,7 +4720,7 @@ function pointMaps(pv) {
   const P = { items: ((pv && pv.items) || []).map(ptItem), byMid: new Map(), byAnswer: new Map(), byId: new Map(), keep: new Set(),
     unacked: new Set(), approvals: new Set((pv && pv.approvals) || []), dones: new Set((pv && pv.dones) || []), asks: (pv && pv.asks) || {}, asksSettledAt: (pv && pv.asksSettledAt) || 0, open: (pv && pv.open) || 0,
     planned: (pv && pv.planned) || 0, delivered: (pv && (pv.delivered != null ? pv.delivered : pv.answered)) || 0,
-    needs: (pv && pv.needs) || null, threads: (pv && pv.threads) || [] };
+    needs: (pv && pv.needs) || null, threads: (pv && pv.threads) || [], turnEnds: (pv && pv.turnEnds) || {} };
   P.askMids = P.needs ? new Set((P.needs.decisions || []).map(c => c.mid)) : null;
   const add = (map, k, p) => { if (!k) return; const l = map.get(k); if (!l) map.set(k, [p]); else if (!l.includes(p)) l.push(p); };
   for (const p of P.items) {
@@ -4620,6 +4778,90 @@ function ptThreadHtml(p, P, href) {
   if (down) bits.push(`<span class="pt-chip pt-thread">followed up by ${down.mid ? ptLink(down.mid, down.id + ' ↓', href, `Go to ${down.id}, your follow-up`, 'pt:' + down.id) : esc(down.id)}</span>`);
   return bits.join('');
 }
+// ---- A request's state, under the person's balloon (#361) ----
+// Each point the person's message holds says plainly what became of it:
+// received, working on it (with the agent's step now), in progress in a
+// task, waiting for you, done, you replied. P.drawn: the items on screen.
+// The room's agents at work (renderActivity); none on a page that does not know.
+const ptWorkers = () => (typeof TAIL_WORKING !== 'undefined' && TAIL_WORKING) || [];
+// "On it" answers this page saw the agent stop after: done from then on (Q2).
+const PT_SETTLED = new Set();
+// An "on it" answer whose agent full state reads found not at work, since it
+// was drawn, in a row: mid → { at: the first of them (ms), n }; a stop is two
+// or more spanning PT_STOP_MS (renderActivity).
+const PT_QUIET = new Map();
+const PT_STOP_MS = 15000;
+// Whether a drawn message after mid passes test; null when mid is not drawn.
+function ptAfter(P, mid, test) {
+  const items = (P && P.drawn) || [];
+  const i = mid ? items.findIndex(x => x && x.id === mid) : -1;
+  if (i < 0) return null;
+  for (let j = i + 1; j < items.length; j++) if (test(items[j])) return true;
+  return false;
+}
+const isAgentMsg = x => !!x && x.from !== 'user' && x.from !== 'ensemble' && !isPoMsg(x);
+// The working agent a point's step line follows: the one that wrote mid, else the first.
+function ptWorker(P, mid) {
+  const w = ptWorkers();
+  if (!w.length) return null;
+  const by = mid ? ((P && P.drawn) || []).find(x => x && x.id === mid) : null;
+  return (by && w.find(a => a.identity === by.from)) || w[0];
+}
+// An "on it" answer (implicit) still being worked on (Q2): the agent that wrote
+// it works now, no one else wrote after it, its turn has not ended since (the
+// hub's turnEnds: every device, after a reload) and this page has not seen it
+// stop (PT_SETTLED: an agent without hooks).
+function ptStillWorking(p, P) {
+  const a = curAnswer(p);
+  if (!a || a.how !== 'implicit' || !a.mid || PT_SETTLED.has(a.mid)) return false;
+  const by = ((P && P.drawn) || []).find(x => x && x.id === a.mid);
+  if (!by || !by.from || !ptWorkers().some(w => w.identity === by.from)) return false;
+  if (Number(((P && P.turnEnds) || {})[by.from] || 0) > Number(by.ts || 0)) return false;
+  return ptAfter(P, a.mid, x => !!x && x.from !== by.from) === false;
+}
+// The agent's step now, filled in by fillNowLines from its terminal.
+const ptNowHtml = w => w && w.ptyId ? `<div class="pt-now" data-pty="${esc(w.ptyId)}"><span class="now">now:</span><span class="ln"></span><span class="ago"></span></div>` : '';
+// Where a planned point's task is: a link to the task, its number and title
+// ('' for a task merged or not found: its words then link to the plan).
+function ptTaskHtml(p) {
+  const t = p.task || {};
+  if (!t.ref || t.done || !t.roomId) return '';
+  const words = t.ref + (t.title ? ' ' + ptWords(t.title, 40) : '');
+  return `<a class="pt-task" href="${esc('/session?id=' + encodeURIComponent(t.roomId))}" data-task="${esc(t.roomId)}" title="${esc('Open task ' + t.ref + (t.workflowName ? ' (' + t.workflowName.toLowerCase() + ')' : ''))}">${esc(words)} ↗</a>`;
+}
+function ptStateHtml(p, P, href) {
+  const a = ptAnswerOf(p);
+  const go = (t, tip) => a && a.mid ? ptLink(a.mid, t, href, tip, 're:' + p.id) : esc(t);
+  const st = (cls, inner) => `<span class="pt-st ${cls}">${inner}</span>`;
+  const dot = '<span class="dot" aria-hidden="true"></span>';
+  const quiet = t => `<span class="pt-chip">${esc(t)}</span>`;
+  const drop = ptBtn(p.id, 'drop', 'Drop', `Drop ${p.id}: you no longer need an answer`);
+  const reopen = ptBtn(p.id, 'reopen', 'Reopen', `Reopen ${p.id}: it waits for an answer again`);
+  const bits = [`<span class="pt-chip pt-id" data-pt-id="${esc(p.id)}" data-pt-state="${esc(p.state)}">${esc(p.id)}</span>`];
+  const up = p.replyTo ? ptThreadHtml({ replyTo: p.replyTo, quote: p.quote }, P, href) : '';
+  if (p.state === 'open') {
+    const w = ptAfter(P, p.mid, isAgentMsg) !== true ? ptWorker(P, null) : null;
+    if (w) bits.push(st('working', dot + 'working on it'), up, drop, ptNowHtml(w));
+    else bits.push(st('received', 'received'), quiet('not started yet'), up, drop);
+  } else if (p.state === 'planned') {
+    const task = ptTaskHtml(p) || (ptTaskWords(p) ? go(ptTaskWords(p) + ' ↓', 'Go to the plan') : ''), w = !task ? ptWorker(P, a && a.mid) : null;
+    bits.push(task ? st('working', dot + 'in progress — ' + task)
+      : st('working', (w ? dot + 'working on it' : 'in progress') + ' — ' + go('see the plan ↓', 'Go to the plan')), up, drop, ptNowHtml(w));
+  } else if (p.state === 'delivered') {
+    const c = curAnswer(p), asks = P.askMids;
+    // Waiting while the answer holds a question card still open, wherever the Inbox files it.
+    const card = mid => { const m = mid && ((P.drawn || []).find(x => x && x.id === mid)); return !!m && openAsks(m, P).length > 0; };
+    if ((asks && ((c && asks.has(c.mid)) || (a && asks.has(a.mid)))) || card(c && c.mid) || card(a && a.mid)) bits.push(st('waiting', 'waiting for you — ' + go('answer the question ↓', 'Go to the question')), up);
+    else if (ptStillWorking(p, P)) bits.push(st('working', dot + 'working on it'), up, drop, ptNowHtml(ptWorker(P, c.mid)));
+    else bits.push(st('done', 'done — ' + go('see the answer ↓', 'Go to the answer')), up);
+  } else if (p.state === 'acked') {
+    bits.push(st('done', 'done — ' + go('see the answer ↓', 'Go to the answer')), quiet('acknowledged'), up, reopen);
+  } else if (p.state === 'followed') {
+    const down = p.followedBy && P.byId.get(p.followedBy);
+    bits.push(down && down.mid ? `<span class="pt-chip">${ptLink(down.mid, 'you replied ↓', href, `Go to ${down.id}, your follow-up`, 'pt:' + down.id)}</span>` : quiet('you replied'), up, reopen);
+  } else bits.push(quiet(PT_WORD[p.state] || p.state), up, p.state === 'dropped' ? reopen : '');
+  return bits.join('');
+}
 // The bar under a balloon: on the person's own, each point it holds and where
 // it stands; on an agent's, the points it answers and the Ack that closes
 // each; an older Go ahead or Done on it as a chip. Done and Go ahead are now
@@ -4627,17 +4869,8 @@ function ptThreadHtml(p, P, href) {
 function pointBarHtml(m, P, href, pick) {
   if (!m || !m.id || !P) return '';
   const bits = [];
-  for (const p of (P.byMid.get(m.id) || []).filter(p => !pick || pick(p))) {
-    // Linked down to its answer whatever the state, so an acknowledged
-    // question read again still leads to what answered it; a planned one
-    // to its plan, with where its task is; a followed-up one to its follow-up.
-    const a = ptAnswerOf(p);
-    const word = p.id + ' · ' + (p.state === 'planned' && ptTaskWords(p) ? 'in progress, ' + ptTaskWords(p) : (PT_WORD[p.state] || p.state));
-    bits.push(`<span class="pt-chip ${esc(p.state)}" data-pt-id="${esc(p.id)}">${a && a.mid ? ptLink(a.mid, word + ' ↓', href, isPlan(a) ? 'Go to the plan' : 'Go to the answer', 're:' + p.id) : esc(word)}</span>`);
-    bits.push(ptThreadHtml(p, P, href));
-    if (p.state === 'open' || p.state === 'planned') bits.push(ptBtn(p.id, 'drop', 'Drop', `Drop ${p.id}: you no longer need an answer`));
-    if (p.state === 'acked' || p.state === 'dropped' || p.state === 'followed') bits.push(ptBtn(p.id, 'reopen', 'Reopen', `Reopen ${p.id}: it waits for an answer again`));
-  }
+  // Each says what became of it, linked down to its answer, plan or follow-up (ptStateHtml).
+  for (const p of (P.byMid.get(m.id) || []).filter(p => !pick || pick(p))) bits.push(ptStateHtml(p, P, href));
   for (const p of P.byAnswer.get(m.id) || []) {
     // A plan: "plans P12", never an Ack (the work is not live yet).
     const here = (p.answers || []).filter(x => x.mid === m.id);
@@ -4646,7 +4879,8 @@ function pointBarHtml(m, P, href, pick) {
     bits.push(`<span class="pt-chip">${p.mid && p.mid !== m.id ? ptLink(p.mid, verb + p.id + ' ↑', href, 'Go to your message', 'pt:' + p.id) : esc(verb + p.id)}</span>`);
     const a = curAnswer(p);
     if (plans) { if (p.state === 'planned' && ptTaskWords(p)) bits.push(`<span class="pt-chip">${esc(ptTaskWords(p))}</span>`); }
-    else if (p.state === 'delivered' && a && a.mid === m.id) bits.push(ackBtn(p.id) + commentBtn(p.id));
+    // An "on it" answer still being worked on takes no Ack yet (Q2).
+    else if (p.state === 'delivered' && a && a.mid === m.id) { if (!ptStillWorking(p, P)) bits.push(ackBtn(p.id) + commentBtn(p.id)); }
     else if (p.state === 'acked') bits.push(`<span class="pt-chip">acknowledged</span>`);
     else if (p.state === 'followed') bits.push(ptThreadHtml({ followedBy: p.followedBy }, P, href) || '<span class="pt-chip">followed up</span>');
   }
@@ -4672,8 +4906,13 @@ function pointItemsHtml(m, it, P, href, md) {
   const bars = own.map(p => pointBarHtml(m, P, href, x => x === p));
   const headBar = withHead ? bars.shift() : '';
   const rest = pointBarHtml(m, P, href, x => !own.includes(x));
-  // Each item drawn on its own, so the whole message's paths are read first.
-  return `<div class="text md">${withPathAbbrevs(m.text, () => itemsHtml(it, bars, md, headBar))}</div>${rest}`;
+  // Each item drawn on its own, so the whole message's paths are read first;
+  // their states go under the balloon, in the items' order (#361, option B).
+  // Each item keeps its point's id (a hidden anchor), so a link to it ("pt:P12") lands on the item.
+  const at = own.map(p => `<span class="pt-at" data-pt-at="${esc(p.id)}" hidden></span>`);
+  if (withHead) at.shift();
+  return { html: `<div class="text md">${withPathAbbrevs(m.text, () => itemsHtml(it, at, md, ''))}</div>`,
+    under: [headBar, ...bars, rest].join('') };
 }
 // The points as the room's poll last gave them.
 let POINTS = pointMaps(null);
@@ -4857,6 +5096,9 @@ function renderBubbles(items, opt = {}) {
   FOLD.hid = new Set([...hiddenIn.keys()].map(i => foldKey(items[i], i)));
   const sup = supersededMap(items);
   CHAT_VIEW = { items, sup };
+  // What the points' states and the labels' hovers read (#361): the items in order.
+  POINTS.drawn = items;
+  SEAT_HIST = seatHistory(items);
   items.forEach((m, i) => {
     const no = m.taskNo || titleNo(m.taskTitle);
     if (no && /^room-/.test(m.taskId || '')) ROOM_NOS.set(m.taskId, { no });
@@ -4987,6 +5229,7 @@ function renderBubbles(items, opt = {}) {
       : '') + '</div>'));
   const focus = askFocusKeep(box);
   patchChildren(box, rows);
+  try { fillNowLines(); } catch (e) {}
   if (tlist) ageTick(box);
   askRestoreDrafts(box);
   focus();
@@ -5657,7 +5900,8 @@ function partOf(el, part) {
   const text = el.querySelector('.text.md');
   if (m[1] === 'pt') {
     const chip = [...el.querySelectorAll('.pt-chip[data-pt-id]')].find(x => x.dataset.ptId === m[2]);
-    return chip ? chip.closest('li.pt-item') : null;
+    const at = [...el.querySelectorAll('li.pt-item [data-pt-at]')].find(x => x.dataset.ptAt === m[2]);
+    return at ? at.closest('li.pt-item') : chip ? chip.closest('li.pt-item') : null;
   }
   if (!text) return null;
   if (m[1] === 're') {
@@ -8262,12 +8506,12 @@ function agentState(a, ptyMap, liveMap) {
   return ptyState(ptyMap[a.ptyId]);
 }
 async function updateAgentStatus() {
-  let ptys = [], live = [];
+  let ptys = [], live = [], ok = true;
+  // A read that failed is drawn as nothing, but says so (ok): no stop is
+  // concluded from it (#361).
+  const read = u => fetch(u).then(r => { if (!r.ok) throw new Error(u); return r.json(); }).then(v => Array.isArray(v) ? v : (ok = false, [])).catch(() => { ok = false; return []; });
   try {
-    [ptys, live] = await Promise.all([
-      fetch('/api/ptys').then(r => r.json()).catch(() => []),
-      fetch('/api/live').then(r => r.json()).catch(() => []),
-    ]);
+    [ptys, live] = await Promise.all([read('/api/ptys'), read('/api/live')]);
   } catch(e) { return; }
   const map = {}; ptys.forEach(x => map[x.id] = x);
   const lmap = {}; (live || []).forEach(x => { if (x.sessionId) lmap[x.sessionId] = x.status; });
@@ -8279,7 +8523,7 @@ async function updateAgentStatus() {
     const stat = document.querySelector('.astat[data-pty="' + dot.dataset.pty + '"]');
     setText(stat, s.txt);
   });
-  renderActivity(map, lmap);
+  renderActivity(map, lmap, ok);
   updateStopControl(map, lmap);
   // A message of the person's still without an answer says so once the agent
   // has stopped working (a stopped session is not working either).
@@ -8449,9 +8693,28 @@ document.addEventListener('keydown', e => {
 }, true);
 
 // The live tail follows the working agents; the state is said once (#232).
-function renderActivity(ptyMap, liveMap) {
+function renderActivity(ptyMap, liveMap, ok = true) {
   const agents = ROOM_AGENTS.filter(a => a.ptyId || a.sessionId);
-  TAIL_WORKING = ROOM_LIVE ? agents.filter(a => a.ptyId && agentState(a, ptyMap, liveMap || {}).cls === 'working') : [];
+  const was = TAIL_WORKING.map(a => a.identity + '\u0001' + a.ptyId).join('|');
+  // A read that failed (ok false: /api/ptys or /api/live did not answer) is no
+  // news: who works stays as last read, so an "on it" answer still being
+  // worked on never shows done (with its Ack) for it (#361).
+  if (ok) TAIL_WORKING = ROOM_LIVE ? agents.filter(a => a.ptyId && agentState(a, ptyMap, liveMap || {}).cls === 'working') : [];
+  // Its agent stopped: an "on it" answer is done from now on (#361, Q2). A
+  // stop is full reads in a row, since the answer was drawn, that found its
+  // agent not at work: at least two, PT_STOP_MS apart or more. A working or a
+  // failed read starts the count again; reads before the answer never count.
+  const busy = new Set(TAIL_WORKING.map(a => a.identity)), drawn = POINTS.drawn || [], now = Date.now();
+  for (const p of POINTS.items || []) {
+    const c = curAnswer(p), by = c && c.mid && c.how === 'implicit' && !PT_SETTLED.has(c.mid) ? drawn.find(x => x && x.id === c.mid) : null;
+    if (!by) continue;
+    if (!ok || busy.has(by.from)) { PT_QUIET.delete(c.mid); continue; }
+    const q = PT_QUIET.get(c.mid);
+    if (!q) PT_QUIET.set(c.mid, { at: now, n: 1 });
+    else if (++q.n >= 2 && now - q.at >= PT_STOP_MS) { PT_SETTLED.add(c.mid); PT_QUIET.delete(c.mid); }
+  }
+  // Who works changed: the requests' states under the balloons say it.
+  if (TAIL_WORKING.map(a => a.identity + '\u0001' + a.ptyId).join('|') !== was && LAST_ITEMS) renderBubbles(LAST_ITEMS);
   renderLiveTail();
   STATE_MAPS = { pty: ptyMap || {}, live: liveMap || {} };
   showState();
@@ -8734,7 +8997,32 @@ document.addEventListener('click', (e) => {
   if (TAIL_POP_PTY && pop && !pop.contains(e.target)) closeTailPop();
 });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && TAIL_POP_PTY) closeTailPop(); });
-setInterval(() => { renderLiveTail(); updateTailPop(); }, 600);
+setInterval(() => { renderLiveTail(); updateTailPop(); fillNowLines(); }, 600);
+// The "now:" line under a request being worked on (#361): the agent's last
+// step on its terminal, and how long ago that line last changed.
+const NOW_SEEN = new Map();   // pty → { line, at }
+function nowAgo(ms) {
+  const s = Math.max(0, Math.round(ms / 1000));
+  return s < 60 ? s + ' s ago' : Math.round(s / 60) + ' min ago';
+}
+function fillNowLines() {
+  const els = document.querySelectorAll('#msgs .pt-now[data-pty]');
+  if (!els.length) return;
+  const t = Date.now(), lines = new Map();
+  for (const el of els) {
+    const pty = el.dataset.pty;
+    if (!lines.has(pty)) {
+      const l = (ensureTermFor(pty) ? tailLines(pty, 1)[0] : '') || '';
+      const seen = NOW_SEEN.get(pty);
+      if (!seen || seen.line !== l) NOW_SEEN.set(pty, { line: l, at: t });
+      lines.set(pty, NOW_SEEN.get(pty));
+    }
+    const s = lines.get(pty), ln = el.querySelector('.ln'), ago = el.querySelector('.ago');
+    const words = s.line || '…', when = s.line ? nowAgo(t - s.at) : '';
+    if (ln && ln.textContent !== words) { ln.textContent = words; ln.title = s.line; }
+    if (ago && ago.textContent !== when) ago.textContent = when;
+  }
+}
 
 // ---- Surface the agent's current prompt when it's waiting on you ----------
 // Read the terminal's emulated screen (xterm buffer = clean text, unlike the raw
@@ -11083,7 +11371,7 @@ $('#msgs').addEventListener('click', e => {
   const fb = e.target.closest && e.target.closest('.fold-btn');
   if (fb) { foldToggle(fb.closest('.msg'), false); return; }
   // An opened balloon's header folds it; what is in it keeps its own click (#333).
-  const fh = e.target.closest && e.target.closest('.msg > .from.fold-head');
+  const fh = e.target.closest && e.target.closest('.msg > .from.fold-head, .msg > .bal > .from.fold-head');
   if (fh && !e.target.closest('a, button, input, select, textarea, summary, label, [role="button"], .ref-chip, .chips, .chip')
       && !textPickedIn(fh.closest('.msg'))) { foldToggle(fh.closest('.msg'), false); return; }
   const sb = e.target.closest && e.target.closest('.send-retry, .send-discard, .send-hide');

@@ -222,8 +222,19 @@ class InboxTest(unittest.TestCase):
                                    "who": "codex"}]
         out = self.build()
         lines = sorted(r["line"] for r in out["rows"] + out["older"])
-        self.assertEqual(lines, ["Question from claude", "Question from claude", "Question from codex",
-                                 "Question from codex", "Ship it?"])
+        # #361: a PO chat's card is the PO's, whichever agent sits in its seat.
+        self.assertEqual(lines, ["Question from codex", "Question from codex", "Question from the PO",
+                                 "Question from the PO", "Ship it?"])
+
+    def test_a_tasks_ask_names_the_seat_by_its_role(self):
+        # #361: "The engineer asks", not the agent's kind; the PO's chat "The PO asks".
+        s = {"participants": [{"identity": "claude", "kind": "agent", "role": "engineer: owns it"},
+                              {"identity": "codex", "kind": "agent", "role": "reviewer"}]}
+        self.assertEqual(inbox._asker(s, "claude", False), "the engineer")
+        self.assertEqual(inbox._asker(s, "codex", False), "the reviewer")
+        self.assertEqual(inbox._asker(s, "codex", True), "the PO")
+        self.assertEqual(inbox._asker(s, "gemini", False), "gemini")
+        self.assertEqual(inbox._asker({}, "", False), "an agent")
 
     def test_older_questions_are_dropped_with_reason(self):
         old = {"mid": "o1", "n": 0, "question": "Old?", "ts": NOW - 9000, "who": "po", "why": "past"}
@@ -234,7 +245,7 @@ class InboxTest(unittest.TestCase):
 
     def test_older_questions_come_in_older_newest_first_with_their_ids(self):
         # #310: the Inbox lists them under Older questions so they can be closed.
-        a = {"mid": "o1", "n": 0, "question": "Old?", "ts": NOW - 9000, "who": "po", "why": "past", "task": "#7"}
+        a = {"mid": "o1", "n": 0, "question": "Old?", "ts": NOW - 9000, "who": "Claude", "why": "past", "task": "#7"}
         b = {"mid": "o2", "n": 2, "question": "Newer?", "ts": NOW - 600, "who": "po", "why": "again"}
         self.w.decisions[PO] = ([], [a, b])
         m = self.w.module()
@@ -253,6 +264,8 @@ class InboxTest(unittest.TestCase):
         self.assertTrue(all(r["older"] and r["kind"] == "answer" for r in out["older"]))
         self.assertEqual((out["older"][1]["taskRef"], out["older"][1]["taskState"]), ("#7", "stopped"))
         self.assertNotIn("taskState", out["older"][0])
+        # #361: an older card names the seat by its role, as the open row does, never an identity.
+        self.assertEqual([r["reason"] for r in out["older"]], ["The PO asks"] * 2)
         self.assertEqual(inbox.build(project_id="proj-b", now=NOW)["olderCount"], 0)
 
     def test_one_answer_to_two_points_is_one_row(self):
