@@ -366,7 +366,7 @@ const vm = require('vm');
 const { code } = JSON.parse(require('fs').readFileSync(0, 'utf8'));
 const ctx = { attSplit: t => ({ words: String(t || ''), paths: [] }), stripRefBlocks: t => t, URL,
   fetch: () => new Promise(() => {}),       // a link the hub has not resolved yet stays pending
-  ROOM: 'room-po', SOLO_MODE: true, pointsChanged: () => {}, pointsNote: () => {}, TAIL_WORKING: [], ACT_IDLE: new Map(),
+  ROOM: 'room-po', SOLO_MODE: true, pointsChanged: () => {}, pointsNote: () => {}, TAIL_WORKING: [],
   withPathAbbrevs: (t, fn) => fn(), ATT_PREFIX: '[image] ', ATT_FILE_PREFIX: '[file] ',
   // renderActivity's world: the room's agents, who works (BUSY), nothing else drawn.
   ROOM_AGENTS: [{ identity: 'claude', ptyId: 'pty-1' }, { identity: 'codex', ptyId: 'pty-2' }], ROOM_LIVE: true, BUSY: new Set(),
@@ -376,7 +376,7 @@ ctx.cardTextHtml = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<
 vm.createContext(ctx);
 vm.runInContext(code + `
   globalThis.t = { CHAT_NAMES, pointMaps, pointBarHtml, ptStateHtml, ptStillWorking, ptAfter, ptWorker, ptWorkers, isAgentMsg,
-    ptNowHtml, ptTaskHtml, PT_SETTLED, foldBalloonHtml, replyStrip, REPLY_HEAD_RE, REPLY_QUOTE_HEAD_RE, openAsks, asksOf, REFS,
+    ptNowHtml, ptTaskHtml, PT_SETTLED, PT_QUIET, foldBalloonHtml, replyStrip, REPLY_HEAD_RE, REPLY_QUOTE_HEAD_RE, openAsks, asksOf, REFS,
     pointItems, pointItemsHtml, renderActivity, setPoints: v => { POINTS = v; } };`, ctx);
 const T = ctx.t;
 const out = {};
@@ -449,29 +449,38 @@ out.q2 = {
   otherWorks: q2({}, [W[1]]),                    // another agent works, the author does not: done
   pointMapsKeeps: T.pointMaps({ items: [], turnEnds: { claude: 5 } }).turnEnds, pointMapsNone: T.pointMaps({ items: [] }).turnEnds,
 };
-// renderActivity settles an "on it" answer whose author is not at work, even
-// while another agent works; one whose author works stays open.
+// renderActivity settles an "on it" answer once full reads in a row since it
+// was drawn found its author not at work: two or more, PT_STOP_MS apart.
 T.setPoints(P);
-// The page's first state read may come before the live states: it settles nothing.
-ctx.BUSY = new Set(['codex']); T.renderActivity({}, {});
-out.q2.settledFirst = T.PT_SETTLED.has('a3');
-ctx.BUSY = new Set(['claude', 'codex']); T.renderActivity({}, {});
+vm.runInContext('Date.now = () => globalThis.CLOCK', ctx);
+const read = (busy, ok = true, dt = 1000) => { ctx.CLOCK = (ctx.CLOCK || 0) + dt; ctx.BUSY = new Set(busy); T.renderActivity({}, {}, ok); };
+const look = () => ({ settled: T.PT_SETTLED.has('a3'), still: T.ptStillWorking(P.byId.get('P3'), P),
+  working: /working on it/.test(st('P3')), ack: /data-pt-act="ack"/.test(T.pointBarHtml({ id: 'a3', from: 'claude' }, P, href)) });
+const reset = () => { T.PT_SETTLED.delete('a3'); T.PT_QUIET.clear(); };
+// Reads before the answer was drawn never count: the first quiet read after it starts the count.
+P.drawn = drawn.filter(x => x.id !== 'a3'); read(['codex'], true, 20000); read(['codex'], true, 20000); P.drawn = drawn;
+read(['codex'], true, 1000);
+out.q2.preHistory = look();
+reset();
+// Its author at work: not settled; a failed read keeps who works, so it is still working on it, no Ack.
+read(['claude', 'codex']);
 out.q2.settledBusy = T.PT_SETTLED.has('a3');
-// A failed read (ok false: /api/ptys or /api/live did not answer) finds no one
-// at work, again and again: no stop, and the next working read is working on it.
-ctx.BUSY = new Set(); T.renderActivity({}, {}, false); T.renderActivity({}, {}, false);
-out.q2.failed = { settled: T.PT_SETTLED.has('a3'), still: T.ptStillWorking(P.byId.get('P3'), P) };
-ctx.BUSY = new Set(['claude', 'codex']); T.renderActivity({}, {});
-out.q2.failedThenWorking = { settled: T.PT_SETTLED.has('a3'), still: T.ptStillWorking(P.byId.get('P3'), P) };
-// One full read with the author not at work is a quiet moment, two in a row a stop.
-ctx.BUSY = new Set(['codex']); T.renderActivity({}, {});
-out.q2.settledOnce = T.PT_SETTLED.has('a3');
-T.renderActivity({}, {});
+read([], false); read([], false);
+out.q2.failed = look();
+// quiet → failed → quiet is no streak: the failed read starts it again.
+read(['codex'], true, 1000); read([], false, 20000); read(['codex'], true, 1000);
+out.q2.interrupted = look();
+reset(); read(['claude', 'codex']);
+// The page's quick first reads (250 ms apart): two quiet reads, not PT_STOP_MS apart, are no stop.
+read(['codex'], true, 250); read(['codex'], true, 250); read(['codex'], true, 250);
+out.q2.rapid = look();
+// Quiet reads in a row spanning PT_STOP_MS: a stop, done from then on.
+read(['codex'], true, 15000);
 out.q2.settledOther = T.PT_SETTLED.has('a3');
 out.q2.workingAfter = ctx.TAIL_WORKING.map(a => a.identity);
-ctx.BUSY = new Set(['claude', 'codex']); T.renderActivity({}, {});
+read(['claude', 'codex']);
 out.q2.afterSettle = { settled: T.PT_SETTLED.has('a3'), still: T.ptStillWorking(P.byId.get('P3'), P) };
-T.PT_SETTLED.delete('a3'); ctx.TAIL_WORKING = W;
+reset(); T.PT_SETTLED.delete('a3'); ctx.TAIL_WORKING = W;
 
 // The person's balloon: its words, then the state under it; a reply's strip on top.
 T.REFS.set('room-po|a9', { state: 'ok', from: 'claude', roomId: 'room-po', text: 'The columns are wider on a test board now.', ts: 1789552800 });
@@ -653,11 +662,12 @@ class BalloonStates(unittest.TestCase):
         self.assertIn('<span class="pt-st done">done — ', q["otherWorks"]["state"])
         self.assertIn('data-pt="P3" data-pt-act="ack"', q["otherWorks"]["agent"])
         self.assertEqual((q["pointMapsKeeps"], q["pointMapsNone"]), ({"claude": 5}, {}))
-        self.assertFalse(q["settledFirst"], "the page's first state read settles nothing")
+        self.assertFalse(q["preHistory"]["settled"], "quiet reads before the answer was drawn do not count")
         self.assertFalse(q["settledBusy"], "its author at work: not settled")
-        self.assertEqual(q["failed"], {"settled": False, "still": False}, "a failed read is no stop (shown as nobody working)")
-        self.assertEqual(q["failedThenWorking"], {"settled": False, "still": True}, "the next full read: working on it again")
-        self.assertFalse(q["settledOnce"], "one read with the author quiet: not yet a stop")
+        self.assertEqual(q["failed"], {"settled": False, "still": True, "working": True, "ack": False},
+                         "a failed read keeps who works: still working on it, no Ack")
+        self.assertFalse(q["interrupted"]["settled"], "quiet, failed, quiet: no streak")
+        self.assertFalse(q["rapid"]["settled"], "quick reads 250 ms apart: not yet a stop")
         self.assertTrue(q["settledOther"], "two reads in a row, its author stopped while another works: settled")
         self.assertEqual(q["workingAfter"], ["codex"])
         self.assertEqual(q["afterSettle"], {"settled": True, "still": False}, "settled stays done when the author works again")

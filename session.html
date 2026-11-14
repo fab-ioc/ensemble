@@ -4786,6 +4786,11 @@ function ptThreadHtml(p, P, href) {
 const ptWorkers = () => (typeof TAIL_WORKING !== 'undefined' && TAIL_WORKING) || [];
 // "On it" answers this page saw the agent stop after: done from then on (Q2).
 const PT_SETTLED = new Set();
+// An "on it" answer whose agent full state reads found not at work, since it
+// was drawn, in a row: mid → { at: the first of them (ms), n }; a stop is two
+// or more spanning PT_STOP_MS (renderActivity).
+const PT_QUIET = new Map();
+const PT_STOP_MS = 15000;
 // Whether a drawn message after mid passes test; null when mid is not drawn.
 function ptAfter(P, mid, test) {
   const items = (P && P.drawn) || [];
@@ -8691,19 +8696,22 @@ document.addEventListener('keydown', e => {
 function renderActivity(ptyMap, liveMap, ok = true) {
   const agents = ROOM_AGENTS.filter(a => a.ptyId || a.sessionId);
   const was = TAIL_WORKING.map(a => a.identity + '\u0001' + a.ptyId).join('|');
-  TAIL_WORKING = ROOM_LIVE ? agents.filter(a => a.ptyId && agentState(a, ptyMap, liveMap || {}).cls === 'working') : [];
+  // A read that failed (ok false: /api/ptys or /api/live did not answer) is no
+  // news: who works stays as last read, so an "on it" answer still being
+  // worked on never shows done (with its Ack) for it (#361).
+  if (ok) TAIL_WORKING = ROOM_LIVE ? agents.filter(a => a.ptyId && agentState(a, ptyMap, liveMap || {}).cls === 'working') : [];
   // Its agent stopped: an "on it" answer is done from now on (#361, Q2). A
-  // stop counts once two state reads in a row, both read in full (ok: neither
-  // /api/ptys nor /api/live failed), found the agent not at work: a failed
-  // read, the first read before the live states, or a PTY's quiet moment is
-  // not a stop.
-  const busy = new Set(TAIL_WORKING.map(a => a.identity)), drawn = POINTS.drawn || [];
-  if (ok) {
-    for (const a of agents) ACT_IDLE.set(a.identity, busy.has(a.identity) ? 0 : (ACT_IDLE.get(a.identity) || 0) + 1);
-    for (const p of POINTS.items || []) {
-      const c = curAnswer(p), by = c && c.mid && c.how === 'implicit' ? drawn.find(x => x && x.id === c.mid) : null;
-      if (by && !busy.has(by.from) && (!agents.some(a => a.identity === by.from) || ACT_IDLE.get(by.from) >= 2)) PT_SETTLED.add(c.mid);
-    }
+  // stop is full reads in a row, since the answer was drawn, that found its
+  // agent not at work: at least two, PT_STOP_MS apart or more. A working or a
+  // failed read starts the count again; reads before the answer never count.
+  const busy = new Set(TAIL_WORKING.map(a => a.identity)), drawn = POINTS.drawn || [], now = Date.now();
+  for (const p of POINTS.items || []) {
+    const c = curAnswer(p), by = c && c.mid && c.how === 'implicit' && !PT_SETTLED.has(c.mid) ? drawn.find(x => x && x.id === c.mid) : null;
+    if (!by) continue;
+    if (!ok || busy.has(by.from)) { PT_QUIET.delete(c.mid); continue; }
+    const q = PT_QUIET.get(c.mid);
+    if (!q) PT_QUIET.set(c.mid, { at: now, n: 1 });
+    else if (++q.n >= 2 && now - q.at >= PT_STOP_MS) { PT_SETTLED.add(c.mid); PT_QUIET.delete(c.mid); }
   }
   // Who works changed: the requests' states under the balloons say it.
   if (TAIL_WORKING.map(a => a.identity + '\u0001' + a.ptyId).join('|') !== was && LAST_ITEMS) renderBubbles(LAST_ITEMS);
@@ -8794,7 +8802,6 @@ document.addEventListener('visibilitychange', placeState);
 // popup with more of the screen. Everything here reads the local xterm buffer,
 // so the ticking costs no server calls.
 const TAIL_LINES = 3, TAIL_POP_LINES = 40;
-const ACT_IDLE = new Map(); // identity → full state reads in a row it was not at work (#361)
 let TAIL_WORKING = [];   // agents currently working: [{identity, ptyId, ...}]
 let TAIL_POP_PTY = '';   // pty whose popup is open ('' = closed)
 
