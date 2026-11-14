@@ -4003,6 +4003,8 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .ldp-n { flex: none; padding: 0 6px; border-radius: 8px; background: var(--c-neutral-bg); color: var(--c-neutral-fg);
     font-size: 10px; text-align: center; font-weight: 400; }
   .ldp-row[aria-current="true"] .ldp-n, .ldp-row[data-cur] .ldp-n { background: var(--surface); }
+  /* #360: older questions only: their number outlined, no fill, muted. */
+  .ldp-row .ldp-n.ldp-old { background: transparent; box-shadow: inset 0 0 0 1px var(--border-strong); color: var(--fg-muted); }
   .ldp-item { position: relative; display: flex; align-items: center; }
   .ldp-dots { position: absolute; right: 2px; top: 50%; transform: translateY(-50%); width: 24px; height: 22px; border: 0; border-radius: var(--r-200);
     background: var(--surface); color: var(--fg-subtle); font: inherit; cursor: pointer; opacity: 0; }
@@ -4169,6 +4171,15 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     background: var(--surface); font-size: 12px; line-height: 1.4; }
   .ibx-listed .ibx-row[data-stage="answer"], .ibx-listed .ibx-row[data-stage="waiting"], .ibx-listed .ibx-row[data-stage="older"] { border-left: 3px solid var(--c-warning-bold); }
   .ibx-listed .ibx-row[data-stage="check"] { border-left: 3px solid var(--c-success-fg); }
+  /* #360 (P333): the older questions under their own heading (a hairline above it unless it comes first), quiet:
+     a grey bar, the sunken ground, a regular-weight title in the subtle colour. */
+  .ibx-older-head { list-style: none; margin: 12px 0 2px; padding: 10px 4px 0; border-top: 1px solid var(--border); }
+  .ibx-cards > .ibx-older-head:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
+  .ibx-older-t { margin: 0; font-size: 11px; line-height: 1.4; font-weight: 600; color: var(--fg-muted); text-transform: uppercase; letter-spacing: .04em; }
+  .ibx-older-why { margin: 0; font-size: 11px; line-height: 1.4; font-weight: 400; color: var(--fg-muted); }
+  .pdp-group > .ibx-older-why { margin: 2px 0 4px; font-size: var(--fs-100); line-height: var(--lh-100); }
+  .ibx-listed .ibx-row[data-stage="older"] { border-left-color: var(--border-strong); background: var(--surface-sunken); }
+  .ibx-listed .ibx-row[data-stage="older"] .ibx-line, .pdp-group[data-stage="older"] .ibx-line { font-weight: 500; color: var(--fg-subtle); }
   .ibx-listed .ibx-line { font-size: 12px; line-height: 1.4; font-weight: 600; }
   .ibx-listed .ibx-reason, .ibx-listed .ibx-meta { font-size: 11px; line-height: 1.4; margin-top: 0; }
   .ibx-listed .ibx-meta { color: var(--fg-muted); }
@@ -16407,6 +16418,18 @@ try { if (localStorage.getItem('cd-inbox-scope') === 'all') IBX.scope = 'all'; }
 const IBX_ROW_UNDO_S = 10, IBX_BULK_UNDO_S = 30, IBX_CHUNK = 200, IBX_HIDE_S = 20;
 // Questions last, so "this and earlier" is every question below the row.
 const IBX_GROUPS = [['check', 'Ready to check'], ['waiting', 'Waiting on you'], ['answer', 'Needs your answer'], ['older', 'Older questions']];
+// #360: why older questions are not counted, said under their heading: the hub's
+// `why` for each (asks.py split_waiting). All one reason reads whole; a mix names each.
+const IBX_OLDER_WHY = { past: 'You wrote past them in their chat', repeat: 'Asked again later: only the newest counts',
+  cleared: 'From before Clear all' };
+const IBX_OLDER_PART = { past: 'written past in their chat', repeat: 'asked again later', cleared: 'from before Clear all' };
+function ibxOlderWhy(list) {
+  const got = new Set((list || []).map(r => IBX_OLDER_PART[r.why] ? r.why : ''));
+  const ws = Object.keys(IBX_OLDER_PART).filter(w => got.has(w));
+  if (ws.length === 1 && got.size === 1) return IBX_OLDER_WHY[ws[0]];
+  const parts = ws.map(w => IBX_OLDER_PART[w]).concat(got.has('') ? ['older'] : []);
+  return 'Not counted: ' + (parts.length > 1 ? parts.slice(0, -1).join(', ') + ' or ' + parts[parts.length - 1] : parts[0] || 'older');
+}
 const IBX_STATE = { running: 'running', stopped: 'stopped', done: 'Done', gone: 'not on the board' };
 function ibxWhere(r, all) {
   const who = r.isPo ? 'PO' : [r.ref, r.task].filter(Boolean).join(' ');
@@ -16570,12 +16593,18 @@ function ibxHtml(d, scope, pid, now, phone, opts) {
   };
   // Under the project list (P287 drawing) the rows are cards in one flat list, no group headings:
   // the card's left bar says which (amber: answer or waiting, green: check).
+  // #360 (P333): the older questions alone get a heading, "Older questions · N" and why, right
+  // above them: they are listed, not counted, so a 0 above them is never left unexplained.
+  const olderLive = older.filter(r => !IBX.gone.has(r.id)).length, olderWhy = ibxOlderWhy(older);
   const groups = listed
-    ? IBX_GROUPS.map(([k]) => (k === 'older' ? older : rows.filter(r => r.kind === k)).map(r => row(r).replace('<li class="ibx-row', `<li data-stage="${k}" class="ibx-row`)).join('')).join('')
+    ? IBX_GROUPS.map(([k]) => (k === 'older' && older.length
+      ? `<li class="ibx-older-head"><h3 class="ibx-older-t">${esc(`Older questions · ${olderLive}`)}</h3><p class="ibx-older-why">${esc(olderWhy)}</p></li>` : '')
+      + (k === 'older' ? older : rows.filter(r => r.kind === k)).map(r => row(r).replace('<li class="ibx-row', `<li data-stage="${k}" class="ibx-row`)).join('')).join('')
     : IBX_GROUPS.map(([k, title]) => {
     const got = k === 'older' ? older : rows.filter(r => r.kind === k);
     const live = got.filter(r => !IBX.gone.has(r.id)).length;
     return got.length ? `<li class="pdp-group" data-stage="${k}"><h3 class="pdp-head">${esc(title)} <span class="pdp-n">${live}</span></h3>`
+      + (k === 'older' ? `<p class="ibx-older-why">${esc(olderWhy)}</p>` : '')
       + `<ul class="pdp-list">${got.map(row).join('')}</ul></li>` : '';
   }).join('');
   const note = d.pending ? '<p class="pdp-note">Reading a conversation’s question cards: more may come.</p>' : '';
@@ -17163,19 +17192,30 @@ function ldpKindIcon(kind, cls) {
     + '<rect x=".9" y="1.6" width="10.2" height="8.8" rx="1.4" fill="var(--c-neutral-bold)" fill-opacity=".22" stroke="var(--c-neutral-bold)" stroke-width="1.2"/>'
     + '<path d="M3.2 4.6l1.8 1.4-1.8 1.4M6.4 7.8h2.4" stroke="var(--c-neutral-bold)" stroke-width="1.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 }
+// #360 (P333): a row with older questions and nothing waiting shows their number, outlined grey:
+// the ones not closed (one waiting on its Undo is not), as the Older questions heading counts them.
+function ldpOlder(pid) {
+  const d = IBX.data;
+  return d ? ibxOlder(d, pid ? 'project' : 'all', pid).filter(r => !IBX.gone.has(r.id)) : [];
+}
 function ldpHtml(m) {
   const cnt = ldpCount;
-  const pill = n => n ? `<span class="ldp-n" title="${n} waiting on you">${n}</span>` : '';
+  // `k`: the row's key for ldpCount ('' for All).
+  const pill = (n, k) => {
+    if (n) return `<span class="ldp-n" title="${n} waiting on you">${n}</span>`;
+    const old = ldpOlder(k), o = old.length;
+    return o ? `<span class="ldp-n ldp-old" title="${esc(`${o} older question${o === 1 ? '' : 's'}, not counted. ${ibxOlderWhy(old)}`)}">${o}</span>` : '';
+  };
   const lp = ibxLdPid();
   const selAll = IBX.scope === 'all' || !lp;
   // data-cur: the row raised whole on hover (#337) drops aria-current but stays selected.
   const cur = on => on ? ' aria-current="true" data-cur' : '';
-  let h = `<button type="button" class="ldp-row" data-ldp="all"${cur(selAll)} title="${esc(nounText("Every {project}'s Inbox"))}"><span class="ldp-name">All</span>${pill(cnt(''))}</button>`;
+  let h = `<button type="button" class="ldp-row" data-ldp="all"${cur(selAll)} title="${esc(nounText("Every {project}'s Inbox"))}"><span class="ldp-name">All</span>${pill(cnt(''), '')}</button>`;
   const ps = LDP.more ? m.projs : m.projs.slice(0, LDP_N);
   for (const p of ps) {
     const reg = projectById(p.pid);
     h += `<div class="ldp-item"><button type="button" class="ldp-row" data-ldp-proj="${esc(p.pid)}"${cur(!selAll && lp === p.pid)} title="${esc(p.name)}">`
-      + `${ldpSwatch(p.pid)}<span class="ldp-name">${esc(p.name)}</span>${pill(cnt(p.pid))}</button>`
+      + `${ldpSwatch(p.pid)}<span class="ldp-name">${esc(p.name)}</span>${pill(cnt(p.pid), p.pid)}</button>`
       + (reg && reg.registered && p.pid !== UNASSIGNED_ID ? `<button type="button" class="ldp-dots" data-ldp-pmenu="${esc(p.pid)}" aria-haspopup="menu" aria-expanded="false" aria-label="${esc('More for ' + p.name)}" title="More">⋯</button>` : '')
       + '</div>';
   }
@@ -17192,11 +17232,12 @@ function ldpHtml(m) {
       const title = r ? (e.kind === 'task' ? rowTitle(r) : detailTitle(r)) : ((e.it && (e.it.title || e.it.ref)) || e.key);
       const room = r ? (r.roomId || '') : e.key;
       const sid = r ? (r.sessionId || '') : '';
-      const n = cnt('room:' + (r ? (r.roomId || r.sessionId) : e.key));
+      const lk = 'room:' + (r ? (r.roomId || r.sessionId) : e.key);
+      const n = cnt(lk);
       const on = !selAll && lp === 'room:' + (room || sid);
       const ref = `data-ldp-room="${esc(room)}" data-ldp-sid="${esc(sid)}"`;
       h += `<div class="ldp-item"><button type="button" class="ldp-row" ${ref}${cur(on)} title="${esc((no ? no + ' ' : '') + title)}">`
-        + `${ldpKindIcon(e.kind)}<span class="ldp-name">${no ? `${esc(no)} ` : ''}${esc(title)}</span>${pill(n)}</button>`
+        + `${ldpKindIcon(e.kind)}<span class="ldp-name">${no ? `${esc(no)} ` : ''}${esc(title)}</span>${pill(n, lk)}</button>`
         + (r ? `<button type="button" class="ldp-dots" data-ldp-menu ${ref} aria-haspopup="menu" aria-expanded="false" aria-label="${esc('More for ' + title)}" title="More">⋯</button>` : '')
         + '</div>';
     }
