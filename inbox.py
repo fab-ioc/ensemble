@@ -389,7 +389,7 @@ def _build_all(debug: bool = False, now: float | None = None) -> dict:
                                    **where(s), "mid": c["mid"], "part": key[2], "n": c["n"],
                                    "line": _line(_ask_title(c["question"], "the PO")),
                                    "since": float(c.get("ts") or 0),
-                                   "reason": _line(f"{c.get('who') or 'The PO'} asks", 240),
+                                   "reason": "The PO asks",   # by role, as the open row says (#361)
                                    "why": c.get("why") or "older", "taskRef": c.get("task") or "",
                                    "points": list(c.get("points") or [])})
                 if debug:

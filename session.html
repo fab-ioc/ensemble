@@ -3347,7 +3347,9 @@ function roleLabel(m, N = CHAT_NAMES) {
   if (st === 'external' || (m.kind === 'notice' && m.noticeKind === 'external')) return { cls: 'outside', text: String(m.senderLabel || 'Outside sender'), note: 'outside line' };
   if (isPoMsg(m) || st === 'po') return { cls: 'po', text: senderName(m, N) };
   const t = taskReport(m);
-  if (t) return { cls: reportBase(m) === 'review' ? 'reviewer' : 'engineer', text: senderName(m, N) };
+  // A report: its sender's role in the label; the task and the review round beside it, quiet.
+  if (t) { const rev = reportBase(m) === 'review', r = rev ? reviewRound(m) : 0;
+    return { cls: rev ? 'reviewer' : 'engineer', text: rev ? 'reviewer' : 'engineer', note: taskName(t, N) + (r ? ' · review ' + r : '') }; }
   if (m.from === 'ensemble' || isHubInput(m)) return { cls: 'hub', text: senderName(m, N) };
   if (m.from === 'user') return { cls: 'person', text: N.operator };
   if (N.po && (m.from === N.po || SEAT_ID_RE.test(String(m.from || '')))) return { cls: 'po', text: 'PO' };
@@ -4385,14 +4387,18 @@ function foldBalloonHtml(m, i, how, o) {
   const fb = o.open ? '<button type="button" class="fold-btn" title="Fold this message again" aria-expanded="true">Fold</button>' : '';
   // o.act: the balloon's own action in its header (Copy link).
   // o.pts: the bar of the person's points it holds or answers (pointBarHtml).
-  // o.body: the text and its bars drawn otherwise (a message of numbered points).
+  // o.body: the text and its bars drawn otherwise (an agent's asks), or, for
+  // the person's numbered points, { html, under }: the items, and their states.
   // The person's own balloon keeps the state of its points under it, as a
-  // caption (#361, option B): the balloon is .bal, the caption .pt-under.
-  const own = o.body && o.body(m);
-  const mine = m.from === 'user' && !hub && !own;
-  const under = mine && o.pts ? o.pts(m) : '';
+  // caption (#361, option B): the balloon is .bal, the caption .pt-under; a
+  // reply's "Re <link>:" is a strip on top (replyStrip).
+  const mine = m.from === 'user' && !hub;
   const rs = mine ? replyStrip(m) : null;
-  const body = own || `${rs ? rs.html : ''}<div class="text md">${o.md(rs ? rs.text : m.text)}</div>${!mine && o.pts ? o.pts(m) : ''}`;
+  const own = o.body && o.body(rs ? { ...m, text: rs.text } : m);
+  const items = mine && own && typeof own === 'object' ? own : null;
+  const under = items ? items.under : mine && o.pts ? o.pts(m) : '';
+  const body = items ? (rs ? rs.html : '') + items.html
+    : (!mine && typeof own === 'string' && own) || `${rs ? rs.html : ''}<div class="text md">${o.md(rs ? rs.text : m.text)}</div>${!mine && o.pts ? o.pts(m) : ''}`;
   // o.reacts: the person's quick reactions to it (reactRowHtml).
   const inner = `<div class="from${fb ? ' fold-head" title="Fold this message again' : ''}">${fb}${o.act ? o.act(m) : ''}${who}${chips}</div>${body}${o.reacts ? o.reacts(m) : ''}`;
   const attrs = `data-mid="${esc(m.id || '')}" data-key="${key}" data-from="${esc(m.from || '')}"`;
@@ -4714,7 +4720,7 @@ function pointMaps(pv) {
   const P = { items: ((pv && pv.items) || []).map(ptItem), byMid: new Map(), byAnswer: new Map(), byId: new Map(), keep: new Set(),
     unacked: new Set(), approvals: new Set((pv && pv.approvals) || []), dones: new Set((pv && pv.dones) || []), asks: (pv && pv.asks) || {}, asksSettledAt: (pv && pv.asksSettledAt) || 0, open: (pv && pv.open) || 0,
     planned: (pv && pv.planned) || 0, delivered: (pv && (pv.delivered != null ? pv.delivered : pv.answered)) || 0,
-    needs: (pv && pv.needs) || null, threads: (pv && pv.threads) || [] };
+    needs: (pv && pv.needs) || null, threads: (pv && pv.threads) || [], turnEnds: (pv && pv.turnEnds) || {} };
   P.askMids = P.needs ? new Set((P.needs.decisions || []).map(c => c.mid)) : null;
   const add = (map, k, p) => { if (!k) return; const l = map.get(k); if (!l) map.set(k, [p]); else if (!l.includes(p)) l.push(p); };
   for (const p of P.items) {
@@ -4796,13 +4802,17 @@ function ptWorker(P, mid) {
   const by = mid ? ((P && P.drawn) || []).find(x => x && x.id === mid) : null;
   return (by && w.find(a => a.identity === by.from)) || w[0];
 }
-// An "on it" answer (implicit) still being worked on: its agent works, no one
-// else wrote after it, and this page has not seen the agent stop since (Q2).
+// An "on it" answer (implicit) still being worked on (Q2): the agent that wrote
+// it works now, no one else wrote after it, its turn has not ended since (the
+// hub's turnEnds: every device, after a reload) and this page has not seen it
+// stop (PT_SETTLED: an agent without hooks).
 function ptStillWorking(p, P) {
   const a = curAnswer(p);
-  if (!a || a.how !== 'implicit' || !a.mid || PT_SETTLED.has(a.mid) || !ptWorkers().length) return false;
+  if (!a || a.how !== 'implicit' || !a.mid || PT_SETTLED.has(a.mid)) return false;
   const by = ((P && P.drawn) || []).find(x => x && x.id === a.mid);
-  return ptAfter(P, a.mid, x => !!x && x.from !== (by ? by.from : '')) === false;
+  if (!by || !by.from || !ptWorkers().some(w => w.identity === by.from)) return false;
+  if (Number(((P && P.turnEnds) || {})[by.from] || 0) > Number(by.ts || 0)) return false;
+  return ptAfter(P, a.mid, x => !!x && x.from !== by.from) === false;
 }
 // The agent's step now, filled in by fillNowLines from its terminal.
 const ptNowHtml = w => w && w.ptyId ? `<div class="pt-now" data-pty="${esc(w.ptyId)}"><span class="now">now:</span><span class="ln"></span><span class="ago"></span></div>` : '';
@@ -4891,8 +4901,13 @@ function pointItemsHtml(m, it, P, href, md) {
   const bars = own.map(p => pointBarHtml(m, P, href, x => x === p));
   const headBar = withHead ? bars.shift() : '';
   const rest = pointBarHtml(m, P, href, x => !own.includes(x));
-  // Each item drawn on its own, so the whole message's paths are read first.
-  return `<div class="text md">${withPathAbbrevs(m.text, () => itemsHtml(it, bars, md, headBar))}</div>${rest}`;
+  // Each item drawn on its own, so the whole message's paths are read first;
+  // their states go under the balloon, in the items' order (#361, option B).
+  // Each item keeps its point's id (a hidden anchor), so a link to it ("pt:P12") lands on the item.
+  const at = own.map(p => `<span class="pt-at" data-pt-at="${esc(p.id)}" hidden></span>`);
+  if (withHead) at.shift();
+  return { html: `<div class="text md">${withPathAbbrevs(m.text, () => itemsHtml(it, at, md, ''))}</div>`,
+    under: [headBar, ...bars, rest].join('') };
 }
 // The points as the room's poll last gave them.
 let POINTS = pointMaps(null);
@@ -5880,7 +5895,8 @@ function partOf(el, part) {
   const text = el.querySelector('.text.md');
   if (m[1] === 'pt') {
     const chip = [...el.querySelectorAll('.pt-chip[data-pt-id]')].find(x => x.dataset.ptId === m[2]);
-    return chip ? chip.closest('li.pt-item') : null;
+    const at = [...el.querySelectorAll('li.pt-item [data-pt-at]')].find(x => x.dataset.ptAt === m[2]);
+    return at ? at.closest('li.pt-item') : chip ? chip.closest('li.pt-item') : null;
   }
   if (!text) return null;
   if (m[1] === 're') {
@@ -8676,8 +8692,12 @@ function renderActivity(ptyMap, liveMap) {
   const agents = ROOM_AGENTS.filter(a => a.ptyId || a.sessionId);
   const was = TAIL_WORKING.map(a => a.identity + '\u0001' + a.ptyId).join('|');
   TAIL_WORKING = ROOM_LIVE ? agents.filter(a => a.ptyId && agentState(a, ptyMap, liveMap || {}).cls === 'working') : [];
-  // The agents stopped: an "on it" answer is done from now on (#361, Q2).
-  if (!TAIL_WORKING.length) for (const p of POINTS.items) { const c = curAnswer(p); if (c && c.mid && c.how === 'implicit') PT_SETTLED.add(c.mid); }
+  // Its agent stopped: an "on it" answer is done from now on (#361, Q2).
+  const busy = new Set(TAIL_WORKING.map(a => a.identity)), drawn = POINTS.drawn || [];
+  for (const p of POINTS.items || []) {
+    const c = curAnswer(p), by = c && c.mid && c.how === 'implicit' ? drawn.find(x => x && x.id === c.mid) : null;
+    if (by && !busy.has(by.from)) PT_SETTLED.add(c.mid);
+  }
   // Who works changed: the requests' states under the balloons say it.
   if (TAIL_WORKING.map(a => a.identity + '\u0001' + a.ptyId).join('|') !== was && LAST_ITEMS) renderBubbles(LAST_ITEMS);
   renderLiveTail();

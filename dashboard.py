@@ -2610,6 +2610,13 @@ def seat_model_display(kind: str, seat_model: str = "") -> str:
     return ""
 
 
+def _points_turn_ended(room_id: str, identity: str) -> None:
+    try:
+        points.turn_ended(room_id, identity)
+    except Exception:                      # noqa: BLE001 - the hook's answer is sent; nothing waits on this
+        pass
+
+
 def _hook_turn_ended(pty_id, room_id, identity, session_id) -> None:
     """A Claude agent's turn ended (its ``Stop`` hook): whether it ended on a
     model's own limit line, which the hook does not say (ED-159). The limit is
@@ -22867,6 +22874,9 @@ class Handler(BaseHTTPRequestHandler):
                                  args=(payload.get("ptyId"), payload.get("room"),
                                        payload.get("identity"), event.get("session_id"))).start()
                 threading.Thread(target=checkpoint_turn, daemon=True,
+                                 args=(payload.get("room") or "", payload.get("identity") or "")).start()
+                # An "on it" answer it wrote is done from now on, on every device (#361, Q2).
+                threading.Thread(target=_points_turn_ended, daemon=True,
                                  args=(payload.get("room") or "", payload.get("identity") or "")).start()
             if (event.get("hook_event_name") == "SessionStart"
                     and event.get("source") in ("clear", "resume") and not event.get("agent_id")):

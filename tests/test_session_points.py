@@ -366,12 +366,18 @@ const vm = require('vm');
 const { code } = JSON.parse(require('fs').readFileSync(0, 'utf8'));
 const ctx = { attSplit: t => ({ words: String(t || ''), paths: [] }), stripRefBlocks: t => t, URL,
   fetch: () => new Promise(() => {}),       // a link the hub has not resolved yet stays pending
-  ROOM: 'room-po', SOLO_MODE: true, pointsChanged: () => {}, pointsNote: () => {}, TAIL_WORKING: [] };
+  ROOM: 'room-po', SOLO_MODE: true, pointsChanged: () => {}, pointsNote: () => {}, TAIL_WORKING: [],
+  withPathAbbrevs: (t, fn) => fn(), ATT_PREFIX: '[image] ', ATT_FILE_PREFIX: '[file] ',
+  // renderActivity's world: the room's agents, who works (BUSY), nothing else drawn.
+  ROOM_AGENTS: [{ identity: 'claude', ptyId: 'pty-1' }, { identity: 'codex', ptyId: 'pty-2' }], ROOM_LIVE: true, BUSY: new Set(),
+  LAST_ITEMS: null, renderLiveTail: () => {}, showState: () => {}, renderBubbles: () => {} };
+ctx.agentState = a => ({ cls: ctx.BUSY.has(a.identity) ? 'working' : 'idle' });
 ctx.cardTextHtml = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); ctx.hubUrlWords = s => String(s ?? ''); ctx.cardText = s => ({ html: ctx.cardTextHtml(s), links: [] }); ctx.cardWords = s => String(s ?? '');
 vm.createContext(ctx);
 vm.runInContext(code + `
   globalThis.t = { CHAT_NAMES, pointMaps, pointBarHtml, ptStateHtml, ptStillWorking, ptAfter, ptWorker, ptWorkers, isAgentMsg,
-    ptNowHtml, ptTaskHtml, PT_SETTLED, foldBalloonHtml, replyStrip, REPLY_HEAD_RE, REPLY_QUOTE_HEAD_RE, openAsks, asksOf, REFS };`, ctx);
+    ptNowHtml, ptTaskHtml, PT_SETTLED, foldBalloonHtml, replyStrip, REPLY_HEAD_RE, REPLY_QUOTE_HEAD_RE, openAsks, asksOf, REFS,
+    pointItems, pointItemsHtml, renderActivity, setPoints: v => { POINTS = v; } };`, ctx);
 const T = ctx.t;
 const out = {};
 const href = mid => '/session?room=room-po&msg=' + mid;
@@ -395,6 +401,9 @@ const pv = { items: [
   // Older questions (not in needs.decisions): open, then answered.
   { id: 'P13', state: 'delivered', text: 'A or B?', mid: 'u13', answers: [{ mid: 'a13', at: 13, how: 're' }] },
   { id: 'P14', state: 'delivered', text: 'C or D?', mid: 'u14', answers: [{ mid: 'a14', at: 14, how: 're' }] },
+  // A numbered request, one point per item.
+  { id: 'P20', state: 'open', text: '**1.** a', mid: 'u20', createdAt: 1, answers: [] },
+  { id: 'P21', state: 'delivered', text: '**2.** b', mid: 'u20', createdAt: 2, answers: [{ mid: 'a21', at: 21, how: 're' }] },
 ], needs: { decisions: [{ mid: 'a7' }] }, asks: { a14: { 0: { option: 'C' } } } };
 const P = T.pointMaps(pv);
 // The drawn chat: u1 has no agent's message after it, u2 has one; a3 is
@@ -406,7 +415,7 @@ P.drawn = [
   { id: 'u1', from: 'user', text: 'Why is it red?' },
   { id: 'u2', from: 'user', text: 'And this?' }, { id: 'x2', from: 'codex', text: 'Something else.' },
   { id: 'u4', from: 'user', text: 'Rename it' }, { id: 'a4', from: 'claude', text: 'On it.' }, { id: 'u4b', from: 'user', text: 'thanks' },
-  { id: 'u3', from: 'user', text: 'Widen the columns' }, { id: 'a3', from: 'claude', text: 'On it, widening them.' },
+  { id: 'u3', from: 'user', text: 'Widen the columns' }, { id: 'a3', from: 'claude', text: 'On it, widening them.', ts: 30 },
 ];
 const bar = mid => T.pointBarHtml({ id: mid, from: 'user' }, P, href);
 const st = id => T.ptStateHtml(P.byId.get(id), P, href);
@@ -429,6 +438,28 @@ out.work = { workers: T.ptWorkers().length, open: openWork, openAfterAgent: st('
 T.PT_SETTLED.add('a3');
 out.settled = { implicit: st('P3'), still: T.ptStillWorking(P.byId.get('P3'), P), agentA3: T.pointBarHtml({ id: 'a3', from: 'claude' }, P, href) };
 T.PT_SETTLED.delete('a3');
+// Q2 after a reload (PT_SETTLED empty): the hub's turnEnds say whether the
+// author's turn ended after its "on it" answer.
+const q2 = (ends, workers) => { P.turnEnds = ends; ctx.TAIL_WORKING = workers;
+  const r = { still: T.ptStillWorking(P.byId.get('P3'), P), state: st('P3'), agent: T.pointBarHtml({ id: 'a3', from: 'claude' }, P, href) };
+  P.turnEnds = {}; ctx.TAIL_WORKING = W; return r; };
+out.q2 = {
+  endedAfter: q2({ claude: 40 }, W),             // working again on something else: done
+  endedBefore: q2({ claude: 20, codex: 99 }, W), // its turn ended before the answer: still working
+  otherWorks: q2({}, [W[1]]),                    // another agent works, the author does not: done
+  pointMapsKeeps: T.pointMaps({ items: [], turnEnds: { claude: 5 } }).turnEnds, pointMapsNone: T.pointMaps({ items: [] }).turnEnds,
+};
+// renderActivity settles an "on it" answer whose author is not at work, even
+// while another agent works; one whose author works stays open.
+T.setPoints(P);
+ctx.BUSY = new Set(['claude', 'codex']); T.renderActivity({}, {});
+out.q2.settledBusy = T.PT_SETTLED.has('a3');
+ctx.BUSY = new Set(['codex']); T.renderActivity({}, {});
+out.q2.settledOther = T.PT_SETTLED.has('a3');
+out.q2.workingAfter = ctx.TAIL_WORKING.map(a => a.identity);
+ctx.BUSY = new Set(['claude', 'codex']); T.renderActivity({}, {});
+out.q2.afterSettle = { settled: T.PT_SETTLED.has('a3'), still: T.ptStillWorking(P.byId.get('P3'), P) };
+T.PT_SETTLED.delete('a3'); ctx.TAIL_WORKING = W;
 
 // The person's balloon: its words, then the state under it; a reply's strip on top.
 T.REFS.set('room-po|a9', { state: 'ok', from: 'claude', roomId: 'room-po', text: 'The columns are wider on a test board now.', ts: 1789552800 });
@@ -443,7 +474,10 @@ out.ball = {
   own: T.foldBalloonHtml({ id: 'u1', from: 'user', text: 'Why is it red?', ts: 0 }, 0, 'full', opt),
   plain: T.foldBalloonHtml({ id: 'z1', from: 'user', text: 'no points here' }, 1, 'full', opt),
   agent: T.foldBalloonHtml({ id: 'a3', from: 'claude', text: 'On it.' }, 2, 'full', opt),
-  items: T.foldBalloonHtml({ id: 'u1', from: 'user', text: '**1.** a' }, 3, 'full', Object.assign({ body: () => '<ol>items</ol>' }, opt)),
+  // The page's body for the person's balloon: their numbered points ({ html, under }).
+  numbered: T.foldBalloonHtml({ id: 'u20', from: 'user', text: 'Re http://h/session?room=room-po&msg=a9:\n\n## Points (2)\n\n**1.** a\n\n**2.** b' }, 3, 'full',
+    Object.assign({ body: m => { const it = m.id ? T.pointItems(m.text) : null; return it ? T.pointItemsHtml(m, it, P, href, md) : null; } }, opt)),
+  agentBody: T.foldBalloonHtml({ id: 'a3', from: 'claude', text: 'On it.' }, 5, 'full', Object.assign({ body: () => '<div class="asks">card</div>' }, opt)),
   reply: T.foldBalloonHtml({ id: 'u10', from: 'user', text: 'Re http://127.0.0.1:8080/session?room=room-po&msg=a9: and the rows?' }, 4, 'full', opt),
 };
 out.strip = {
@@ -470,7 +504,7 @@ class BalloonStates(unittest.TestCase):
         esc = next(ln for ln in SRC.split("\n") if ln.startswith("const esc = "))
         ref_href = SRC[SRC.index("const refHref = "):SRC.index("const REFS = ")]
         code = (esc + "\n" + fold_block(SRC) + fn_src("refOfUrl") + ref_href + "const REFS = new Map();\n"
-                + fn_src("refInfo") + fn_src("refWho") + fn_src("refPreview"))
+                + fn_src("refInfo") + fn_src("refWho") + fn_src("refPreview") + fn_src("itemsHtml") + fn_src("renderActivity"))
         run = subprocess.run([NODE, "-e", STATES_JS], input=json.dumps({"code": code}), capture_output=True,
                              text=True, encoding="utf-8", timeout=60, env={**__import__("os").environ, "TZ": "UTC"})
         if run.returncode:
@@ -570,11 +604,47 @@ class BalloonStates(unittest.TestCase):
         self.assertIn('<div class="text md"><p>Why is it red?</p></div></div><div class="pt-under"><div class="pt-bar">', own)
         self.assertTrue(own.endswith("</div></div></div>"))
         self.assertEqual(own.count('class="pt-bar"'), 1, "the bar is under the balloon, not in it too")
-        # Without points, a numbered message (its bars in its items) and an agent's: no caption.
+        # Without points and an agent's: no caption; an agent's own body (its asks) as it is.
         self.assertTrue(b["plain"].startswith('<div class="msg user" data-mid="z1"'))
-        self.assertNotIn("has-under", b["plain"] + b["items"] + b["agent"])
-        self.assertIn("<ol>items</ol>", b["items"])
+        self.assertNotIn("has-under", b["plain"] + b["agent"] + b["agentBody"])
         self.assertIn('<div class="text md"><p>On it.</p></div><div class="pt-bar">', b["agent"], "an agent's bar stays in its balloon")
+        self.assertIn('<div class="asks">card</div>', b["agentBody"])
+
+    def test_a_numbered_reply_has_its_strip_its_items_and_their_states_under_it(self):
+        # Review 1: a numbered request is option B too, and a reply's head is a strip.
+        h = self.r["ball"]["numbered"]
+        self.assertTrue(h.startswith('<div class="msg user has-under" data-mid="u20"'), h)
+        bal, under = h.split('<div class="pt-under">')
+        self.assertIn('<div class="bal"><div class="from">', bal)
+        self.assertIn('<a class="ref-chip reply-strip" href="/session?room=room-po&amp;msg=a9"', bal)
+        self.assertLess(bal.index("reply-strip"), bal.index('<div class="text md">'), "the strip on top")
+        self.assertNotIn("Re http", h)
+        self.assertIn('<ol class="pt-items"><li class="pt-item"><p>a</p><span class="pt-at" data-pt-at="P20" hidden></span></li>'
+                      '<li class="pt-item"><p>b</p><span class="pt-at" data-pt-at="P21" hidden></span></li></ol>', bal,
+                      "each item keeps its point's id, so a link to it lands on the item")
+        self.assertNotIn("pt-bar", bal, "no state inside the balloon")
+        self.assertEqual(under.count('<div class="pt-bar">'), 2)
+        self.assertLess(under.index('data-pt-id="P20"'), under.index('data-pt-id="P21"'), "in the items' order")
+        self.assertIn('data-pt-id="P21" data-pt-state="delivered"', under)
+        self.assertIn("see the answer ↓", under)
+
+    def test_an_on_it_answer_is_settled_by_its_own_agents_turn(self):
+        # Review 1: durable (the hub's turnEnds, every device and after a reload) and per agent.
+        q = self.r["q2"]
+        self.assertFalse(q["endedAfter"]["still"])
+        self.assertIn('<span class="pt-st done">done — ', q["endedAfter"]["state"])
+        self.assertIn('data-pt="P3" data-pt-act="ack"', q["endedAfter"]["agent"])
+        self.assertTrue(q["endedBefore"]["still"], "a turn that ended before the answer says nothing")
+        self.assertIn(f'{self.DOT}working on it', q["endedBefore"]["state"])
+        self.assertNotIn('data-pt-act="ack"', q["endedBefore"]["agent"])
+        self.assertFalse(q["otherWorks"]["still"], "another agent at work does not keep it open")
+        self.assertIn('<span class="pt-st done">done — ', q["otherWorks"]["state"])
+        self.assertIn('data-pt="P3" data-pt-act="ack"', q["otherWorks"]["agent"])
+        self.assertEqual((q["pointMapsKeeps"], q["pointMapsNone"]), ({"claude": 5}, {}))
+        self.assertFalse(q["settledBusy"], "its author at work: not settled")
+        self.assertTrue(q["settledOther"], "its author stopped while another works: settled")
+        self.assertEqual(q["workingAfter"], ["codex"])
+        self.assertEqual(q["afterSettle"], {"settled": True, "still": False}, "settled stays done when the author works again")
 
     def test_a_reply_shows_what_it_answers_as_a_strip_on_top(self):
         s, b = self.r["strip"], self.r["ball"]

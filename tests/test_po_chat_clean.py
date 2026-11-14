@@ -288,7 +288,8 @@ async function main() {
         const rb = b && b.getBoundingClientRect(), ru = u && u.getBoundingClientRect();
         return { mid: e.dataset.mid, head: !!e.querySelector(':scope > .bal > .from'), bar: !!(u && u.querySelector(':scope > .pt-bar')),
           below: !!(rb && ru && ru.top >= rb.bottom - 1), right: !!(rb && ru && Math.abs(ru.right - rb.right) < 12),
-          clear: getComputedStyle(e).backgroundColor === 'rgba(0, 0, 0, 0)', filled: !!b && getComputedStyle(b).backgroundColor !== 'rgba(0, 0, 0, 0)' }; })`);
+          clear: getComputedStyle(e).backgroundColor === 'rgba(0, 0, 0, 0)', filled: !!b && getComputedStyle(b).backgroundColor !== 'rgba(0, 0, 0, 0)',
+          inBal: !!(b && b.querySelector('.pt-bar')) }; })`);
       await p.shot(`po-chat-${w}-clean`);
       // #311: the chat's Needs you list is gone; the bars under the balloons lead the same ways.
       o.land = await p.evalIn(`(async () => {
@@ -481,8 +482,9 @@ class InChrome(unittest.TestCase):
                 self.assertIn("you replied ↓", bars["po-sid:2"], "#361: P1 says the person replied (P2)")
                 self.assertIn("Reopen", bars["po-sid:2"])
                 # The ask's balloon holds its words; the caption sits under it, at its right edge.
-                self.assertEqual(o["under"], [{"mid": "po-sid:2", "head": True, "bar": True, "below": True, "right": True,
-                                               "clear": True, "filled": True}])
+                # Review 1: the numbered comment (P2) too.
+                self.assertEqual(o["under"], [{"mid": m, "head": True, "bar": True, "below": True, "right": True, "clear": True,
+                                               "filled": True, "inBal": False} for m in ("po-sid:2", "po-sid:11")])
                 self.assertIn("answers P1", bars["po-sid:4"])
                 self.assertNotIn("Ack", bars["po-sid:4"], "no thumbs up owed on a followed-up ask")
                 self.assertIn("follow-up to P1", bars["po-sid:11"])

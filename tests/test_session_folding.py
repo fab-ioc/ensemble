@@ -76,7 +76,7 @@ const room = [
 out.senders = room.map(m => T.senderName(m));
 out.recipients = room.map(m => T.recipientName(m));
 out.kinds = room.map(m => T.kindName(m));
-out.head = [T.whoHtml(room[1]), T.whoHtml(room[5]), T.whoHtml(room[0])];
+out.head = [T.whoHtml(room[1]), T.whoHtml(room[5]), T.whoHtml(room[0]), T.whoHtml(room[2])];
 out.reviewChip = T.foldChips(room[2]);
 out.groups = T.chatGroups(room).map(g => ({ task: g.task, hidden: g.hidden, stand: g.stand, at: g.at }));
 out.kept = T.chatGroups(room, i => i === 2).map(g => ({ task: g.task, hidden: g.hidden }));
@@ -138,7 +138,9 @@ class WhoWritesToWhom(unittest.TestCase):
         self.assertEqual(self.r["recipients"], ["PO", "PO", "PO", "#26 claude", "PO", "PO", "PO", "PO", "PO", "PO", "PO"])
         # #361: one label by role; in a PO's room every message is between the
         # person and the PO, so the header names no recipient.
-        self.assertEqual(self.r["head"][0], '<span class="who rl engineer">#26 claude</span>')
+        # Review 1: a report's label is its sender's role; the task (and a review's round) quiet beside it.
+        self.assertEqual(self.r["head"][0], '<span class="who rl engineer">engineer</span><span class="rl-note">#26</span>')
+        self.assertEqual(self.r["head"][3], '<span class="who rl reviewer">reviewer</span><span class="rl-note">#26 · review 1</span>')
         self.assertEqual(self.r["head"][1], '<span class="who rl hub hub-who">Hub</span>')
         self.assertEqual(self.r["head"][2], '<span class="who rl person">sam</span>')
         self.assertNotIn("@", "".join(self.r["head"]))
@@ -204,7 +206,9 @@ Object.assign(T.CHAT_NAMES, { po: 'claude' });
 out.po = [T.whoHtml({ from: 'claude', to: 'user', text: 'x' }), T.whoHtml({ from: 'codex-2', to: 'user', text: 'x' }),
   T.whoHtml({ from: 'user', to: 'claude', text: 'x' }),
   T.whoHtml({ from: 'claude@room-x', kind: 'pomsg', fromProjectName: 'Dock', to: 'claude', text: 'x' }),
-  T.whoHtml({ from: 'claude@room-0804cfef', to: 'claude', kind: 'report', reportKind: 'review', taskId: 'room-0804cfef', text: 'x' })];
+  T.whoHtml({ from: 'claude@room-0804cfef', to: 'claude', kind: 'report', reportKind: 'review', taskId: 'room-0804cfef', text: 'x' }),
+  T.whoHtml({ from: 'user', kind: 'report', reportKind: 'review 2 (approved)', taskId: '#60', reporter: 'codex', text: '[report] …' }),
+  T.whoHtml({ from: 'user', kind: 'report', reportKind: 'completed', taskId: '#60', reporter: 'claude', text: '[report] …' })];
 out.poTo = T.roleTo({ from: 'claude', to: 'user' });
 // The hover: who sat in the seat for this message, and the kind before a handover.
 Object.assign(T.CHAT_NAMES, { po: '' });
@@ -263,8 +267,10 @@ class RoleLabels(unittest.TestCase):
             '<span class="who rl po">PO</span>',
             '<span class="who rl person">sam</span>',
             '<span class="who rl po">Dock PO</span>',
-            # A task's review report is the reviewer's, named by its task.
-            '<span class="who rl reviewer">0804cfef claude</span>',
+            # A task's report is its sender's role, the task beside it: in a room, and as a transcript's hub input.
+            '<span class="who rl reviewer">reviewer</span><span class="rl-note">0804cfef</span>',
+            '<span class="who rl reviewer">reviewer</span><span class="rl-note">#60 · review 2</span>',
+            '<span class="who rl engineer">engineer</span><span class="rl-note">#60</span>',
         ])
         self.assertNotIn("→", "".join(self.r["po"]))
         self.assertEqual(self.r["poTo"], "")
