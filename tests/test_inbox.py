@@ -222,8 +222,19 @@ class InboxTest(unittest.TestCase):
                                    "who": "codex"}]
         out = self.build()
         lines = sorted(r["line"] for r in out["rows"] + out["older"])
-        self.assertEqual(lines, ["Question from claude", "Question from claude", "Question from codex",
-                                 "Question from codex", "Ship it?"])
+        # #361: a PO chat's card is the PO's, whichever agent sits in its seat.
+        self.assertEqual(lines, ["Question from codex", "Question from codex", "Question from the PO",
+                                 "Question from the PO", "Ship it?"])
+
+    def test_a_tasks_ask_names_the_seat_by_its_role(self):
+        # #361: "The engineer asks", not the agent's kind; the PO's chat "The PO asks".
+        s = {"participants": [{"identity": "claude", "kind": "agent", "role": "engineer: owns it"},
+                              {"identity": "codex", "kind": "agent", "role": "reviewer"}]}
+        self.assertEqual(inbox._asker(s, "claude", False), "the engineer")
+        self.assertEqual(inbox._asker(s, "codex", False), "the reviewer")
+        self.assertEqual(inbox._asker(s, "codex", True), "the PO")
+        self.assertEqual(inbox._asker(s, "gemini", False), "gemini")
+        self.assertEqual(inbox._asker({}, "", False), "an agent")
 
     def test_older_questions_are_dropped_with_reason(self):
         old = {"mid": "o1", "n": 0, "question": "Old?", "ts": NOW - 9000, "who": "po", "why": "past"}

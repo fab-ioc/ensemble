@@ -199,6 +199,20 @@ def _context():
     return rooms, po_of, where
 
 
+def _asker(s: dict, who: str, po: bool) -> str:
+    """Who asks, as the chat's labels name the seat (#361): the PO in a PO's
+    chat, else the agent's role ("the engineer"), else its identity."""
+    if po:
+        return "the PO"
+    p = next((p for p in s.get("participants") or [] if p.get("identity") == who), None)
+    role = str((p or {}).get("role") or "").split(":")[0].strip()
+    return f"the {role}" if role else (who or "an agent")
+
+
+def _cap(t: str) -> str:
+    return t[:1].upper() + t[1:]
+
+
 def _decisions(s: dict) -> tuple[list, list, bool]:
     """A PO chat's Decisions as its Needs you shows them: ``(waiting, older,
     pending)``. The first read of a chat's cards can take seconds: read in the
@@ -361,8 +375,8 @@ def _build_all(debug: bool = False, now: float | None = None) -> dict:
                 if hit:
                     R.fold(hit, "ask:decision", pts)
                     continue
-                row(s, "answer", "ask:decision", c["mid"], part, _ask_title(c["question"], c.get("who") or "the PO"),
-                    c["ts"], pts, reason=f"{c.get('who') or 'The PO'} asks")
+                row(s, "answer", "ask:decision", c["mid"], part, _ask_title(c["question"], "the PO"),
+                    c["ts"], pts, reason="The PO asks")
             for c in older:
                 key = (rid, c["mid"], f"ask:{c['n']}")
                 if key in R.by_key:
@@ -373,7 +387,7 @@ def _build_all(debug: bool = False, now: float | None = None) -> dict:
                 older_of[key] = why
                 older_rows.append({"id": f"older:{rid}:{c['mid']}:{key[2]}", "kind": "answer", "older": True,
                                    **where(s), "mid": c["mid"], "part": key[2], "n": c["n"],
-                                   "line": _line(_ask_title(c["question"], c.get("who") or "the PO")),
+                                   "line": _line(_ask_title(c["question"], "the PO")),
                                    "since": float(c.get("ts") or 0),
                                    "reason": _line(f"{c.get('who') or 'The PO'} asks", 240),
                                    "why": c.get("why") or "older", "taskRef": c.get("task") or "",
@@ -408,8 +422,9 @@ def _build_all(debug: bool = False, now: float | None = None) -> dict:
                         R.drop(roomId=rid, mid=q["mid"], part=part, since=q.get("ts"), line=_line(q.get("question")),
                                source="ask:open", why=older_of[key])
                     continue
-                row(s, "answer", "ask:open", q["mid"], part, _ask_title(q["question"], q.get("who") or "an agent"),
-                    q["ts"], reason=f"{q.get('who') or 'An agent'} asks")
+                who = _asker(s, q.get("who") or "", rid in po_of)
+                row(s, "answer", "ask:open", q["mid"], part, _ask_title(q["question"], who),
+                    q["ts"], reason=f"{_cap(who)} asks")
         except Exception as e:      # noqa: BLE001
             failed("open asks", e, rid)
 
