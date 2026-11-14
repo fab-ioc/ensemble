@@ -180,6 +180,27 @@ async function main() {
     await until(paired(ta),'own window auto paired');
     await sleep(400);
     out.ownAuto = await ev(route);
+    // A thread started on a balloon, opened here: its id known already (the
+    // alias the dashboard kept in this tab), then found only by its page.
+    const tid = out.promoted.tid, side = `document.getElementById('ts-frame').contentWindow`;
+    const balloonOpen = async () => {
+      await ev(`sideClose();document.getElementById('msgpane').dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}));0`);
+      await send('Runtime.evaluate',{expression:`openThread('',${JSON.stringify(A.balloon)});0`,userGesture:true,returnByValue:true},s);
+    };
+    out.ownAlias = await ev(`sessionStorage.getItem('cd-thread-alias:'+ROOM+':'+${JSON.stringify(A.balloon)})`);
+    await balloonOpen();
+    await until(paired(tid),'own window balloon (alias) paired');
+    await sleep(400);
+    out.ownBalloonKnown = {thread: await ev(route), aim: await ev(`SIDE_AIM`)};
+    await ev(`sessionStorage.removeItem('cd-thread-alias:'+ROOM+':'+${JSON.stringify(A.balloon)});0`);
+    await balloonOpen();
+    await until(`${side}?.sharedPairedNow?.() && new URLSearchParams(${side}.location.search).get('tmid')===${JSON.stringify(A.balloon)}`,'own window balloon paired');
+    await ev(`(()=>{${i}.value='Balloon draft';${i}.dispatchEvent(new Event('input',{bubbles:true}));edStoreNow();return 0})()`);
+    await until(`${side}.sharedThreadTarget().thread===${JSON.stringify(tid)} && SHARED_THREAD?.thread===${JSON.stringify(tid)}`,'own window balloon promoted');
+    await sleep(400);
+    out.ownBalloonLater = {thread: await ev(route), draft: await ev(`${i}.value`), aim: await ev(`SIDE_AIM`),
+      stored: await ev(`JSON.parse(sessionStorage.getItem('cd-draft:'+ROOM+':thread:'+${JSON.stringify(tid)})||'{}').head||''`),
+      old: await ev(`sessionStorage.getItem('cd-draft:'+ROOM+':thread:m:'+${JSON.stringify(A.balloon)})`)};
     console.log(JSON.stringify(out));
   } finally { c.close(); ch.kill(); }
 }
@@ -312,6 +333,17 @@ class ThreadAimsBox(unittest.TestCase):
         self.assertEqual(g['ownPo'], {'thread':'','draft':'Own PO draft'})
         self.assertEqual(g['ownSame'], tb)
         self.assertEqual(g['ownAuto'], '')
+
+    def test_balloon_thread_in_its_own_window(self):
+        g, tid = self.got, self.got['promoted']['tid']
+        self.assertEqual(g['ownAlias'], tid, 'the dashboard kept the alias in this tab')
+        self.assertEqual(g['ownBalloonKnown'], {'thread':tid,'aim':None}, 'an id known at once: the aim is taken')
+        later = g['ownBalloonLater']
+        self.assertEqual(later['thread'], tid, 'an id found later: the box follows it')
+        self.assertEqual(later['aim'], None)
+        self.assertEqual(later['draft'], 'Balloon draft')
+        self.assertEqual(later['stored'], 'Balloon draft', 'the draft moves to the id')
+        self.assertIsNone(later['old'])
 
 
 if __name__ == '__main__':

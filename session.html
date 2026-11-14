@@ -6750,6 +6750,7 @@ $('#compose-destination-link').addEventListener('click', e => {
 });
 function sharedThreadSelect(target, focus = false) {
   if (THREAD_MODE || !target?.thread) return;
+  if (target.mid) sharedThreadPromote(target.mid, target.thread);
   const switching = SHARED_THREAD?.thread !== String(target.thread);
   if (switching) edStoreNow();
   SHARED_THREAD = { thread:String(target.thread), title:String(target.title || 'Thread'), info:target.info || null };
@@ -6761,7 +6762,27 @@ function sharedThreadSelect(target, focus = false) {
   if (focus) { sharedComposerResume(); $('#input').focus({ preventScroll:true }); }
 }
 function sharedThreadUpdate(target) {
+  if (target.mid) sharedThreadPromote(target.mid, target.thread);
   if (SHARED_THREAD?.thread === target.thread) sharedThreadSelect(target, false);
+}
+// A thread started on a balloon (m:<mid>) has its id once its first reply is
+// in: the box aimed at it, a pending aim and its draft follow (#363).
+function sharedThreadPromote(mid, thread) {
+  if (THREAD_MODE || !mid || !thread || String(thread).startsWith('m:')) return;
+  const old = 'm:' + mid;
+  if (SIDE_AIM?.thread === old) SIDE_AIM.thread = thread;
+  if (SHARED_THREAD?.thread !== old) return;
+  edStoreNow();
+  const base = 'cd-draft:' + ROOM + ':thread:', s = edWorkspaceStorage();
+  try {
+    const v = s.getItem(base + old);
+    if (v && !s.getItem(base + thread)) edDraftWrite(base + thread, v);
+    edDraftWrite(base + old, null);
+    if (!document.body.classList.contains('workspace-guest')) s.setItem('cd-thread-alias:' + ROOM + ':' + mid, thread);
+  } catch (e) {}
+  SHARED_THREAD.thread = thread;
+  try { sessionStorage.setItem(SHARED_CHOICE_KEY, JSON.stringify({thread, active:true})); } catch (e) {}
+  sharedTargetPaint();
 }
 function sharedThreadClear(closed = false) {
   const thread = SHARED_THREAD?.thread || TS?.tid || (TS?.mid && 'm:' + TS.mid);
@@ -7822,9 +7843,11 @@ const TS_KEY = 'cd-thread-open:' + ROOM;
 // The thread the reader last opened beside the channel, {thread, focus}:
 // once its page pairs with the channel, the channel's box sends to it (#363).
 let SIDE_AIM = null;
-function sharedSideAimTake(thread) {
+// t: the thread page's target; a balloon's thread matches by its balloon too,
+// its id known (an alias) or not yet.
+function sharedSideAimTake(t) {
   const a = SIDE_AIM;
-  if (!a || a.thread !== thread) return null;
+  if (!a || !t || (a.thread !== t.thread && !(a.mid && a.mid === t.mid))) return null;
   SIDE_AIM = null;
   return a;
 }
@@ -7832,7 +7855,7 @@ function sharedSideAimTake(thread) {
 function sideAimNow(w) {
   try {
     if (!SIDE_AIM || !w?.sharedPairedNow?.()) return;
-    const t = w.sharedThreadTarget(), a = sharedSideAimTake(t.thread);
+    const t = w.sharedThreadTarget(), a = sharedSideAimTake(t);
     if (a) sharedThreadSelect(t, a.focus && edClicked());
   } catch (e) {}
 }
@@ -7860,7 +7883,7 @@ function sideOpen(o) {
   // (#236); else (a phone, a window of its own, a popped-out chat) it is here.
   // The reader opened it (#363): the box beside it sends to it, at once if
   // its page is paired with this channel already, else once it is.
-  SIDE_AIM = o.restore || o.auto ? null : { thread: TS.tid || 'm:' + TS.mid, focus: edClicked() };
+  SIDE_AIM = o.restore || o.auto ? null : { thread: TS.tid || 'm:' + TS.mid, mid: TS.tid ? '' : TS.mid, focus: edClicked() };
   if (sidePanel(o, title)) {
     let dock = null;
     try { dock = dashboardHost()?.PD?.rt?.get('thread:po')?.el.querySelector('iframe.po-thread')?.contentWindow; } catch (e) {}
@@ -7944,7 +7967,7 @@ window.addEventListener('message', e => {
     if (TS && d.asked !== undefined && (d.asked ? d.asked !== TS.tid : !d.tmid || (d.tmid !== TS.mid && d.thread !== TS.tid))) return;
     setText($('#ts-title'), d.title || 'Thread');
     // A thread started on a balloon has its id once its first reply is in.
-    if (TS && d.thread && TS.tid !== d.thread) { TS = { tid: d.thread, mid: '' }; try { localStorage.setItem(TS_KEY, JSON.stringify(TS)); } catch (err) {} sideMark(); }
+    if (TS && d.thread && TS.tid !== d.thread) { if (TS.mid) sharedThreadPromote(TS.mid, d.thread); TS = { tid: d.thread, mid: '' }; try { localStorage.setItem(TS_KEY, JSON.stringify(TS)); } catch (err) {} sideMark(); }
   } else if (d.type === 'thread-back') sideClose();
   else if (d.type === 'open-thread' && d.roomId === ROOM) openThread(d.thread || '', d.mid || '', d.part || '');
   else if (d.type === 'open-msg' && d.roomId === ROOM) gotoMsg(d.msg || '', d.part || '');
@@ -10205,7 +10228,7 @@ function sharedMainVisible(main) {
   } catch (e) { return false; }
 }
 function sharedThreadTarget() {
-  return { thread:THREAD || ('m:' + THREAD_MID), title:THR_INFO?.title || 'Thread', info:THR_INFO };
+  return { thread:THREAD || ('m:' + THREAD_MID), mid:THREAD_MID, title:THR_INFO?.title || 'Thread', info:THR_INFO };
 }
 function sharedPairedNow() { return SHARED_PAIRED === true; }
 let SHARED_PAIRED = null;
@@ -10227,7 +10250,7 @@ function sharedComposerSync() {
     // as the send target until the reader uses the thread or Reply. A thread
     // that owned the box while alone keeps its target when the box moves here.
     // One the reader opened has it at once (#363).
-    const aim = main.sharedSideAimTake?.(target.thread);
+    const aim = main.sharedSideAimTake?.(target);
     if (aim || SHARED_PAIRED === false || (choice?.thread === target.thread && choice.active === true))
       main.sharedThreadSelect(target, !!aim?.focus && main.edClicked());
   } else {
