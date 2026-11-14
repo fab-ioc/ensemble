@@ -32,6 +32,7 @@
 <script src="/static/pagekey.js"></script>
 <script src="/static/filedrag.js"></script>
 <script src="/static/filelinks.js"></script>
+<script src="/static/po-colour.js"></script>
 <script>FileDrag.attach(document);</script>
 <script src="/static/vendor/xterm/xterm.min.js"></script>
 <script src="/static/vendor/xterm/xterm-addon-fit.min.js"></script>
@@ -1886,6 +1887,29 @@
 const qs = new URLSearchParams(location.search);
 // ?id= from the dashboard; ?room= (with &msg=) from a link to one of its balloons.
 const ROOM = qs.get('id') || qs.get('room');
+let PO_PROJECTS = null;
+function poColourPaint() {
+  if (PO_PROJECTS && typeof ProjectColour !== 'undefined') {
+    const own = ROOM_OBJ && ROOM_OBJ.projectId ||
+      (PO_PROJECTS.find(p => p.poRoomId === ROOM || (p.sessions || []).some(s => s.roomId === ROOM)) || {}).id || '';
+    ProjectColour.paint(document, PO_PROJECTS, own);
+  }
+}
+async function poColourFetch() {
+  try {
+    const res = await fetch('/api/projects');
+    if (!res.ok) return;
+    const data = await res.json();
+    if (Array.isArray(data.projects)) { PO_PROJECTS = data.projects; poColourPaint(); }
+  } catch (e) {}
+}
+window.addEventListener('message', e => {
+  const d = e.data || {};
+  if (e.origin !== location.origin || e.source !== window.parent || d.ensemble !== 'po-project-colours' || !Array.isArray(d.projects)) return;
+  PO_PROJECTS = d.projects;
+  poColourPaint();
+});
+new MutationObserver(poColourPaint).observe(document.documentElement, { attributes:true, attributeFilter:['data-theme'] });
 // One thread of a PO chat (#210): ?thread=<id>, or ?thread=&tmid=<balloon> for
 // a thread started on that balloon. Its own messages and its own reply box.
 const THREAD_MODE = qs.has('thread');
@@ -3343,7 +3367,11 @@ function seatRole(id) {
 function roleLabel(m, N = CHAT_NAMES) {
   const st = m.senderType || '';
   // A line from outside (POST /api/room/notify) carries noticeKind 'external'; a PO view's copy, senderType.
-  if (st === 'external' || (m.kind === 'notice' && m.noticeKind === 'external')) return { cls: 'outside', text: String(m.senderLabel || 'Outside sender'), note: 'outside line' };
+  if (st === 'external' || (m.kind === 'notice' && m.noticeKind === 'external')) {
+    const label = String(m.senderLabel || 'Outside sender');
+    return (m.fromProjectId || m.fromProjectName || / PO$/.test(label)) ? { cls: 'po', text: label, note: 'outside line' }
+      : { cls: 'outside', text: label, note: 'outside line' };
+  }
   if (isPoMsg(m) || st === 'po') return { cls: 'po', text: senderName(m, N) };
   const t = taskReport(m);
   // A report: its sender's role in the label; the task and the review round beside it, quiet.
@@ -3398,7 +3426,11 @@ function whoHtml(m, N = CHAT_NAMES, o = {}) {
   const r = roleLabel(m, N);
   const pop = o.pop ? seatPopHtml(m, r.text) : '';
   const to = roleTo(m, N);
-  return `<span class="who rl ${r.cls}${r.cls === 'hub' ? ' hub-who' : ''}"${pop ? ' tabindex="0"' : ''}>${esc(r.text)}${pop}</span>`
+  const poName = m.fromProjectName || (/ PO$/.test(String(m.senderLabel || '')) ? String(m.senderLabel).slice(0, -3) : '');
+  const otherPo = isPoMsg(m) || (r.cls === 'po' && r.note === 'outside line');
+  const poOrigin = r.cls === 'po' && (m.fromProjectId ? ` data-po-project="${esc(m.fromProjectId)}"`
+    : poName || otherPo ? ` data-po-name="${esc(poName)}"` : '');
+  return `<span class="who rl ${r.cls}${r.cls === 'hub' ? ' hub-who' : ''}"${poOrigin || ''}${pop ? ' tabindex="0"' : ''}>${esc(r.text)}${pop}</span>`
     + (r.note ? `<span class="rl-note">${esc(r.note)}</span>` : '')
     + (to ? ` <span class="to">→ <b>${esc(to)}</b></span>` : '');
 }
@@ -5244,6 +5276,7 @@ function renderBubbles(items, opt = {}) {
   }
   applyComments();
   showLatest();
+  if (typeof poColourPaint === 'function') poColourPaint();
   markLanded();
   landPending();
   if (!CU_OPENED && box.clientHeight && items.length) catchUpOpen();
@@ -8056,7 +8089,7 @@ function threadLineHtml(tid, mine) {
   const on = TS && TS.tid === tid;
   return `<div class="thr-line${unread ? ' unread' : ''}${mine ? ' mine' : ''}${on ? ' on' : ''}" data-thr-line="${esc(tid)}" data-last-mid="${esc(t.lastMid || '')}" data-key="thr:${esc(tid)}:${n}:${work}:${unread}:${esc(t.state || '')}:${+t.lastAt || 0}:${on ? 1 : 0}">`
     + `<button type="button" class="thr-open" data-thr="${esc(tid)}" title="Open the thread beside the chat" aria-label="${esc(label + (unread ? ', ' + unread + ' new' : '') + '. Open the thread “' + (t.title || '') + '”')}">`
-    + (who.length ? `<span class="thr-who" aria-hidden="true">${who.map(w => `<span class="rl ${esc(w.cls)}">${esc(w.cls === 'person' ? OPERATOR || 'you' : w.text)}</span>`).join('')}</span>` : '')
+    + (who.length ? `<span class="thr-who" aria-hidden="true">${who.map(w => `<span class="rl ${esc(w.cls)}"${w.cls === 'po' && w.projectId ? ` data-po-project="${esc(w.projectId)}"` : w.cls === 'po' && (w.projectName || w.otherProject) ? ` data-po-name="${esc(w.projectName || '')}"` : ''}>${esc(w.cls === 'person' ? OPERATOR || 'you' : w.text)}</span>`).join('')}</span>` : '')
     + `<span class="thr-count">${label}</span>`
     + `<span class="thr-ago" data-ts="${+t.lastAt || 0}">Last reply ${esc(thrAgo(t.lastAt))}</span>`
     + (unread ? `<span class="thr-dot" role="img" aria-label="New replies" title="${unread} new repl${unread === 1 ? 'y' : 'ies'}"></span>` : '')
@@ -10652,6 +10685,10 @@ window.addEventListener('message', (e) => {
 // Inside the dashboard, say this chat has started: a balloon link opened while
 // it was still loading is sent to it again.
 try { if (window.parent !== window) window.parent.postMessage({ type: 'chat-ready', roomId: ROOM }, location.origin); } catch (e) {}
+if (window.parent === window) poColourFetch();
+else setTimeout(() => { if (!PO_PROJECTS) poColourFetch(); }, 1500);
+window.addEventListener('visibilitychange', () => { if (!document.hidden && window.parent === window) poColourFetch(); });
+setInterval(() => { if (window.parent === window && !document.hidden) poColourFetch(); }, 60000);
 // #311: on a phone the PO chat shows one line naming what waits in the Inbox
 // (CSS shows it only there). The page writes the counts on this frame as
 // data-inbox-wait='{"q":3,"check":1,"wait":0}', so a reloaded frame reads them

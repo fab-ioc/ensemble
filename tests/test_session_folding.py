@@ -266,7 +266,7 @@ class RoleLabels(unittest.TestCase):
             '<span class="who rl po">PO</span>',
             '<span class="who rl po">PO</span>',
             '<span class="who rl person">sam</span>',
-            '<span class="who rl po">Dock PO</span>',
+            '<span class="who rl po" data-po-name="Dock">Dock PO</span>',
             # A task's report is its sender's role, the task beside it: in a room, and as a transcript's hub input.
             '<span class="who rl reviewer">reviewer</span><span class="rl-note">0804cfef</span>',
             '<span class="who rl reviewer">reviewer</span><span class="rl-note">#60 · review 2</span>',
