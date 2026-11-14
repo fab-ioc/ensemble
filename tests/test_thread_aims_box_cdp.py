@@ -197,10 +197,25 @@ async function main() {
     out.p340.tabStacked = await ev(toLine);
     // (a'') The PO chat's tab clicked at once after the thread opened: a click of its own.
     await openA('quick', 0);
+    out.p340.quickAt = await ev(`Date.now()-WC.aimAt`);
     await clickTop('.dk-tab[data-dk-tab="po-chat"]');
     await sleep(100);
     out.p340.tabQuick = await ev(toLine);
     await until(onPo,'P340 tab quick');
+    // (a''') A key on the tabs at once after the thread opened, stacked in
+    // front of the PO chat: Dock brings the PO chat forward, the box follows.
+    await ev(`PD.dock.removePanel('thread:po');PD.dock.forget('thread:po');pdFits=()=>false;0`);
+    await openA('key', 0);
+    await ev(`pdFits=window.__fits;0`);
+    const key = await ev(`(()=>{const t=document.querySelector('.dk-tab[data-dk-tab="thread:po"]');t.focus();
+      const l=[...t.closest('.dk-tabs').querySelectorAll('[data-dk-tab]')].map(x=>x.dataset.dkTab);
+      return l.indexOf('po-chat')===0?'Home':'End'})()`);
+    out.p340.keyAt = await ev(`Date.now()-WC.aimAt`);
+    for (const type of ['keyDown','keyUp'])
+      await send('Input.dispatchKeyEvent',{type,key,code:key,windowsVirtualKeyCode:key==='Home'?36:35},s);
+    await sleep(100);
+    out.p340.keyQuick = {...await ev(toLine), front: await ev(`PD.dock.isShown('po-chat')`)};
+    await until(onPo,'P340 key quick');
     // (b) The To line's ×.
     await openA('x');
     await clickTop('#workspace-compose-back');
@@ -465,6 +480,12 @@ class ThreadAimsBox(unittest.TestCase):
         self.assertTrue(p['x']['focus'], 'the × leaves the caret in the box')
         self.assertFalse(p['close']['panel'])
         self.assertFalse(p['reload']['panel'])
+        self.assertLess(p['quickAt'], 600, 'the quick click came within the 600 ms hold')
+        self.assertLess(p['keyAt'], 600, 'the key came within the 600 ms hold')
+        k = p['keyQuick']
+        self.assertTrue(k['front'], 'the key brought the PO chat forward')
+        self.assertEqual((k['kind'], k['placeholder']), ('po', 'Message the PO…'),
+                         'a key on the tabs at once after a thread opened takes the box')
         self.assertEqual((p['tabQuick']['kind'], p['tabQuick']['placeholder']), ('po', 'Message the PO…'),
                          'a click on the PO tab right after a thread opened takes the box')
         self.assertLess(p['reloadMs'], 4000, 'no wait for a thread that is not coming back')
