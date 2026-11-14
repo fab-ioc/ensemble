@@ -151,6 +151,13 @@ async function main() {
     await until(`${W}.contentWindow.liveTailBoxThread?.()===PD.rt.get('thread:po').tid && ${boxReady}`,'promoted editor');
     out.promoted = await ev(`({target:WC.target, tid:PD.rt.get('thread:po').tid})`);
     out.promotedRoute = await boxRoute();
+    // The PO chat is the workspace's guest: the workspace's editor moves the
+    // draft; the chat's promotion moves its target only.
+    out.guest = await ev(`${PO}.contentWindow.eval(\`(()=>{const k='cd-draft:'+ROOM+':thread:', c=sessionStorage.getItem(SHARED_CHOICE_KEY), was=SHARED_THREAD;
+      sessionStorage.setItem(k+'m:zz','{"head":"stale"}');SHARED_THREAD={thread:'m:zz',title:'T',info:null};sharedThreadPromote('zz','Tzz');
+      const r={guest:document.body.classList.contains('workspace-guest'),thread:SHARED_THREAD.thread,old:sessionStorage.getItem(k+'m:zz'),
+        moved:sessionStorage.getItem(k+'Tzz'),alias:sessionStorage.getItem('cd-thread-alias:'+ROOM+':zz')};
+      SHARED_THREAD=was;sessionStorage.removeItem(k+'m:zz');if(c===null)sessionStorage.removeItem(SHARED_CHOICE_KEY);else sessionStorage.setItem(SHARED_CHOICE_KEY,c);sharedTargetPaint();return r})()\`)`);
     // 9. The chat in a window of its own: its box follows the thread it opens beside it.
     await send('Page.navigate',{url:A.base+'/session?id='+encodeURIComponent(A.po)},s);
     await until(`document.querySelectorAll('#msgs .thr-open[data-thr]').length===2 && document.getElementById('send')?.disabled===false`,'own window chat');
@@ -192,14 +199,27 @@ async function main() {
     await until(paired(tid),'own window balloon (alias) paired');
     await sleep(400);
     out.ownBalloonKnown = {thread: await ev(route), aim: await ev(`SIDE_AIM`)};
-    await ev(`sessionStorage.removeItem('cd-thread-alias:'+ROOM+':'+${JSON.stringify(A.balloon)});0`);
+    const idDraft = `JSON.parse(sessionStorage.getItem('cd-draft:'+ROOM+':thread:'+${JSON.stringify(tid)})||'{}').head||''`;
+    const unalias = `sessionStorage.removeItem('cd-thread-alias:'+ROOM+':'+${JSON.stringify(A.balloon)});0`;
+    const promoted = `${side}?.sharedPairedNow?.() && ${side}.sharedThreadTarget().thread===${JSON.stringify(tid)} && SHARED_THREAD?.thread===${JSON.stringify(tid)}`;
+    // The id has a draft of its own, the alias is gone: the box shows that draft once the id is found.
+    await ev(`(()=>{${i}.value='Existing ID draft';${i}.dispatchEvent(new Event('input',{bubbles:true}));edStoreNow();return 0})()`);
+    await ev(unalias);
+    await balloonOpen();
+    await until(promoted,'own window balloon (id draft) promoted');
+    await sleep(400);
+    out.ownIdDraft = {thread: await ev(route), draft: await ev(`${i}.value`)};
+    await ev(`edStoreNow();0`);
+    out.ownIdDraft.stored = await ev(idDraft);
+    await ev(`(()=>{${i}.value='';${i}.dispatchEvent(new Event('input',{bubbles:true}));edStoreNow();return 0})()`);
+    await ev(unalias);
     await balloonOpen();
     await until(`${side}?.sharedPairedNow?.() && new URLSearchParams(${side}.location.search).get('tmid')===${JSON.stringify(A.balloon)}`,'own window balloon paired');
     await ev(`(()=>{${i}.value='Balloon draft';${i}.dispatchEvent(new Event('input',{bubbles:true}));edStoreNow();return 0})()`);
-    await until(`${side}.sharedThreadTarget().thread===${JSON.stringify(tid)} && SHARED_THREAD?.thread===${JSON.stringify(tid)}`,'own window balloon promoted');
+    await until(promoted,'own window balloon promoted');
     await sleep(400);
     out.ownBalloonLater = {thread: await ev(route), draft: await ev(`${i}.value`), aim: await ev(`SIDE_AIM`),
-      stored: await ev(`JSON.parse(sessionStorage.getItem('cd-draft:'+ROOM+':thread:'+${JSON.stringify(tid)})||'{}').head||''`),
+      stored: await ev(idDraft),
       old: await ev(`sessionStorage.getItem('cd-draft:'+ROOM+':thread:m:'+${JSON.stringify(A.balloon)})`)};
     console.log(JSON.stringify(out));
   } finally { c.close(); ch.kill(); }
@@ -344,6 +364,11 @@ class ThreadAimsBox(unittest.TestCase):
         self.assertEqual(later['draft'], 'Balloon draft')
         self.assertEqual(later['stored'], 'Balloon draft', 'the draft moves to the id')
         self.assertIsNone(later['old'])
+        self.assertEqual(g['ownIdDraft'], {'thread':tid,'draft':'Existing ID draft','stored':'Existing ID draft'},
+                         "the id's own draft is shown and kept")
+
+    def test_guest_chat_leaves_the_draft_to_the_workspace(self):
+        self.assertEqual(self.got['guest'], {'guest':True,'thread':'Tzz','old':'{"head":"stale"}','moved':None,'alias':None})
 
 
 if __name__ == '__main__':

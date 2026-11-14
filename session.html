@@ -6772,16 +6772,23 @@ function sharedThreadPromote(mid, thread) {
   const old = 'm:' + mid;
   if (SIDE_AIM?.thread === old) SIDE_AIM.thread = thread;
   if (SHARED_THREAD?.thread !== old) return;
-  edStoreNow();
-  const base = 'cd-draft:' + ROOM + ':thread:', s = edWorkspaceStorage();
-  try {
-    const v = s.getItem(base + old);
-    if (v && !s.getItem(base + thread)) edDraftWrite(base + thread, v);
-    edDraftWrite(base + old, null);
-    if (!document.body.classList.contains('workspace-guest')) s.setItem('cd-thread-alias:' + ROOM + ':' + mid, thread);
-  } catch (e) {}
+  // In the workspace its own editor holds the draft and moves it (pdThreadTitle).
+  let reload = false;
+  if (!document.body.classList.contains('workspace-guest')) {
+    edStoreNow();
+    const base = 'cd-draft:' + ROOM + ':thread:', s = edWorkspaceStorage();
+    try {
+      // The text in the box goes with it; an empty box shows the id's own draft.
+      const v = s.getItem(base + old);
+      if (v) edDraftWrite(base + thread, v);
+      else reload = !!s.getItem(base + thread);
+      edDraftWrite(base + old, null);
+      s.setItem('cd-thread-alias:' + ROOM + ':' + mid, thread);
+    } catch (e) {}
+  }
   SHARED_THREAD.thread = thread;
   try { sessionStorage.setItem(SHARED_CHOICE_KEY, JSON.stringify({thread, active:true})); } catch (e) {}
+  if (reload && COMPOSER_SHARED_ACTIVE) { sharedComposerYield(false); sharedComposerResume(); }
   sharedTargetPaint();
 }
 function sharedThreadClear(closed = false) {
