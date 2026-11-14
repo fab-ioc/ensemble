@@ -8692,9 +8692,10 @@ function renderActivity(ptyMap, liveMap) {
   const agents = ROOM_AGENTS.filter(a => a.ptyId || a.sessionId);
   const was = TAIL_WORKING.map(a => a.identity + '\u0001' + a.ptyId).join('|');
   TAIL_WORKING = ROOM_LIVE ? agents.filter(a => a.ptyId && agentState(a, ptyMap, liveMap || {}).cls === 'working') : [];
-  // Its agent stopped: an "on it" answer is done from now on (#361, Q2).
+  // Its agent stopped: an "on it" answer is done from now on (#361, Q2). Not
+  // on the page's first state read, which may come before the live states.
   const busy = new Set(TAIL_WORKING.map(a => a.identity)), drawn = POINTS.drawn || [];
-  for (const p of POINTS.items || []) {
+  if (ACT_READS++ > 0) for (const p of POINTS.items || []) {
     const c = curAnswer(p), by = c && c.mid && c.how === 'implicit' ? drawn.find(x => x && x.id === c.mid) : null;
     if (by && !busy.has(by.from)) PT_SETTLED.add(c.mid);
   }
@@ -8787,6 +8788,7 @@ document.addEventListener('visibilitychange', placeState);
 // popup with more of the screen. Everything here reads the local xterm buffer,
 // so the ticking costs no server calls.
 const TAIL_LINES = 3, TAIL_POP_LINES = 40;
+let ACT_READS = 0;       // state reads renderActivity has had (#361: the first settles nothing)
 let TAIL_WORKING = [];   // agents currently working: [{identity, ptyId, ...}]
 let TAIL_POP_PTY = '';   // pty whose popup is open ('' = closed)
 

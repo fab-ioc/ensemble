@@ -366,7 +366,7 @@ const vm = require('vm');
 const { code } = JSON.parse(require('fs').readFileSync(0, 'utf8'));
 const ctx = { attSplit: t => ({ words: String(t || ''), paths: [] }), stripRefBlocks: t => t, URL,
   fetch: () => new Promise(() => {}),       // a link the hub has not resolved yet stays pending
-  ROOM: 'room-po', SOLO_MODE: true, pointsChanged: () => {}, pointsNote: () => {}, TAIL_WORKING: [],
+  ROOM: 'room-po', SOLO_MODE: true, pointsChanged: () => {}, pointsNote: () => {}, TAIL_WORKING: [], ACT_READS: 0,
   withPathAbbrevs: (t, fn) => fn(), ATT_PREFIX: '[image] ', ATT_FILE_PREFIX: '[file] ',
   // renderActivity's world: the room's agents, who works (BUSY), nothing else drawn.
   ROOM_AGENTS: [{ identity: 'claude', ptyId: 'pty-1' }, { identity: 'codex', ptyId: 'pty-2' }], ROOM_LIVE: true, BUSY: new Set(),
@@ -452,6 +452,9 @@ out.q2 = {
 // renderActivity settles an "on it" answer whose author is not at work, even
 // while another agent works; one whose author works stays open.
 T.setPoints(P);
+// The page's first state read may come before the live states: it settles nothing.
+ctx.BUSY = new Set(['codex']); T.renderActivity({}, {});
+out.q2.settledFirst = T.PT_SETTLED.has('a3');
 ctx.BUSY = new Set(['claude', 'codex']); T.renderActivity({}, {});
 out.q2.settledBusy = T.PT_SETTLED.has('a3');
 ctx.BUSY = new Set(['codex']); T.renderActivity({}, {});
@@ -641,6 +644,7 @@ class BalloonStates(unittest.TestCase):
         self.assertIn('<span class="pt-st done">done — ', q["otherWorks"]["state"])
         self.assertIn('data-pt="P3" data-pt-act="ack"', q["otherWorks"]["agent"])
         self.assertEqual((q["pointMapsKeeps"], q["pointMapsNone"]), ({"claude": 5}, {}))
+        self.assertFalse(q["settledFirst"], "the page's first state read settles nothing")
         self.assertFalse(q["settledBusy"], "its author at work: not settled")
         self.assertTrue(q["settledOther"], "its author stopped while another works: settled")
         self.assertEqual(q["workingAfter"], ["codex"])
