@@ -16393,8 +16393,18 @@ try { if (localStorage.getItem('cd-inbox-scope') === 'all') IBX.scope = 'all'; }
 const IBX_ROW_UNDO_S = 10, IBX_BULK_UNDO_S = 30, IBX_CHUNK = 200, IBX_HIDE_S = 20;
 // Questions last, so "this and earlier" is every question below the row.
 const IBX_GROUPS = [['check', 'Ready to check'], ['waiting', 'Waiting on you'], ['answer', 'Needs your answer'], ['older', 'Older questions']];
-// #360: what an older question is, said under its heading.
-const IBX_OLDER_WHY = 'You wrote past them in their chat';
+// #360: why older questions are not counted, said under their heading: the hub's
+// `why` for each (asks.py split_waiting). All one reason reads whole; a mix names each.
+const IBX_OLDER_WHY = { past: 'You wrote past them in their chat', repeat: 'Asked again later: only the newest counts',
+  cleared: 'From before Clear all' };
+const IBX_OLDER_PART = { past: 'written past in their chat', repeat: 'asked again later', cleared: 'from before Clear all' };
+function ibxOlderWhy(list) {
+  const got = new Set((list || []).map(r => IBX_OLDER_PART[r.why] ? r.why : ''));
+  const ws = Object.keys(IBX_OLDER_PART).filter(w => got.has(w));
+  if (ws.length === 1 && got.size === 1) return IBX_OLDER_WHY[ws[0]];
+  const parts = ws.map(w => IBX_OLDER_PART[w]).concat(got.has('') ? ['older'] : []);
+  return 'Not counted: ' + (parts.length > 1 ? parts.slice(0, -1).join(', ') + ' or ' + parts[parts.length - 1] : parts[0] || 'older');
+}
 const IBX_STATE = { running: 'running', stopped: 'stopped', done: 'Done', gone: 'not on the board' };
 function ibxWhere(r, all) {
   const who = r.isPo ? 'PO' : [r.ref, r.task].filter(Boolean).join(' ');
@@ -16560,16 +16570,16 @@ function ibxHtml(d, scope, pid, now, phone, opts) {
   // the card's left bar says which (amber: answer or waiting, green: check).
   // #360 (P333): the older questions alone get a heading, "Older questions · N" and why, right
   // above them: they are listed, not counted, so a 0 above them is never left unexplained.
-  const olderLive = older.filter(r => !IBX.gone.has(r.id)).length;
+  const olderLive = older.filter(r => !IBX.gone.has(r.id)).length, olderWhy = ibxOlderWhy(older);
   const groups = listed
     ? IBX_GROUPS.map(([k]) => (k === 'older' && older.length
-      ? `<li class="ibx-older-head"><h3 class="ibx-older-t">${esc(`Older questions · ${olderLive}`)}</h3><p class="ibx-older-why">${esc(IBX_OLDER_WHY)}</p></li>` : '')
+      ? `<li class="ibx-older-head"><h3 class="ibx-older-t">${esc(`Older questions · ${olderLive}`)}</h3><p class="ibx-older-why">${esc(olderWhy)}</p></li>` : '')
       + (k === 'older' ? older : rows.filter(r => r.kind === k)).map(r => row(r).replace('<li class="ibx-row', `<li data-stage="${k}" class="ibx-row`)).join('')).join('')
     : IBX_GROUPS.map(([k, title]) => {
     const got = k === 'older' ? older : rows.filter(r => r.kind === k);
     const live = got.filter(r => !IBX.gone.has(r.id)).length;
     return got.length ? `<li class="pdp-group" data-stage="${k}"><h3 class="pdp-head">${esc(title)} <span class="pdp-n">${live}</span></h3>`
-      + (k === 'older' ? `<p class="ibx-older-why">${esc(IBX_OLDER_WHY)}</p>` : '')
+      + (k === 'older' ? `<p class="ibx-older-why">${esc(olderWhy)}</p>` : '')
       + `<ul class="pdp-list">${got.map(row).join('')}</ul></li>` : '';
   }).join('');
   const note = d.pending ? '<p class="pdp-note">Reading a conversation’s question cards: more may come.</p>' : '';
@@ -17157,18 +17167,19 @@ function ldpKindIcon(kind, cls) {
     + '<rect x=".9" y="1.6" width="10.2" height="8.8" rx="1.4" fill="var(--c-neutral-bold)" fill-opacity=".22" stroke="var(--c-neutral-bold)" stroke-width="1.2"/>'
     + '<path d="M3.2 4.6l1.8 1.4-1.8 1.4M6.4 7.8h2.4" stroke="var(--c-neutral-bold)" stroke-width="1.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 }
-// #360 (P333): a row with older questions and nothing waiting shows their number, outlined grey.
+// #360 (P333): a row with older questions and nothing waiting shows their number, outlined grey:
+// the ones not closed (one waiting on its Undo is not), as the Older questions heading counts them.
 function ldpOlder(pid) {
   const d = IBX.data;
-  return d ? ibxOlder(d, pid ? 'project' : 'all', pid).length : 0;
+  return d ? ibxOlder(d, pid ? 'project' : 'all', pid).filter(r => !IBX.gone.has(r.id)) : [];
 }
 function ldpHtml(m) {
   const cnt = ldpCount;
   // `k`: the row's key for ldpCount ('' for All).
   const pill = (n, k) => {
     if (n) return `<span class="ldp-n" title="${n} waiting on you">${n}</span>`;
-    const o = ldpOlder(k);
-    return o ? `<span class="ldp-n ldp-old" title="${o} older question${o === 1 ? '' : 's'}: you wrote past ${o === 1 ? 'it' : 'them'}">${o}</span>` : '';
+    const old = ldpOlder(k), o = old.length;
+    return o ? `<span class="ldp-n ldp-old" title="${esc(`${o} older question${o === 1 ? '' : 's'}, not counted. ${ibxOlderWhy(old)}`)}">${o}</span>` : '';
   };
   const lp = ibxLdPid();
   const selAll = IBX.scope === 'all' || !lp;
