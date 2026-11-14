@@ -214,8 +214,11 @@ class TheChatBox(unittest.TestCase):
         self.assertIn("#send { height:var(--touch-min); padding:0 var(--s-400); border-color:var(--accent); background:var(--accent); color:var(--accent-fg);", css)
         self.assertIn(".msg.user:not(.hub) { align-self:flex-end; max-width:85%;", css)
         self.assertIn(".msg.user.pending { border:1px dashed var(--border-strong); }", css)   # a send on its way keeps its edge
-        self.assertIn('.msg.claude:not(.user) > .from::before { content:"C"; background:var(--agent-claude-bg); color:var(--agent-claude-fg); }', css)
-        self.assertIn('.msg.codex:not(.user) > .from::before { content:"X"; background:var(--agent-codex-bg); color:var(--agent-codex-fg); }', css)
+        # #361: the sender's role label replaces the agent kind's letter; the
+        # person's balloon with its caption under it keeps its look on .bal.
+        self.assertNotIn("::before", css)
+        self.assertIn(".msg.user.has-under:not(.hub) { border:0; background:transparent; }", css)
+        self.assertIn(".msg.user.has-under > .bal { border:1px solid transparent; }", css)
         self.assertNotRegex(css, r"#[0-9a-fA-F]{3,6}\b")             # tokens only
         # The phone's block is untouched by it.
         phone = media_block(SESSION, "@media (pointer: coarse) {")

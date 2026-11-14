@@ -535,6 +535,58 @@ class CodexFileTable(unittest.TestCase):
         self.assertEqual(got[sid][0], 15)
 
 
+class TurnEnds(_World):
+    """#361, Q2: an agent's Stop hook ends its turn (points.turn_ended); the
+    chat reads ``turnEnds`` to settle an "on it" answer written before it, on
+    every device and after a reload."""
+
+    def test_the_last_turn_end_is_kept_and_shown(self):
+        rid = self.team_room()
+        points.turn_ended(rid, "claude", now=100.0)
+        points.turn_ended(rid, "codex", now=90.0)
+        points.turn_ended(rid, "claude", now=80.0)            # an older one arriving late changes nothing
+        self.assertEqual(points.load(rid)["turnEnds"], {"claude": 100.0, "codex": 90.0})
+        points.turn_ended(rid, "claude", now=120.0)
+        points._CACHE.clear()                                  # read from its file again
+        self.assertEqual(points.load(rid)["turnEnds"], {"claude": 120.0, "codex": 90.0})
+        self.assertEqual(points.view(rid, quick=True)["turnEnds"], {"claude": 120.0, "codex": 90.0})
+
+    def test_nothing_without_a_room_or_an_agent(self):
+        rid = self.team_room()
+        points.turn_ended("", "claude", now=1.0)
+        points.turn_ended(rid, "", now=1.0)
+        self.assertNotIn("turnEnds", points.load(rid))
+        # A room id no room has (a hook's stale or made-up room): no ledger is written.
+        points.turn_ended("room-1", "eng", now=1.0)
+        points.turn_ended("not-a-room", "eng", now=1.0)
+        self.assertFalse(points._path("room-1").exists())
+        self.assertEqual(points.view(rid, quick=True)["turnEnds"], {})
+
+    def test_a_ledger_keeps_only_sound_entries(self):
+        base = points._empty("room-x")
+        led = points._clean({**base, "turnEnds": {"claude": 5, "codex": "x", "gemini": 2.5}}, "room-x")
+        self.assertEqual(led["turnEnds"], {"claude": 5.0, "gemini": 2.5})
+        self.assertNotIn("turnEnds", points._clean({**base, "turnEnds": ["claude"]}, "room-x"))
+
+    def test_other_writes_keep_it(self):
+        rid = self.solo_room()
+        points.turn_ended(rid, "claude", now=50.0)
+        self.send(rid, "Keep me")
+        points.act(rid, "P1", "drop")
+        self.assertEqual(points.load(rid)["turnEnds"], {"claude": 50.0})
+
+    def test_the_stop_hook_ends_the_turn(self):
+        calls = []
+        with mock.patch.object(points, "turn_ended", side_effect=lambda *a: calls.append(a)):
+            dashboard._points_turn_ended("room-1", "claude")
+        self.assertEqual(calls, [("room-1", "claude")])
+        with mock.patch.object(points, "turn_ended", side_effect=OSError("disk")):
+            dashboard._points_turn_ended("room-1", "claude")    # the hook's answer is sent: nothing raises
+        src = Path(dashboard.__file__).read_text(encoding="utf-8")
+        i = src.index('event.get("hook_event_name") in ("Stop", "StopFailure")')
+        self.assertIn("target=_points_turn_ended", src[i:i + 1200])
+
+
 class Storage(_World):
     def test_it_survives_a_reload_of_the_module(self):
         rid = self.solo_room()

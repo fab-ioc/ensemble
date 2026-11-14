@@ -1541,6 +1541,18 @@ def wake_targets(room: dict, sender: str, to: str, text: str) -> list[str]:
 # Messaging
 # ---------------------------------------------------------------------------
 
+def seat_stamp(room: dict, identity: str) -> dict | None:
+    """Who sat in an agent's seat when it wrote (#361): its kind, model and
+    role at that moment, kept on the message as ``seat``, so a label still
+    says who wrote it after a handover moved the seat to another kind. None
+    for the person, the hub and an outside sender."""
+    p = participant(room, identity)
+    if not p or p.get("kind") != "agent":
+        return None
+    seat = {k: str(p.get(k) or "").strip() for k in ("agent", "model", "role")}
+    return {k: v for k, v in seat.items() if v} or None
+
+
 def post_message(room_id: str, sender: str, text: str, to: str = "",
                  wait_for_human: bool = True, structured_asks: list[dict] | None = None,
                  ask_audience: str = "") -> dict | None:
@@ -1567,6 +1579,9 @@ def post_message(room_id: str, sender: str, text: str, to: str = "",
             "text": text,
             "ts": _now(),
         }
+        seat = seat_stamp(room, sender)
+        if seat:
+            msg["seat"] = seat
         if structured_asks is not None:
             msg["asks"] = structured_asks
         if ask_audience:
@@ -1653,6 +1668,9 @@ def record_report(room_id: str, identity: str, kind: str, text: str,
         msg = {"id": uuid.uuid4().hex[:12], "from": identity, "to": HUMAN_IDENTITY,
                "text": f"{heading}\n\n{text}" if heading else text, "ts": now,
                "kind": "report", "reportKind": kind, "rang": []}
+        seat = seat_stamp(room, identity)
+        if seat:
+            msg["seat"] = seat
         if routed_to:
             msg["reportTo"] = routed_to
         if structured_asks is not None:
