@@ -4105,6 +4105,10 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   #workspace-compose .wc-to { display:flex; align-items:center; min-height:28px; gap:var(--s-100); padding:var(--s-100) var(--s-300) 0; font-size:var(--fs-200); color:var(--fg-subtle); }
   #workspace-compose .wc-to a { color:var(--link); min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; text-decoration:underline; }
   #workspace-compose .wc-to a:focus-visible { outline:none; box-shadow:0 0 0 2px var(--focus-ring); }
+  /* Back to the PO while the box is on a thread (P340): the chat's own chip's × (session.html #compose-target button). */
+  #workspace-compose .wc-to button { flex:0 0 auto; border:0; background:transparent; color:inherit; font:inherit; cursor:pointer; min-width:24px; min-height:24px; }
+  #workspace-compose .wc-to button[hidden] { display:none; }
+  #workspace-compose .wc-to button:focus-visible { outline:none; box-shadow:0 0 0 2px var(--focus-ring); }
   #workspace-compose iframe { display:block; width:100%; height:110px; border:0; background:var(--surface); }
   #workspace-compose iframe.menu-room { position:relative; z-index:1; background:transparent; }   /* a menu's room over the chats (wcFrameRoom) */
   @media (min-width:768px) {
@@ -5280,7 +5284,7 @@ window.DOC_LISTENERS_PAUSED = false;
     <section id="po-panel" hidden aria-label="The project's PO" data-noun-aria-label="The {project}'s PO"></section>
 
   </div>
-  <div id="workspace-compose" hidden><div class="wc-to">To: <a href="#" id="workspace-compose-link"></a></div><iframe id="workspace-compose-frame" title="Workspace message box" allow="clipboard-read; clipboard-write"></iframe></div>
+  <div id="workspace-compose" hidden><div class="wc-to">To: <a href="#" id="workspace-compose-link"></a><button type="button" id="workspace-compose-back" hidden aria-label="Back to the PO" title="Back to the PO">&times;</button></div><iframe id="workspace-compose-frame" title="Workspace message box" allow="clipboard-read; clipboard-write"></iframe></div>
 </main>
 <dialog id="modal"></dialog>
 <aside id="detail-panel"></aside>
@@ -15404,7 +15408,7 @@ function pdChatUnpanel(roomId) {
 function pdRowTitle(r) { return [taskNoText(r, false), detailTitle(r)].filter(Boolean).join(' ') || 'Chat'; }
 // The workspace owns one editor. Its session frame runs the ordinary send path,
 // while the conversation frames keep their messages and per-target drafts.
-const WC = { target:null, base:'', tailKey:'', restoring:false, pickSeq:0, popped:new Map(), aimAt:0 };
+const WC = { target:null, base:'', tailKey:'', restoring:false, pickSeq:0, popped:new Map(), aimAt:0, ownAt:0 };
 function wcPoRoom() { return PO_PANEL.querySelector('iframe.po-session:not([hidden])')?.dataset.room || ''; }
 function wcMainTarget() {
   const r = SELECTED_SID && rowBySid(SELECTED_SID);
@@ -15533,6 +15537,7 @@ function wcSync() {
   }
   box.hidden = false;
   document.getElementById('workspace-compose-link').textContent = wcTitle(WC.target);
+  document.getElementById('workspace-compose-back').hidden = WC.target?.kind !== 'thread';
   const t = WC.target;
   const base = wcBase(t);
   if (WC.base !== base) {
@@ -15548,7 +15553,33 @@ function wcSync() {
       try { chat.contentWindow?.renderLiveTail?.(); } catch (e) {}
   }
 }
-try { WC.target = JSON.parse(sessionStorage.getItem('cd-workspace-compose-target') || 'null'); WC.restoring = !!WC.target; } catch (e) {}
+try {
+  WC.target = JSON.parse(sessionStorage.getItem('cd-workspace-compose-target') || 'null');
+  // A thread closed before the reload does not come back (its chat keeps
+  // the open one, session.html's TS_KEY): the box is the PO's (P340).
+  if (WC.target?.kind === 'thread' && !localStorage.getItem('cd-thread-open:' + WC.target.room)) WC.target = {kind:'po', room:WC.target.room};
+  WC.restoring = !!WC.target;
+} catch (e) {}
+// The box back on the chat the PO's panel shows (P340): the PO, or the task in
+// the middle. The thread's draft stays its own (#363).
+function wcToMain(focus = false) {
+  const t = wcMainTarget();
+  if (t && wcValid(t)) wcChoose(t, focus);
+}
+document.getElementById('workspace-compose-back').addEventListener('click', () => {
+  if (WC.target?.kind === 'thread') wcToMain(true);
+});
+// The PO's chat brought to the front by the person (its tab, the Panels
+// menu, a key, the thread's Back): the box is that chat's (P340). Not a
+// restore at load, nor the press that has just opened a thread (#363): the
+// chat shown within 600 ms of it may be that press's. A click on its tab
+// (tab), or a press or key on this page after the thread was aimed at (the
+// Panels menu, a key on the tabs: WC.ownAt), is the person's own, however soon.
+function wcPoFront(tab = false) {
+  const own = tab || WC.ownAt > WC.aimAt;
+  if (PD.thrRestoring || !navigator.userActivation?.isActive || (!own && Date.now() - WC.aimAt < 600)) return;
+  if (WC.target?.kind === 'thread') wcToMain();
+}
 document.getElementById('workspace-compose-link').addEventListener('click', e => {
   e.preventDefault();
   const t = WC.target;
@@ -15784,7 +15815,7 @@ function pdThreadPanel(frameEl, o) {
   try { res = d.addPanel({ id: PD_THREAD, title, el, closable: true }, where); } catch (e) { res = null; } finally { PD.thrAdding = false; }
   if (res !== 'added') { PD.rt.delete(PD_THREAD); return res === 'exists'; }
   // Back in the chat's own stack after a reload: the chat stays in front.
-  if (o.restore && d.frontOf && d.frontOf('po-chat') === PD_THREAD) { try { d.activate('po-chat'); } catch (e) {} }
+  if (o.restore && d.frontOf && d.frontOf('po-chat') === PD_THREAD) { PD.thrRestoring = true; try { d.activate('po-chat'); } catch (e) {} finally { PD.thrRestoring = false; } }
   pdToolsFit();
   pdThreadAim(o);
   return true;
@@ -15866,6 +15897,14 @@ function pdRuntimeRemoved(id) {
   pdToolsFit();
 }
 PD_ROOT.addEventListener('dock-removed', e => { try { pdRuntimeRemoved(e.detail && e.detail.id); } catch (err) {} });
+// The PO chat's tab clicked while the chat is on screen already (its thread
+// beside it): the person is back at the PO's chat, so is the box (P340).
+PD_ROOT.addEventListener('click', e => { if (e.target.closest?.('.dk-tab[data-dk-tab="po-chat"]')) wcPoFront(true); }, true);
+// A press or key on this page (not in a chat's frame, where a thread is
+// opened from): its time, so that what it brings forward counts as the
+// person's own (wcPoFront). It comes before whatever it opens, so the press
+// that opens a thread is older than that thread's WC.aimAt.
+for (const ev of ['pointerdown', 'keydown']) window.addEventListener(ev, e => { if (e.isTrusted) WC.ownAt = Date.now(); }, true);
 // Once after the dock is made: the file and chat panels of the last visit,
 // each in its kept place (no `where`: Dock parks a panel a stored layout
 // names until it is added). A Workspace whose task or project is gone, or a
@@ -16262,6 +16301,7 @@ function pdShown(id) {
     return;
   }
   if (id === 'board' || id === 'workspace' || id === 'changes') renderRows();
+  if (id === 'po-chat') wcPoFront();
   if (pdTask() && id !== 'po-chat') renderDetail();
   pdPlaceChat();
   barCrumbs();
@@ -24479,6 +24519,7 @@ window.addEventListener('message', (ev) => {
   if (d && d.type === 'thread-back' && d.roomId && ev.origin === location.origin) {
     const cid = pdChatId(String(d.roomId));
     try { PD.dock.reveal(PD.rt.has(cid) ? cid : 'po-chat'); } catch (e) {}
+    if (WC.target?.kind === 'thread') wcToMain();
   }
   // "Changes in this turn" on a checkpoint mark in a chat framed here (#197).
   if (d && d.type === 'checkpoint-diff' && d.roomId && /^\d+$/.test(String(d.n)) && ev.origin === location.origin) openTurnChanges(String(d.roomId), +d.n);

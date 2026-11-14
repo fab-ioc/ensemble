@@ -194,7 +194,7 @@ class TheChatBox(unittest.TestCase):
     def test_a_short_placeholder_per_chat(self):
         body = fn(SESSION, "function composePlaceholder(")
         self.assertIn("composePlaceholder(!!po, solo);", fn(SESSION, "function chatNamesFor("))
-        js = "const PHONE_CHAT = {matches:false};\n" + body + "\nconst out = [[true, false], [false, false], [false, true], [true, true]].map(a => { composePlaceholder(...a); return I.placeholder; });\nconsole.log(JSON.stringify(out));"
+        js = "const PHONE_CHAT = {matches:false}; const THREAD_MODE = false; let SHARED_THREAD = null;\n" + body + "\nconst out = [[true, false], [false, false], [false, true], [true, true]].map(a => { composePlaceholder(...a); return I.placeholder; });\nSHARED_THREAD = {thread: 't1'}; composePlaceholder(); out.push(I.placeholder);\nSHARED_THREAD = null; composePlaceholder(); out.push(I.placeholder);\nconsole.log(JSON.stringify(out));"
         if not NODE:
             self.skipTest("node is not installed")
         with tempfile.TemporaryDirectory() as tmp:
@@ -203,6 +203,7 @@ class TheChatBox(unittest.TestCase):
             out = json.loads(subprocess.run([NODE, str(p)], capture_output=True, text=True, encoding="utf-8", timeout=60).stdout)
         self.assertEqual(out, [
             "Message the PO…", "Message the agents…", "Message the agent…", "Message the PO…",
+            "Reply in thread…", "Message the PO…",   # aimed at a thread, then back (P340)
         ])
 
     def test_the_card_and_the_balloons_are_a_mouse_only(self):

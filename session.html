@@ -6463,11 +6463,22 @@ function chatNamesFor(room, solo) {
 }
 // The box's one hint, short: who it goes to, how to direct it, and the keys.
 // Numbered asks and images have buttons of their own under it.
+// A box aimed at a thread says so (P340): Reply in thread…, as its button.
 function composePlaceholder(isPo, solo) {
-  const who = isPo ? 'the PO' : solo ? 'the agent' : 'the agents';
-  const direct = solo ? '' : ' — @codex or @claude to direct it ·';
-  $('#input').placeholder = `Message ${who}…`;
-  $('#input').title = `Message ${who}${direct || ' —'} #18 links a task · Ctrl+Enter sends`;
+  const st = composePlaceholder;   // what it was told last, and the page's own hint
+  if (isPo !== undefined) st.who = { isPo, solo };
+  const input = $('#input');
+  if (!input) return;
+  if (!st.hint0) st.hint0 = { placeholder: input.placeholder, title: input.title };
+  let thread = false;
+  try { thread = THREAD_MODE || !!SHARED_THREAD; } catch (e) {}
+  if (!st.who && !thread) { input.placeholder = st.hint0.placeholder; input.title = st.hint0.title; return; }
+  const w = st.who || {};
+  const who = w.isPo ? 'the PO' : w.solo ? 'the agent' : 'the agents';
+  const direct = w.solo ? '' : ' — @codex or @claude to direct it ·';
+  const head = thread ? 'Reply in thread' : `Message ${who}`;
+  input.placeholder = `${head}…`;
+  input.title = `${head}${direct || ' —'} #18 links a task · Ctrl+Enter sends`;
 }
 // ---- Checkpoints (#197): begin -----------------------------------------------
 // The hub keeps the task's code as it was at the end of each of the owner's
@@ -6969,6 +6980,7 @@ function sharedTargetPaint() {
   if (SHARED_THREAD) setText(chip.querySelector('span'), 'In thread: ' + SHARED_THREAD.title);
   $('#thr-also-l').hidden = THREAD_MODE ? false : !SHARED_THREAD;
   composerDestinationPaint();
+  composePlaceholder();
   // What the agent is doing shows where the box now sends (#274).
   if (!THREAD_MODE && !WORKSPACE_COMPOSE) try { renderLiveTail(); } catch (e) {}
 }
