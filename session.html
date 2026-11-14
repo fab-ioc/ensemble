@@ -943,10 +943,9 @@
   .thr-line .thr-count { color:var(--link); font-weight:600; }
   .thr-line .thr-open:hover .thr-count { text-decoration:underline; }
   .thr-line.on .thr-count, .thr-line.on .thr-ago { color:var(--selected-fg); }
-  .thr-who { display:inline-flex; gap:2px; }
-  .thr-av { display:inline-flex; align-items:center; justify-content:center; width:20px; height:20px; border-radius:var(--r-full);
-    font-size:var(--fs-100); font-weight:700; line-height:1; background:var(--c-neutral-bg); color:var(--c-neutral-fg); box-shadow:inset 0 0 0 1px var(--border-strong); }
-  .thr-av-po { background:var(--agent-claude-bg); color:var(--agent-claude-fg); box-shadow:none; }
+  .thr-who { display:inline-flex; flex-wrap:wrap; gap:2px; }
+  .thr-line .thr-open { max-width:100%; min-width:0; flex-wrap:wrap; }
+  .thr-who .rl { height:16px; padding:0 6px; font-size:var(--fs-100); }
   /* The thread open beside the chat: a column on a wide screen, the whole
      window with Back on a phone or a narrow one (tsLayout sets .layer). */
   #thr-side { flex:0 0 clamp(340px, 40%, 520px); display:flex; flex-direction:column; min-width:0; background:var(--bg); border-left:1px solid var(--border); }
@@ -1162,16 +1161,16 @@
      engineer, reviewer, another role), the person outlined, an outside
      sender amber with "outside line", the hub quiet text. The hover or a tap
      says who sat in the seat for this message. */
-  .msg .from .rl, .msg-fold .from .rl { display:inline-flex; align-items:center; height:20px; padding:0 8px; border-radius:var(--r-100);
+  .rl { display:inline-flex; align-items:center; height:20px; padding:0 8px; border-radius:var(--r-100);
     font-weight:700; font-size:var(--fs-200); line-height:1; color:var(--surface); white-space:nowrap; position:relative; vertical-align:middle; }
   .msg-fold .from .rl { height:16px; padding:0 6px; font-size:var(--fs-100); }
-  .msg .from .rl.po, .msg-fold .from .rl.po { background:var(--c-discovery-fg); color:var(--surface); }
-  .msg .from .rl.engineer, .msg-fold .from .rl.engineer { background:var(--c-progress-fg); color:var(--surface); }
-  .msg .from .rl.reviewer, .msg-fold .from .rl.reviewer { background:var(--c-success-fg); color:var(--surface); }
-  .msg .from .rl.other, .msg-fold .from .rl.other { background:var(--c-neutral-fg); color:var(--surface); }
-  .msg .from .rl.person, .msg-fold .from .rl.person { background:transparent; color:var(--fg); box-shadow:inset 0 0 0 1.5px var(--fg-muted); }
-  .msg .from .rl.outside, .msg-fold .from .rl.outside { background:var(--c-warning-bg); color:var(--c-warning-fg); box-shadow:inset 0 0 0 1.5px var(--c-warning-bold); }
-  .msg .from .rl.hub, .msg-fold .from .rl.hub { height:auto; padding:0; background:transparent; color:var(--fg-muted); font-weight:500; }
+  .rl.po { background:var(--c-discovery-fg); color:var(--surface); }
+  .rl.engineer { background:var(--c-progress-fg); color:var(--surface); }
+  .rl.reviewer { background:var(--c-success-fg); color:var(--surface); }
+  .rl.other { background:var(--c-neutral-fg); color:var(--surface); }
+  .rl.person { background:transparent; color:var(--fg); box-shadow:inset 0 0 0 1.5px var(--fg-muted); }
+  .rl.outside { background:var(--c-warning-bg); color:var(--c-warning-fg); box-shadow:inset 0 0 0 1.5px var(--c-warning-bold); }
+  .rl.hub { height:auto; padding:0; background:transparent; color:var(--fg-muted); font-weight:500; }
   .rl-note { margin-left:var(--s-100); color:var(--fg-subtle); font-weight:400; text-transform:none; letter-spacing:0; }
   .msg .from .to, .msg-fold .from .to { color:var(--fg-muted); font-weight:400; }
   .msg .from .to b, .msg-fold .from .to b { font-weight:600; }
@@ -8044,13 +8043,20 @@ function threadLineHtml(tid, mine) {
   const n = +t.replies || 0, unread = +t.unread || 0;
   const work = +t.workCount || 0;
   if (!n && !work) return '';
-  const who = (t.who || []).map(w => THR_WHO[w] || w);
+  // New indexes carry the same role labels as balloons; older indexes fall back
+  // to the categories their reply summary already used.
+  const who = t.whoLabels || (t.who || []).map(w => {
+    if (w === 'po') return { cls: 'po', text: 'PO' };
+    if (w === 'task') return { cls: 'engineer', text: 'engineer' };
+    if (w === 'hub') return { cls: 'hub', text: 'Hub' };
+    return { cls: 'person', text: 'you' };
+  });
   const st = THR_STATE[t.state] || '';
   const label = `${n} repl${n === 1 ? 'y' : 'ies'}${work ? ` · ${work} in Work log` : ''}`;
   const on = TS && TS.tid === tid;
   return `<div class="thr-line${unread ? ' unread' : ''}${mine ? ' mine' : ''}${on ? ' on' : ''}" data-thr-line="${esc(tid)}" data-last-mid="${esc(t.lastMid || '')}" data-key="thr:${esc(tid)}:${n}:${work}:${unread}:${esc(t.state || '')}:${+t.lastAt || 0}:${on ? 1 : 0}">`
     + `<button type="button" class="thr-open" data-thr="${esc(tid)}" title="Open the thread beside the chat" aria-label="${esc(label + (unread ? ', ' + unread + ' new' : '') + '. Open the thread “' + (t.title || '') + '”')}">`
-    + (who.length ? `<span class="thr-who" aria-hidden="true">${who.map(w => `<span class="thr-av thr-av-${esc(w === 'PO' ? 'po' : w === 'you' ? 'you' : 'task')}">${esc(w === 'you' ? (OPERATOR || 'you').slice(0, 1).toUpperCase() : w.slice(0, 1).toUpperCase())}</span>`).join('')}</span>` : '')
+    + (who.length ? `<span class="thr-who" aria-hidden="true">${who.map(w => `<span class="rl ${esc(w.cls)}">${esc(w.cls === 'person' ? OPERATOR || 'you' : w.text)}</span>`).join('')}</span>` : '')
     + `<span class="thr-count">${label}</span>`
     + `<span class="thr-ago" data-ts="${+t.lastAt || 0}">Last reply ${esc(thrAgo(t.lastAt))}</span>`
     + (unread ? `<span class="thr-dot" role="img" aria-label="New replies" title="${unread} new repl${unread === 1 ? 'y' : 'ies'}"></span>` : '')

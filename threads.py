@@ -836,6 +836,22 @@ def _who(r: dict) -> str:
     return "hub"
 
 
+def _reply_label(r: dict) -> dict:
+    """The #361 sender label for a thread reply, before the page sizes it."""
+    turn = r.get("turn") or {}
+    if turn.get("senderType") == "external" or turn.get("noticeKind") == "external":
+        return {"cls": "outside", "text": str(turn.get("senderLabel") or "Outside sender")}
+    who = _who(r)
+    if who == "po":
+        return {"cls": "po", "text": "PO"}
+    if who == "you":
+        return {"cls": "person", "text": "you"}
+    if who == "task":
+        role = "reviewer" if str(turn.get("reportKind") or "").lower().startswith("review") else "engineer"
+        return {"cls": role, "text": role}
+    return {"cls": "hub", "text": "Hub"}
+
+
 def _unhome(out: dict, tid: str, mid: str) -> None:
     """The balloon ``mid`` is no longer in the thread ``tid``."""
     for k in ("of", "parent"):
@@ -977,12 +993,15 @@ def build(room_id: str, room: dict | None = None, *, show_progress: bool = True,
         last_po = max(po_replies, key=lambda r: r["ts"]) if po_replies else None
         lastr = replies[-1] if replies else None
         open_questions = sum(1 for m in th["members"] if m in open_mids)
+        labels = list({(label["cls"], label["text"]): label
+                       for label in (_reply_label(r) for r in replies)}.values())
         th.update({
             "replies": len(replies),
             "workCount": len(work_replies),
             "workLastMid": work_replies[-1]["mid"] if work_replies else "",
             "rootWho": _who(rs[0]) if rs else "",
             "who": list(dict.fromkeys(_who(r) for r in replies)),
+            "whoLabels": labels,
             "lastAt": (lastr or rs[0])["ts"] if rs else th["rootTs"],
             "lastMid": (lastr or rs[0])["mid"] if rs else th["root"],
             "lastWho": _who(lastr) if lastr else "",
@@ -1087,7 +1106,7 @@ def ready(room_id: str, room: dict) -> dict | None:
 # ---------------------------------------------------------------------------
 
 def _meta(th: dict) -> dict:
-    out = {k: th.get(k) for k in ("id", "root", "title", "points", "task", "replies", "workCount", "workLastMid", "rootWho", "who",
+    out = {k: th.get(k) for k in ("id", "root", "title", "points", "task", "replies", "workCount", "workLastMid", "rootWho", "who", "whoLabels",
                                    "lastAt", "lastMid", "lastWho", "unread", "state", "openQuestions",
                                    "updatedAt", "openPoints")}
     out["archived"] = th.get("archived") or 0

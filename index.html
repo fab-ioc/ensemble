@@ -1475,6 +1475,10 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     flex: 0 0 auto; display: flex; align-items: center; gap: var(--s-200);
     min-width: 0; padding: var(--s-200) var(--s-300); border-bottom: 1px solid var(--border);
   }
+  /* #361 sender label in the PO header, using the same role token as chat. */
+  .po-head .rl { display:inline-flex; align-items:center; height:20px; padding:0 8px; border-radius:var(--r-100);
+    background:var(--c-discovery-fg); color:var(--surface); font-size:var(--fs-200); font-weight:700;
+    line-height:1; white-space:nowrap; flex:0 0 auto; }
   .po-who { flex: 1 1 auto; min-width: 0; }
   .po-name, .po-sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .po-name { font-size: var(--fs-400); font-weight: 600; color: var(--fg); }
@@ -14487,16 +14491,15 @@ function poMenuItems(row) {
   return items;
 }
 function poHeadHtml(pj, row, peek) {
-  const { m, cls } = poAgent(row);
+  const { m } = poAgent(row);
   const model = shortModel(m.model);
   const open = poOpenCount(pj, ALL_ROWS);
   // One part a span, so a narrow header cuts a part (the project's name
   // first) rather than letting the line run past the edge. What needs you is
   // the Inbox's (#311): this line says only the PO's state.
-  // The PO is called PO; its kind and model are in the tooltip (#232).
-  const who = [m.agent || '', model].filter(Boolean).join(' ');
-  // In its panel the tab above is the project's name (#261): the header says
-  // only "PO". A drawer has no tab, so it names the project.
+  // The PO is called PO; its agent, model and seat identity are in the tooltip (#232).
+  const who = [m.agent || '', model, m.identity && m.identity !== m.agent ? m.identity : ''].filter(Boolean).join(' · ');
+  // The role label says PO once. A drawer has no tab, so it also names the project.
   const sub = stateChip(row, false, ATTENTION_BY_ROOM.get(row.roomId) || row.attention)
     + (peek ? `<span class="po-sub-proj">${esc(noun('one') + ' ' + pj.name)}</span>` : '')
     + `<span>${open} task${open === 1 ? '' : 's'} open</span>`;
@@ -14509,8 +14512,8 @@ function poHeadHtml(pj, row, peek) {
     + `<span class="po-menu" role="menu" hidden>${menu.join('')}</span></span>`);
   if (peek) acts.push(`<button class="po-btn x" data-po="close" title="Close (Esc)" aria-label="Close the PO">×</button>`);
   const tip = who ? ` title="PO · ${esc(who)}"` : '';
-  return `<span class="av ${cls}"${tip}>${esc((m.agent || '?')[0])}</span>`
-    + `<div class="po-who"><div class="po-name"${tip}>${esc(peek ? pj.name + ' · PO' : 'PO')}</div><div class="po-sub">${sub}</div></div>`
+  return `<span class="rl po"${tip}>PO</span>`
+    + `<div class="po-who">${peek ? `<div class="po-name">${esc(pj.name)}</div>` : ''}<div class="po-sub">${sub}</div></div>`
     + `<div class="po-acts">${acts.join('')}</div>`;
 }
 function poMenuOpen(head, open) {
