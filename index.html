@@ -716,6 +716,28 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .pm-none { margin: 0; padding: 7px 10px; font-size: var(--fs-200); color: var(--fg-muted); }
   #proj-menu.pm-finding .pm-recent, #proj-menu.pm-finding .pm-recent + .pm-rule,
   #proj-menu.pm-finding #pm-recent-h, #proj-menu.pm-finding .pm-tail { display: none; }
+  /* #362: the switcher's rows: the project's button and its pin button side by side (no nested buttons). */
+  #proj-menu.pm-finding .pm-pins, #proj-menu.pm-finding .pm-pins + .pm-rule, #proj-menu.pm-finding #pm-pin-h { display: none; }
+  .pm-pins { display: flex; flex-direction: column; }
+  .pm-row { position: relative; display: flex; align-items: center; }
+  .pm-row > .pm-item { flex: 1 1 auto; min-width: 0; }
+  .pm-pinb { flex: none; width: 28px; height: 28px; padding: 0; border: 0; border-radius: var(--r-200); background: transparent; color: var(--fg-subtle);
+    display: grid; place-items: center; cursor: pointer; opacity: 0; }
+  .pm-row:hover .pm-pinb, .pm-pinb:focus-visible, .pm-pinb[aria-pressed="true"] { opacity: 1; }
+  .pm-pinb:hover { background: var(--hover); color: var(--fg); }
+  .pm-pinb:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--focus-ring); }
+  .pm-pinrow > .pm-item { cursor: grab; }
+  .pm-grip { display: none; flex: none; width: 12px; height: 12px; color: var(--fg-subtle); }
+  .pm-pinrow:hover > .pm-item > .pm-sw, .pm-lifted > .pm-item > .pm-sw { display: none; }
+  .pm-pinrow:hover .pm-grip, .pm-lifted .pm-grip { display: block; }
+  .pm-griph { display: none; }
+  body.ph-switch #proj-menu .pm-pinb { opacity: 1; width: var(--touch-min); height: var(--touch-min); }
+  body.ph-switch #proj-menu .pm-griph { display: grid; place-items: center; flex: none; width: var(--touch-min); height: var(--touch-min);
+    color: var(--fg-subtle); touch-action: none; cursor: grab; }
+  body.ph-switch #proj-menu .pm-griph svg { width: 14px; height: 14px; }
+  body.ph-switch #proj-menu .pm-pinrow > .pm-item > .pm-sw { display: block; }
+  body.ph-switch #proj-menu .pm-grip { display: none; }
+  .pm-lifted .pm-griph { color: var(--fg); }
   /* Search syntax. A placeholder is not documentation. */
   #search-help-pop { width: 300px; padding: var(--s-300); }
   #search-help-pop .shp-title {
@@ -4012,6 +4034,28 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     color: var(--fg-muted); font: inherit; font-size: 11px; line-height: 1.4; cursor: pointer; text-align: left; }
   .ldp-more:hover { color: var(--fg); text-decoration: underline; }
   .ldp-sep { height: 0; border-top: 1px solid var(--border); margin: 6px 2px; }
+  /* #362 (P335, drawing option A): pinned projects. A pin button beside ⋯ on hover or focus (outline: Pin
+     to the top; filled: Unpin), a filled pin mark on a pinned row, and on a pinned row the swatch turns into
+     a grip: the row drags inside the pinned group. The slot is the one drop target (--selected-bg + --accent). */
+  .ldp-pins { display: flex; flex-direction: column; }
+  .ldp-pinb { position: absolute; right: 28px; top: 50%; transform: translateY(-50%); width: 24px; height: 22px; padding: 0; border: 0; border-radius: var(--r-200);
+    background: var(--surface); color: var(--fg-subtle); cursor: pointer; opacity: 0; display: grid; place-items: center; }
+  .ldp-item:hover .ldp-pinb, .ldp-pinb:focus-visible, .ldp-item:has(.ldp-dots[aria-expanded="true"]) .ldp-pinb { opacity: 1; }
+  .ldp-pinb:hover { background: var(--hover); color: var(--fg); }
+  .ldp-pinb:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--focus-ring); }
+  .pin-ico { display: block; width: 12px; height: 12px; }
+  .ldp-pinmark { flex: none; display: grid; color: var(--fg-subtle); }
+  .ldp-hand .ldp-row { cursor: grab; }
+  .ldp-grip { display: none; flex: none; width: 12px; height: 12px; color: var(--fg-subtle); }
+  .ldp-hand:hover .ldp-row > .ldp-ico, .ldp-hand.ldp-lifted .ldp-row > .ldp-ico { display: none; }
+  .ldp-hand:hover .ldp-grip, .ldp-hand.ldp-lifted .ldp-grip { display: block; }
+  .ldp-slot, .pm-slot { flex: none; height: var(--slot-h, 25px); border-radius: var(--r-200); background: var(--selected-bg); box-shadow: inset 0 0 0 2px var(--accent); }
+  .ldp-lifted, .pm-lifted { position: fixed; z-index: 1000; margin: 0; background: var(--surface-overlay); box-shadow: var(--e-200); border-radius: var(--r-200);
+    pointer-events: none; font-family: var(--ldp-font, inherit); }
+  .ldp-lifted .ldp-row, .pm-lifted .pm-item { cursor: grabbing; }
+  .ldp-lifted .ldp-dots, .ldp-lifted .ldp-pinb { display: none; }
+  .ldp-item.ldp-gone, .pm-row.pm-gone { display: none; }
+  body.pin-dragging, body.pin-dragging * { cursor: grabbing !important; user-select: none; }
   .ibx-title.ibx-title-listed { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     font-size: var(--fs-100); line-height: var(--lh-100); color: var(--fg-muted); text-transform: uppercase; letter-spacing: .04em; }
   /* ---- The PO screen as panels ---------------------------------------------
@@ -4227,7 +4271,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   #po-dock { --dk-strip-badge-bg: var(--surface); --dk-strip-badge-fs: 10px; }
   /* The list dock's left strip (#322, the P287 drawing): 52px, the Inbox's icon in a 32x30 box with its
      name under it, a red count on the icon's corner; the font is the drawing's. */
-  #list-dock, .ldp-expanded { --ldp-font: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  #list-dock, .ldp-expanded, .ldp-lifted { --ldp-font: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
   /* #337: a cut name raised from the left panel (rowExpandShow) keeps the panel's font. */
   .row-expanded.ldp-expanded { font-family: var(--ldp-font); }
   .ldp-row.row-expanded:not([data-cur]) { background: linear-gradient(var(--hover), var(--hover)), var(--surface); }
@@ -8236,7 +8280,10 @@ function swByProject(g) {
   for (const e of g.needs || []) add(e, 'needs');
   for (const e of g.projects || []) add(e, 'projects');
   for (const k of ['running', 'review', 'other']) for (const e of g[k] || []) add(e, k);
-  return [...out.values()].sort((a, b) => (a.pid ? 0 : 1) - (b.pid ? 0 : 1) || a.name.localeCompare(b.name));
+  // #362: the pinned projects first, in the person's order.
+  const pins = typeof pinList === 'function' ? pinList() : [];
+  const at = pid => { const i = pins.indexOf(pid); return i < 0 ? pins.length : i; };
+  return [...out.values()].sort((a, b) => (a.pid ? 0 : 1) - (b.pid ? 0 : 1) || at(a.pid) - at(b.pid) || a.name.localeCompare(b.name));
 }
 // sel: {sid} the open task, or {po} the project whose PO is on screen.
 // doneOpen: whether Done today is unfolded. by: 'status' or 'project'.
@@ -10006,7 +10053,7 @@ const SDOT_TIP = { work: 'working', wait: 'waiting for you', danger: 'needs you'
 const sdotTip = (sn, st) => (attnDot(sn) || {}).tip || (st === 'idle' && sn.runState === 'command' ? commandWords(sn) : SDOT_TIP[st]);
 function projectsLandingHtml() {
   if (!PROJECTS) return `<p class="empty">${esc(nounText('Loading {projects}…'))}</p>`;
-  const cards = PROJECTS.projects.map(p => {
+  const cards = pinSorted(PROJECTS.projects).map(p => {   // #362: the pinned first
     const tasks = projectTasks(p);
     const count = tasks.length;
     const rows = tasks.slice(0, 4).map(sn => {
@@ -13447,8 +13494,15 @@ function rowExpandShow(row, spec, focus = false) {
       .map(el => el.closest(spec.covered || spec.row))
       .find(el => el && spec.root.contains(el) && el !== row) || null;
   };
+  // spec.controls (#362: a left-list row's pin and ⋯): the row's own buttons the
+  // copy lies over. The pointer on one lets the copy go, so the button shows and
+  // takes the click; a click that still lands on the copy there goes to it.
+  const control = ev => !spec.controls ? null : doc.elementsFromPoint(ev.clientX, ev.clientY)
+    .map(el => !copy.contains(el) && el.closest(spec.controls))
+    .find(el => el && row.parentElement && row.parentElement.contains(el)) || null;
   copy.addEventListener('pointermove', ev => {
     if (ev.pointerType !== 'mouse') return;
+    if (control(ev)) { rowExpandHide(); return; }
     const next = covered(ev);
     if (!next) return;
     if (next.matches(spec.row)) rowExpandSchedule(next, spec, true);
@@ -13462,7 +13516,7 @@ function rowExpandShow(row, spec, focus = false) {
     ctrlKey: ev.ctrlKey, metaKey: ev.metaKey, shiftKey: ev.shiftKey, altKey: ev.altKey, ...extra });
   copy.addEventListener('click', ev => {
     ev.preventDefault();
-    const next = covered(ev);
+    const next = control(ev) || covered(ev);
     const target = next || at(ev);
     rowExpandHide();
     target.dispatchEvent(new MouseEvent('click', mouse(ev)));
@@ -17051,7 +17105,13 @@ function ldpModel() {
   for (const e of rec.recent) if (!e.po && !e.proj && !e.pid) add(e, e.row && !e.row.headless ? 'session' : 'task', e.at);
   for (const e of rec.unassigned) add(e, 'session', swActivity(e.row));
   loose.sort((a, b) => b.at - a.at);
-  return { projs: ldpHeld('projs', projs, p => p.pid), loose: ldpHeld('loose', loose, e => e.key) };
+  // #362: the pinned in the person's order (their own change shows at once,
+  // never held), then the rest in the order above.
+  const pins = pinList(), by = new Map(projs.map(p => [p.pid, p]));
+  const pinned = pins.filter(id => by.has(id) || pinCan(id))
+    .map(id => by.get(id) || { pid: id, name: projectById(id).name, at: 0, n: ldpCount(id) });
+  const rest = projs.filter(p => !pins.includes(p.pid));
+  return { pinned, projs: ldpHeld('projs', rest, p => p.pid), loose: ldpHeld('loose', loose, e => e.key) };
 }
 // When a project was last spoken in (#337): the newest message in its PO's
 // chat, its tasks' chats (the hub's convAt; newsAt on a card from before it)
@@ -17146,14 +17206,24 @@ function ldpHtml(m) {
   // data-cur: the row raised whole on hover (#337) drops aria-current but stays selected.
   const cur = on => on ? ' aria-current="true" data-cur' : '';
   let h = `<button type="button" class="ldp-row" data-ldp="all"${cur(selAll)} title="${esc(nounText("Every {project}'s Inbox"))}"><span class="ldp-name">All</span>${pill(cnt(''))}</button>`;
-  const ps = LDP.more ? m.projs : m.projs.slice(0, LDP_N);
-  for (const p of ps) {
-    const reg = projectById(p.pid);
-    h += `<div class="ldp-item"><button type="button" class="ldp-row" data-ldp-proj="${esc(p.pid)}"${cur(!selAll && lp === p.pid)} title="${esc(p.name)}">`
-      + `${ldpSwatch(p.pid)}<span class="ldp-name">${esc(p.name)}</span>${pill(cnt(p.pid))}</button>`
-      + (reg && reg.registered && p.pid !== UNASSIGNED_ID ? `<button type="button" class="ldp-dots" data-ldp-pmenu="${esc(p.pid)}" aria-haspopup="menu" aria-expanded="false" aria-label="${esc('More for ' + p.name)}" title="More">⋯</button>` : '')
+  // #362: a pinned row (`hand`) has a pin mark, and a grip that takes the
+  // swatch's place on hover; every project row has the pin button beside ⋯.
+  const projRow = (p, hand) => {
+    const can = pinCan(p.pid);
+    return `<div class="ldp-item${hand ? ' ldp-hand' : ''}" data-pin-row="${esc(p.pid)}"><button type="button" class="ldp-row" data-ldp-proj="${esc(p.pid)}"${cur(!selAll && lp === p.pid)} title="${esc(p.name)}">`
+      + `${ldpSwatch(p.pid)}${hand ? pinGripSvg('ldp-grip') : ''}<span class="ldp-name">${esc(p.name)}</span>${pill(cnt(p.pid))}`
+      + (hand ? `<span class="ldp-pinmark" title="Pinned">${pinSvg(true)}</span>` : '') + '</button>'
+      + (can ? pinBtnHtml('ldp-pinb', 'data-ldp-pin', p.pid, p.name, hand) : '')
+      + (can ? `<button type="button" class="ldp-dots" data-ldp-pmenu="${esc(p.pid)}" aria-haspopup="menu" aria-expanded="false" aria-label="${esc('More for ' + p.name)}" title="More">⋯</button>` : '')
       + '</div>';
+  };
+  const pinned = m.pinned || [];
+  if (pinned.length) {
+    h += `<div class="ldp-pins" role="group" aria-label="Pinned">${pinned.map(p => projRow(p, true)).join('')}</div>`;
+    if (m.projs.length) h += '<div class="ldp-sep" role="separator"></div>';
   }
+  const ps = LDP.more ? m.projs : m.projs.slice(0, LDP_N);
+  for (const p of ps) h += projRow(p, false);
   if (m.projs.length > LDP_N) {
     const rest = m.projs.length - LDP_N;
     h += `<button type="button" class="ldp-more" data-ldp-more="proj" aria-expanded="${LDP.more}">${esc(LDP.more ? 'Fewer' : `${rest} more ${noun(rest === 1 ? 'one' : 'many')}`)}</button>`;
@@ -17188,13 +17258,14 @@ function ldpPaint() {
   if (typeof LDP === 'undefined') return;
   const el = document.getElementById('ld-projs');
   if (!el) return;
+  if (PIN.drag) { PIN.drag.repaint = true; return; }   // #362: after the drop
   const html = (window.LD && LD.dock && !window.ensListDocked) ? ldpHtml(ldpModel()) : '';
   if (html === LDP.sig) return;
   LDP.sig = html;
   rowExpandBeforeChange(el);
   // Keep focus on the same control across the repaint.
   const a = document.activeElement, keep = a && el.contains(a)
-    ? ['data-ldp', 'data-ldp-proj', 'data-ldp-pmenu', 'data-ldp-room', 'data-ldp-sid', 'data-ldp-more'].map(k => a.hasAttribute(k) ? `[${k}="${CSS.escape(a.getAttribute(k))}"]` : '').join('')
+    ? ['data-ldp', 'data-ldp-proj', 'data-ldp-pmenu', 'data-ldp-pin', 'data-ldp-room', 'data-ldp-sid', 'data-ldp-more'].map(k => a.hasAttribute(k) ? `[${k}="${CSS.escape(a.getAttribute(k))}"]` : '').join('')
       + (a.hasAttribute('data-ldp-menu') ? '[data-ldp-menu]' : (a.classList.contains('ldp-row') ? '.ldp-row' : ''))
     : '';
   el.innerHTML = html;
@@ -17309,18 +17380,32 @@ function ldpTerms(b, r) {
   ibxRepaint();
 }
 // #329 (P297 drawing): a project row's menu: Open, then Rename and its settings.
+// #362: Pin to the top / Unpin, and for a pinned one Move up / Move down (the
+// keyboard's way to order them), between the two.
 function ldpProjMenu(b, pid, rect) {
   const pj = projectById(pid);
   if (!pj) return;
+  const pins = pinList(), on = pins.includes(pid), at = pins.indexOf(pid);
+  const it = (act, label, dis) => `<button type="button" role="menuitem" class="ov-item dcm-item" data-act="${act}"${dis ? ' disabled aria-disabled="true"' : ''}>${esc(label)}</button>`;
   ldpMenuOpen(b, rect, 'Actions for ' + pj.name, `<div class="dcm-head">${esc(pj.name)}</div>`
-    + `<button type="button" role="menuitem" class="ov-item dcm-item" data-act="open">Open</button>`
+    + it('open', 'Open')
     + '<div class="dcm-rule" role="separator"></div>'
-    + `<button type="button" role="menuitem" class="ov-item dcm-item" data-act="rename">${esc(nounText('Rename {project}…'))}</button>`
-    + `<button type="button" role="menuitem" class="ov-item dcm-item" data-act="settings">${esc(nounText('{Project} settings…'))}</button>`,
+    + it('pin', on ? 'Unpin' : 'Pin to the top')
+    + (on ? it('up', 'Move up', at <= 0) + it('down', 'Move down', at >= pins.length - 1) : '')
+    + '<div class="dcm-rule" role="separator"></div>'
+    + it('rename', nounText('Rename {project}…'))
+    + it('settings', nounText('{Project} settings…')),
   '[data-ldp-pmenu]', it => {
     const a = it.dataset.act;
+    const kb = document.activeElement === it;
     ldpMenuClose();
     if (a === 'open') { ldpScope('project'); ldSelSet(pid); projPick(pid); ibxRepaint(); }
+    else if (a === 'pin' || a === 'up' || a === 'down') {
+      if (a === 'pin') pinToggle(pid); else pinMove(pid, a === 'up' ? -1 : 1);
+      // Back on the row's ⋯, wherever the row went: the next Move is one Enter away.
+      const d = document.querySelector(`#ld-projs [data-ldp-pmenu="${CSS.escape(pid)}"]`);
+      if (d && kb) d.focus();
+    }
     else projSettings(pid, { rename: a === 'rename' });
     return true;
   });
@@ -17333,11 +17418,200 @@ function ldpOpenLoose(b) {
   else swOpenRoomTab(room);
   ibxRepaint();
 }
+// ---- Pinned projects (#362, P335: the drawing's option A): begin -------------
+// The pinned projects sit at the top of every project list (the left list,
+// the switcher, a phone's cards) in the person's own order; the rest keep
+// their own order below. One list per hub (settings.json pinnedProjects, read
+// as PROJECTS.summary.pinned), so every device agrees. A change shows at once
+// and is then posted; until the hub has answered, a projects poll that read
+// the list before it cannot put the old one back.
+var PIN = { mine: null, busy: 0, until: 0, drag: null };
+function pinList() {
+  if (PIN.mine && (PIN.busy || Date.now() < PIN.until)) return PIN.mine;
+  const s = PROJECTS && PROJECTS.summary;
+  return s && Array.isArray(s.pinned) ? s.pinned.filter(id => projectById(id)) : [];
+}
+function pinCan(pid) {
+  const r = projectById(pid);
+  return !!(r && r.registered && pid !== UNASSIGNED_ID);
+}
+// `list` (projects with .id) with the pinned first, in their order.
+function pinSorted(list) {
+  const pins = pinList(), at = new Map(pins.map((id, i) => [id, i]));
+  const top = (list || []).filter(p => p && at.has(p.id)).sort((a, b) => at.get(a.id) - at.get(b.id));
+  return top.concat((list || []).filter(p => p && !at.has(p.id)));
+}
+function pinSvg(on) {
+  return '<svg class="pin-ico" viewBox="0 0 12 12" aria-hidden="true"><path d="M4 1h4l-.6 3.6 2.1 2V7.3H6.5V11L6 11.7 5.5 11V7.3H2.5v-.7l2.1-2z"'
+    + ` fill="${on ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="1" stroke-linejoin="round"/></svg>`;
+}
+function pinGripSvg(cls) {
+  return `<svg${cls ? ` class="${cls}"` : ''} viewBox="0 0 12 12" aria-hidden="true">`
+    + [[4, 2.5], [8, 2.5], [4, 6], [8, 6], [4, 9.5], [8, 9.5]].map(([x, y]) => `<circle cx="${x}" cy="${y}" r="1.1" fill="currentColor"/>`).join('') + '</svg>';
+}
+function pinBtnHtml(cls, attr, pid, name, on) {
+  return `<button type="button" class="${cls}" ${attr}="${esc(pid)}" aria-pressed="${on}" aria-label="${esc((on ? 'Unpin ' : 'Pin ') + name)}"`
+    + ` title="${esc(on ? 'Unpin' : 'Pin to the top')}">${pinSvg(on)}</button>`;
+}
+// Every list that shows the order, again.
+function pinRepaint() {
+  LDP.sig = '';
+  ldpPaint();
+  projMenuRefresh();
+  if (phoneNow() && !SELECTED_PROJECT && !PH_PANE) renderRows();   // a phone's cards page
+}
+function pinApply(next, body) {
+  PIN.mine = next.slice();
+  PIN.busy++;
+  pinRepaint();
+  api('/api/projects/pins', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+    .then(j => { if (PROJECTS && PROJECTS.summary && Array.isArray(j.pinned)) PROJECTS.summary.pinned = j.pinned; if (PIN.busy === 1) PIN.mine = j.pinned; })
+    .catch(e => { toast(`Could not save the order: ${histErr(e)}`, 4000); PIN.mine = null; PIN.until = 0; })
+    .finally(() => { PIN.busy--; if (PIN.mine) PIN.until = Date.now() + 4000; pinRepaint(); });
+}
+function pinToggle(pid) {
+  if (!pinCan(pid)) return;
+  const pins = pinList(), on = pins.includes(pid);
+  pinApply(on ? pins.filter(x => x !== pid) : pins.concat(pid), { projectId: pid, pinned: !on });
+}
+function pinMove(pid, by) {
+  const pins = pinList().slice(), i = pins.indexOf(pid), j = i + by;
+  if (i < 0 || j < 0 || j >= pins.length) return;
+  pins.splice(i, 1);
+  pins.splice(j, 0, pid);
+  pinApply(pins, { order: pins });
+}
+function pinReorder(order) {
+  const pins = pinList();
+  const next = order.filter(id => pins.includes(id)).concat(pins.filter(id => !order.includes(id)));
+  if (next.join('\n') !== pins.join('\n')) pinApply(next, { order: next });
+}
+// A drag inside a pinned group. `o`: the box listened on, `rows` (the
+// draggable rows), `group` (their container), `idOf(row)`, `handle(ev)` (the
+// row a press starts on, or null), `slot`/`lifted`/`gone` (classes), `host`
+// (where the lifted copy lives), `nudge` (px the copy sits right of the row). The drag starts past 4px, so a click still
+// opens; it drops only inside the group; Escape puts it back.
+function pinDragWire(box, o) {
+  if (!box || box._pinDrag) return;
+  box._pinDrag = true;
+  const start = (ev) => {
+    if (ev.button !== 0 || !ev.isPrimary || PIN.drag) return;
+    const row = o.handle(ev);
+    if (!row) return;
+    const group = row.closest(o.group);
+    if (!group) return;
+    const x0 = ev.clientX, y0 = ev.clientY, pointer = ev.pointerId;
+    let d = null;
+    const begin = () => {
+      if (typeof rowExpandHide === 'function') rowExpandHide();
+      const r = row.getBoundingClientRect();
+      const slot = document.createElement('div');
+      slot.className = o.slot;
+      slot.style.setProperty('--slot-h', r.height + 'px');
+      row.parentNode.insertBefore(slot, row);
+      const lift = row.cloneNode(true);
+      lift.classList.add(o.lifted);
+      lift.setAttribute('aria-hidden', 'true');
+      lift.querySelectorAll('[id]').forEach(e => e.removeAttribute('id'));
+      // Lifted a little to the right (the drawing): the slot it leaves shows beside it.
+      lift.style.left = (r.left + (o.nudge || 0)) + 'px'; lift.style.width = r.width + 'px'; lift.style.top = r.top + 'px';
+      row.classList.add(o.gone);
+      (o.host() || document.body).appendChild(lift);
+      document.body.classList.add('pin-dragging');
+      d = PIN.drag = { row, slot, lift, group, dy: y0 - r.top, h: r.height, repaint: false };
+    };
+    const place = (y) => {
+      const g = group.getBoundingClientRect();
+      d.lift.style.top = Math.max(g.top - d.h / 2, Math.min(g.bottom - d.h / 2, y - d.dy)) + 'px';
+      const others = [...group.querySelectorAll(o.rows)].filter(e => e !== row);
+      const before = others.find(e => { const b = e.getBoundingClientRect(); return y < b.top + b.height / 2; });
+      if (before) { if (d.slot.nextSibling !== before) group.insertBefore(d.slot, before); }
+      else if (group.lastElementChild !== d.slot) group.appendChild(d.slot);
+    };
+    const finish = (drop) => {
+      off();
+      if (!d) return;
+      const order = [];
+      for (const e of group.children) {
+        if (e === d.slot) order.push(o.idOf(row));
+        else if (e !== row && e.matches(o.rows)) order.push(o.idOf(e));
+      }
+      d.slot.remove(); d.lift.remove(); row.classList.remove(o.gone);
+      document.body.classList.remove('pin-dragging');
+      const again = d.repaint;
+      PIN.drag = null;
+      // The click a drop ends with is no click on the row.
+      const eat = e => { e.stopPropagation(); e.preventDefault(); };
+      window.addEventListener('click', eat, { capture: true, once: true });
+      setTimeout(() => window.removeEventListener('click', eat, { capture: true }), 0);
+      if (drop) pinReorder(order);
+      if (again || !drop) { LDP.sig = ''; ldpPaint(); }
+    };
+    const move = (e) => {
+      if (e.pointerId !== pointer) return;
+      if (!d) {
+        if (Math.abs(e.clientX - x0) + Math.abs(e.clientY - y0) <= 4) return;
+        begin();
+      }
+      e.preventDefault();
+      place(e.clientY);
+    };
+    const up = (e) => { if (e.pointerId === pointer) finish(true); };
+    const cancel = (e) => { if (e.pointerId === pointer) finish(false); };
+    const key = (e) => { if (e.key === 'Escape' && d) { e.preventDefault(); e.stopPropagation(); finish(false); } };
+    const off = () => {
+      document.removeEventListener('pointermove', move, true);
+      document.removeEventListener('pointerup', up, true);
+      document.removeEventListener('pointercancel', cancel, true);
+      document.removeEventListener('keydown', key, true);
+    };
+    document.addEventListener('pointermove', move, true);
+    document.addEventListener('pointerup', up, true);
+    document.addEventListener('pointercancel', cancel, true);
+    document.addEventListener('keydown', key, true);
+  };
+  box.addEventListener('pointerdown', start);
+  if (o.alsoOn) o.alsoOn(start);
+}
+// The left list: a pinned row drags by the mouse anywhere on it (a raised
+// copy of a cut name too: the press goes to the row under it).
+pinDragWire(document.getElementById('ld-projs'), {
+  rows: '.ldp-hand', group: '.ldp-pins', slot: 'ldp-slot', lifted: 'ldp-lifted', gone: 'ldp-gone',
+  idOf: e => e.getAttribute('data-pin-row'), host: () => document.body, nudge: 12,
+  handle: ev => {
+    if (ev.pointerType === 'touch') return null;
+    const t = ev.target.closest && ev.target.closest('.ldp-row');
+    if (t && t.closest('#ld-projs')) return t.closest('.ldp-hand');
+    if (ev.target.closest && ev.target.closest('.ldp-expanded') && ROW_EXPAND && ROW_EXPAND.row && ROW_EXPAND.row.closest('#ld-projs'))
+      return ROW_EXPAND.row.closest('.ldp-hand');
+    return null;
+  },
+  alsoOn: start => document.addEventListener('pointerdown', ev => { if (ev.target.closest && ev.target.closest('.ldp-expanded.row-expanded')) start(ev); }),
+});
+// The switcher: the mouse anywhere on a pinned row; a finger only on the
+// grip at the row's right (the rest of the row scrolls the pane).
+pinDragWire(document.getElementById('proj-menu'), {
+  rows: '.pm-pinrow', group: '.pm-pins', slot: 'pm-slot', lifted: 'pm-lifted', gone: 'pm-gone',
+  idOf: e => e.getAttribute('data-pin-row'), host: () => document.getElementById('proj-menu'),
+  handle: ev => {
+    const row = ev.target.closest && ev.target.closest('.pm-pinrow');
+    if (!row || ev.target.closest('.pm-pinb')) return null;
+    if (ev.pointerType === 'touch') return ev.target.closest('.pm-griph') ? row : null;
+    return row;
+  },
+});
+document.getElementById('ld-projs').addEventListener('click', (ev) => {
+  const b = ev.target.closest('[data-ldp-pin]');
+  if (!b) return;
+  ev.stopPropagation();
+  pinToggle(b.getAttribute('data-ldp-pin'));
+}, true);
+// ---- Pinned projects: end ------------------------------------------------------
 // #337 (P309, P123): a cut name in the left panel shows whole on hover, as the
 // old list's did (#170): its project, task and session rows, and the Inbox's
 // title under them, which names the project or task picked.
 rowExpandWire(document.getElementById('ld-projs'),
-  { row: '.ldp-row', name: '.ldp-name', covered: '.ldp-row, .ldp-dots, .ldp-more', copyClass: 'ldp-expanded', focusClass: 'ldp-expand-focus' });
+  { row: '.ldp-row', name: '.ldp-name', covered: '.ldp-row, .ldp-dots, .ldp-more', controls: '.ldp-pinb, .ldp-dots', copyClass: 'ldp-expanded', focusClass: 'ldp-expand-focus' });
 // A card's text cut at its lines (a question, an answer) shows whole too,
 // downwards; a press on what the copy covers (the card's buttons) goes there.
 rowExpandWire(document.getElementById('ld-ibx-body'),
@@ -23149,28 +23423,60 @@ function projHere() {
   const crumb = document.body.classList.contains('bar-proj') ? crumbProject(crumbTask()) : null;
   return crumb ? crumb.id : SELECTED_PROJECT;
 }
+// #362: a switcher row is the project's button and its pin button side by
+// side; a pinned row (cls 'pm-pin') drags, by a grip at its right on a phone.
+function projRowHtml(pj, here, cls) {
+  const pins = pinList(), on = pins.includes(pj.id), hand = cls === 'pm-pin';
+  let b = projItemHtml(pj, here, cls);
+  if (hand) b = b.replace('<span class="pm-name">', pinGripSvg('pm-grip') + '<span class="pm-name">');
+  const pin = pinCan(pj.id) ? pinBtnHtml('pm-pinb', 'data-pm-pin', pj.id, pj.name, on) : '';
+  return `<div class="pm-row${hand ? ' pm-pinrow' : ''}" data-pin-row="${esc(pj.id)}">${b}${pin}`
+    + (hand ? `<span class="pm-griph" title="Drag to reorder">${pinGripSvg('')}</span>` : '') + '</div>';
+}
 function projAllHtml(list, here, q) {
   const got = projMatches(list, q);
-  return got.length ? got.map(pj => projItemHtml(pj, here, 'pm-any')).join('')
+  return got.length ? got.map(pj => projRowHtml(pj, here, 'pm-any')).join('')
     : `<p class="pm-none">No ${esc(noun('one'))} matches “${esc(q)}”</p>`;
+}
+// The open switcher drawn again (a pin changed): its find text, scroll and focus kept.
+function projMenuRefresh() {
+  const m = $('#proj-menu');
+  if (!m || m.hidden || PIN.drag) return;
+  const f = m.querySelector('.pm-find'), q = f ? f.value : '', top = m.scrollTop, a = document.activeElement;
+  const keep = a && m.contains(a) ? (a.matches('.pm-find') ? '.pm-find'
+    : a.hasAttribute('data-pm-pin') ? `[data-pm-pin="${CSS.escape(a.getAttribute('data-pm-pin'))}"]`
+    : a.hasAttribute('data-proj') ? `.pm-item[data-proj="${CSS.escape(a.getAttribute('data-proj'))}"]` : '') : '';
+  const head = m.querySelector(':scope > .ph-pane-head');
+  m.innerHTML = (head ? head.outerHTML : '') + projMenuHtml();
+  const nf = m.querySelector('.pm-find');
+  if (nf && q) { nf.value = q; nf.dispatchEvent(new Event('input', { bubbles: true })); }
+  m.scrollTop = top;
+  const k = keep && m.querySelector(keep);
+  if (k) k.focus({ preventScroll: true });
 }
 function projMenuHtml() {
   const list = (PROJECTS && PROJECTS.projects) || [];
   const here = projHere();
   const today = new Date(); today.setHours(0, 0, 0, 0);
   const un = projectById(UNASSIGNED_ID);
+  // #362: Pinned first, then Recent without the pinned, then All by name.
+  const pinIds = pinList();
+  const pins = pinIds.map(id => list.find(p => p.id === id)).filter(Boolean);
+  const rest = list.filter(p => !pinIds.includes(p.id));
   let recent = [];
   try {
-    recent = projRecent(list, swRecent(ALL_ROWS, attentionItems(), registeredProjects(),
+    recent = projRecent(rest, swRecent(ALL_ROWS, attentionItems(), registeredProjects(),
       { dayStart: today / 1000, unassigned: (un && un.sessions) || [] }).recent, projOpened());
-  } catch (e) { recent = projRecent(list, [], projOpened()); }
+  } catch (e) { recent = projRecent(rest, [], projOpened()); }
   // All projects is a phone's cards page; a desktop has no such page (#135).
   // A phone's task list is a pane of its own (#307): every task, Unassigned and past sessions.
   const cards = phoneNow() ? `<button type="button" class="pm-item pm-cards${!here ? ' on' : ''}" data-proj="">${esc(nounText('All {projects} as cards'))}</button>`
     + `<button type="button" class="pm-item pm-cards pm-tasks" data-ph-list title="Every task, and your sessions with no ${esc(noun('one'))}">Task list</button>` : '';
   const pj = projectById(here);
-  return (recent.length ? `<div class="pm-head" id="pm-recent-h">Recent</div><div class="pm-recent" role="group" aria-labelledby="pm-recent-h">`
-      + recent.map(p => projItemHtml(p, here, 'pm-rec')).join('') + '</div><div class="pm-rule"></div>' : '')
+  return (pins.length ? `<div class="pm-head" id="pm-pin-h">Pinned</div><div class="pm-pins" role="group" aria-labelledby="pm-pin-h">`
+      + pins.map(p => projRowHtml(p, here, 'pm-pin')).join('') + '</div><div class="pm-rule"></div>' : '')
+    + (recent.length ? `<div class="pm-head" id="pm-recent-h">Recent</div><div class="pm-recent" role="group" aria-labelledby="pm-recent-h">`
+      + recent.map(p => projRowHtml(p, here, 'pm-rec')).join('') + '</div><div class="pm-rule"></div>' : '')
     + `<div class="pm-head" id="pm-all-h">${esc(nounText('All {projects}'))} <span class="pm-n">${list.length}</span></div>`
     + `<div class="pm-findrow"><input type="search" class="pm-find" placeholder="${esc(nounText('Find a {project}…'))}"`
     + ` aria-label="${esc(nounText('Find a {project}'))}" autocomplete="off" spellcheck="false"></div>`
@@ -23251,8 +23557,16 @@ $('#proj-menu').addEventListener('keydown', (ev) => {
     ev.preventDefault(); ev.stopPropagation();
     if (ev.target.matches('.pm-find') && ev.target.value) { ev.target.value = ''; ev.target.dispatchEvent(new Event('input', { bubbles: true })); return; }
     closeProjMenu(true);
-  } else if (ev.key === 'ArrowDown') { go(i + 1); ev.preventDefault(); }
-  else if (ev.key === 'ArrowUp') { go(i < 0 ? items.length - 1 : i - 1); ev.preventDefault(); }
+  } else if ((ev.key === 'ArrowRight' || ev.key === 'ArrowLeft') && ev.target.closest('.pm-row') && !ev.target.matches('.pm-find')) {
+    // #362: a row's pin button is one ArrowRight from it, and back.
+    const row = ev.target.closest('.pm-row');
+    const to = row.querySelector(ev.key === 'ArrowRight' ? '.pm-pinb' : '.pm-item');
+    if (to) { to.focus(); ev.preventDefault(); }
+  } else if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
+    // From a pin button the rows go on from its own row.
+    const own = ev.target.matches('.pm-pinb') ? items.indexOf(ev.target.closest('.pm-row').querySelector('.pm-item')) : i;
+    go(ev.key === 'ArrowDown' ? own + 1 : (own < 0 ? items.length - 1 : own - 1)); ev.preventDefault();
+  }
   else if ((ev.key === 'Home' || ev.key === 'End') && !ev.target.matches('.pm-find')) { go(ev.key === 'Home' ? 0 : items.length - 1); ev.preventDefault(); }
   else if (ev.key === 'Enter' && ev.target.matches('.pm-find')) {
     // Enter in the filter opens the first project it found.
@@ -23278,6 +23592,8 @@ function projPick(pid) {
 }
 $('#proj-menu').addEventListener('click', (ev) => {
   if (ev.target.closest('.pm-find, .pm-findrow')) { ev.stopPropagation(); return; }
+  const pb = ev.target.closest('[data-pm-pin]');
+  if (pb) { ev.stopPropagation(); pinToggle(pb.getAttribute('data-pm-pin')); return; }
   const it = ev.target.closest('.pm-item');
   if (!it) return;
   // This project's settings: the page's own click handler opens its dialog.
