@@ -4016,6 +4016,8 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .ldp-sep { height: 0; border-top: 1px solid var(--border); margin: 6px 2px; }
   .ibx-title.ibx-title-listed { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     font-size: var(--fs-100); line-height: var(--lh-100); color: var(--fg-muted); text-transform: uppercase; letter-spacing: .04em; }
+  /* #360: the Older questions heading's case, as the Inbox's own heading above (its other styles with the Inbox's, below). */
+  .ibx-older-t { text-transform: uppercase; letter-spacing: .04em; }
   /* ---- The PO screen as panels ---------------------------------------------
      A project with a PO: its Overview is a Dock (static/dock, a vendored copy
      of the Dock library) of five panels: PO chat, Points, Board, Workspace and
@@ -4175,7 +4177,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
      a grey bar, the sunken ground, a regular-weight title in the subtle colour. */
   .ibx-older-head { list-style: none; margin: 12px 0 2px; padding: 10px 4px 0; border-top: 1px solid var(--border); }
   .ibx-cards > .ibx-older-head:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
-  .ibx-older-t { margin: 0; font-size: 11px; line-height: 1.4; font-weight: 600; color: var(--fg-muted); text-transform: uppercase; letter-spacing: .04em; }
+  .ibx-older-t { margin: 0; font-size: 11px; line-height: 1.4; font-weight: 600; color: var(--fg-muted); }
   .ibx-older-why { margin: 0; font-size: 11px; line-height: 1.4; font-weight: 400; color: var(--fg-muted); }
   .pdp-group > .ibx-older-why { margin: 2px 0 4px; font-size: var(--fs-100); line-height: var(--lh-100); }
   .ibx-listed .ibx-row[data-stage="older"] { border-left-color: var(--border-strong); background: var(--surface-sunken); }
@@ -15348,7 +15350,7 @@ function pdChatUnpanel(roomId) {
 function pdRowTitle(r) { return [taskNoText(r, false), detailTitle(r)].filter(Boolean).join(' ') || 'Chat'; }
 // The workspace owns one editor. Its session frame runs the ordinary send path,
 // while the conversation frames keep their messages and per-target drafts.
-const WC = { target:null, base:'', tailKey:'', restoring:false, pickSeq:0, popped:new Map() };
+const WC = { target:null, base:'', tailKey:'', restoring:false, pickSeq:0, popped:new Map(), aimAt:0 };
 function wcPoRoom() { return PO_PANEL.querySelector('iframe.po-session:not([hidden])')?.dataset.room || ''; }
 function wcMainTarget() {
   const r = SELECTED_SID && rowBySid(SELECTED_SID);
@@ -15541,6 +15543,9 @@ window.addEventListener('message', e => {
   if (e.data?.type !== 'workspace-pick' || e.source === f.contentWindow || !e.data.roomId) return;
   const chat = [...document.querySelectorAll('iframe.po-session, iframe.dp-session, iframe.po-thread')].find(x => x.contentWindow === e.source);
   if (!chat || !chat.contentDocument?.body.classList.contains('workspace-guest')) return;
+  // The press on a thread's link in the PO chat picks the PO as the click
+  // opens the thread (#363): that pick, delivered after, is not the last word.
+  if (+e.data.at && +e.data.at <= WC.aimAt && !chat.classList.contains('po-thread')) return;
   wcChoose(wcChatTarget(chat, String(e.data.roomId), e.data), !!e.data.focus);
 });
 // The box's target for a chat frame of the workspace.
@@ -15566,6 +15571,22 @@ function wcCommentLink(win, link, d) {
   return true;
 }
 setInterval(wcSync, 400);
+// A thread the person opens (a balloon's link, an Inbox card, Reply in
+// thread…) has the box at once, no click into its panel needed (#363). Not
+// a restore (a reload, the chat's load, another PO's chat shown again) nor
+// one opened by reply catch-up (o.auto): the box keeps what it had then.
+// The caret goes into the box after a click, unless a field has it.
+function pdThreadAim(o) {
+  if (o.restore || o.auto || PD.dock.popWindow(PD_THREAD)) return;
+  WC.aimAt = Date.now();
+  wcChoose({kind:'thread', room:o.room, thread:o.tid || '', mid:o.tid ? '' : o.mid}, wcClicked());
+}
+function wcClicked() {
+  if (!navigator.userActivation?.isActive) return false;
+  let el = document.activeElement;
+  try { while (el?.tagName === 'IFRAME' && el.contentDocument?.activeElement) el = el.contentDocument.activeElement; } catch (e) {}
+  return !(el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)));
+}
 function pdChatsRemember() {
   const rooms = [...PD.rt.values()].filter(e => e.kind === 'chat').map(e => e.room);
   if (PD_HOLD) PD_HOLD.rooms.forEach(r => { if (!rooms.includes(r)) rooms.push(r); });
@@ -15691,6 +15712,7 @@ function pdThreadPanel(frameEl, o) {
     pdThreadSetTitle(title);
     // A restore at the chat's load leaves the panel where it is, unseen if so.
     if (!o.restore) { try { d.reveal(PD_THREAD); } catch (e) {} }
+    pdThreadAim(o);
     return true;
   }
   const el = document.createElement('div');
@@ -15710,6 +15732,7 @@ function pdThreadPanel(frameEl, o) {
   // Back in the chat's own stack after a reload: the chat stays in front.
   if (o.restore && d.frontOf && d.frontOf('po-chat') === PD_THREAD) { try { d.activate('po-chat'); } catch (e) {} }
   pdToolsFit();
+  pdThreadAim(o);
   return true;
 }
 // The PO chats of a room are told about their thread's panel (thread-closed,
@@ -15738,10 +15761,14 @@ function pdThreadFollow(roomId, frame) {
   if (!first && frame && frame.contentWindow) { try { frame.contentWindow.postMessage({ ensemble: 'thread-again' }, location.origin); } catch (err) {} }
 }
 // The thread's page names its thread: the panel's tab follows; a thread
-// started on a balloon has its id once its first reply is in.
-function pdThreadTitle(roomId, title, thread) {
+// started on a balloon has its id once its first reply is in. from: the
+// thread that page was opened for ({asked, tmid}); one the panel no longer
+// shows (another thread opened in it, its word late) changes nothing (#363).
+function pdThreadTitle(roomId, title, thread, from) {
   const e = PD.rt.get(PD_THREAD);
   if (!e || e.room !== roomId) return;
+  if (from && (from.asked ? from.asked !== e.tid && from.asked !== e.wcAlias
+    : !from.tmid || (from.tmid !== e.mid && 'm:' + from.tmid !== e.wcAlias && thread !== e.tid))) return;
   if (thread && e.tid !== thread) {
     const old = e.tid || (e.mid ? 'm:' + e.mid : '');
     e.wcAlias = old;
@@ -24106,7 +24133,8 @@ window.addEventListener('message', (ev) => {
       window.open('/session?id=' + encodeURIComponent(roomId) + q, '_blank', 'noopener');
     }
   }
-  if (d && d.type === 'thread-title' && d.roomId && ev.origin === location.origin) pdThreadTitle(String(d.roomId), String(d.title || ''), String(d.thread || ''));
+  if (d && d.type === 'thread-title' && d.roomId && ev.origin === location.origin) pdThreadTitle(String(d.roomId), String(d.title || ''), String(d.thread || ''),
+    d.asked === undefined ? null : { asked: String(d.asked || ''), tmid: String(d.tmid || '') });
   if (d && d.type === 'thread-back' && d.roomId && ev.origin === location.origin) {
     const cid = pdChatId(String(d.roomId));
     try { PD.dock.reveal(PD.rt.has(cid) ? cid : 'po-chat'); } catch (e) {}
