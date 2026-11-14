@@ -164,10 +164,10 @@ async function main() {
         placeholder:${W}.contentDocument.getElementById('input').placeholder, box:${W}.contentDocument.getElementById('input').value,
         draft:JSON.parse(sessionStorage.getItem('cd-draft:'+${JSON.stringify(A.po)}+':thread:'+${JSON.stringify(ta)})||'{}').head||''}})()`;
     const onPo = `WC.target?.kind==='po' && !${W}.contentWindow.liveTailBoxThread?.() && ${boxReady}`;
-    const openA = async label => {
+    const openA = async (label, wait = 800) => {
       await clickAt(PO, `#msgs .thr-open[data-thr="${ta}"]`);
       await until(`WC.target?.thread===${JSON.stringify(ta)} && ${W}.contentWindow.liveTailBoxThread?.()===${JSON.stringify(ta)} && ${boxReady}`,'P340 thread '+label);
-      await sleep(800);
+      await sleep(wait);
     };
     const clickTop = async selector => {
       const p = await ev(`(()=>{const e=document.querySelector(${JSON.stringify(selector)});const q=e.getBoundingClientRect();return {x:q.x+q.width/2,y:q.y+q.height/2}})()`);
@@ -195,6 +195,12 @@ async function main() {
     await clickTop('.dk-tab[data-dk-tab="po-chat"]');
     await until(onPo,'P340 tab stacked');
     out.p340.tabStacked = await ev(toLine);
+    // (a'') The PO chat's tab clicked at once after the thread opened: a click of its own.
+    await openA('quick', 0);
+    await clickTop('.dk-tab[data-dk-tab="po-chat"]');
+    await sleep(100);
+    out.p340.tabQuick = await ev(toLine);
+    await until(onPo,'P340 tab quick');
     // (b) The To line's ×.
     await openA('x');
     await clickTop('#workspace-compose-back');
@@ -459,6 +465,8 @@ class ThreadAimsBox(unittest.TestCase):
         self.assertTrue(p['x']['focus'], 'the × leaves the caret in the box')
         self.assertFalse(p['close']['panel'])
         self.assertFalse(p['reload']['panel'])
+        self.assertEqual((p['tabQuick']['kind'], p['tabQuick']['placeholder']), ('po', 'Message the PO…'),
+                         'a click on the PO tab right after a thread opened takes the box')
         self.assertLess(p['reloadMs'], 4000, 'no wait for a thread that is not coming back')
 
     def test_p340_phone(self):

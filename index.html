@@ -15571,9 +15571,11 @@ document.getElementById('workspace-compose-back').addEventListener('click', () =
 });
 // The PO's chat brought to the front by the person (its tab, the Panels
 // menu, a key, the thread's Back): the box is that chat's (P340). Not a
-// restore at load, nor the press that has just opened a thread (#363).
-function wcPoFront() {
-  if (PD.thrRestoring || !navigator.userActivation?.isActive || Date.now() - WC.aimAt < 600) return;
+// restore at load, nor the press that has just opened a thread (#363): the
+// chat shown within 600 ms of it may be that press's. A click on its tab
+// (tab) is the person's own, however soon.
+function wcPoFront(tab = false) {
+  if (PD.thrRestoring || !navigator.userActivation?.isActive || (!tab && Date.now() - WC.aimAt < 600)) return;
   if (WC.target?.kind === 'thread') wcToMain();
 }
 document.getElementById('workspace-compose-link').addEventListener('click', e => {
@@ -15895,7 +15897,7 @@ function pdRuntimeRemoved(id) {
 PD_ROOT.addEventListener('dock-removed', e => { try { pdRuntimeRemoved(e.detail && e.detail.id); } catch (err) {} });
 // The PO chat's tab clicked while the chat is on screen already (its thread
 // beside it): the person is back at the PO's chat, so is the box (P340).
-PD_ROOT.addEventListener('click', e => { if (e.target.closest?.('.dk-tab[data-dk-tab="po-chat"]')) wcPoFront(); }, true);
+PD_ROOT.addEventListener('click', e => { if (e.target.closest?.('.dk-tab[data-dk-tab="po-chat"]')) wcPoFront(true); }, true);
 // Once after the dock is made: the file and chat panels of the last visit,
 // each in its kept place (no `where`: Dock parks a panel a stored layout
 // names until it is added). A Workspace whose task or project is gone, or a
