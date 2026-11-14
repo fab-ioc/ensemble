@@ -17423,11 +17423,15 @@ function ldpOpenLoose(b) {
 // the switcher, a phone's cards) in the person's own order; the rest keep
 // their own order below. One list per hub (settings.json pinnedProjects, read
 // as PROJECTS.summary.pinned), so every device agrees. A change shows at once
-// and is then posted; until the hub has answered, a projects poll that read
-// the list before it cannot put the old one back.
-var PIN = { mine: null, busy: 0, until: 0, drag: null };
+// (PIN.mine) and is then posted. The posts go one at a time, in the order the
+// person made the changes, so the hub applies them in that order (a pin then
+// an unpin never ends pinned; a reorder after a pin finds it pinned). PIN.ver
+// moves with every post sent and answered: a projects GET that overlapped one
+// read the hub before it, so its pinned list gives way to the hub's latest
+// answer (PIN.known) — see pinFromPoll in apiProjects.
+var PIN = { mine: null, busy: 0, ver: 0, known: null, q: Promise.resolve(), drag: null };
 function pinList() {
-  if (PIN.mine && (PIN.busy || Date.now() < PIN.until)) return PIN.mine;
+  if (PIN.mine) return PIN.mine;
   const s = PROJECTS && PROJECTS.summary;
   return s && Array.isArray(s.pinned) ? s.pinned.filter(id => projectById(id)) : [];
 }
@@ -17463,11 +17467,30 @@ function pinRepaint() {
 function pinApply(next, body) {
   PIN.mine = next.slice();
   PIN.busy++;
+  PIN.ver++;
   pinRepaint();
-  api('/api/projects/pins', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
-    .then(j => { if (PROJECTS && PROJECTS.summary && Array.isArray(j.pinned)) PROJECTS.summary.pinned = j.pinned; if (PIN.busy === 1) PIN.mine = j.pinned; })
-    .catch(e => { toast(`Could not save the order: ${histErr(e)}`, 4000); PIN.mine = null; PIN.until = 0; })
-    .finally(() => { PIN.busy--; if (PIN.mine) PIN.until = Date.now() + 4000; pinRepaint(); });
+  const send = () => api('/api/projects/pins', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+    .then(j => {
+      if (!Array.isArray(j.pinned)) return;
+      PIN.known = j.pinned.slice();
+      if (PROJECTS && PROJECTS.summary) PROJECTS.summary.pinned = j.pinned.slice();
+    })
+    .catch(e => toast(`Could not save the order: ${histErr(e)}`, 4000))
+    .finally(() => {
+      PIN.ver++;
+      // The last one answered: the lists show the hub's own order again.
+      if (--PIN.busy === 0) { PIN.mine = null; pinRepaint(); }
+    });
+  PIN.q = PIN.q.then(send, send);
+}
+// A projects GET's summary: `ver`/`idle` are PIN's when it was sent. If a pin
+// post was in flight or went out while it was, its pinned list may predate
+// that post: the hub's latest answer stands instead. Otherwise it is the
+// hub's newest word (another device's change too).
+function pinFromPoll(summary, ver, idle) {
+  if (!summary) return;
+  if (idle && !PIN.busy && ver === PIN.ver) { if (Array.isArray(summary.pinned)) PIN.known = summary.pinned.slice(); }
+  else if (PIN.known) summary.pinned = PIN.known.slice();
 }
 function pinToggle(pid) {
   if (!pinCan(pid)) return;
@@ -20912,7 +20935,9 @@ function listFeed(key, sub = '', subKey = 'sessionId') {
 const SESS_FEED = listFeed('sessionId'), PROJ_FEED = listFeed('id', 'sessions');
 async function apiProjects() {
   let summary = null;
+  const pin = typeof PIN !== 'undefined' ? PIN : null, ver = pin ? pin.ver : 0, idle = !pin || !pin.busy;
   const projects = await PROJ_FEED.get('/api/projects', undefined, d => { summary = d.summary; });
+  if (pin) pinFromPoll(summary, ver, idle);   // #362: a GET that overlapped a pin post
   return { projects, summary };
 }
 

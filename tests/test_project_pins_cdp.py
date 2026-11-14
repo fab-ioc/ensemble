@@ -216,6 +216,30 @@ async function main() {
     D.dotsAt = !!dotsAt;
     await d.ev('ldpMenuClose(), 0');
     D.listEnd = names(await d.ev(L));
+    // 14. overlapping changes: the first post is held 700ms before it goes out,
+    // so without one-at-a-time the second would reach the hub first
+    await d.ev(`(() => { window.POSTHOLD = []; const f0 = window.fetch; window.fetch = function (u, o) {
+      if (String(u).startsWith('/api/projects/pins') && POSTHOLD.length) { const ms = POSTHOLD.shift(); return new Promise(r => setTimeout(r, ms)).then(() => f0.call(this, u, o)); }
+      if (String(u).startsWith('/api/projects?') && window.GETHOLD) { const ms = GETHOLD; GETHOLD = 0; return f0.call(this, u, o).then(r => new Promise(k => setTimeout(() => k(r), ms))); }
+      return f0.call(this, u, o); }; return 0; })()`);
+    const pins = async (...acts) => { await d.ev(`(POSTHOLD = [700, 0], ${acts.join(', ')}, 0)`); await settle(d); return { list: names(await d.ev(L)), hub: names(await d.ev(HUB)) }; };
+    D.twoPins = await pins(`pinToggle(${JSON.stringify(ID.Harbor)})`, `pinToggle(${JSON.stringify(ID.Quarry)})`);
+    D.pinUnpin = await pins(`pinToggle(${JSON.stringify(ID.Beacon)})`, `pinToggle(${JSON.stringify(ID.Beacon)})`);
+    D.pinMove = await pins(`pinToggle(${JSON.stringify(ID.Cobalt)})`, `pinMove(${JSON.stringify(ID.Cobalt)}, -1)`);
+    // 15. a projects GET that read the hub before a pin answers after it
+    D.staleGet = await d.ev(`(async () => {
+      GETHOLD = 900; const g = apiProjects();
+      await new Promise(r => setTimeout(r, 250));
+      pinToggle(${JSON.stringify(ID.Fjord)});
+      await PIN.q; await new Promise(r => setTimeout(r, 50));
+      const p = await g; const got = p.summary.pinned.slice();
+      PROJECTS = p; pinRepaint();
+      return { got, list: pinList() };
+    })()`);
+    D.staleGet = { got: names(D.staleGet.got), list: names(D.staleGet.list), now: names(await d.ev(L)) };
+    for (const n of ['Harbor', 'Quarry', 'Cobalt', 'Fjord'])
+      await d.ev(`fetch('/api/projects/pins', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ projectId: ${JSON.stringify(ID[n])}, pinned: false }) }).then(r => r.status)`);
+    D.restored = names(await d.ev(HUB));
     await d.close();
 
     // Phone
@@ -378,6 +402,19 @@ class PinnedProjectsInChrome(unittest.TestCase):
         self.assertEqual(d["afterUnpin"], ["Lumen", "Atlas"], d)
         self.assertEqual(d["hubUnpin"], ["Lumen", "Atlas"], d)
         self.assertEqual(d["listAfterUnpin"], ["Lumen", "Atlas"], d)
+
+    def test_overlapping_changes_land_in_order(self):
+        d = self.got["desk"]
+        self.assertEqual(d["twoPins"], {"list": ["Lumen", "Atlas", "Harbor", "Quarry"], "hub": ["Lumen", "Atlas", "Harbor", "Quarry"]}, d)
+        self.assertEqual(d["pinUnpin"], {"list": ["Lumen", "Atlas", "Harbor", "Quarry"], "hub": ["Lumen", "Atlas", "Harbor", "Quarry"]}, d)
+        want = ["Lumen", "Atlas", "Harbor", "Cobalt", "Quarry"]
+        self.assertEqual(d["pinMove"], {"list": want, "hub": want}, d)
+        self.assertEqual(d["restored"], ["Lumen", "Atlas"], d)
+
+    def test_a_get_from_before_a_pin_does_not_undo_it(self):
+        d = self.got["desk"]
+        want = ["Lumen", "Atlas", "Harbor", "Cobalt", "Quarry", "Fjord"]
+        self.assertEqual(d["staleGet"], {"got": want, "list": want, "now": want}, d)
 
     def test_phone(self):
         p = self.got["phone"]
