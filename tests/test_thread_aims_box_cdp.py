@@ -84,6 +84,23 @@ async function main() {
     await until(`document.getElementById('workspace-compose')?.hidden===false && WC.target?.kind==='po' && ${boxReady}`,'workspace box on the PO');
     const [ta, tb] = await ev(threads);
     out.ta = ta; out.tb = tb;
+    out.roleLabels = await ev(`(() => {
+      const frame=${PO}, head=document.querySelector('#po-panel .po-head'), line=frame.contentDocument.querySelector('#msgs .thr-line');
+      line.scrollIntoView({block:'center'});
+      const tag=head?.querySelector('.rl.po');
+      const labels=[...(line?.querySelectorAll('.thr-who .rl')||[])];
+      const rect=e=>{const r=e.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height}};
+      const hr=rect(head), lr=rect(line), fr=rect(frame);
+      return {head:{label:tag?.textContent||'', title:tag?.title||'', circles:head?.querySelectorAll('.av').length||0,
+          name:head?.querySelector('.po-name')?.textContent||''},
+        replies:{labels:labels.map(e=>({text:e.textContent,cls:e.className,width:e.getBoundingClientRect().width,
+          height:e.getBoundingClientRect().height})), circles:line?.querySelectorAll('.thr-av').length||0},
+        rects:{head:hr, replies:{x:fr.x+lr.x,y:fr.y+lr.y,width:lr.width,height:lr.height}}};
+    })()`);
+    if (A.shots) {
+      await snap('role-labels');
+      require('fs').writeFileSync(A.shots+'/role-labels.json',JSON.stringify(out.roleLabels));
+    }
     await typeBox('PO draft kept');
     // 1. A click on a thread's link: the box is that thread's at once, caret in it.
     await clickAt(PO, `#msgs .thr-open[data-thr="${ta}"]`);
@@ -395,7 +412,8 @@ class ThreadAimsBox(unittest.TestCase):
         threading.Thread(target=cls.server.serve_forever, daemon=True).start()
         args = {**chrome_profile.node_args(), 'tmp':cls.tmp.name,
                 'base':f'http://127.0.0.1:{cls.server.server_address[1]}',
-                'proj':cls.proj,'po':cls.po,'task':cls.task,'balloon':cls.balloon}
+                'proj':cls.proj,'po':cls.po,'task':cls.task,'balloon':cls.balloon,
+                'shots':os.environ.get('ENSEMBLE_SHOTS', '')}
         script = base / 'thread_aim_cdp.js'; script.write_text(CDP_JS, encoding='utf-8')
         result = subprocess.run([NODE,str(script),json.dumps(args)],capture_output=True,encoding='utf-8',timeout=200)
         assert result.returncode == 0, result.stderr[-5000:]
@@ -414,6 +432,16 @@ class ThreadAimsBox(unittest.TestCase):
         self.assertTrue(g['firstFocus'], 'a click puts the caret in the box')
         self.assertEqual(g['firstRoute'], {'room':self.po,'thread':ta})
         self.assertEqual(g['firstDraft'], '')
+
+    def test_role_labels_replace_the_header_and_replies_circles(self):
+        labels = self.got['roleLabels']
+        self.assertEqual(labels['head']['label'], 'PO')
+        self.assertIn('claude', labels['head']['title'].lower(), labels)
+        self.assertEqual(labels['head']['circles'], 0)
+        self.assertNotIn('PO', labels['head']['name'], labels)
+        self.assertEqual(labels['replies']['circles'], 0)
+        self.assertEqual([x['text'] for x in labels['replies']['labels']], ['PO'])
+        self.assertTrue(all('rl po' in x['cls'] and x['width'] > x['height'] for x in labels['replies']['labels']), labels)
 
     def test_another_thread_and_drafts(self):
         g, ta, tb = self.got, self.got['ta'], self.got['tb']

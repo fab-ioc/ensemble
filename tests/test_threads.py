@@ -1020,5 +1020,20 @@ class InboxLook(tp._World):
         self.assertTrue(threads.load_side(self.rid).get("since"))
 
 
+class ReplyRoleLabels(unittest.TestCase):
+    def test_report_and_po_replies_keep_their_sender_roles(self):
+        def reply(kind, **turn):
+            return {"role": "user", "kind": kind, "turn": turn}
+
+        self.assertEqual(threads._reply_label({"role": "agent", "turn": {}}),
+                         {"cls": "po", "text": "PO"})
+        self.assertEqual(threads._reply_label(reply("report", reportKind="completed")),
+                         {"cls": "engineer", "text": "engineer"})
+        self.assertEqual(threads._reply_label(reply("report", reportKind="review 2 (approved)")),
+                         {"cls": "reviewer", "text": "reviewer"})
+        self.assertEqual(threads._reply_label(reply("human")),
+                         {"cls": "person", "text": "you"})
+
+
 if __name__ == "__main__":
     unittest.main()

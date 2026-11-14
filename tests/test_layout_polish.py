@@ -129,10 +129,10 @@ class ThePoHeader(unittest.TestCase):
 
     def test_one_quiet_line_says_what_is_true(self):
         h = self.r["live"]
-        # The PO is called PO; its kind and model are in the tooltip (#232).
-        self.assertIn('<span class="av claude" title="PO · claude opus">c</span>', h)
-        # In its panel the tab above is the project's name (#261): the header says only "PO".
-        self.assertIn('<div class="po-name" title="PO · claude opus">PO</div>', h)
+        # The #361 role label says PO once; its tooltip still says who holds the seat.
+        self.assertIn('<span class="rl po" title="PO · claude · opus">PO</span>', h)
+        self.assertNotIn('class="av ', h)
+        self.assertNotIn('class="po-name"', h)
         # The state comes first: it is the one place the PO's state is said (#232).
         self.assertIn('<div class="po-sub"><span class="run" data-state-room="po-1" title="idle: running, not working"><span class="dot idle"></span>idle</span>'
                       '<span>2 tasks open</span></div>', h)
@@ -140,7 +140,7 @@ class ThePoHeader(unittest.TestCase):
         # A drawer (peek) has no tab: it names the project. A part a span (CSS draws the " · "), so a
         # narrow header cuts the project's name first.
         s = self.r["stopped"]
-        self.assertIn('>Ensemble Dashboard · PO</div>', s)
+        self.assertIn('<div class="po-name">Ensemble Dashboard</div>', s)
         self.assertIn('<span class="po-sub-proj">project Ensemble Dashboard</span><span>2 tasks open</span>', s)
         self.assertIn(".po-sub > * + *::before { content: \"·\";", INDEX)
         self.assertIn(".po-sub > .po-sub-proj { flex-shrink: 1000; }", INDEX)

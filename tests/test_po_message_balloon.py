@@ -40,6 +40,10 @@ vm.runInContext(code + `
   globalThis.t = { CHAT_NAMES, whoHtml, senderName, recipientName, kindName, foldChips, foldBalloonHtml,
     quietItem, taskOfMsg, chatGroups, withHubRows, withTaskBubble, soloItems, isHubInput, hubLabel, answerChip };`, ctx);
 const T = ctx.t;
+// The extracted page block compares its active room before adding older rows.
+// This fixture passes a different room, so give that comparison a distinct one.
+ctx.ROOM_OBJ = {};
+ctx.SOLO_MODE = true;
 Object.assign(T.CHAT_NAMES, { operator: 'sam', po: 'claude', taskNo: () => null });
 const out = {};
 const pm = (id, direction, ts, extra) => Object.assign({ id, kind: 'pomsg', direction, ts, rang: [],
@@ -105,8 +109,8 @@ class APoMessageBalloon(unittest.TestCase):
 
     def test_it_says_which_po_writes_to_which(self):
         self.assertEqual(self.r["head"], [
-            '<span class="who">opten PO</span> <span class="to">→ Dock PO</span>',
-            '<span class="who">Dock PO</span> <span class="to">→ opten PO</span>'])
+            '<span class="who rl po">opten PO</span>',
+            '<span class="who rl po">Dock PO</span>'])
         self.assertEqual(self.r["kind"], "PO message")
 
     def test_it_is_marked_apart_from_a_report(self):
@@ -130,7 +134,7 @@ class APoMessageBalloon(unittest.TestCase):
 
     def test_persisted_and_synthetic_hub_inputs_keep_their_sender_and_style(self):
         recorded = self.r["recorded"]
-        self.assertEqual(recorded[:4], ["PO", '<span class="who hub-who">PO</span> <span class="to">→ PO</span>',
+        self.assertEqual(recorded[:4], ["PO", '<span class="who rl po">PO</span>',
                                         "po", "record"])
         self.assertIn('class="msg user hub"', recorded[4])
         self.assertIn('>PO</span>', recorded[4])
