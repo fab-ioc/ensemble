@@ -244,7 +244,7 @@ class OlderQuestionsInChrome(unittest.TestCase):
                 project("Plain", NEW["Plain"], False)
                 project("Again", NEW["Again"], False, twice=True)     # the earlier card: why "repeat"
                 project("Cleared", NEW["Cleared"], False)
-                # Clear all, as the Inbox's: the questions before now (why "cleared") and the room's Needs you item.
+                # Clear all on the room's Needs you Decisions (#279) marks the questions before now (why "cleared"); the Needs you item is dismissed too, so it does not re-add the card.
                 points.clear_decisions(pos["Cleared"], now=time.time() + 1)
                 dashboard.attention_done_many([pos["Cleared"]])
             args = {**chrome_profile.node_args(), "tmp": cls.tmp.name, "base": f"http://127.0.0.1:{server.server_address[1]}",
