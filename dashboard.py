@@ -2304,6 +2304,10 @@ _SETTINGS_DEFAULTS = {
     # Pace each agent kind's 7-day allowance and compare weighted spare
     # capacity per hour until each kind's own reset (ED-203).
     "paceWeek": True,
+    # Pinned projects (#362): the ids at the top of every project list, in the
+    # person's own order. One list per hub so every device agrees; only
+    # POST /api/projects/pins writes it (a settings PUT never does).
+    "pinnedProjects": [],
     # Settings › Agent models › Review rounds per task (#288): past this many
     # review rounds the hub starts no reviewer for a task (REVIEW_ROUNDS_DEFAULT;
     # a task's own reviewLimit, set by its PO, wins). 0 = no limit.
@@ -2457,7 +2461,61 @@ def load_settings() -> dict:
     out["agentModels"] = agent_models.normalise(saved.get("agentModels"),
                                                 legacy_claude=saved.get("defaultModel"))
     out["defaultModel"] = out["agentModels"]["claude"]["model"]
+    out["pinnedProjects"] = clean_pinned_projects(saved.get("pinnedProjects"))
     return out
+
+
+PINNED_MAX = 200
+
+
+def clean_pinned_projects(v) -> list:
+    """The pin list as saved, made safe: strings of at most 80 characters,
+    each once, at most PINNED_MAX, in order. Anything else reads as none."""
+    if not isinstance(v, list):
+        return []
+    out: list = []
+    for x in v:
+        if isinstance(x, str) and 0 < len(x) <= 80 and x not in out:
+            out.append(x)
+        if len(out) >= PINNED_MAX:
+            break
+    return out
+
+
+def set_project_pins(data) -> tuple[int, dict]:
+    """POST /api/projects/pins: {projectId, pinned: bool} pins a project at the
+    end of the pinned group or unpins it; {order: [ids]} reorders the pinned
+    ones only (the ids it names that are pinned, in that order, then the
+    pinned it left out) and never pins or unpins. One read-modify-write under
+    the settings lock, so two devices at once both land. Ids no longer
+    registered drop out on the way. Answers (status, body)."""
+    if not isinstance(data, dict):
+        return 400, {"error": "bad_json"}
+    with _SETTINGS_LOCK:
+        registered = {p["id"] for p in load_projects()}
+        pins = [x for x in load_settings()["pinnedProjects"] if x in registered]
+        if "order" in data:
+            order = data.get("order")
+            if not isinstance(order, list):
+                return 400, {"error": "bad_order"}
+            want = [x for x in clean_pinned_projects([o for o in order if isinstance(o, str)]) if x in pins]
+            pins = want + [x for x in pins if x not in want]
+        else:
+            pid = data.get("projectId")
+            on = data.get("pinned")
+            if not isinstance(pid, str) or not isinstance(on, bool):
+                return 400, {"error": "bad_request"}
+            if pid not in registered:
+                return 404, {"error": "no_such_project"}
+            if on and pid not in pins:
+                if len(pins) >= PINNED_MAX:
+                    return 400, {"error": "too_many"}
+                pins.append(pid)
+            elif not on:
+                pins = [x for x in pins if x != pid]
+        if not os.environ.get("ENSEMBLE_PTY_PREFLIGHT"):
+            _save_settings_locked({}, pins=pins)
+    return 200, {"ok": True, "pinned": pins}
 
 
 def agent_models_error(data: dict) -> str:
@@ -2991,15 +3049,17 @@ def save_settings(settings: dict) -> dict:
         return _save_settings_locked(settings)
 
 
-def _save_settings_locked(settings: dict) -> dict:
+def _save_settings_locked(settings: dict, pins: list | None = None) -> dict:
     current = load_settings()
+    if pins is not None:
+        current["pinnedProjects"] = clean_pinned_projects(pins)
     for change in _agent_model_changes(settings):
         models, _why = agent_models.check(change, current["agentModels"])
         if models is not None:
             current["agentModels"] = models
             current["defaultModel"] = models["claude"]["model"]
     for k, v in settings.items():
-        if k not in _SETTINGS_DEFAULTS or k in ("agentModels", "defaultModel"):
+        if k not in _SETTINGS_DEFAULTS or k in ("agentModels", "defaultModel", "pinnedProjects"):
             continue
         if k == "feedbackRepo" and not feedback.valid_repo(v):
             continue
@@ -10101,9 +10161,12 @@ def build_projects() -> dict:
     # most-recently-active first; Unassigned always last.
     projects.sort(key=lambda x: (x["id"] == UNASSIGNED, -(x["updatedAt"] or 0),
                                  x["name"].lower()))
+    registered_ids = {p["id"] for p in projects_reg}
     return {"projects": projects,
             "summary": {"needsYou": needs_you, "agentsLive": agents_live,
                         "changed": total_changed,
+                        # #362: the pinned projects, in the person's order.
+                        "pinned": [x for x in load_settings()["pinnedProjects"] if x in registered_ids],
                         "projects": len([p for p in projects if p.get("registered")])}}
 
 
@@ -23447,6 +23510,16 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(200 if ok else (404 if msg == "no_such_project" else 400),
                             {"ok": True, "value": data.get("value") or None}
                             if ok else {"error": msg})
+            return
+        if p == "/api/projects/pins":
+            # #362: {projectId, pinned} or {order: [ids]}. The person's own
+            # order: only the page changes it, never a task's agent.
+            why = self._page_refusal()
+            if why:
+                self._send_json(403, {"error": "page_only", "message": why})
+                return
+            code, body = set_project_pins(data)
+            self._send_json(code, body)
             return
         if p == "/api/projects/key":
             # {projectId, key}: the project's short key (ED), for ED-18.
