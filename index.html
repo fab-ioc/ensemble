@@ -4016,6 +4016,8 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .ldp-sep { height: 0; border-top: 1px solid var(--border); margin: 6px 2px; }
   .ibx-title.ibx-title-listed { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     font-size: var(--fs-100); line-height: var(--lh-100); color: var(--fg-muted); text-transform: uppercase; letter-spacing: .04em; }
+  /* #360: the Older questions heading's case, as the Inbox's own heading above (its other styles with the Inbox's, below). */
+  .ibx-older-t { text-transform: uppercase; letter-spacing: .04em; }
   /* ---- The PO screen as panels ---------------------------------------------
      A project with a PO: its Overview is a Dock (static/dock, a vendored copy
      of the Dock library) of five panels: PO chat, Points, Board, Workspace and
@@ -4175,7 +4177,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
      a grey bar, the sunken ground, a regular-weight title in the subtle colour. */
   .ibx-older-head { list-style: none; margin: 12px 0 2px; padding: 10px 4px 0; border-top: 1px solid var(--border); }
   .ibx-cards > .ibx-older-head:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
-  .ibx-older-t { margin: 0; font-size: 11px; line-height: 1.4; font-weight: 600; color: var(--fg-muted); text-transform: uppercase; letter-spacing: .04em; }
+  .ibx-older-t { margin: 0; font-size: 11px; line-height: 1.4; font-weight: 600; color: var(--fg-muted); }
   .ibx-older-why { margin: 0; font-size: 11px; line-height: 1.4; font-weight: 400; color: var(--fg-muted); }
   .pdp-group > .ibx-older-why { margin: 2px 0 4px; font-size: var(--fs-100); line-height: var(--lh-100); }
   .ibx-listed .ibx-row[data-stage="older"] { border-left-color: var(--border-strong); background: var(--surface-sunken); }
