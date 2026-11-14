@@ -366,7 +366,7 @@ const vm = require('vm');
 const { code } = JSON.parse(require('fs').readFileSync(0, 'utf8'));
 const ctx = { attSplit: t => ({ words: String(t || ''), paths: [] }), stripRefBlocks: t => t, URL,
   fetch: () => new Promise(() => {}),       // a link the hub has not resolved yet stays pending
-  ROOM: 'room-po', SOLO_MODE: true, pointsChanged: () => {}, pointsNote: () => {}, TAIL_WORKING: [], ACT_READS: 0,
+  ROOM: 'room-po', SOLO_MODE: true, pointsChanged: () => {}, pointsNote: () => {}, TAIL_WORKING: [], ACT_IDLE: new Map(),
   withPathAbbrevs: (t, fn) => fn(), ATT_PREFIX: '[image] ', ATT_FILE_PREFIX: '[file] ',
   // renderActivity's world: the room's agents, who works (BUSY), nothing else drawn.
   ROOM_AGENTS: [{ identity: 'claude', ptyId: 'pty-1' }, { identity: 'codex', ptyId: 'pty-2' }], ROOM_LIVE: true, BUSY: new Set(),
@@ -457,7 +457,16 @@ ctx.BUSY = new Set(['codex']); T.renderActivity({}, {});
 out.q2.settledFirst = T.PT_SETTLED.has('a3');
 ctx.BUSY = new Set(['claude', 'codex']); T.renderActivity({}, {});
 out.q2.settledBusy = T.PT_SETTLED.has('a3');
+// A failed read (ok false: /api/ptys or /api/live did not answer) finds no one
+// at work, again and again: no stop, and the next working read is working on it.
+ctx.BUSY = new Set(); T.renderActivity({}, {}, false); T.renderActivity({}, {}, false);
+out.q2.failed = { settled: T.PT_SETTLED.has('a3'), still: T.ptStillWorking(P.byId.get('P3'), P) };
+ctx.BUSY = new Set(['claude', 'codex']); T.renderActivity({}, {});
+out.q2.failedThenWorking = { settled: T.PT_SETTLED.has('a3'), still: T.ptStillWorking(P.byId.get('P3'), P) };
+// One full read with the author not at work is a quiet moment, two in a row a stop.
 ctx.BUSY = new Set(['codex']); T.renderActivity({}, {});
+out.q2.settledOnce = T.PT_SETTLED.has('a3');
+T.renderActivity({}, {});
 out.q2.settledOther = T.PT_SETTLED.has('a3');
 out.q2.workingAfter = ctx.TAIL_WORKING.map(a => a.identity);
 ctx.BUSY = new Set(['claude', 'codex']); T.renderActivity({}, {});
@@ -646,7 +655,10 @@ class BalloonStates(unittest.TestCase):
         self.assertEqual((q["pointMapsKeeps"], q["pointMapsNone"]), ({"claude": 5}, {}))
         self.assertFalse(q["settledFirst"], "the page's first state read settles nothing")
         self.assertFalse(q["settledBusy"], "its author at work: not settled")
-        self.assertTrue(q["settledOther"], "its author stopped while another works: settled")
+        self.assertEqual(q["failed"], {"settled": False, "still": False}, "a failed read is no stop (shown as nobody working)")
+        self.assertEqual(q["failedThenWorking"], {"settled": False, "still": True}, "the next full read: working on it again")
+        self.assertFalse(q["settledOnce"], "one read with the author quiet: not yet a stop")
+        self.assertTrue(q["settledOther"], "two reads in a row, its author stopped while another works: settled")
         self.assertEqual(q["workingAfter"], ["codex"])
         self.assertEqual(q["afterSettle"], {"settled": True, "still": False}, "settled stays done when the author works again")
 

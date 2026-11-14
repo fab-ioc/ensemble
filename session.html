@@ -8501,12 +8501,12 @@ function agentState(a, ptyMap, liveMap) {
   return ptyState(ptyMap[a.ptyId]);
 }
 async function updateAgentStatus() {
-  let ptys = [], live = [];
+  let ptys = [], live = [], ok = true;
+  // A read that failed is drawn as nothing, but says so (ok): no stop is
+  // concluded from it (#361).
+  const read = u => fetch(u).then(r => { if (!r.ok) throw new Error(u); return r.json(); }).then(v => Array.isArray(v) ? v : (ok = false, [])).catch(() => { ok = false; return []; });
   try {
-    [ptys, live] = await Promise.all([
-      fetch('/api/ptys').then(r => r.json()).catch(() => []),
-      fetch('/api/live').then(r => r.json()).catch(() => []),
-    ]);
+    [ptys, live] = await Promise.all([read('/api/ptys'), read('/api/live')]);
   } catch(e) { return; }
   const map = {}; ptys.forEach(x => map[x.id] = x);
   const lmap = {}; (live || []).forEach(x => { if (x.sessionId) lmap[x.sessionId] = x.status; });
@@ -8518,7 +8518,7 @@ async function updateAgentStatus() {
     const stat = document.querySelector('.astat[data-pty="' + dot.dataset.pty + '"]');
     setText(stat, s.txt);
   });
-  renderActivity(map, lmap);
+  renderActivity(map, lmap, ok);
   updateStopControl(map, lmap);
   // A message of the person's still without an answer says so once the agent
   // has stopped working (a stopped session is not working either).
@@ -8688,16 +8688,22 @@ document.addEventListener('keydown', e => {
 }, true);
 
 // The live tail follows the working agents; the state is said once (#232).
-function renderActivity(ptyMap, liveMap) {
+function renderActivity(ptyMap, liveMap, ok = true) {
   const agents = ROOM_AGENTS.filter(a => a.ptyId || a.sessionId);
   const was = TAIL_WORKING.map(a => a.identity + '\u0001' + a.ptyId).join('|');
   TAIL_WORKING = ROOM_LIVE ? agents.filter(a => a.ptyId && agentState(a, ptyMap, liveMap || {}).cls === 'working') : [];
-  // Its agent stopped: an "on it" answer is done from now on (#361, Q2). Not
-  // on the page's first state read, which may come before the live states.
+  // Its agent stopped: an "on it" answer is done from now on (#361, Q2). A
+  // stop counts once two state reads in a row, both read in full (ok: neither
+  // /api/ptys nor /api/live failed), found the agent not at work: a failed
+  // read, the first read before the live states, or a PTY's quiet moment is
+  // not a stop.
   const busy = new Set(TAIL_WORKING.map(a => a.identity)), drawn = POINTS.drawn || [];
-  if (ACT_READS++ > 0) for (const p of POINTS.items || []) {
-    const c = curAnswer(p), by = c && c.mid && c.how === 'implicit' ? drawn.find(x => x && x.id === c.mid) : null;
-    if (by && !busy.has(by.from)) PT_SETTLED.add(c.mid);
+  if (ok) {
+    for (const a of agents) ACT_IDLE.set(a.identity, busy.has(a.identity) ? 0 : (ACT_IDLE.get(a.identity) || 0) + 1);
+    for (const p of POINTS.items || []) {
+      const c = curAnswer(p), by = c && c.mid && c.how === 'implicit' ? drawn.find(x => x && x.id === c.mid) : null;
+      if (by && !busy.has(by.from) && (!agents.some(a => a.identity === by.from) || ACT_IDLE.get(by.from) >= 2)) PT_SETTLED.add(c.mid);
+    }
   }
   // Who works changed: the requests' states under the balloons say it.
   if (TAIL_WORKING.map(a => a.identity + '\u0001' + a.ptyId).join('|') !== was && LAST_ITEMS) renderBubbles(LAST_ITEMS);
@@ -8788,7 +8794,7 @@ document.addEventListener('visibilitychange', placeState);
 // popup with more of the screen. Everything here reads the local xterm buffer,
 // so the ticking costs no server calls.
 const TAIL_LINES = 3, TAIL_POP_LINES = 40;
-let ACT_READS = 0;       // state reads renderActivity has had (#361: the first settles nothing)
+const ACT_IDLE = new Map(); // identity → full state reads in a row it was not at work (#361)
 let TAIL_WORKING = [];   // agents currently working: [{identity, ptyId, ...}]
 let TAIL_POP_PTY = '';   // pty whose popup is open ('' = closed)
 
