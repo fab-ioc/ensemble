@@ -1418,6 +1418,16 @@ self-contained component, so a later layout can host it elsewhere.
   switch), its rows flat cards (`ul.ibx-cards`, `data-stage`). Its head's **Clear all** acts on
   dismissible rows in the visible scope, with the old confirm and Undo; a dismissible row also
   has **Done with this**. A check row retains **Done**, and answer cards retain **Close**.
+  **Older questions are listed, not counted** (#360, P333 option A): the head's N, the project
+  pills, the strip badge and the bar count only what waits; the older questions (`d.older`, ones
+  the person wrote past in their chat) come last under their own heading, `li.ibx-older-head`:
+  "OLDER QUESTIONS · N" (`.ibx-older-t`, as the head) and "You wrote past them in their chat"
+  (`.ibx-older-why`, `IBX_OLDER_WHY`), a `--border` hairline above it unless it comes first. Their
+  cards are quiet: a `--border-strong` bar, `--surface-sunken`, a 500 `--fg-subtle` title. A row
+  with nothing waiting but older questions shows their number as an outlined grey pill
+  (`.ldp-n.ldp-old`: transparent, inset 1px `--border-strong`, `--fg-muted`; selected rows too),
+  never a filled one, so a 0 above listed cards is always explained. The grouped Inbox (phone pane,
+  PO dock tab) puts the same why line under its "Older questions N" head.
   Which scope: a loose task open in the middle, else the PO screen's project, else the one the
   bar names (`ibxLdPid()`). While the
   Inbox is on screen or on its strip the bar's **Inbox N** gives way (`body.ld-ibx`); in its own
