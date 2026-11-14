@@ -840,7 +840,18 @@ def _reply_label(r: dict) -> dict:
     """The #361 sender label for a thread reply, before the page sizes it."""
     turn = r.get("turn") or {}
     if turn.get("senderType") == "external" or turn.get("noticeKind") == "external":
-        return {"cls": "outside", "text": str(turn.get("senderLabel") or "Outside sender")}
+        label = str(turn.get("senderLabel") or "Outside sender")
+        if turn.get("fromProjectId") or turn.get("fromProjectName") or label.endswith(" PO"):
+            return {"cls": "po", "text": label,
+                    "projectId": str(turn.get("fromProjectId") or ""),
+                    "projectName": str(turn.get("fromProjectName") or (label[:-3] if label.endswith(" PO") else "")),
+                    "otherProject": True}
+        return {"cls": "outside", "text": label}
+    if turn.get("kind") == "pomsg" or (turn.get("senderType") == "po" and turn.get("fromProjectName")):
+        name = str(turn.get("fromProjectName") or "")
+        return {"cls": "po", "text": str(turn.get("senderLabel") or (name + " PO" if name else "PO")),
+                "projectId": str(turn.get("fromProjectId") or ""),
+                "projectName": name, "otherProject": True}
     who = _who(r)
     if who == "po":
         return {"cls": "po", "text": "PO"}
@@ -993,7 +1004,7 @@ def build(room_id: str, room: dict | None = None, *, show_progress: bool = True,
         last_po = max(po_replies, key=lambda r: r["ts"]) if po_replies else None
         lastr = replies[-1] if replies else None
         open_questions = sum(1 for m in th["members"] if m in open_mids)
-        labels = list({(label["cls"], label["text"]): label
+        labels = list({(label["cls"], label["text"], label.get("projectId"), label.get("projectName")): label
                        for label in (_reply_label(r) for r in replies)}.values())
         th.update({
             "replies": len(replies),

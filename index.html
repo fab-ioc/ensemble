@@ -4714,6 +4714,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
 <script src="/static/filedrag.js"></script>
 <script src="/static/pagekey.js"></script>
 <script src="/static/filelinks.js"></script>
+<script src="/static/po-colour.js"></script>
 <script>FileDrag.attach(document); FileLinks.watch();</script>
 <link rel="stylesheet" href="/static/feedback.css">
 <script src="/static/feedback.js" defer></script>
@@ -10010,7 +10011,7 @@ function registeredProjects() { return (PROJECTS && PROJECTS.projects || []).fil
 async function refreshProjects() {
   const progressKey = 'projects:' + Date.now();
   globalThis.EnsembleProgress?.set(progressKey, {phase: 'Loading projects'});
-  try { PROJECTS = await apiProjects(); _projFailed = false; _projTs = Date.now(); }
+  try { PROJECTS = await apiProjects(); _projFailed = false; _projTs = Date.now(); poColourBroadcast(); }
   catch (e) { _projFailed = true; }
   finally { globalThis.EnsembleProgress?.clear(progressKey); }
 }
@@ -14608,6 +14609,7 @@ function renderPo() {
     head.dataset.proj = pj.id; head.dataset.room = row.roomId; head.dataset.sid = row.sessionId;
     restoreFocus(head, focus);
   }
+  ProjectColour.paint(head, PROJECTS && PROJECTS.projects, pj.id);
   // One session per PO, created the first time it is shown and never rebuilt.
   const frames = panel.querySelector('.po-frames');
   const poRooms = new Set(registeredProjects().map(p => p.poRoomId).filter(Boolean));
@@ -17268,15 +17270,26 @@ function ldpHeld(k, list, id) {
 // stable pick from the status tokens' bold shades. #328: by its place among the
 // registered projects, so the first four never share a colour (a hash of the id
 // gave two of three the same); by its id when it is not in that list.
-const LDP_COLOURS = ['var(--c-progress-bold)', 'var(--c-success-bold)', 'var(--c-warning-bold)', 'var(--c-discovery-bold)'];
+const LDP_COLOURS = ProjectColour.COLOURS;
 function ldpColour(pid) {
-  let i = -1;
-  try { i = registeredProjects().findIndex(p => p.id === pid); } catch (e) {}
-  if (i >= 0) return LDP_COLOURS[i % LDP_COLOURS.length];
-  let h = 0;
-  for (const ch of String(pid || '')) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
-  return LDP_COLOURS[h % LDP_COLOURS.length];
+  return ProjectColour.pick(PROJECTS && PROJECTS.projects, pid);
 }
+function poColourBroadcast(target) {
+  if (!PROJECTS || !PROJECTS.projects) return;
+  const projects = PROJECTS.projects.map(p => ({ id:p.id, name:p.name, poRoomId:p.poRoomId,
+    registered:!!p.registered, icon:p.icon && {v:p.icon.v} }));
+  const msg = { ensemble:'po-project-colours', projects };
+  if (target) { try { target.postMessage(msg, location.origin); } catch (e) {} return; }
+  document.querySelectorAll('iframe[src*="/session?"]').forEach(f => {
+    try { if (f.contentWindow) f.contentWindow.postMessage(msg, location.origin); } catch (e) {}
+  });
+  const head = document.querySelector('#po-panel .po-head');
+  if (head) ProjectColour.paint(head, PROJECTS.projects, head.dataset.proj || '');
+}
+new MutationObserver(() => {
+  const head = document.querySelector('#po-panel .po-head');
+  if (head && PROJECTS) ProjectColour.paint(head, PROJECTS.projects, head.dataset.proj || '');
+}).observe(document.documentElement, { attributes:true, attributeFilter:['data-theme'] });
 // #328 (P294 drawing): every row's 12px icon. A project its colour square; #335
 // (CEO's pick, set B): a task a clipboard with a check, a session the terminal it
 // runs in, so neither reads as one more project square. Named by its tooltip.
@@ -21113,7 +21126,7 @@ async function refresh({ now = false, until = 0 } = {}) {
       const showProjectProgress = !PROJECTS;
       if (showProjectProgress) globalThis.EnsembleProgress?.set(projectProgressKey, {phase: 'Loading projects'});
       // Which attention item is a PO's is known only once the projects are.
-      apiProjects().then(p => { PROJECTS = p; _projFailed = false; renderAttention(); if (!SELECTED_PROJECT) renderRows(); else pdProjectPanels(); })
+      apiProjects().then(p => { PROJECTS = p; _projFailed = false; renderAttention(); if (!SELECTED_PROJECT) renderRows(); else pdProjectPanels(); poColourBroadcast(); })
         .catch(() => { if (typeof HubResilience === 'undefined' || !HubResilience.offline) { _projFailed = true; renderRows(); } })
         .finally(() => { if (showProjectProgress) globalThis.EnsembleProgress?.clear(projectProgressKey); _projInFlight = false; });
     }
@@ -24502,7 +24515,10 @@ window.addEventListener('message', (ev) => {
   // A balloon link clicked in a chat framed here; a chat framed here that has
   // started, or has landed on the balloon it was sent to.
   if (d && d.type === 'open-msg' && d.roomId && d.msg && ev.origin === location.origin) openMsgLink(String(d.roomId), String(d.msg), String(d.part || ''));
-  if (d && d.type === 'chat-ready' && d.roomId && ev.origin === location.origin) sendGotoMsg(String(d.roomId));
+  if (d && d.type === 'chat-ready' && d.roomId && ev.origin === location.origin) {
+    poColourBroadcast(ev.source);
+    sendGotoMsg(String(d.roomId));
+  }
   if (d && d.type === 'goto-taken' && d.roomId && ev.origin === location.origin) GOTO_MSG.delete(String(d.roomId));
   // #311: a PO chat's phone strip, Inbox ›.
   if (d && d.type === 'inbox-open' && ev.origin === location.origin) ibxOpen();

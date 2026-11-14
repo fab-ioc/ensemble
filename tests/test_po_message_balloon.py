@@ -109,8 +109,8 @@ class APoMessageBalloon(unittest.TestCase):
 
     def test_it_says_which_po_writes_to_which(self):
         self.assertEqual(self.r["head"], [
-            '<span class="who rl po">opten PO</span>',
-            '<span class="who rl po">Dock PO</span>'])
+            '<span class="who rl po" data-po-name="opten">opten PO</span>',
+            '<span class="who rl po" data-po-name="Dock">Dock PO</span>'])
         self.assertEqual(self.r["kind"], "PO message")
 
     def test_it_is_marked_apart_from_a_report(self):

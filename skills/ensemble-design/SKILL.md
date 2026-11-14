@@ -1306,6 +1306,12 @@ third of the panel empty).
 
 - **The header** (`.from`) is `--fs-200` 400 `--fg-muted`, sentence case, the name `--fg-subtle`
   500; an agent's starts with its 20px avatar (`::before`, "C" or "X" on `--agent-*-bg/-fg`).
+- **Role labels** (`.rl`, #361) identify the sender in balloons, the PO chat header, and thread reply
+  rows. The PO label takes its project's colour from the project-list square (`ldpColour`): the same
+  `--c-*-bold` fill, with AA-contrast white or dark text; use that token's `-fg` shade if neither
+  text colour passes 4.5:1. A project with its own icon, or an unknown
+  other project's PO, keeps the violet label. Engineer, reviewer, person and outside labels keep
+  their existing colours.
 - The hub's rows keep their sunken rows; a send on its way keeps its dashed edge.
 - **Phone:** the same, full width under the bar's two rows (#129).
 
