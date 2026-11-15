@@ -519,13 +519,48 @@ class AssignTest(unittest.TestCase):
             self.assertEqual(threads._channel({**out, "recs": recs}), ["s:0"], sent)
             self.assertIn("s:2", out["threads"]["P1"]["members"], sent)
 
-    def test_an_also_record_from_before_237_makes_no_thread(self):
-        # No room keeps one any more (#367): a reply typed in the chat is the chat's.
+    def test_an_also_record_from_before_237_keeps_its_thread(self):
+        # #367 review 1: a record from before #237 is the person's reply from
+        # P1's box (to the chat too): P1 is theirs and stays; P2, the hub's, goes.
         recs, pts = self.leak_case("Re P1: ship it")
+        recs += [human("s:3", 200, "and the legend"), po("s:4", 205, "Re P2: Done.")]
+        pts.append(point("P2", "s:3", "and the legend"))
         out = self.run_(recs, pts, side(also=[{"thread": "P1", "key": "k", "at": T0 + 100, "words": "ship it"}]))
-        self.assertNoThread(out)
-        self.assertEqual(out["also"], {})
-        self.assertEqual(threads._channel({**out, "recs": recs}), ["s:0", "s:1", "s:2"])
+        self.assertEqual(out["threads"]["P1"]["members"], ["s:0", "s:1", "s:2"])
+        self.assertTrue(out["threads"]["P1"].get("chosen"))
+        self.assertEqual(out["also"], {"s:2": "P1"})
+        self.assertEqual(out["threads"]["P2"]["members"], ["s:3"])
+        self.assertEqual(threads._channel({**out, "recs": recs}), ["s:0", "s:2", "s:3", "s:4"])
+        # Without the record: no thread at all.
+        self.assertNoThread(self.run_(recs, pts, side()))
+
+    def test_a_new_thread_stays_the_persons_after_400_newer_sends(self):
+        # #367 review 1: a compacted record keeps "new".
+        recs = [human("s:0", 0, "make the chart wider"), po("s:1", 5, "Done.")]
+        pts = [point("P1", "s:0", "make the chart wider")]
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(threads, "_dir", lambda: Path(tmp)):
+            rid = "room-abc128"
+            threads.forget()
+            sd = side(sent=[new_row("s:0")])
+            sd["sent"] += [self.sent_row(f"other {n}", 200 + n, key=f"o{n}") for n in range(threads.SIDE_KEEP)]
+            threads._save_side(rid, sd)
+            threads.forget()
+            kept = threads.load_side(rid)
+            threads.forget()
+        self.assertEqual(kept["sent"][0], {"mid": "s:0", "thread": "", "also": False, "new": True})
+        out = self.run_(recs, pts, kept)
+        self.assertEqual(out["threads"]["P1"]["members"], ["s:0", "s:1"])
+        self.assertEqual(threads._channel({**out, "recs": recs}), ["s:0"])
+
+    def test_a_new_thread_is_listed_before_any_reply(self):
+        # #367 review 1: the person's thread has its row from the start.
+        recs = [human("s:0", 0, "make the chart wider"), human("s:1", 10, "and the legend")]
+        pts = [point("P1", "s:0", "make the chart wider"), point("P2", "s:1", "and the legend")]
+        out = self.run_(recs, pts, side(sent=[new_row("s:0")]))
+        self.assertTrue(out["threads"]["P1"].get("chosen"))
+        self.assertFalse(out["threads"]["P2"].get("chosen"))
+        self.assertEqual(threads._replied(out), {"P1"})
+        self.assertTrue(threads._meta({**out["threads"]["P1"], "replies": 0})["chosen"])
 
     def test_a_reply_with_no_point_from_a_thread_box_joins_it(self):
         recs = [human("s:0", 0, "a"), po("s:1", 5, "b"), human("s:2", 100, "ok thanks")]

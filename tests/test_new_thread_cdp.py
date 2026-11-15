@@ -91,6 +91,13 @@ CDP_JS = PANEL_JS[:PANEL_JS.index('  const PO = ')] + r"""
     await until(`(() => { const b=${BAL('TOKN')}; return !!b && b.nextElementSibling?.matches('.thr-line'); })()`, 'TOKN thread row');
     out.made = await ev(ROWS('TOKN'));
     out.channelHasAnswer = await ev(`!!(${BAL('Answer to TOKN')})`);
+    // Review 1: a new thread nobody answered yet has its row at once.
+    await ev(`document.getElementById('new-thread').click(); 0`);
+    await ev(`document.getElementById('input').value='TOKW a thread nobody answered yet'; document.getElementById('input').dispatchEvent(new Event('input',{bubbles:true})); 0`);
+    await until(`document.getElementById('send').disabled===false`, 'send ready (TOKW)');
+    await ev(`sendNow().then(()=>0)`);
+    await until(`(() => { const b=${BAL('TOKW')}; return !!b && b.nextElementSibling?.matches('.thr-line'); })()`, 'TOKW thread row');
+    out.waiting = await ev(ROWS('TOKW'));
     // A thread's own box has no thread icon.
     await ev(`${BAL('TOKN')}.nextElementSibling.querySelector('.thr-open').click(); 0`);
     const TS = `document.getElementById('ts-frame')?.contentDocument`;
@@ -203,7 +210,8 @@ class NewThread(unittest.TestCase):
             now = time.time()
             with cls.transcript.open('a', encoding='utf-8') as f:
                 f.write(json.dumps(cls.turn('user', text, now)) + '\n')
-                f.write(json.dumps(cls.turn('assistant', f'Re {pid}: Answer to {tok}.', now + .5)) + '\n')
+                if tok != 'TOKW':       # TOKW: not answered (yet)
+                    f.write(json.dumps(cls.turn('assistant', f'Re {pid}: Answer to {tok}.', now + .5)) + '\n')
         threading.Thread(target=read, daemon=True).start()
         return {'delivered': 1}
 
@@ -236,13 +244,20 @@ class NewThread(unittest.TestCase):
     # 2 -----------------------------------------------------------------
     def test_a_message_sent_as_a_new_thread_starts_one(self):
         rows = [a for a in self.side.get('sent') or [] if a.get('new')]
-        self.assertEqual(sorted(a.get('thread') for a in rows), ['', ''], rows)
+        self.assertEqual(sorted(a.get('thread') for a in rows), ['', '', ''], rows)   # TOKT, TOKN, TOKW
         self.assertIn('send:t', [a.get('key') for a in rows])
         made = self.got['made']
         self.assertEqual(made['lines'], 1, made)
         self.assertIn('1 reply', made['line'], made)
         self.assertEqual((made['unders'], made['under']), (0, ''), made)
         self.assertFalse(self.got['channelHasAnswer'], 'the answer is in the thread, not the chat')
+
+    def test_a_new_thread_has_its_row_before_any_reply(self):
+        w = self.got['waiting']
+        self.assertEqual(w['lines'], 1, w)
+        self.assertIn('New thread', w['line'], w)
+        self.assertIn('Started', w['line'], w)
+        self.assertEqual((w['unders'], w['under']), (0, ''), w)
 
     # 3 -----------------------------------------------------------------
     def test_a_thread_root_has_one_row_its_threads(self):

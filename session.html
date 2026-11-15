@@ -8108,7 +8108,7 @@ function thrAgo(ts) {
   return sendWhen(ts);
 }
 function thrAgoTick() {
-  document.querySelectorAll('.thr-ago[data-ts]').forEach(el => setText(el, 'Last reply ' + thrAgo(+el.dataset.ts)));
+  document.querySelectorAll('.thr-ago[data-ts]').forEach(el => setText(el, (el.dataset.started ? 'Started ' : 'Last reply ') + thrAgo(+el.dataset.ts)));
 }
 setInterval(thrAgoTick, 30000);
 function threadLineHtml(tid, mine) {
@@ -8116,7 +8116,8 @@ function threadLineHtml(tid, mine) {
   if (!t) return '';
   const n = +t.replies || 0, unread = +t.unread || 0;
   const work = +t.workCount || 0;
-  if (!n && !work) return '';
+  // A thread the person started shows its row from the start (#367 review 1).
+  if (!n && !work && !t.chosen) return '';
   // New indexes carry the same role labels as balloons; older indexes fall back
   // to the categories their reply summary already used.
   const who = t.whoLabels || (t.who || []).map(w => {
@@ -8126,13 +8127,13 @@ function threadLineHtml(tid, mine) {
     return { cls: 'person', text: 'you' };
   });
   const st = THR_STATE[t.state] || '';
-  const label = `${n} repl${n === 1 ? 'y' : 'ies'}${work ? ` · ${work} in Work log` : ''}`;
+  const label = !n && !work ? 'New thread' : `${n} repl${n === 1 ? 'y' : 'ies'}${work ? ` · ${work} in Work log` : ''}`;
   const on = TS && TS.tid === tid;
   return `<div class="thr-line${unread ? ' unread' : ''}${mine ? ' mine' : ''}${on ? ' on' : ''}" data-thr-line="${esc(tid)}" data-last-mid="${esc(t.lastMid || '')}" data-key="thr:${esc(tid)}:${n}:${work}:${unread}:${esc(t.state || '')}:${+t.lastAt || 0}:${on ? 1 : 0}">`
     + `<button type="button" class="thr-open" data-thr="${esc(tid)}" title="Open the thread beside the chat" aria-label="${esc(label + (unread ? ', ' + unread + ' new' : '') + '. Open the thread “' + (t.title || '') + '”')}">`
     + (who.length ? `<span class="thr-who" aria-hidden="true">${who.map(w => `<span class="rl ${esc(w.cls)}"${w.cls === 'po' && w.projectId ? ` data-po-project="${esc(w.projectId)}"` : w.cls === 'po' && (w.projectName || w.otherProject) ? ` data-po-name="${esc(w.projectName || '')}"` : ''}>${esc(w.cls === 'person' ? OPERATOR || 'you' : w.text)}</span>`).join('')}</span>` : '')
     + `<span class="thr-count">${label}</span>`
-    + `<span class="thr-ago" data-ts="${+t.lastAt || 0}">Last reply ${esc(thrAgo(t.lastAt))}</span>`
+    + `<span class="thr-ago" data-ts="${+t.lastAt || 0}"${n ? '' : ' data-started="1"'}>${n ? 'Last reply' : 'Started'} ${esc(thrAgo(t.lastAt))}</span>`
     + (unread ? `<span class="thr-dot" role="img" aria-label="New replies" title="${unread} new repl${unread === 1 ? 'y' : 'ies'}"></span>` : '')
     + '</button>'
     + (st ? `<span class="thr-state st-${esc(t.state)}">${esc(st)}</span>` : '')

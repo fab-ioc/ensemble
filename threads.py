@@ -233,7 +233,7 @@ def _save_side(room_id: str, side: dict) -> None:
     if len(sent) > SIDE_KEEP:
         # A reply's place lasts as long as its balloon (#237 reviews 1, 2):
         # an older send keeps only that, once its balloon is known.
-        old = [{k: a[k] for k in ("mid", "thread", "also") if k in a}
+        old = [{k: a[k] for k in ("mid", "thread", "also", "new") if k in a}
                for a in sent[:-SIDE_KEEP] if a.get("mid")]
         sent = old + sent[-SIDE_KEEP:]
     side["sent"] = sent
@@ -403,6 +403,13 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
     thread whose report gave none."""
     pts = {p["id"]: p for p in led.get("points") or []}
     anchors = side.get("anchors") or {}
+    # A record from before #237 (``side["also"]``): a reply sent from a
+    # thread's box to the chat too. It is the person's choice of that thread,
+    # as a send is: read as one (#367 review 1).
+    legacy = [{**a, "also": True, "words": _send_words(str(a.get("words") or ""))} for a in side.get("also") or []
+              if isinstance(a, dict) and a.get("thread")]
+    if legacy:
+        side = {**side, "sent": list(side.get("sent") or []) + legacy}
     by_mid: dict[str, list[str]] = {}       # a balloon → the points it made
     follows: dict[str, list[str]] = {}      # a balloon → the points it follows up (Re Pn, said again)
     answers: dict[str, list[str]] = {}      # a balloon → the points it answers (the ledger's links)
@@ -669,6 +676,8 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
     # Sends paired by what they hold: their balloon, kept (build), so their
     # place outlives their record (#237 review 1).
     paired = {a["key"]: (m, _num(a.get("at"))) for m, a in sent_of.items() if a.get("key") and a.get("mid") != m}
+    for t in chosen:
+        threads[t]["chosen"] = True     # the person's: its row shows before any reply (#367 review 1)
     return {"threads": threads, "of": of, "parent": parent, "also": also,
             "work": work, "order": order, "paired": paired, "answered": answered}
 
@@ -1132,7 +1141,7 @@ def ready(room_id: str, room: dict) -> dict | None:
 def _meta(th: dict) -> dict:
     out = {k: th.get(k) for k in ("id", "root", "title", "points", "task", "replies", "workCount", "workLastMid", "rootWho", "who", "whoLabels",
                                    "lastAt", "lastMid", "lastWho", "unread", "state", "openQuestions",
-                                   "updatedAt", "openPoints")}
+                                   "updatedAt", "openPoints", "chosen")}
     out["archived"] = th.get("archived") or 0
     if th["id"] == "team:activity":
         # Hub notes and reports do not ring the unread bell. A PO reply in
@@ -1214,10 +1223,10 @@ def _span(idx: dict, seq: list[str], n: int, upto: str = "", before: str = "",
 
 def _replied(idx: dict, archived: bool = False) -> set[str]:
     """The threads with replies (#304: what the Threads filter shows and
-    counts): more than their first balloon, Team activity aside; a
-    put-away one (#319) only with ``archived``."""
+    counts): more than their first balloon, or one the person started
+    (#367), Team activity aside; a put-away one (#319) only with ``archived``."""
     return {tid for tid, t in idx["threads"].items()
-            if tid != "team:activity" and len(t.get("members") or []) > 1
+            if tid != "team:activity" and (len(t.get("members") or []) > 1 or t.get("chosen"))
             and bool(t.get("archived")) == archived}
 
 
