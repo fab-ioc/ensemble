@@ -60,7 +60,7 @@ def fixture(home: Path) -> None:
     tdir = home / ".claude" / "projects" / "C--proj"
     tdir.mkdir(parents=True, exist_ok=True)
     now = time.time()
-    t0 = now - 20 * 86400                   # within the topics' 30 days
+    t0 = now - 20 * 86400                   # 20 days of messages
     msgs = lambda rid, who: [{"id": f"m{i:06d}", "from": who[i % len(who)], "to": "all",   # noqa: E731
                               "text": f"[report] update {i} " + WORDS[:2500], "ts": t0 + i * 60}
                              for i in range(ROOM_MESSAGES)]
@@ -165,7 +165,7 @@ def main() -> None:
         out["readAheadMs"] = round((time.perf_counter() - t) * 1000)
         get("/api/themes")                  # the page's own first requests come before any open
     # Each open as the page asks for it first: a PO chat (the room, light, and
-    # its channel's newest entries), a thread of it, a topic, a task chat, and
+    # its channel's newest entries), a thread of it, a task chat, and
     # a one-agent chat's last balloons.
     opens = {"poRoom": f"/api/room?id={PO_ROOM}&n=50&lite=1",
              "poChannel": f"/api/room/channel?id={PO_ROOM}&n=40&lite=1",
@@ -185,16 +185,6 @@ def main() -> None:
             opens["poThread"] = f"/api/room/thread?id={PO_ROOM}&t={quote(tid)}&n=40"
             body, ms = get(opens["poThread"])
             out["poThread"] = {"bytes": len(body), "firstMs": round(ms, 1), "thread": tid}
-            for _ in range(600):            # the topics, grouped in the background
-                grouping = json.loads(get(f"/api/room/topics?id={PO_ROOM}")[0])
-                if not grouping.get("pending"):
-                    break
-                time.sleep(0.1)
-            topic = next(iter(grouping.get("topics") or []), {}).get("id", "")
-            opens["poTopic"] = f"/api/room/channel?id={PO_ROOM}&n=40&lite=1&topic={quote(topic)}"
-            body, ms = get(opens["poTopic"])
-            out["poTopic"] = {"bytes": len(body), "firstMs": round(ms, 1), "topic": topic,
-                              "items": len(json.loads(body).get("items") or [])}
     for name, path in opens.items():
         out[name]["warmMs"] = round(min(get(path)[1] for _ in range(3)), 1)
     # The polls of an open chat with nothing new: the channel's (its sig) and

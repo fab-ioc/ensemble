@@ -656,15 +656,13 @@ class AssignTest(unittest.TestCase):
         with mock.patch.object(threads, "ready", return_value=idx):
             plain = threads.channel_view("r", {}, 40)
             only = threads.channel_view("r", {}, 40, threads_only=True)
-            topic = threads.channel_view("r", {}, 40, topic_tids=set(), threads_only=True)
         mids = lambda v: [t["mid"] for t in v["items"]]      # noqa: E731
         self.assertIn("s:4", mids(plain))
         # s:4 nobody answered: a thread of its own (m:s:4), not one with replies.
         self.assertEqual(out["parent"].get("s:4"), ["m:s:4"])
         self.assertEqual(mids(only), ["s:0"], "only the balloon a thread with replies hangs on")
-        self.assertEqual(mids(topic), [], "a topic given wins over Threads")
         self.assertNotEqual(plain["sig"], only["sig"], "a filtered view is never the plain one's delta")
-        for v in (plain, only, topic):
+        for v in (plain, only):
             self.assertEqual(v["threadCount"], 1, "P1; not m:s:4 nor Team activity")
             self.assertIsInstance(v["unreadCount"], int)
         with mock.patch.object(threads, "ready", return_value=None):
@@ -681,13 +679,13 @@ class AssignTest(unittest.TestCase):
             poll = threads.channel_view("r", {}, 0, frm="s:0")
             linked = threads.channel_view("r", {}, 40, upto="s:3")
             up = threads.channel_view("r", {}, 100, before="s:10")
-            topic = threads.channel_view("r", {}, 40, frm="s:2", to="s:5")
+            span = threads.channel_view("r", {}, 40, frm="s:2", to="s:5")
         mids = lambda v: [t["mid"] for t in v["items"]]      # noqa: E731
         self.assertEqual((mids(poll)[0], len(mids(poll)), poll["before"], poll["after"]),
                          ("s:0", threads.CHANNEL_LIMIT, 0, 6000 - threads.CHANNEL_LIMIT))
         self.assertEqual((mids(linked)[0], linked["before"], len(mids(linked))), ("s:0", 0, 44))
         self.assertEqual((mids(up)[0], len(mids(up)), up["before"]), ("s:0", 10, 0))
-        self.assertEqual(mids(topic), ["s:2", "s:3", "s:4", "s:5"])
+        self.assertEqual(mids(span), ["s:2", "s:3", "s:4", "s:5"])
 
     def test_the_channel_comes_in_pages_from_the_newest_up(self):
         # #247: the latest 40 first; older ones a page at a time as the
@@ -723,8 +721,7 @@ class AssignTest(unittest.TestCase):
             few = threads.channel_view("r", {}, 3)
             later = [threads.channel_view("r", {}, 0, frm=first["items"][0]["mid"]),
                      threads.channel_view("r", {}, 100, before=first["items"][0]["mid"]),
-                     threads.channel_view("r", {}, 40, upto="old:0"),
-                     threads.channel_view("r", {}, 40, topic_tids={"P1"})]
+                     threads.channel_view("r", {}, 40, upto="old:0")]
         texts = [t["text"] for t in first["items"]]
         self.assertTrue(first["quick"])
         self.assertEqual((len(texts), texts[0], texts[-1]), (40, "turn 10", "turn 49"))
@@ -968,18 +965,20 @@ class Endpoints(tp._World):
                          "Reply in thread on Team activity starts a thread of its own")
         self.assertEqual(http_get(f"/api/room/thread?id={self.rid}&t=P99")[0], 404)
 
-    def test_a_topic_comes_in_pages_like_the_channel(self):
-        # Review 4, finding 3: a topic's newest n, then a page above it.
-        grouping = {"topics": [{"id": "subject:P1", "threads": ["P1", "team:activity"]}]}
+    def test_an_old_topic_param_shows_the_whole_channel(self):
+        # P345: Topics were removed; an old &topic= is ignored, the chat comes
+        # in pages as without it.
         project = {"id": "p", "poRoomId": self.rid}
-        with mock.patch.object(dashboard, "load_projects", return_value=[project]), \
-                mock.patch.object(dashboard.topics, "view", return_value=grouping):
-            first = http_get(f"/api/room/channel?id={self.rid}&n=2&topic=subject:P1")[1]
+        with mock.patch.object(dashboard, "load_projects", return_value=[project]):
+            plain = http_get(f"/api/room/channel?id={self.rid}&n=2")[1]
+            status, first = http_get(f"/api/room/channel?id={self.rid}&n=2&topic=subject:P1")
             up = http_get(f"/api/room/channel?id={self.rid}&n=2&topic=subject:P1"
                           f"&before={first['items'][0]['mid']}")[1]
-        self.assertEqual([i["mid"] for i in first["items"]], ["sid-1:2", "sid-1:3"])
-        self.assertEqual((first["before"], first["after"]), (1, 0))
-        self.assertEqual([i["mid"] for i in up["items"]], ["sid-1:0"])
+        self.assertEqual(status, 200)
+        self.assertEqual([i["mid"] for i in first["items"]], [i["mid"] for i in plain["items"]])
+        self.assertEqual((first["before"], first["after"]), (plain["before"], plain["after"]))
+        self.assertTrue(up["items"], "a page above it")
+        self.assertNotIn("topicSuggestion", first)
 
     def test_a_poll_that_holds_the_channel_gets_what_changed(self):
         # #247: a new balloon reaches a page that holds the channel as a

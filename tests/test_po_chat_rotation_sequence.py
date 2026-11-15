@@ -228,19 +228,18 @@ async function main() {
     await evalIn(`sideOpen({tid:'P1'}); true`);
     await until(`TS?.tid === 'P1' && !document.querySelector('#thr-side').hidden`, 4000);
     const batchMids = await evalIn(`[...THR_INLINE_TURNS.keys()]`);
-    await evalIn(`TOPIC_FILTER = {id:'nonexistent-topic', name:'A selected topic'};
-      showTopicFilter(); thrRestart(); renderThreaded(true); true`);
-    await until(`TOPIC_FILTER?.id === 'nonexistent-topic' && !THR_FETCHING && THR_DRAWN`, 8000);
+    // The Threads filter picked (Topics were removed, P345: the filter left).
+    await evalIn(`chatFilterSet({kind:'threads'}, {persist:false}); true`);
+    await until(`CHAT_FILTER.kind === 'threads' && !THR_FETCHING && THR_DRAWN`, 8000);
     await evalIn(`for (const m of ${JSON.stringify(batchMids)}) THR_AUTO_OPENED.delete(m);
       thrWatchedReplies(THR_VIEW); true`);
     await hub('/__test/report', {});
     await sleep(4500);
-    out.topicPreserved = await evalIn(`TOPIC_FILTER?.id === 'nonexistent-topic'`);
-    out.topicContentIsolated = await evalIn(`!document.querySelector('#msgs')?.textContent.includes('Here it is, answer BATCHA.') &&
-      !document.querySelector('#msgs')?.textContent.includes('Here it is, answer BATCHB.')`);
-    out.topicSideKept = await evalIn(`TS?.tid === 'P1' && !document.querySelector('#thr-side').hidden`);
+    out.filterPreserved = await evalIn(`CHAT_FILTER.kind === 'threads' && THREADS_ONLY`);
+    out.filterContentIsolated = await evalIn(`document.querySelectorAll('#msgs .msg[data-mid]').length === 0`);
+    out.filterSideKept = await evalIn(`TS?.tid === 'P1' && !document.querySelector('#thr-side').hidden`);
     await evalIn(`for (const m of ${JSON.stringify(batchMids)}) THR_AUTO_OPENED.add(m); true`);
-    await evalIn(`TOPIC_FILTER = null; showTopicFilter(); thrRestart(); renderThreaded(true); true`);
+    await evalIn(`chatFilterSet({kind:'all'}, {persist:false}); true`);
     await until(`!THR_FETCHING && THR_DRAWN && THR_AFTER === 0 && document.querySelectorAll('#msgs .msg[data-mid]').length > 0`, 8000);
     const newest = await hub('/api/room/channel?id=' + A.room + '&n=40');
     const older = await hub('/api/room/channel?id=' + A.room + '&n=100&before=' + encodeURIComponent(newest.items[0].mid));
@@ -248,7 +247,7 @@ async function main() {
     await evalIn(`gotoMsg(${JSON.stringify(oldMid)}); true`);
     await until(`THR_AFTER > 0 && !!document.querySelector('#msgs .msg[data-mid="${oldMid}"]')`, 10000)
       .catch(async () => { out.windowDebug = await evalIn(`({after:THR_AFTER,goto:GOTO,mid:${JSON.stringify(oldMid)},fetching:THR_FETCHING,
-        shown:document.querySelectorAll('#msgs .msg[data-mid]').length,topic:TOPIC_FILTER})`); });
+        shown:document.querySelectorAll('#msgs .msg[data-mid]').length,filter:CHAT_FILTER.kind})`); });
     await evalIn(`for (const m of ${JSON.stringify(batchMids)}) THR_AUTO_OPENED.delete(m);
       thrWatchedReplies(THR_VIEW); true`);
     await hub('/__test/report', {});
@@ -634,10 +633,10 @@ class PoChatRotationSequence(unittest.TestCase):
         self.assertEqual(self.got.get("batchThreadCount"), 2, "the replies must be in different threads")
         self.assertTrue(self.got.get("batchAfterChange"), "inline replies vanished on the next changed poll")
 
-    def test_unrelated_activity_preserves_selected_topic_and_link_window(self):
-        self.assertTrue(self.got.get("topicPreserved"), self.got)
+    def test_unrelated_activity_preserves_selected_filter_and_link_window(self):
+        self.assertTrue(self.got.get("filterPreserved"), self.got)
         self.assertTrue(self.got.get("windowPreserved"), self.got)
-        for key in ("topicContentIsolated", "topicSideKept", "windowContentIsolated", "windowSideKept"):
+        for key in ("filterContentIsolated", "filterSideKept", "windowContentIsolated", "windowSideKept"):
             self.assertTrue(self.got.get(key), key)
         self.assertTrue(self.got.get("ordinaryExcluded"), self.got)
 
@@ -708,7 +707,7 @@ class HoldAndBudget(unittest.TestCase):
 @unittest.skipUnless(NODE, "node is not installed")
 class StalePageLoads(unittest.TestCase):
     """Review 2: a page above or below asked before the pages started again
-    (a topic chosen) is not added to the new view, even when both views share
+    (a filter chosen) is not added to the new view, even when both views share
     the entry it was asked from."""
 
     @classmethod
@@ -735,7 +734,7 @@ const run = s => vm.runInContext(s, ctx);
 const view = mids => JSON.stringify({ items: mids.map(mid => ({ mid })) });
 (async () => {
   const out = {};
-  // Above: the unfiltered view's page arrives after a topic's view with the same first entry.
+  // Above: the unfiltered view's page arrives after a filtered view with the same first entry.
   run('THR_VIEW = ' + view(['a', 'b']) + '; THR_BEFORE = 1;');
   const up = ctx.thrLoadUp();
   run('thrRestart(); THR_VIEW = ' + view(['a', 'c']) + '; THR_BEFORE = 5;');
@@ -763,11 +762,11 @@ const view = mids => JSON.stringify({ items: mids.map(mid => ({ mid })) });
             raise AssertionError(res.stderr)
         cls.r = json.loads(res.stdout)
 
-    def test_a_page_above_asked_before_a_topic_switch_is_not_added(self):
+    def test_a_page_above_asked_before_a_filter_switch_is_not_added(self):
         self.assertFalse(self.r["upDrawn"])
         self.assertEqual(self.r["up"], [[], 5])
 
-    def test_a_page_below_asked_before_a_topic_switch_is_not_added(self):
+    def test_a_page_below_asked_before_a_filter_switch_is_not_added(self):
         self.assertFalse(self.r["downDrawn"])
         self.assertEqual(self.r["down"], [["y", "z"], 7])
 
