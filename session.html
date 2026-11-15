@@ -255,6 +255,8 @@
     --agent-claude-fg: #FFFFFF;
     --agent-codex-bg: #166A7C;
     --agent-codex-fg: #FFFFFF;
+    --spool-wood: #A0703A;   /* #367 (P350): the thread toggle's spool: wood flanges, blue thread. Identity colours, not the accent. */
+    --spool-thread: #1D7AFC;
     --match-bg: #FFF0B3;
     --match-fg: var(--fg);
     --prio-1: #CD1317;
@@ -337,6 +339,8 @@
     --agent-claude-fg: #1D2125;
     --agent-codex-bg: #3DA3BC;
     --agent-codex-fg: #1D2125;
+    --spool-wood: #C99A62;
+    --spool-thread: #579DFF;
     --match-bg: #7F5F01;
     --match-fg: #FFF7D6;
     --e-100: 0 1px 1px rgba(3,4,4,.5), 0 0 1px rgba(3,4,4,.6);
@@ -389,6 +393,8 @@
     --agent-claude-fg: #1F1E1C;
     --agent-codex-bg: #4FA8BC;
     --agent-codex-fg: #1F1E1C;
+    --spool-wood: #C9A271;
+    --spool-thread: #7AA7E0;
     --match-bg: #5E4A12;
     --match-fg: #F6E7B8;
     --e-100: 0 1px 1px rgba(0,0,0,.45), 0 0 1px rgba(0,0,0,.55);
@@ -441,6 +447,8 @@
     --agent-claude-fg: #FFFFFF;
     --agent-codex-bg: #166A7C;
     --agent-codex-fg: #FFFFFF;
+    --spool-wood: #9A6A33;
+    --spool-thread: #2F6FD0;
     --match-bg: #FBE39A;
     --match-fg: #2B2620;
     --e-100: 0 1px 1px rgba(60,40,10,.22), 0 0 1px rgba(60,40,10,.30);
@@ -494,6 +502,8 @@
     --agent-claude-fg: #FFFFFF;
     --agent-codex-bg: #0B4E5C;
     --agent-codex-fg: #FFFFFF;
+    --spool-wood: #7A4E1C;
+    --spool-thread: #0050D0;
     --match-bg: #FFE066;
     --match-fg: #000000;
     --e-100: 0 0 0 1px #303030;
@@ -546,6 +556,8 @@
     --agent-claude-fg: #2E3440;
     --agent-codex-bg: #8FBCBB;
     --agent-codex-fg: #2E3440;
+    --spool-wood: #D2A877;
+    --spool-thread: #88C0D0;
     --match-bg: #6B5A2E;
     --match-fg: #F6ECCF;
     --e-100: 0 1px 1px rgba(15,18,24,.5), 0 0 1px rgba(15,18,24,.6);
@@ -597,6 +609,8 @@
     --agent-claude-fg: #1E1F22;
     --agent-codex-bg: #60C0B5;
     --agent-codex-fg: #1E1F22;
+    --spool-wood: #C99A62;
+    --spool-thread: #78A4FA;
     --match-bg: #5E4D33;
     --match-fg: #FCEBA4;
     --e-100: 0 1px 1px rgba(0,0,0,.125), 0 0 1px rgba(0,0,0,.20);
@@ -1497,6 +1511,11 @@
   #new-thread[hidden] { display:none; }
   #new-thread:hover { background:var(--hover); color:var(--fg); }
   #new-thread[aria-pressed="true"] { background:var(--selected-bg); color:var(--selected-fg); border-color:var(--selected-fg); }
+  /* #367 (P350): the spool keeps its colours off, on hover and on; "on" only adds the pressed background. */
+  #new-thread .sp-wood { fill:var(--spool-wood); }
+  #new-thread .sp-thread { fill:var(--spool-thread); }
+  #new-thread .sp-wind { stroke:var(--surface); stroke-opacity:.6; stroke-width:1.4; }
+  #new-thread .sp-tail { stroke:var(--spool-thread); stroke-width:2.1; }
   #new-thread:focus-visible { outline:none; box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
   #add-point, #attach { height:32px; padding:0 var(--s-200); background:transparent; border:1px solid transparent; color:var(--fg-subtle); font-size:var(--fs-200); }
   #add-point:hover, #attach:hover { background:var(--hover); color:var(--fg); }
@@ -1880,8 +1899,8 @@
         <button type="button" id="attach" title="Attach files or screenshots (you can also paste or drop them)">Attach</button>
         <input type="file" id="attach-input" multiple hidden>
         <!-- #367 (P346): only the person starts a thread: on, this message starts one.
-             Icon: a spool of thread, our own drawing, 1.4px stroke at 16px (P349). -->
-        <button type="button" id="new-thread" aria-pressed="false" aria-label="New thread" title="New thread: this message starts a thread" hidden><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="15" height="3.5" rx="1.75"/><rect x="2" y="18.5" width="15" height="3.5" rx="1.75"/><path d="M5 5.5v13M14 5.5v13M5 10.5l9-1.5M5 14.5l9-1.5"/><path d="M14 15c3.5 0 5.5 1 5.5 3.5S21 22 22.5 21.5"/></svg></button>
+             Icon: a spool of thread, our own drawing (P349), in colour: wood and blue thread (P350). -->
+        <button type="button" id="new-thread" aria-pressed="false" aria-label="New thread" title="New thread: this message starts a thread" hidden><svg class="spool" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false" fill="none" stroke-linecap="round" stroke-linejoin="round"><rect class="sp-thread" x="4.5" y="5" width="10" height="14"/><path class="sp-wind" d="M4.5 10.5l10-1.8M4.5 14.6l10-1.8"/><rect class="sp-wood" x="2" y="1.5" width="15" height="4" rx="2"/><rect class="sp-wood" x="2" y="18.5" width="15" height="4" rx="2"/><path class="sp-tail" d="M14.5 15c3.5 0 5.5 1 5.5 3.5S21 22 22.5 21.5"/></svg></button>
         <span class="grow"></span>
         <div id="stop-wrap" hidden><button type="button" id="stop-agent" title="Stop the working agent (Esc)">Stop</button><div id="stop-choices" role="group" aria-label="Choose agent to stop" hidden></div></div>
         <div id="send-split"><button id="send" disabled>Send</button><button type="button" id="send-more" aria-haspopup="menu" aria-expanded="false" aria-controls="send-menu" aria-label="More ways to send" title="More ways to send" hidden>&#9662;</button><div id="send-menu" role="menu" aria-label="Send" hidden><button type="button" role="menuitem" id="send-now"><span class="sm-name">Send now</span><span class="sm-sub"></span></button></div></div>
