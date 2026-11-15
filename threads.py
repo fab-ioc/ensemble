@@ -629,7 +629,9 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
             if p is None or i not in home or (r["ts"] and r["ts"] < float(p.get("createdAt") or 0) - points.SLACK_S):
                 continue
             places.append(home[i])
-            if not home[i] and i in threads:
+            if not home[i] and i in threads and i not in chosen:
+                # Its entry in the main chat; the person's thread P1 does not
+                # take a main-chat answer to P1 (#367).
                 answered.setdefault(i, []).append(mid)
         tids = list(dict.fromkeys(t for t in places if t))
         line = r["turn"].get("text") or ""
@@ -831,9 +833,11 @@ def _state_of(th: dict, pts: dict, open_mids: set, task_of) -> str:
     an answer asks them to try something), po (a point waits on the PO), task
     (a task works on it), answered (an answer not acknowledged), done."""
     ps = [pts[i] for i in th["points"] if i in pts]
+    if any(m in open_mids for m in th["members"]):
+        return "needs"      # an open card in it wins, even over points all done (#367)
     if ps and all(p.get("state") in ("acked", "dropped", "followed", "split") for p in ps):
         return "done"       # its points are all done: never "needs you" (#367)
-    if any(m in open_mids for m in th["members"]) or any(points.needs_you(p) == "try" for p in ps):
+    if any(points.needs_you(p) == "try" for p in ps):
         return "needs"
     if any(p.get("state") == "open" for p in ps):
         return "po"

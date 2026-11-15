@@ -282,6 +282,29 @@ class AssignTest(unittest.TestCase):
         self.assertEqual(found["latest"]["msgId"], "s:3")
         self.assertEqual(found["latest"]["threads"], 2)
 
+    def test_a_main_chat_answer_to_a_threaded_point_stays_out_of_its_thread(self):
+        # The person started thread P1, then typed "Re P1" in the main box: the
+        # PO's answer to that is in the main chat, not an answer inside P1 (#367).
+        recs = [human("s:0", 0, "make the chart wider"), po("s:1", 5, "Re P1: done", re_=["P1"]),
+                human("s:2", 10, "Re P1: wider still", re_=["P1"]),
+                po("s:3", 12, "Re P1: wider now", re_=["P1"])]
+        out = self.run_(recs, [point("P1", "s:0", "make the chart wider")], side(sent=[new_row("s:0")]))
+        self.assertEqual(out["threads"]["P1"]["members"], ["s:0", "s:1"])
+        self.assertNotIn("s:3", out["answered"].get("P1", []))
+        idx = {**out, "recs": recs, "by_mid": {r["mid"]: r for r in recs}}
+        self.assertIn("s:3", threads._channel(idx))
+        with mock.patch.object(threads, "ready", return_value=idx):
+            found = threads.search_balloons("room-12345678", {}, [["wider"]])
+        self.assertNotEqual((found["latest"]["thread"], found["latest"]["msgId"]), ("P1", "s:3"))
+
+    def test_an_open_card_in_a_thread_wins_over_its_points_all_done(self):
+        # The person acknowledged P1 in their thread, then the PO asked a card
+        # there: the row waits for the person (#367).
+        th = {"points": ["P1"], "members": ["s:0", "s:1", "s:2"], "task": ""}
+        pts = {"P1": {"id": "P1", "state": "acked"}}
+        self.assertEqual(threads._state_of(th, pts, {"s:2"}, None), "needs")
+        self.assertEqual(threads._state_of(th, pts, set(), None), "done")
+
     def test_a_point_naming_one_task_claims_its_reports_in_a_thread(self):
         recs = [human("s:0", 0, "how is #12 going?"), report("s:1", 50, "#12")]
         pts = [point("P1", "s:0", "how is #12 going?")]
