@@ -483,10 +483,10 @@ def _build_all(debug: bool = False, now: float | None = None) -> dict:
                 items.sort(key=lambda i: i["since"])
                 n = len(items)
                 tries = sum(1 for i in items if i["try"])
-                name = where(s)["project"] or "This project"
                 pids = [pid for i in items for pid in i["points"]]
                 first = next((i for i in items if i["mid"]), items[0])
-                g = row(s, "check", "points", first["mid"], "", f"{name} PO: {n} answer{'s' if n != 1 else ''} to check",
+                # Its PO as its own chat calls it; the card's meta names the project (P347).
+                g = row(s, "check", "points", first["mid"], "", f"PO: {n} answer{'s' if n != 1 else ''} to check",
                         items[0]["since"], pids,
                         reason=(f"{tries} ask{'s' if tries == 1 else ''} you to try something" if tries else ""),
                         id_=f"check:{rid}:points", items=[{k2: v for k2, v in i.items() if k2 != "source" or debug} for i in items])

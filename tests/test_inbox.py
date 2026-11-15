@@ -400,14 +400,14 @@ class PoFixes(unittest.TestCase):
         rows = {(r["roomId"], r["kind"]): r for r in out["rows"]}
         self.assertEqual(out["counts"], {"answer": 1, "check": 2, "waiting": 0})
         g = rows[(PO, "check")]
-        self.assertEqual(g["line"], "Alpha PO: 3 answers to check")
+        self.assertEqual(g["line"], "PO: 3 answers to check")
         self.assertEqual(g["id"], f"check:{PO}:points")
         self.assertEqual((g["mid"], g["since"]), ("m-a1", NOW - 300), "opens the oldest answer, since the oldest")
         self.assertEqual(g["points"], ["P1", "P2", "P3"])
         self.assertEqual([i["mid"] for i in g["items"]], ["m-a1", "m-a2", "m-a3"])
         self.assertTrue(g["items"][1]["try"])
         self.assertEqual(g["reason"], "1 asks you to try something")
-        self.assertEqual(rows[(PO2, "check")]["line"], "Beta PO: 1 answer to check")
+        self.assertEqual(rows[(PO2, "check")]["line"], "PO: 1 answer to check")
 
 
     # #352: every row has somewhere to go and a way to close it.

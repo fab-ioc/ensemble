@@ -3334,7 +3334,11 @@ const isPersons = m => !!m && m.from === 'user' && !isHubInput(m);
 const isDigest = m => !!m && (isHubInput(m) ? m.kind === 'digest' : m.from === 'ensemble' && reportBase(m) === 'digest');
 // "opten PO", "Dock PO": a message between POs names both by their projects.
 const poSide = name => (name || nounText('Another {project}')) + ' PO';
+// This chat's own PO wrote it: the copy a PO keeps of what it sent another
+// PO is just "PO" in its own chat, as all its other messages (P347).
+const isOwnPoMsg = m => isPoMsg(m) && m.direction === 'sent';
 function senderName(m, N = CHAT_NAMES) {
+  if (isOwnPoMsg(m)) return 'PO';
   if (m && m.senderLabel) return String(m.senderLabel);
   if (isPoMsg(m)) return poSide(m.fromProjectName);
   const t = taskReport(m);
@@ -3387,6 +3391,8 @@ function roleLabel(m, N = CHAT_NAMES) {
 // The recipient's word in a task chat ("you", "reviewer"); none in a PO's room,
 // where every message is between the person and the PO.
 function roleTo(m, N = CHAT_NAMES) {
+  // Its own PO's copy of what it sent another PO says which PO it went to (P347).
+  if (isOwnPoMsg(m)) return poSide(m.toProjectName);
   if (N.po || isPoMsg(m) || !m.to || m.to === 'all') return '';
   if (m.to === 'user') return 'you';
   return seatRole(m.to) || whoName(m.to, N);
