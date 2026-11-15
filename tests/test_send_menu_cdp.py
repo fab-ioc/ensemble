@@ -29,6 +29,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 import chatroom  # noqa: E402
 import dashboard  # noqa: E402
+import threads  # noqa: E402
 from tests import chrome_profile  # noqa: E402
 from tests.test_page_update import CHROME  # noqa: E402
 
@@ -254,6 +255,8 @@ class SendMenu(unittest.TestCase):
                       turn('assistant', f'Answer {n}: a reply long enough to wrap onto a second line in a narrow panel of the dock.', 10 * n + 2)]
         lines += [turn('user', 'A conversation with a thread.', 400), turn('assistant', 'The thread reply.', 401)]
         (transcript / f'{sid}.jsonl').write_text(''.join(json.dumps(x)+'\n' for x in lines), encoding='utf-8')
+        # The person sent it as a new thread: only they start one (#367).
+        threads.note_send(po['id'], '', 'send:menu', [], False, 'A conversation with a thread.', now=at + 400, new=True)
         (base / 'transcripts' / 'C--task').mkdir()
         lines = [turn('user' if n % 2 else 'assistant', f'Task message {n}: enough words to take a line or two in the chat.', n + 1, 'menu-task')
                  for n in range(40)]

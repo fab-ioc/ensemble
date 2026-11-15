@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 import chatroom  # noqa: E402
 import dashboard  # noqa: E402
+import threads  # noqa: E402
 from tests import chrome_profile  # noqa: E402
 from tests.test_page_update import CHROME  # noqa: E402
 
@@ -270,6 +271,8 @@ class ActivityStrip(unittest.TestCase):
         lines = [turn('user','A conversation with a thread.',1), turn('assistant','The thread reply.',2),
                  turn('user','A new topic without replies.',3)]
         (transcript / f'{sid}.jsonl').write_text(''.join(json.dumps(x)+'\n' for x in lines), encoding='utf-8')
+        # The person sent the first as a new thread: only they start one (#367).
+        threads.note_send(po['id'], '', 'send:strip', [], False, 'A conversation with a thread.', now=at + 1, new=True)
         cls.server = ThreadingHTTPServer(('127.0.0.1', 0), dashboard.Handler)
         cls.server.daemon_threads = True; cls.server.handle_error = lambda *a: None
         threading.Thread(target=cls.server.serve_forever, daemon=True).start()

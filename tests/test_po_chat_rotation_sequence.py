@@ -124,7 +124,9 @@ async function main() {
       }
     })();
     const send = async words => {
-      await evalIn(`(() => { const i = document.getElementById('input'); i.value = ${JSON.stringify(words)}; i.dispatchEvent(new Event('input')); document.getElementById('send').click(); return 0; })()`);
+      // #367: only the person starts a thread: each send here is one, by the box's thread icon.
+      await evalIn(`(() => { const i = document.getElementById('input'); i.value = ${JSON.stringify(words)}; i.dispatchEvent(new Event('input'));
+        if (!NEW_THREAD) document.getElementById('new-thread').click(); document.getElementById('send').click(); return 0; })()`);
     };
     for (const [tok, words, what] of A.sequence) {
       if (tok === 'ASK1') { await hub('/__test/hold-channel', {}); await sleep(2500); }
@@ -308,12 +310,14 @@ async function main() {
     if (out.dockReady) {
       await evalIn(`(() => { const d = document.querySelector('iframe.po-session').contentWindow.document;
         const i = d.querySelector('#input'); i.value = 'ASK1 Dock verification'; i.dispatchEvent(new Event('input'));
+        if (d.querySelector('#new-thread').getAttribute('aria-pressed') !== 'true') d.querySelector('#new-thread').click();
         d.querySelector('#send').click(); return true; })()`);
       out.dockedPoAnswer = await until(`document.querySelector('.pd-thread iframe')?.contentWindow
         ?.document?.querySelector('#msgs')?.textContent.includes('Here it is, answer 1.')`, 12000)
         .then(() => true).catch(() => false);
       const dockSend = async words => evalIn(`(() => { const d = document.querySelector('iframe.po-session').contentWindow.document;
         const i = d.querySelector('#input'); i.value = ${JSON.stringify(words)}; i.dispatchEvent(new Event('input'));
+        if (d.querySelector('#new-thread').getAttribute('aria-pressed') !== 'true') d.querySelector('#new-thread').click();
         d.querySelector('#send').click(); return true; })()`);
       await hub('/__test/hold-channel', {});
       await sleep(2500);

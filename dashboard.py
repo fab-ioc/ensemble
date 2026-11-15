@@ -12169,7 +12169,9 @@ def global_find(q: str, deep: bool = False, tag: str = "", seq: int = 0) -> tupl
         e = by_id.get(m["roomId"]) or {}
         po = po_of.get(m["roomId"])
         if m.get("kind") == "pomsg":
-            from_label = f"{m.get('fromProjectName') or 'Another project'} PO"
+            # Its own PO's copy of what it sent another PO: just "PO" (P347).
+            from_label = ("PO" if m.get("direction") == "sent"
+                          else f"{m.get('fromProjectName') or 'Another project'} PO")
             to_label = f"{m.get('toProjectName') or 'Project'} PO"
         else:
             from_label = str(m.get("senderLabel") or participant_label(m.get("from", ""), m["roomId"]))
@@ -20227,11 +20229,14 @@ class Handler(BaseHTTPRequestHandler):
                         text = message_refs.with_images(text, paths, attachment_names(data.get("attachments")))
                 if text and not held:
                     sends.accept(rid, key, text, to, thread=thread, also=data.get("also") is True)
-                if thread and text and not held and not again:
+                new_thread = not thread and data.get("newThread") is True and threads.is_threaded(rid)
+                if (thread or new_thread) and text and not held and not again:
                     # Kept before it is delivered (#237): its balloon is the
-                    # thread's reply from the first moment the chat shows it.
+                    # thread's reply from the first moment the chat shows it,
+                    # or a thread the person starts (#367, "New thread").
                     try:
-                        threads.note_send(rid, thread, key, pids, data.get("also") is True, text)
+                        threads.note_send(rid, thread, key, pids, data.get("also") is True, text,
+                                          new=new_thread)
                         noted = True
                     except Exception as e:      # noqa: BLE001 — sent; placed by its points instead
                         print(f"[threads] {rid}: reply not anchored: {e!r}", flush=True)

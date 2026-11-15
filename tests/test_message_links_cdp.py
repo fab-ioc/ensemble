@@ -26,6 +26,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 import chatroom  # noqa: E402
 import dashboard  # noqa: E402
+import threads  # noqa: E402
 from tests import chrome_profile  # noqa: E402
 from tests.test_page_update import CHROME  # noqa: E402
 
@@ -240,6 +241,8 @@ class MessageLinksInPlace(unittest.TestCase):
         lines += [turn('user' if i % 2 else 'assistant', f'After {i} ' + 'words ' * 30, 41 + i) for i in range(6)]
         tdir = base / 'transcripts' / 'C--po'; tdir.mkdir()
         (tdir / f'{sid}.jsonl').write_text(''.join(json.dumps(x) + '\n' for x in lines), encoding='utf-8')
+        # The person sent Filler 29 as a new thread, the links' balloon its reply: only they start one (#367).
+        threads.note_send(po['id'], '', 'send:links', [], False, 'Filler 29 ' + 'words ' * 30, now=at + 31, new=True)
         cls.sid, cls.po, cls.task, cls.port = sid, rid, task['id'], port
         html = home / 'links.html'
         html.write_text(f'<!doctype html><html><head><title>x</title></head><body><p><a id="m" href="http://127.0.0.1:{port}/session?room={rid}&amp;msg={sid}:3">the balloon</a></p></body></html>', encoding='utf-8')

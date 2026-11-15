@@ -28,9 +28,12 @@ class OldThreads(tp._World):
         p.start()
         self.addCleanup(p.stop)
         t = self.t0
-        one, _ = self.send(self.rid, "Make the chart wider", at=t)
+        # Both sent as new threads (#367: only the person starts one).
+        one, ids = self.send(self.rid, "Make the chart wider", key="k1", at=t)
+        threads.note_send(self.rid, "", "k1", ids, False, one, now=t, new=True)
         self.add("sid-1", tp.turn("user", one, t + 1), tp.turn("assistant", "Re P1: done, it is wider.", t + 2))
-        two, _ = self.send(self.rid, "Fix the login page", at=t + 100)
+        two, ids = self.send(self.rid, "Fix the login page", key="k2", at=t + 100)
+        threads.note_send(self.rid, "", "k2", ids, False, two, now=t + 100, new=True)
         self.add("sid-1", tp.turn("user", two, t + 101), tp.turn("assistant", "Re P2: fixed.", t + 102))
         # A later answer in P1: P1 is the thread updated last, though started first.
         self.add("sid-1", tp.turn("assistant", "Re P1: and taller now.", t + 300))

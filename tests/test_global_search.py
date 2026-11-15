@@ -389,6 +389,10 @@ class GlobalFind(unittest.TestCase):
              "text": "labelhit report"},
             {"id": "m", "ts": 6, "from": "claude@room-other", "to": "claude", "kind": "pomsg",
              "fromProjectName": "Dock", "toProjectName": "Proj", "text": "labelhit other po"},
+            # P347: its own PO's copy of what it sent another PO is just "PO".
+            {"id": "s", "ts": 7, "from": "claude", "to": "claude@room-other", "kind": "pomsg",
+             "direction": "sent", "fromProjectName": "Proj", "toProjectName": "Dock",
+             "text": "labelhit own po"},
         ]
         (self.dir / "room-po.json").write_text(json.dumps(po), encoding="utf-8")
         gs._ROOM_CACHE.clear()
@@ -403,6 +407,7 @@ class GlobalFind(unittest.TestCase):
             "p": ("PO", "sam"),
             "r": ("#6 codex", "PO"),
             "m": ("Dock PO", "Proj PO"),
+            "s": ("PO", "Dock PO"),
         })
 
     def test_short_or_empty(self):

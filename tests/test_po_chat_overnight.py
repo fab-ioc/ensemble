@@ -88,7 +88,10 @@ async function main() {
     await sleep(4500);
     out.falseRepairs = ((await hub('/api/health')).chatRepairs || 0) - beforeNoticeRepairs;
     await evalIn(`(() => { const i = document.getElementById('input'); i.value = 'ASK1 after rotation';
-      i.dispatchEvent(new Event('input')); document.getElementById('send').click(); return true; })()`);
+      i.dispatchEvent(new Event('input'));
+      // Sent as a new thread: only the person starts one (#367), its answer lands in it.
+      if (!NEW_THREAD) document.getElementById('new-thread').click();
+      document.getElementById('send').click(); return true; })()`);
     out.sent = await until(`document.getElementById('msgs').textContent.includes('ASK1 after rotation')`, 1500).then(() => true).catch(() => false);
     // Let the send's own state updates finish before damaging the DOM.
     await sleep(4500);

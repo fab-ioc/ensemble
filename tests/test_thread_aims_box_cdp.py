@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 import chatroom  # noqa: E402
 import dashboard  # noqa: E402
+import threads  # noqa: E402
 from tests import chrome_profile  # noqa: E402
 from tests.test_page_update import CHROME  # noqa: E402
 
@@ -393,6 +394,9 @@ class ThreadAimsBox(unittest.TestCase):
                  turn('user','A new topic without replies.',5)]
         cls.balloon = f'{sid}:4'
         (transcript / f'{sid}.jsonl').write_text(''.join(json.dumps(x)+'\n' for x in lines), encoding='utf-8')
+        # Each topic sent as a new thread (#367: only the person starts one).
+        for text, offset in (('The first topic.', 1), ('The second topic.', 3), ('A new topic without replies.', 5)):
+            threads.note_send(cls.po, '', '', [], False, text, now=at + offset, new=True)
         cls.transcript_lock = threading.Lock()
         task_transcript = base / 'transcripts' / 'C--task'; task_transcript.mkdir()
         (task_transcript / 'shared-task.jsonl').write_text('', encoding='utf-8')

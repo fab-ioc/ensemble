@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 import chatroom  # noqa: E402
 import dashboard  # noqa: E402
+import threads  # noqa: E402
 from tests import chrome_profile  # noqa: E402
 from tests.test_page_update import CHROME  # noqa: E402
 
@@ -337,6 +338,8 @@ class SharedComposer(unittest.TestCase):
         lines = [turn('user','A conversation with a thread.',1), turn('assistant','The thread reply.',2),
                  turn('user','A new topic without replies.',3)]
         (transcript / f'{sid}.jsonl').write_text(''.join(json.dumps(x)+'\n' for x in lines), encoding='utf-8')
+        # The person sent it as a new thread: only they start one (#367).
+        threads.note_send(po['id'], '', 'send:shared', [], False, 'A conversation with a thread.', now=at + 1, new=True)
         cls.transcript_lock = threading.Lock()
         task_transcript = base / 'transcripts' / 'C--task'; task_transcript.mkdir()
         (task_transcript / 'shared-task.jsonl').write_text('', encoding='utf-8')

@@ -26,6 +26,7 @@ import chatroom  # noqa: E402
 import dashboard  # noqa: E402
 import points  # noqa: E402
 import sends  # noqa: E402
+import threads  # noqa: E402
 from tests import chrome_profile  # noqa: E402
 from tests.test_page_update import CHROME  # noqa: E402
 from tests.test_thread_panel_cdp import CDP_JS as PANEL_JS, NODE  # noqa: E402
@@ -137,8 +138,12 @@ class ThreadReply(unittest.TestCase):
         # Sent through the hub: each makes a point (P1, P2), so a reply from
         # its thread is a "Re P1:" follow-up that makes none (the leak).
         room = chatroom.get_room(cls.po, public=False)
-        said = [points.take(room, t, '', '', now=at + n)[0] for t, n in
-                (('We need the chat to use the whole width of its panel.', 1), ('And the thread opens beside it.', 20))]
+        said = []
+        for t, n in (('We need the chat to use the whole width of its panel.', 1), ('And the thread opens beside it.', 20)):
+            q, ids = points.take(room, t, '', '', now=at + n)
+            # Sent as a new thread (#367: only the person starts one).
+            threads.note_send(cls.po, '', '', ids, False, q, now=at + n, new=True)
+            said.append(q)
         lines = [cls.turn('user', said[0], at + 1),
                  cls.turn('assistant', 'Done: the chat fills its panel now.', at + 2),
                  cls.turn('user', said[1], at + 20),
