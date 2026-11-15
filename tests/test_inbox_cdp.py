@@ -279,7 +279,7 @@ class InboxInChrome(unittest.TestCase):
         self.assertEqual(d["stages"], ["check"] * len(d["rows"]), d["stages"])
         self.assertTrue(all(w == "PO" for w in d["where"]), d["where"])
         self.assertTrue(all(a for a in d["ages"]), d["ages"])
-        self.assertTrue(any(x.startswith("Motors PO: ") for x in d["lines"]), d["lines"])
+        self.assertTrue(any(x.startswith("PO: ") for x in d["lines"]), d["lines"])
         self.assertEqual(d["scope"], [], "the Projects panel owns the All/project choice")
         self.assertTrue(d["tool"], "the Inbox's icon in its colour")
 
@@ -310,7 +310,7 @@ class InboxInChrome(unittest.TestCase):
         # PO fix 6: two answers to check in the Motors PO chat are one row.
         d, m = self.got["desk"], self.got["more"]
         self.assertEqual(len(d["rows"]), 1, d["rows"])
-        self.assertEqual(m["line"], "Motors PO: 2 answers to check")
+        self.assertEqual(m["line"], "PO: 2 answers to check")
         self.assertEqual((m["open"], m["summary"]), (True, "2 answers"))
         self.assertEqual(m["items"], [self.mid, self.mid2], "oldest first")
         self.assertTrue(self.got["moreKept"], "stays open when the inbox paints again")

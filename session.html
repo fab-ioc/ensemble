@@ -3391,6 +3391,8 @@ function roleLabel(m, N = CHAT_NAMES) {
 // The recipient's word in a task chat ("you", "reviewer"); none in a PO's room,
 // where every message is between the person and the PO.
 function roleTo(m, N = CHAT_NAMES) {
+  // Its own PO's copy of what it sent another PO says which PO it went to (P347).
+  if (isOwnPoMsg(m)) return poSide(m.toProjectName);
   if (N.po || isPoMsg(m) || !m.to || m.to === 'all') return '';
   if (m.to === 'user') return 'you';
   return seatRole(m.to) || whoName(m.to, N);
