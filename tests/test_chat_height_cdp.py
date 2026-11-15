@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 import chatroom  # noqa: E402
 import dashboard  # noqa: E402
+import threads  # noqa: E402
 from tests import chrome_profile  # noqa: E402
 from tests.test_page_update import CHROME  # noqa: E402
 
@@ -258,6 +259,8 @@ class ChatHeight(unittest.TestCase):
         lines = [turn('user', 'We need to add this chat thread and keep the conversation readable.', 1)]
         lines += [turn('assistant', f'Answer {i}: ' + 'Conversation details. ' * 12, i + 2) for i in range(30)]
         (transcript / f'{po_sid}.jsonl').write_text(''.join(json.dumps(x)+'\n' for x in lines), encoding='utf-8')
+        # The person sent it as a new thread: only they start one (#367).
+        threads.note_send(po['id'], '', 'send:height', [], False, 'We need to add this chat thread and keep the conversation readable.', now=at + 1, new=True)
         task = chatroom.create_room('Tall chat', [{'identity':'claude','agent':'claude','cwd':str(home)}])
         chatroom.post_message(task['id'], 'user', 'A message above the composer')
         dashboard.assign_session_project(task['id'], cls.proj)

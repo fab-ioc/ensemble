@@ -351,7 +351,7 @@ class Page(unittest.TestCase):
     def test_the_page_reads_the_shown_text_for_cards_and_balloons(self):
         self.assertIn("  m = askShown(m);\n", _fn("asksOf"))
         self.assertIn("if (!a.length && !m.askShown) a = safetyAsk(t);", _fn("asksOf"))
-        self.assertIn("  const balloon = (m, i) => {\n    m = askShown(m);\n", SESSION)
+        self.assertIn("  const balloon = (m, i, noUnder) => {\n    m = askShown(m);\n", SESSION)
 
 
 if __name__ == "__main__":
