@@ -1,5 +1,6 @@
 """A message between two projects' POs draws as a balloon of its own in each
-PO's chat (session.html): "opten PO → Dock PO" with a "PO to PO · bug" chip,
+PO's chat (session.html): "opten PO" with a "PO to PO · bug" chip (its own
+PO's copy of what it sent reads just "PO", P347),
 never folded as hub traffic nor into a task's row, and in a one-agent PO chat
 it is taken from the room and put among the transcript's turns by its time.
 
@@ -53,10 +54,19 @@ const pm = (id, direction, ts, extra) => Object.assign({ id, kind: 'pomsg', dire
 const got = pm('pm-1', 'received', 1010);
 const sent = pm('pm-2', 'sent', 1020, { fromProjectName: 'Dock', toProjectName: 'opten', poKind: 'answer', from: 'claude', to: 'claude@room-0pten000' });
 out.head = [T.whoHtml(got), T.whoHtml(sent)];
+// P347: in X's own chat, X's copy of what it sent reads just PO (in X's colour,
+// by its id); Y's message keeps the name Y had when it sent it.
+const own = pm('pm-3', 'sent', 1050, { from: 'claude', fromProjectId: 'proj-x', fromProjectName: 'X QA',
+  toProjectId: 'proj-y', toProjectName: 'Old Y' });
+const theirs = pm('pm-4', 'received', 1060, { fromProjectId: 'proj-y', fromProjectName: 'Old Y',
+  toProjectId: 'proj-x', toProjectName: 'X QA' });
+out.own = [T.whoHtml(own), T.whoHtml(theirs), T.senderName(own), T.senderName(theirs)];
 out.kind = T.kindName(got);
 out.chip = T.foldChips(got);
 out.full = T.foldBalloonHtml(got, 0, 'full', { md: t => t });
 out.row = T.foldBalloonHtml(got, 0, 'row', { md: t => t });
+out.ownRow = T.foldBalloonHtml(own, 0, 'row', { md: t => t });
+out.ownFull = T.foldBalloonHtml(own, 0, 'full', { md: t => t });
 out.quiet = [T.quietItem(got, false), T.quietItem(got, true)];
 out.task = T.taskOfMsg(got);
 // Among a task's reports it is no part of the task's row.
@@ -110,8 +120,17 @@ class APoMessageBalloon(unittest.TestCase):
     def test_it_says_which_po_writes_to_which(self):
         self.assertEqual(self.r["head"], [
             '<span class="who rl po" data-po-name="opten">opten PO</span>',
-            '<span class="who rl po" data-po-name="Dock">Dock PO</span>'])
+            '<span class="who rl po" data-po-name="Dock">PO</span> <span class="to">→ <b>opten PO</b></span>'])
         self.assertEqual(self.r["kind"], "PO message")
+
+    def test_its_own_po_is_just_po_and_another_keeps_its_stored_name(self):
+        self.assertEqual(self.r["own"], [
+            '<span class="who rl po" data-po-project="proj-x">PO</span> <span class="to">→ <b>Old Y PO</b></span>',
+            '<span class="who rl po" data-po-project="proj-y">Old Y PO</span>',
+            "PO", "Old Y PO"])
+        # Folded or open, its own copy says which PO it went to.
+        for how in ("ownRow", "ownFull"):
+            self.assertIn('>PO</span> <span class="to">→ <b>Old Y PO</b></span>', self.r[how], how)
 
     def test_it_is_marked_apart_from_a_report(self):
         self.assertIn(">PO to PO · bug</span>", self.r["chip"])

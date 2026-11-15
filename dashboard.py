@@ -12170,7 +12170,9 @@ def global_find(q: str, deep: bool = False, tag: str = "", seq: int = 0) -> tupl
         e = by_id.get(m["roomId"]) or {}
         po = po_of.get(m["roomId"])
         if m.get("kind") == "pomsg":
-            from_label = f"{m.get('fromProjectName') or 'Another project'} PO"
+            # Its own PO's copy of what it sent another PO: just "PO" (P347).
+            from_label = ("PO" if m.get("direction") == "sent"
+                          else f"{m.get('fromProjectName') or 'Another project'} PO")
             to_label = f"{m.get('toProjectName') or 'Project'} PO"
         else:
             from_label = str(m.get("senderLabel") or participant_label(m.get("from", ""), m["roomId"]))
