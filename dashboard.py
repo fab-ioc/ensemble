@@ -135,7 +135,6 @@ import asks
 # A PO chat's threads (#210): derived from its transcripts and points ledger.
 import threads
 import inbox
-import topics
 import progress
 # Provenance for hub/tool text that agent transcripts can only call "user".
 import input_provenance
@@ -13189,6 +13188,8 @@ _ROOM_STATUS_LOCK = threading.Lock()
 # patch on the poll it makes right after (#247: a PO chat's status was
 # 400-540 KB, most of it closed points, Needs you's lists and 200 rotations).
 LITE_THREADS = 20
+# Topics were removed (P345): /api/room/topics, read or changed, answers 410.
+TOPICS_GONE = {"error": "gone", "message": "Topics were removed from Ensemble."}
 LITE_ROTATIONS = 3
 LITE_POINTS = 20
 LITE_BYTES = 96 * 1024          # the whole first answer (#247: ≤100 KB)
@@ -13311,23 +13312,10 @@ def thread_act(rid: str, room: dict, action: str, tids: list) -> list:
     raise ValueError(f"not a thread action: {action!r}")
 
 
-def topic_threads(project: dict, room: dict, topic_ids: list) -> list:
-    """The threads of the topics ``topic_ids`` as the chat has them now
-    (listed or put away), worked out from the current threads (#319)."""
-    idx = threads.build(project.get("poRoomId") or "", room)
-    if idx is None:
-        return []
-    grouping = topics._build_view(project, idx, chatroom.ROOMS_DIR)
-    want = set(topic_ids)
-    return list(dict.fromkeys(t for row in grouping["topics"] + grouping["archived"]
-                              if row["id"] in want for t in row["threads"]))
-
-
 def old_threads(cutoff: float, room_id: str = "") -> list:
-    """Free disk space's "Old threads and topics" (#319): in every PO chat
-    (or ``room_id``'s), the topics not updated since ``cutoff`` and the
-    threads in no listed topic not updated since, none of them archived.
-    Rows: {kind thread | topic, room, id, name, chat, at, threads}."""
+    """Free disk space's "Old threads" (#319): in every PO chat (or
+    ``room_id``'s), the threads not updated since ``cutoff``, none of them
+    archived. Rows: {kind thread, room, id, name, chat, at, threads}."""
     rows = []
     for p in load_projects():
         rid = (p.get("poRoomId") or "").strip() if isinstance(p, dict) else ""
@@ -13338,18 +13326,7 @@ def old_threads(cutoff: float, room_id: str = "") -> list:
         if idx is None:
             continue
         chat = p.get("name") or rid
-        grouping = topics._build_view(p, idx, chatroom.ROOMS_DIR)
-        in_topic = set()
-        for row in grouping["topics"] + grouping.get("archived", []):
-            in_topic |= set(row["threads"])
-            at = float(row.get("updatedAt") or 0)
-            if row in grouping.get("archived", []):
-                continue
-            if 0 < at < cutoff:
-                rows.append({"kind": "topic", "room": rid, "id": row["id"], "name": row.get("name") or "Topic",
-                             "chat": chat, "at": at, "threads": list(row["threads"]),
-                             "openPoints": list(row.get("openPoints") or [])})
-        for tid in threads._replied(idx) - in_topic:
+        for tid in threads._replied(idx):
             th = idx["threads"][tid]
             at = float(th.get("updatedAt") or 0)
             if 0 < at < cutoff:
@@ -13357,16 +13334,6 @@ def old_threads(cutoff: float, room_id: str = "") -> list:
                              "chat": chat, "at": at, "threads": [tid],
                              "openPoints": list(th.get("openPoints") or [])})
     return rows
-
-
-def topic_act(project: dict, room: dict, action: str, topic_ids: list) -> list:
-    """Archive, restore or delete topics (#319), each with its threads; the
-    threads it applied to."""
-    rid = project.get("poRoomId") or ""
-    topics.view(project, room, chatroom.ROOMS_DIR)
-    tids = topic_threads(project, room, topic_ids)
-    topics.change(project, chatroom.ROOMS_DIR, action, topics=list(topic_ids))
-    return thread_act(rid, room, action, tids) if tids else []
 
 
 def old_thread_act(row: dict, action: str, cutoff: float) -> str:
@@ -13379,14 +13346,9 @@ def old_thread_act(row: dict, action: str, cutoff: float) -> str:
            next((x for x in old_threads(cutoff, rid) if x["kind"] == row.get("kind") and x["id"] == row.get("id")), None))
     if now is None:
         return "updated since, archived or gone"
-    room = chatroom.get_room(rid, public=False)
-    if row["kind"] == "thread":
-        thread_act(rid, room, action, [row["id"]])
-        return ""
-    project = next((p for p in load_projects() if isinstance(p, dict) and (p.get("poRoomId") or "") == rid), None)
-    if project is None:
-        return "its project is gone"
-    topic_act(project, room, action, [row["id"]])
+    if row.get("kind") != "thread":
+        return "not a thread"
+    thread_act(rid, chatroom.get_room(rid, public=False), action, [row["id"]])
     return ""
 
 
@@ -19714,14 +19676,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(200, notify.status())
             return
         if p == "/api/room/topics":
-            q = parse_qs(u.query)
-            rid = (q.get("id", [""])[0] or "").strip()
-            project = next((pj for pj in load_projects() if pj.get("poRoomId") == rid), None)
-            room = chatroom.get_room(rid, public=False) if project else None
-            if not room:
-                self._send_json(404, {"error": "no_such_po_chat"})
-                return
-            self._send_json(200, topics.view(project, room, chatroom.ROOMS_DIR))
+            # Topics were removed (P345): an old page asking gets Gone.
+            self._send_json(410, TOPICS_GONE)
             return
         if p == "/api/room/commands":
             # ?roomId=&identity= the slash commands to suggest for the agent a
@@ -19769,19 +19725,10 @@ class Handler(BaseHTTPRequestHandler):
                 n = 0
             try:
                 if p == "/api/room/channel":
-                    topic_id = arg("topic")
-                    topic_tids = None
-                    if topic_id:
-                        project = next((pj for pj in load_projects() if pj.get("poRoomId") == rid), None)
-                        grouping = topics.view(project, room, chatroom.ROOMS_DIR) if project else {"topics": []}
-                        if grouping.get("pending"):
-                            self._send_json(200, {"pending": True})
-                            return
-                        chosen = next((t for t in grouping["topics"] if t["id"] == topic_id), None)
-                        topic_tids = set(chosen["threads"]) if chosen else set()
+                    # An old page's &topic= (P345) is not read: the whole chat.
                     watch_mids = [m for m in arg("watch").split(",") if m][:24]
                     out = threads.channel_view(rid, room, n or threads.CHANNEL_MAX, arg("upto"),
-                                               before, arg("from"), topic_tids, arg("after"), arg("to"), watch_mids,
+                                               before, arg("from"), arg("after"), arg("to"), watch_mids,
                                                threads_only=arg("threads") == "1")
                     channel_hub_rows(out, room)
                     channel_latest_visible(out)
@@ -19792,14 +19739,6 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     out = threads.thread_view(rid, room, arg("t"), arg("mid"), n, before,
                                               arg("from"), arg("upto"), arg("after"), arg("to"))
-                    if out.get("thread"):
-                        project = next((pj for pj in load_projects() if pj.get("poRoomId") == rid), None)
-                        if project:
-                            grouping = topics.view(project, room, chatroom.ROOMS_DIR)
-                            out["topicSuggestion"] = grouping.get("suggestions", {}).get(out["thread"]["id"])
-                            # A first thread open still renders during a cold topic
-                            # build; the changed signature supplies its chip later.
-                            out["sig"] += ":topics:" + str(grouping.get("stamp", "pending"))
             except Exception as e:      # noqa: BLE001 — the page shows the whole chat
                 print(f"[threads] {rid}: {p} failed: {e!r}", flush=True)
                 self._send_json(500, {"error": "not_read"})
@@ -23706,7 +23645,7 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(ids, list) or not all(isinstance(i, str) for i in ids):
                 self._send_json(400, {"error": "bad_ids", "message": "Tick what should go."})
                 return
-            # #319: {id: "delete"} for an old thread or topic to delete, not archive.
+            # #319: {id: "delete"} for an old thread to delete, not archive.
             actions = data.get("actions") if isinstance(data.get("actions"), dict) else {}
             actions = {k: v for k, v in actions.items() if isinstance(k, str) and v == "delete"}
             ok, msg = prune_run_start(ids, actions)
@@ -23923,34 +23862,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(200, {"ok": True, "seen": got, **({"points": _points_view(rid)} if got else {})})
             return
         if p == "/api/room/topics":
-            if self._files_cross_site():
-                return
-            rid = str(data.get("roomId") or "")
-            project = next((pj for pj in load_projects() if pj.get("poRoomId") == rid), None)
-            room = chatroom.get_room(rid, public=False) if project else None
-            if not room:
-                self._send_json(404, {"error": "no_such_po_chat"})
-                return
-            act = str(data.get("action") or "")
-            many = data.get("topics")
-            if many is not None and (not isinstance(many, list) or not all(isinstance(t, str) for t in many)):
-                self._send_json(400, {"error": "invalid_topic_change", "message": "topics is a list of topic ids"})
-                return
-            try:
-                topics.view(project, room, chatroom.ROOMS_DIR)
-                # #319: a topic archived, restored or deleted takes its threads with it.
-                tids = topic_threads(project, room, many if many is not None else [str(data.get("topic") or "")]) \
-                    if act in ("archive", "restore", "delete") else []
-                topics.change(project, chatroom.ROOMS_DIR, act,
-                              topic=str(data.get("topic") or ""), other=str(data.get("other") or ""),
-                              thread=str(data.get("thread") or ""), name=str(data.get("name") or ""),
-                              topics=many)
-                if tids:
-                    thread_act(rid, room, act, tids)
-            except (ValueError, OSError) as e:
-                self._send_json(400, {"error": "invalid_topic_change", "message": str(e)})
-                return
-            self._send_json(200, {"ok": True, "threads": tids, **topics.view(project, room, chatroom.ROOMS_DIR)})
+            # Topics were removed (P345): an old page asking gets Gone.
+            self._send_json(410, TOPICS_GONE)
             return
         if p == "/api/room/threads":
             # Old threads (#319): {roomId, action: archive | restore | delete,
