@@ -9,7 +9,12 @@ from unittest import mock
 
 import threads
 import topics
-from tests.test_threads import T0, human, po, point, side
+from tests.test_threads import T0, human, new_row, po, point, side
+
+
+def chosen(recs):
+    """Every person's message sent as a new thread (#367): topics group threads."""
+    return side(sent=[new_row(r["mid"], key="n" + r["mid"]) for r in recs if r["role"] == "user"])
 
 
 class TopicTest(unittest.TestCase):
@@ -31,7 +36,7 @@ class TopicTest(unittest.TestCase):
                      po("s:5", 5, "Re P3: done", re_=["P3"])]
         assigned = threads.assign(self.recs, {"points": [point("P1", "s:0", "Backtest the strategy"),
                                                        point("P2", "s:2", "Backtested trades", 2),
-                                                       point("P3", "s:4", "Skew panel", 4)]}, side())
+                                                       point("P3", "s:4", "Skew panel", 4)]}, chosen(self.recs))
         self.idx = {**assigned, "by_mid": {r["mid"]: r for r in self.recs}, "recs": self.recs, "sig": "fixture"}
         for th in self.idx["threads"].values():
             th.update(unread=0, openQuestions=0, state="answered", rootWho="you")
@@ -80,7 +85,7 @@ class TopicTest(unittest.TestCase):
                 human("a:2", 2, "App mobile alerts settings screen")]
         assigned = threads.assign(recs, {"points": [point("P1", "a:0", "App mobile alerts settings screen"),
                                                    point("P2", "a:1", "App mobile alerts notifications screen", 1),
-                                                   point("P3", "a:2", "App mobile alerts settings screen", 2)]}, side())
+                                                   point("P3", "a:2", "App mobile alerts settings screen", 2)]}, chosen(recs))
         self.idx = {**assigned, "by_mid": {r["mid"]: r for r in recs}, "recs": recs, "sig": "uncertain"}
         for th in self.idx["threads"].values():
             th.update(unread=0, openQuestions=0, state="", rootWho="you")
@@ -98,7 +103,7 @@ class TopicTest(unittest.TestCase):
                 human("a:2", 2, "App mobile alerts settings screen")]
         assigned = threads.assign(recs, {"points": [point("P1", "a:0", "App mobile alerts settings screen"),
                                                    point("P2", "a:1", "App mobile alerts notifications screen", 1),
-                                                   point("P3", "a:2", "App mobile alerts settings screen", 2)]}, side())
+                                                   point("P3", "a:2", "App mobile alerts settings screen", 2)]}, chosen(recs))
         self.idx = {**assigned, "by_mid": {r["mid"]: r for r in recs}, "recs": recs, "sig": "uncertain"}
         for th in self.idx["threads"].values():
             th.update(unread=0, openQuestions=0, state="", rootWho="you")
@@ -227,7 +232,7 @@ class IncrementalTopicTest(unittest.TestCase):
         self.assign("start")
 
     def assign(self, sig):
-        self.idx = {**threads.assign(self.recs, {"points": self.pts}, side()),
+        self.idx = {**threads.assign(self.recs, {"points": self.pts}, chosen(self.recs)),
                     "by_mid": {r["mid"]: r for r in self.recs}, "recs": self.recs, "sig": sig}
         for th in self.idx["threads"].values():
             th.update(unread=0, openQuestions=0, state="", rootWho="you")

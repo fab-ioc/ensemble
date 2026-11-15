@@ -255,6 +255,8 @@
     --agent-claude-fg: #FFFFFF;
     --agent-codex-bg: #166A7C;
     --agent-codex-fg: #FFFFFF;
+    --spool-wood: #A0703A;   /* #367 (P350): the thread toggle's spool: wood flanges, blue thread. Identity colours, not the accent. */
+    --spool-thread: #1D7AFC;
     --match-bg: #FFF0B3;
     --match-fg: var(--fg);
     --prio-1: #CD1317;
@@ -337,6 +339,8 @@
     --agent-claude-fg: #1D2125;
     --agent-codex-bg: #3DA3BC;
     --agent-codex-fg: #1D2125;
+    --spool-wood: #C99A62;
+    --spool-thread: #579DFF;
     --match-bg: #7F5F01;
     --match-fg: #FFF7D6;
     --e-100: 0 1px 1px rgba(3,4,4,.5), 0 0 1px rgba(3,4,4,.6);
@@ -389,6 +393,8 @@
     --agent-claude-fg: #1F1E1C;
     --agent-codex-bg: #4FA8BC;
     --agent-codex-fg: #1F1E1C;
+    --spool-wood: #C9A271;
+    --spool-thread: #7AA7E0;
     --match-bg: #5E4A12;
     --match-fg: #F6E7B8;
     --e-100: 0 1px 1px rgba(0,0,0,.45), 0 0 1px rgba(0,0,0,.55);
@@ -441,6 +447,8 @@
     --agent-claude-fg: #FFFFFF;
     --agent-codex-bg: #166A7C;
     --agent-codex-fg: #FFFFFF;
+    --spool-wood: #9A6A33;
+    --spool-thread: #2F6FD0;
     --match-bg: #FBE39A;
     --match-fg: #2B2620;
     --e-100: 0 1px 1px rgba(60,40,10,.22), 0 0 1px rgba(60,40,10,.30);
@@ -494,6 +502,8 @@
     --agent-claude-fg: #FFFFFF;
     --agent-codex-bg: #0B4E5C;
     --agent-codex-fg: #FFFFFF;
+    --spool-wood: #7A4E1C;
+    --spool-thread: #0050D0;
     --match-bg: #FFE066;
     --match-fg: #000000;
     --e-100: 0 0 0 1px #303030;
@@ -546,6 +556,8 @@
     --agent-claude-fg: #2E3440;
     --agent-codex-bg: #8FBCBB;
     --agent-codex-fg: #2E3440;
+    --spool-wood: #D2A877;
+    --spool-thread: #88C0D0;
     --match-bg: #6B5A2E;
     --match-fg: #F6ECCF;
     --e-100: 0 1px 1px rgba(15,18,24,.5), 0 0 1px rgba(15,18,24,.6);
@@ -597,6 +609,8 @@
     --agent-claude-fg: #1E1F22;
     --agent-codex-bg: #60C0B5;
     --agent-codex-fg: #1E1F22;
+    --spool-wood: #C99A62;
+    --spool-thread: #78A4FA;
     --match-bg: #5E4D33;
     --match-fg: #FCEBA4;
     --e-100: 0 1px 1px rgba(0,0,0,.125), 0 0 1px rgba(0,0,0,.20);
@@ -1110,6 +1124,11 @@
     color:var(--fg-subtle); font-size:var(--fs-200); line-height:16px; cursor:pointer; }
   .pt-btn:hover { background:var(--hover); color:var(--fg); }
   .pt-btn:disabled { color:var(--fg-disabled); cursor:default; }
+  /* #367: a quiet action (Reopen on a done point) shows on hover or focus. */
+  @media (hover: hover) {
+    .msg .pt-btn.pt-hover { visibility:hidden; }
+    .msg:hover .pt-btn.pt-hover, .msg:focus-within .pt-btn.pt-hover { visibility:visible; }
+  }
   .pt-btn:focus-visible, a.pt-link:focus-visible { outline:none; border-radius:var(--r-100);
     box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
   /* Under a balloon: the points it holds or answers, and their one click. */
@@ -1486,6 +1505,18 @@
   .msg .from .send-how { margin-left:var(--s-100); color:var(--fg-subtle); }
   #stop-note { flex:0 0 auto; padding:var(--s-100) var(--s-300); color:var(--fg-muted); font-size:var(--fs-200); text-align:center; }
 
+  /* #367: the thread icon toggle; pressed, this message starts a thread. */
+  #new-thread { width:32px; height:32px; padding:0; display:inline-flex; align-items:center; justify-content:center; background:transparent;
+    border:1px solid transparent; border-radius:var(--r-200); color:var(--fg-subtle); cursor:pointer; }
+  #new-thread[hidden] { display:none; }
+  #new-thread:hover { background:var(--hover); color:var(--fg); }
+  #new-thread[aria-pressed="true"] { background:var(--selected-bg); color:var(--selected-fg); border-color:var(--selected-fg); }
+  /* #367 (P350): the spool keeps its colours off, on hover and on; "on" only adds the pressed background. */
+  #new-thread .sp-wood { fill:var(--spool-wood); }
+  #new-thread .sp-thread { fill:var(--spool-thread); }
+  #new-thread .sp-wind { stroke:var(--surface); stroke-opacity:.6; stroke-width:1.4; }
+  #new-thread .sp-tail { stroke:var(--spool-thread); stroke-width:2.1; }
+  #new-thread:focus-visible { outline:none; box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
   #add-point, #attach { height:32px; padding:0 var(--s-200); background:transparent; border:1px solid transparent; color:var(--fg-subtle); font-size:var(--fs-200); }
   #add-point:hover, #attach:hover { background:var(--hover); color:var(--fg); }
   #attach:focus-visible, #add-point:focus-visible { outline:none; box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
@@ -1591,7 +1622,7 @@
     #compose { padding: 8px; gap: 4px; }
     /* The editor's controls are a finger's size, and the box itself takes at
        most half of what the keyboard leaves. */
-    .ed-btn, #add-point, #send-more { min-height: var(--touch-min); min-width: var(--touch-min); }
+    .ed-btn, #add-point, #send-more, #new-thread { min-height: var(--touch-min); min-width: var(--touch-min); }
     .ed-pt .ed-n { padding-top: 12px; }
     .ed-pt textarea.ed-text { min-height: var(--touch-min); }
     .ed-refs a.ref-chip, .ed-refs a.task-chip { min-height: var(--touch-min); align-items: center; }
@@ -1867,6 +1898,9 @@
         <!-- Pasting or dropping a file still works; this is the way you can see (and the only one on a phone). -->
         <button type="button" id="attach" title="Attach files or screenshots (you can also paste or drop them)">Attach</button>
         <input type="file" id="attach-input" multiple hidden>
+        <!-- #367 (P346): only the person starts a thread: on, this message starts one.
+             Icon: a spool of thread, our own drawing (P349), in colour: wood and blue thread (P350). -->
+        <button type="button" id="new-thread" aria-pressed="false" aria-label="New thread" title="New thread: this message starts a thread" hidden><svg class="spool" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false" fill="none" stroke-linecap="round" stroke-linejoin="round"><rect class="sp-thread" x="4.5" y="5" width="10" height="14"/><path class="sp-wind" d="M4.5 10.5l10-1.8M4.5 14.6l10-1.8"/><rect class="sp-wood" x="2" y="1.5" width="15" height="4" rx="2"/><rect class="sp-wood" x="2" y="18.5" width="15" height="4" rx="2"/><path class="sp-tail" d="M14.5 15c3.5 0 5.5 1 5.5 3.5S21 22 22.5 21.5"/></svg></button>
         <span class="grow"></span>
         <div id="stop-wrap" hidden><button type="button" id="stop-agent" title="Stop the working agent (Esc)">Stop</button><div id="stop-choices" role="group" aria-label="Choose agent to stop" hidden></div></div>
         <div id="send-split"><button id="send" disabled>Send</button><button type="button" id="send-more" aria-haspopup="menu" aria-expanded="false" aria-controls="send-menu" aria-label="More ways to send" title="More ways to send" hidden>&#9662;</button><div id="send-menu" role="menu" aria-label="Send" hidden><button type="button" role="menuitem" id="send-now"><span class="sm-name">Send now</span><span class="sm-sub"></span></button></div></div>
@@ -4368,6 +4402,10 @@ function foldUnanswered(items) {
   const out = new Map();
   items.forEach((m, i) => {
     if (!m || m.from !== 'user' || m.kind !== 'human') return;
+    // A balloon whose points all have an answer (or a plan) never says "no
+    // answer yet", wherever that answer is (#367).
+    const ps = (typeof POINTS !== 'undefined' && POINTS && POINTS.byMid && POINTS.byMid.get(m.id)) || [];
+    if (ps.length && ps.every(p => p.state !== 'open')) return;
     let j = i + 1;
     while (j < items.length && (isLandmark(items[j]) || (items[j].from === 'user' && items[j].kind === 'human'))) j++;
     if (j >= items.length) out.set(foldKey(m, i), 'last');
@@ -4433,7 +4471,7 @@ function foldBalloonHtml(m, i, how, o) {
   const rs = mine ? replyStrip(m) : null;
   const own = o.body && o.body(rs ? { ...m, text: rs.text } : m);
   const items = mine && own && typeof own === 'object' ? own : null;
-  const under = items ? items.under : mine && o.pts ? o.pts(m) : '';
+  const under = o.noUnder ? '' : items ? items.under : mine && o.pts ? o.pts(m) : '';
   const body = items ? (rs ? rs.html : '') + items.html
     : (!mine && typeof own === 'string' && own) || `${rs ? rs.html : ''}<div class="text md">${o.md(rs ? rs.text : m.text)}</div>${!mine && o.pts ? o.pts(m) : ''}`;
   // o.reacts: the person's quick reactions to it (reactRowHtml).
@@ -4793,8 +4831,8 @@ const ptWords = (t, n = 80) => { t = foldLine(stripPointLines(String(t || '').re
 // the point's item on the person's balloon), else the whole balloon.
 const ptLink = (mid, text, href, tip, part) => mid
   ? `<a class="pt-link" href="${esc(href(mid) + (part ? '&part=' + encodeURIComponent(part).replace(/%3A/gi, ':') : ''))}" data-ref-msg="${esc(mid)}"${part ? ` data-ref-part="${esc(part)}"` : ''}${tip ? ` title="${esc(tip)}"` : ''}>${esc(text)}</a>` : '';
-const ptBtn = (id, act, text, label) =>
-  `<button type="button" class="pt-btn" data-pt="${esc(id)}" data-pt-act="${act}" aria-label="${esc(label)}" title="${esc(label)}">${text}</button>`;
+const ptBtn = (id, act, text, label, cls = '') =>
+  `<button type="button" class="pt-btn${cls ? ' ' + cls : ''}" data-pt="${esc(id)}" data-pt-act="${act}" aria-label="${esc(label)}" title="${esc(label)}">${text}</button>`;
 // Ack closes the point and types nothing: Done and Go ahead, which the agent
 // reads, are the selection bar's ✅ and 🚀 reactions on the answer's words.
 const ackBtn = id => ptBtn(id, 'ack', '👍 Ack', `Acknowledge the answer to ${id}: nothing is sent to the agent`);
@@ -4874,6 +4912,8 @@ function ptStateHtml(p, P, href) {
   const quiet = t => `<span class="pt-chip">${esc(t)}</span>`;
   const drop = ptBtn(p.id, 'drop', 'Drop', `Drop ${p.id}: you no longer need an answer`);
   const reopen = ptBtn(p.id, 'reopen', 'Reopen', `Reopen ${p.id}: it waits for an answer again`);
+  // #367: on an acknowledged point the row says only "done"; Reopen shows on hover.
+  const reopenHover = ptBtn(p.id, 'reopen', 'Reopen', `Reopen ${p.id}: it waits for an answer again`, 'pt-hover');
   const bits = [`<span class="pt-chip pt-id" data-pt-id="${esc(p.id)}" data-pt-state="${esc(p.state)}">${esc(p.id)}</span>`];
   const up = p.replyTo ? ptThreadHtml({ replyTo: p.replyTo, quote: p.quote }, P, href) : '';
   if (p.state === 'open') {
@@ -4892,7 +4932,7 @@ function ptStateHtml(p, P, href) {
     else if (ptStillWorking(p, P)) bits.push(st('working', dot + 'working on it'), up, drop, ptNowHtml(ptWorker(P, c.mid)));
     else bits.push(st('done', 'done — ' + go('see the answer ↓', 'Go to the answer')), up);
   } else if (p.state === 'acked') {
-    bits.push(st('done', 'done — ' + go('see the answer ↓', 'Go to the answer')), quiet('acknowledged'), up, reopen);
+    bits.push(st('done', 'done — ' + go('see the answer ↓', 'Go to the answer')), up, reopenHover);
   } else if (p.state === 'followed') {
     const down = p.followedBy && P.byId.get(p.followedBy);
     bits.push(down && down.mid ? `<span class="pt-chip">${ptLink(down.mid, 'you replied ↓', href, `Go to ${down.id}, your follow-up`, 'pt:' + down.id)}</span>` : quiet('you replied'), up, reopen);
@@ -4918,7 +4958,6 @@ function pointBarHtml(m, P, href, pick) {
     if (plans) { if (p.state === 'planned' && ptTaskWords(p)) bits.push(`<span class="pt-chip">${esc(ptTaskWords(p))}</span>`); }
     // An "on it" answer still being worked on takes no Ack yet (Q2).
     else if (p.state === 'delivered' && a && a.mid === m.id) { if (!ptStillWorking(p, P)) bits.push(ackBtn(p.id) + commentBtn(p.id)); }
-    else if (p.state === 'acked') bits.push(`<span class="pt-chip">acknowledged</span>`);
     else if (p.state === 'followed') bits.push(ptThreadHtml({ followedBy: p.followedBy }, P, href) || '<span class="pt-chip">followed up</span>');
   }
   if (P.approvals.has(m.id)) bits.push('<span class="pt-chip">approved: go ahead</span>');
@@ -5152,7 +5191,7 @@ function renderBubbles(items, opt = {}) {
   let folded = 0, quietRows = 0;
   const firstFull = plan.indexOf('full');
   const keys = [], decKeys = [];
-  const balloon = (m, i) => {
+  const balloon = (m, i, noUnder) => {
     m = askShown(m);
     const k = foldKey(m, i);
     keys.push(k);
@@ -5161,7 +5200,7 @@ function renderBubbles(items, opt = {}) {
     try {
       return foldBalloonHtml(m, i, plan[i], { md, open: FOLD.open.has(k), un: unanswered.get(k), idle: SOLO_IDLE,
         act: actHtml, plain: t => pmPlain(refPlain(t)), lineHtml: foldedPointHtml, superseded: sup.has(i), pts: ptBar, body,
-        reacts: m => reactRowHtml(m, reacts) });
+        reacts: m => reactRowHtml(m, reacts), noUnder });
     } finally { TASK_REF_PID = ''; }
   };
   const href = mid => refHref(ROOM, mid);
@@ -5239,10 +5278,13 @@ function renderBubbles(items, opt = {}) {
     // draws it); in a thread it says the reply was also sent to the chat.
     const mark = thr ? threadMarkHtml(m) : '';
     if (mark && !THREAD_MODE) rows.push(mark);
-    rows.push(balloon(m, i));
+    // A thread's root in the chat has one row under it, its thread's (#367):
+    // the thread row carries the state, the points' own row is in the thread.
+    const lines = thr && !THREAD_MODE ? (m.thr || []).map(t => threadLineHtml(t, m.from === 'user')).filter(Boolean) : [];
+    rows.push(balloon(m, i, lines.length > 0));
     if (thr) {
       if (mark && THREAD_MODE) rows.push(mark);
-      if (!THREAD_MODE)(m.thr || []).forEach(t => { const l = threadLineHtml(t, m.from === 'user'); if (l) rows.push(l); });
+      rows.push(...lines);
     }
   });
   // A channel shows its latest entries: the way to those before.
@@ -7022,9 +7064,28 @@ function sharedTargetPaint() {
   // What the agent is doing shows where the box now sends (#274).
   if (!THREAD_MODE && !WORKSPACE_COMPOSE) try { renderLiveTail(); } catch (e) {}
 }
+// #367 (P346): the box's thread icon. Pressed, the message starts a thread of
+// its own (the hub keeps it as the person's); it turns off once sent, and is
+// not there while the box writes in a thread, nor outside a PO chat.
+let NEW_THREAD = false;
+function newThreadPaint() {
+  const b = $('#new-thread');
+  if (!b) return;
+  const off = !THREADED || THREAD_MODE || !!SHARED_THREAD;
+  if (off) NEW_THREAD = false;
+  b.hidden = off;
+  b.setAttribute('aria-pressed', NEW_THREAD ? 'true' : 'false');
+}
+$('#new-thread').addEventListener('click', () => {
+  NEW_THREAD = !NEW_THREAD;
+  composerDestinationPaint();
+  $('#input').focus();
+});
 function composerDestinationPaint() {
+  newThreadPaint();
   const link = $('#compose-destination-link');
   if (!link) return;
+  if (NEW_THREAD) { link.textContent = 'a new thread'; return; }
   if (THREAD_MODE || SHARED_THREAD) { link.textContent = (THREAD_MODE ? THR_INFO?.title : SHARED_THREAD?.title) || 'Thread'; return; }
   const room = ROOM_OBJ;
   if (room?.no) { link.textContent = '#' + room.no + ' ' + room.title; return; }
@@ -8073,7 +8134,7 @@ function thrAgo(ts) {
   return sendWhen(ts);
 }
 function thrAgoTick() {
-  document.querySelectorAll('.thr-ago[data-ts]').forEach(el => setText(el, 'Last reply ' + thrAgo(+el.dataset.ts)));
+  document.querySelectorAll('.thr-ago[data-ts]').forEach(el => setText(el, (el.dataset.started ? 'Started ' : 'Last reply ') + thrAgo(+el.dataset.ts)));
 }
 setInterval(thrAgoTick, 30000);
 function threadLineHtml(tid, mine) {
@@ -8081,7 +8142,8 @@ function threadLineHtml(tid, mine) {
   if (!t) return '';
   const n = +t.replies || 0, unread = +t.unread || 0;
   const work = +t.workCount || 0;
-  if (!n && !work) return '';
+  // A thread the person started shows its row from the start (#367 review 1).
+  if (!n && !work && !t.chosen) return '';
   // New indexes carry the same role labels as balloons; older indexes fall back
   // to the categories their reply summary already used.
   const who = t.whoLabels || (t.who || []).map(w => {
@@ -8091,13 +8153,13 @@ function threadLineHtml(tid, mine) {
     return { cls: 'person', text: 'you' };
   });
   const st = THR_STATE[t.state] || '';
-  const label = `${n} repl${n === 1 ? 'y' : 'ies'}${work ? ` · ${work} in Work log` : ''}`;
+  const label = !n && !work ? 'New thread' : `${n} repl${n === 1 ? 'y' : 'ies'}${work ? ` · ${work} in Work log` : ''}`;
   const on = TS && TS.tid === tid;
   return `<div class="thr-line${unread ? ' unread' : ''}${mine ? ' mine' : ''}${on ? ' on' : ''}" data-thr-line="${esc(tid)}" data-last-mid="${esc(t.lastMid || '')}" data-key="thr:${esc(tid)}:${n}:${work}:${unread}:${esc(t.state || '')}:${+t.lastAt || 0}:${on ? 1 : 0}">`
     + `<button type="button" class="thr-open" data-thr="${esc(tid)}" title="Open the thread beside the chat" aria-label="${esc(label + (unread ? ', ' + unread + ' new' : '') + '. Open the thread “' + (t.title || '') + '”')}">`
     + (who.length ? `<span class="thr-who" aria-hidden="true">${who.map(w => `<span class="rl ${esc(w.cls)}"${w.cls === 'po' && w.projectId ? ` data-po-project="${esc(w.projectId)}"` : w.cls === 'po' && (w.projectName || w.otherProject) ? ` data-po-name="${esc(w.projectName || '')}"` : ''}>${esc(w.cls === 'person' ? OPERATOR || 'you' : w.text)}</span>`).join('')}</span>` : '')
     + `<span class="thr-count">${label}</span>`
-    + `<span class="thr-ago" data-ts="${+t.lastAt || 0}">Last reply ${esc(thrAgo(t.lastAt))}</span>`
+    + `<span class="thr-ago" data-ts="${+t.lastAt || 0}"${n ? '' : ' data-started="1"'}>${n ? 'Last reply' : 'Started'} ${esc(thrAgo(t.lastAt))}</span>`
     + (unread ? `<span class="thr-dot" role="img" aria-label="New replies" title="${unread} new repl${unread === 1 ? 'y' : 'ies'}"></span>` : '')
     + '</button>'
     + (st ? `<span class="thr-state st-${esc(t.state)}">${esc(st)}</span>` : '')
@@ -8518,6 +8580,7 @@ function refreshShow(room, ticket, sendsGen) {
     CP_SIG = cpNow;
     if (!THR_NOTED || THREADED !== !!room.threaded) { THR_NOTED = true; thrRemember(!!room.threaded); }
     THREADED = !!room.threaded;
+    newThreadPaint();
     showThreadsBtn();
     // A thread the dashboard asked for before this chat knew it was a PO's
     // (a link opened with the page, #308): it opens now.
@@ -9590,7 +9653,7 @@ setInterval(() => {
 // from here on drops nothing. ``key`` names this attempt: sent again after a
 // lost reply, the hub takes it once. A team's every send goes this way: the
 // hub, not the last poll, decides whether the team is running.
-async function sendResuming(text, to, key, attachments, now) {
+async function sendResuming(text, to, key, attachments, now, box = false) {
   const body = { roomId: ROOM, text, to: to || '', key: key || '' };
   if (now) body.now = true;     // Send now (#252): reach the busy agent at once
   // From a thread's box (#210): the hub tells the PO which thread. A thread
@@ -9602,7 +9665,7 @@ async function sendResuming(text, to, key, attachments, now) {
     body.also = !!($('#thr-also') && $('#thr-also').checked);
     const t = THREAD_MODE ? THR_INFO : SHARED_THREAD?.info;
     if (t && !(t.points || []).length && t.root && text) body.text = msgLink(t.root) + '\n\n' + text;
-  }
+  } else if (box && THREADED && NEW_THREAD) body.newThread = true;     // #367: the box's thread icon
   if (attachments && attachments.length) body.attachments = attachments;
   return postOk('/api/room/resume', body);
 }
@@ -10059,7 +10122,7 @@ async function sendNow(urgent = false) {
       // their lines (and the images'), and types it in (or resumes the session).
       let d;
       noteSending(key, t, '');
-      try { d = await sendResuming(t, '', key, atts, urgent); }
+      try { d = await sendResuming(t, '', key, atts, urgent, true); }
       catch (e) {
         if (keptByHub(e)) { settleSending(key); return; }
         unnoteSending(key);
@@ -10072,6 +10135,7 @@ async function sendNow(urgent = false) {
       // go in), until the transcript has it.
       edClear();
       if ($('#thr-also')) $('#thr-also').checked = false;
+      if (NEW_THREAD) { NEW_THREAD = false; composerDestinationPaint(); }
       noteSent(d && d.send);
       setTimeout(checkSolo, 1200);
       setTimeout(refresh, 400);  // the hub's hold on it, and "resuming", show at once
@@ -10087,7 +10151,7 @@ async function sendNow(urgent = false) {
     let d;
     const key = msgKey();
     noteSending(key, t, to);
-    try { d = await sendResuming(t, to, key, atts, urgent); }
+    try { d = await sendResuming(t, to, key, atts, urgent, true); }
     catch (e) {
       if (keptByHub(e)) { settleSending(key); return; }
       unnoteSending(key);
@@ -10097,6 +10161,7 @@ async function sendNow(urgent = false) {
     }
     SEND_ERR = ''; SEND_KEY = '';
     edClear(); noteSent(d && d.send); refresh();
+    if (NEW_THREAD) { NEW_THREAD = false; composerDestinationPaint(); }
   } finally {
     setSendBusy(false);
   }

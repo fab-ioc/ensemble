@@ -162,7 +162,9 @@ class Points(unittest.TestCase):
         self.assertIn('title="Go to the answer">see the answer ↓</a></span>', r["hisAnswered"])
         self.assertNotIn("data-pt-act", r["hisAnswered"], "a delivered point is neither dropped nor reopened")
         self.assertIn('<span class="pt-st done">done — ', r["hisAcked"])
-        self.assertIn('<span class="pt-chip">acknowledged</span>', r["hisAcked"])
+        # #367: no "acknowledged" word on the row; Reopen shows on hover.
+        self.assertNotIn("acknowledged", r["hisAcked"])
+        self.assertIn('class="pt-btn pt-hover" data-pt="P1" data-pt-act="reopen"', r["hisAcked"])
         # Read again after the thumbs up, the question still leads to its answer.
         self.assertIn('data-ref-msg="s:10"', r["hisAcked"])
         self.assertIn('data-pt-act="reopen"', r["hisAcked"])
@@ -174,7 +176,9 @@ class Points(unittest.TestCase):
         self.assertIn('data-ref-msg="s:0"', r["agent"])
         self.assertIn('data-pt="P2" data-pt-act="ack"', r["agent"])
         self.assertIn("👍 Ack", r["agent"])
-        self.assertIn("acknowledged", r["agentAcked"])
+        # #367: one quiet "answers Pn" link per point, no "acknowledged" chip.
+        self.assertNotIn("acknowledged", r["agentAcked"])
+        self.assertEqual(r["agentAcked"].count("answers P1"), 1)
         self.assertNotIn('data-pt-act="ack"', r["agentAcked"])
         self.assertEqual(r["nothing"], "")
 
@@ -607,7 +611,7 @@ class BalloonStates(unittest.TestCase):
         self.assertIn('<span class="pt-st done">done — ', w["cardAnswered"])
         self.assertNotIn("waiting", w["cardAnswered"])
         self.assertIn('<span class="pt-st done">done — <a class="pt-link" href="/session?room=room-po&amp;msg=a8&amp;part=re:P8"', w["acked"])
-        self.assertIn('<span class="pt-chip">acknowledged</span>', w["acked"])
+        self.assertNotIn("acknowledged", w["acked"])
         self.assertIn('data-pt="P8" data-pt-act="reopen"', w["acked"])
         self.assertIn('<span class="pt-chip"><a class="pt-link" href="/session?room=room-po&amp;msg=u10&amp;part=pt:P10" data-ref-msg="u10" data-ref-part="pt:P10"'
                       ' title="Go to P10, your follow-up">you replied ↓</a></span>', w["followed"])

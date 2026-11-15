@@ -443,6 +443,7 @@ class ThreadsPage(unittest.TestCase):
         work_question, ids = points.take(chatroom.get_room(work_rid, public=False),
                                          "How is #12?", key="P3", now=work_t0, sid=work_sid)
         assert ids == ["P3"], ids
+        threads.note_send(work_rid, "", "P3", ids, False, work_question, now=work_t0, new=True)
         work_lines = cls.lines[work_rid]
         work_lines.extend([_turn(work_sid, "user", work_question, work_t0 + 1),
                            _turn(work_sid, "assistant", "Re P3: The chart is ready.", work_t0 + 2)])
@@ -527,6 +528,8 @@ class ThreadsPage(unittest.TestCase):
         for pid, text, answers, dt in talk:
             q, ids = points.take(chatroom.get_room(rid, public=False), text, key=pid, now=t0 + dt, sid=sid)
             assert ids == [pid], ids
+            # Sent as a new thread (#367: only the person starts one).
+            threads.note_send(rid, "", pid, ids, False, q, now=t0 + dt, new=True)
             lines.append(_turn(sid, "user", q, t0 + dt + 1))
             lines += [_turn(sid, "assistant", a, t0 + dt + 5 + i) for i, a in enumerate(answers)]
             if pid == "P1":

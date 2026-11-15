@@ -156,12 +156,14 @@ if not ids_file.exists():
     ids["po"] = po["id"]
     text, got = points.take(chatroom.get_room(po["id"], public=False), "Make the board wider", to="claude", key="k1")
     assert got == ["P1"], got
+    now = time.time() - 60       # before the card: a chat draws no hub row above its first turn
+    import threads as thr        # P1 is sent as a new thread: only the person starts one (#367)
+    thr.note_send(po["id"], "", "k1", got, False, text, now=now, new=True)
     tdir = dashboard.PROJ_DIR / "C--po"; tdir.mkdir(parents=True, exist_ok=True)
     def turn(role, words, at):
         msg = {"role": role, "content": words if role == "user" else [{"type": "text", "text": words}]}
         if role == "assistant": msg["stop_reason"] = "end_turn"
         return {"type": role, "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(at)) + ".000Z", "sessionId": "po-sid", "message": msg}
-    now = time.time() - 60       # before the card: a chat draws no hub row above its first turn
     (tdir / "po-sid.jsonl").write_text("".join(json.dumps(x) + chr(10) for x in [turn("user", text, now), turn("assistant", "Re P1: it is wider now.", now + 1)]), encoding="utf-8")
     points.sync(po["id"], force=True)
     led = points.load(po["id"], shared=True)

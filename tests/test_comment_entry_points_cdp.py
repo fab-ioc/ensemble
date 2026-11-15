@@ -333,6 +333,7 @@ class EveryComment(unittest.TestCase):
         threads.forget()
         q, ids = points.take(chatroom.get_room(cls.po, public=False), "Please make the board wider", key="P1", now=t0 + 10, sid=sid)
         assert ids == ["P1"], ids
+        threads.note_send(cls.po, "", "P1", ids, False, q, now=t0 + 10, new=True)   # a new thread (#367)
         tdir = base / "transcripts" / "C--po"
         tdir.mkdir()
         (tdir / f"{sid}.jsonl").write_text("".join(json.dumps(x) + "\n" for x in [
