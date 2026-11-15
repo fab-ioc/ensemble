@@ -1124,7 +1124,7 @@ Changes · Files · Board · Spec`, with Panels ▾ in the bar. An open task is 
 too (`pdTask()` holds on a phone), so its tools are the same tabs, not the task panel's own:
 tabs, not a sheet, because they are the same dock and panes as the desktop's strip (no new
 component) and the mockup (`a2-…-390.png`) shows a tab row. The conversation's tab names what it holds
-(`pdSyncTitles`, Dock's `setTitle`): the PO's chat is its **project's name** (#261, P213), on its tab, its window's name (once: `popTitle` adds no second project), and the Panels menu; "#12 The title" with a task in the middle, as a task's chat panel names its task. **The header under a tab does not name it again**: the PO's says "PO" (a drawer, which has no tab, keeps "*Project* · PO"), and a docked task panel hides its title (`body.dp-docked … .dp-head h2`). A switch of project or a rename re-titles the tab. Long names are cut by Dock's tab ellipsis (`--dk-tab-max`) with the whole name in its tooltip. On a phone (the narrow dock) a task's conversation tab keeps reading **Chat** (`PD_TITLES`); the PO's is the project's name cut at 112 px (`#po-dock.dk-narrow .dk-tab[data-dk-tab="po-chat"]`), and a long press on a cut tab shows the whole name in a toast. The row scrolls sideways (Board has been past a 390 px row's edge since Topics came). The Tabs rule above ("a tab that renames itself…") is about the task panel's fixed tab set; a dock panel names its content, as a file panel does.
+(`pdSyncTitles`, Dock's `setTitle`): the PO's chat is its **project's name** (#261, P213), on its tab, its window's name (once: `popTitle` adds no second project), and the Panels menu; "#12 The title" with a task in the middle, as a task's chat panel names its task. **The header under a tab does not name it again**: the PO's says "PO" (a drawer, which has no tab, keeps "*Project* · PO"), and a docked task panel hides its title (`body.dp-docked … .dp-head h2`). A switch of project or a rename re-titles the tab. Long names are cut by Dock's tab ellipsis (`--dk-tab-max`) with the whole name in its tooltip. On a phone (the narrow dock) a task's conversation tab keeps reading **Chat** (`PD_TITLES`); the PO's is the project's name cut at 112 px (`#po-dock.dk-narrow .dk-tab[data-dk-tab="po-chat"]`), and a long press on a cut tab shows the whole name in a toast. The row scrolls sideways (Board is past a 390 px row's edge). The Tabs rule above ("a tab that renames itself…") is about the task panel's fixed tab set; a dock panel names its content, as a file panel does.
 
 A project with a PO opens on its **PO screen**: a Dock (`static/dock`, a vendored copy of the Dock
 library; `VERSION` names its commit, v0.24.0 now) of five panels, **PO chat, Needs you, Board, Workspace,
@@ -1317,23 +1317,24 @@ third of the panel empty).
 
 ### The chat's filter (#304)
 
-**Topics is a filter on the conversation, not a place of its own.** A threaded chat has one row of
-pills over its balloons (`#chat-filters`, session.html): **All · Threads N · Topics N ▾ · Unread N**.
+A threaded chat has one row of pills over its balloons (`#chat-filters`, session.html):
+**All · Threads N · Unread N**. Topics were removed (P345): there is no Topics pill, popover or
+filter, and nothing reads `~/.ensemble/topics/`.
 One is pressed at a time (`aria-pressed`, `--selected-bg`/`--selected-fg`); the counts are
 `.cf-n`, the pill's own colour at 75%, and none shows until the hub sent it.
 - **All** the channel; **Threads** only the balloons of a thread with replies (the hub's
-  `&threads=1`; an unanswered balloon is no thread); **Topics** opens a popover (`#topics-pop`,
-  `min(360px, 100vw - 32px)`) listing the active topics, Show all for the rest, and each topic's
-  corrections behind ⋯ (rename, merge, move, archive, restore); picking one filters the chat to it
-  (`&topic=`) and closes the list; **Unread** the threads with new replies, newest first.
-- A filter on says so in `#topic-note` ("Showing topic *X*", "Showing threads only") with **Show all**.
-- The choice is kept per chat in this browser (`ens-chat-filter:<room>`). A link to a balloon the
-  filter hides puts the filter back to All, then lands.
+  `&threads=1`; an unanswered balloon is no thread); **Unread** the threads with new replies,
+  newest first.
+- A filter on says so in `#filter-note` ("Showing threads only", "Showing threads with new
+  replies") with **Show all**.
+- The choice is kept per chat in this browser (`ens-chat-filter:<room>`); a stored filter that is
+  neither Threads nor Unread (a topic kept from before P345) is All, and its key is dropped. A
+  link to a balloon the filter hides puts the filter back to All, then lands.
 - 28px pills, 44px (`--touch-min`) on a coarse pointer; the row never scrolls the page sideways at
   360px. A thread page has no filter row.
-- There is **no Topics panel** in the PO page's dock any more: a layout saved with one opens
-  without it (Dock parks the unknown panel). The Needs you list's topic links open the chat with
-  that topic's filter on (`pdTopicTell`).
+- There is **no Topics panel** in the PO page's dock: a layout saved with one opens without it
+  (Dock parks the unknown panel). An old topic link (`&topic=`, `#topic-…`) opens the PO chat;
+  the hub's `/api/room/topics` answers 410.
 
 ### A send on its way
 

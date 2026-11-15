@@ -16,6 +16,7 @@ takes as alive.
 Links (each at both sizes):
 
 * ``/?room=<PO>&msg=<answer>`` opens the PO's conversation at that balloon;
+  an old topic link (``&topic=…``, ``/?topic=…``, ``#topic-…``; P345) the PO's;
   ``/?room=<task>&msg=<card>&part=ask:0`` the task's, at its card;
   ``/?room=<PO>&thread=P1`` the P1 thread; a room the app does not list goes
   to the chat's own page (``&stay=1``), which offers no way back;
@@ -451,6 +452,12 @@ async function main() {
       : `document.body.classList.contains('po-dock') && ldOnScreen('inbox') ? { po: PD.pid } : null`, 20000).catch(async e => ({ fail: e.message, body: await p.ev(`document.body.className`) }));
     o.links.needsOver = await p.ev(OVER);
     await p.close();
+    // Old topic links (Topics were removed, P345): the PO chat, no error.
+    for (const [k, url] of [['topicQs', `/?room=${I.po}&topic=subject:P1`], ['topicBare', '/?topic=subject:P1'], ['topicHash', '/#topic-subject-P1']]) {
+      p = await app(b.c, url, true);
+      o.links[k] = await p.until(`${FRAMES(I.po)}.length ? location.pathname + location.search + location.hash : ''`, 30000).catch(async e => ({ fail: e.message, url: await p.ev('location.href') }));
+      await p.close();
+    }
     p = await tab(b.c, `/session?room=${I.po}&msg=${I.answer}`);
     await p.until(`(() => { const a = document.getElementById('to-app'); return a && !a.hidden; })()`, 20000).catch(() => null);
     // Once it has landed (on a phone the answer's thread opens over the chat,
@@ -558,6 +565,8 @@ class LinksAndStatesInChrome(unittest.TestCase):
                 self.assertFalse(L["unknownToApp"], "no way back to an app that does not list it")
                 self.assertNotIn("fail", L["needs"] or {"fail": "none"}, L["needs"])
                 self.assertLessEqual(L["needsOver"], 1)
+                for k in ("topicQs", "topicBare", "topicHash"):
+                    self.assertEqual(L[k], "/", f"{k}: an old topic link opens the PO chat at the app's own address")
                 self.assertEqual(L["framedIcons"], [], "a chat in the app's frame has no icon back to it")
                 self.assertEqual(L["embedIcons"], [])
 

@@ -1,11 +1,12 @@
-"""CDP coverage for the chat's filter (#304): All, Threads, Topics, Unread.
+"""CDP coverage for the chat's filter (#304): All, Threads, Unread.
 
-Topics stopped being a panel of its own on the PO page; the conversation got a
-row of filter pills over it. Each viewport has a solo PO chat with two threads
-(P1 with two replies, P2 with one) and Team activity; the project's topics are
-mocked (topics.view) as one topic holding P2. Checked at desktop and phone
-widths: the pills and their counts, each filter's balloons, Show all, a link
-to a balloon outside the filter landing, no sideways scroll, no page errors.
+The conversation has a row of filter pills over it (Topics were removed,
+P345). Each viewport has a solo PO chat with two threads (P1 with two
+replies, P2 with one) and Team activity. Checked at desktop and phone
+widths: the pills and their counts, no Topics pill or list, each filter's
+balloons, a reload keeping the filter, Show all, a stored topic filter from
+before falling back to All, a link to a balloon outside the filter landing,
+no sideways scroll, no page errors.
 Screenshots go to $ENSEMBLE_SHOTS when set. Skipped without Node and Chrome.
 """
 from __future__ import annotations
@@ -62,9 +63,9 @@ class Cdp {
   send(method, params = {}, sessionId) { const id = ++this.id; return new Promise((res, rej) => { this.waits.set(id, { res, rej }); this.ws.send(JSON.stringify({ id, method, params, sessionId })); }); }
 }
 const VIEW = `(() => {
-  const row = document.getElementById('chat-filters'), pop = document.getElementById('topics-pop'), note = document.getElementById('topic-note');
+  const row = document.getElementById('chat-filters'), note = document.getElementById('filter-note');
   const words = e => e ? e.textContent.replace(/\\s+/g, ' ').trim() : '';
-  const r = row.getBoundingClientRect(), pr = pop.getBoundingClientRect();
+  const r = row.getBoundingClientRect();
   return {
     mids: [...document.querySelectorAll('#msgs .msg[data-mid]')].map(e => e.dataset.mid),
     lines: [...document.querySelectorAll('#msgs .thr-line')].map(e => e.dataset.thrLine),
@@ -73,7 +74,8 @@ const VIEW = `(() => {
     pills: [...row.querySelectorAll('[data-filter]')].map(b => ({ f: b.dataset.filter, text: words(b), pressed: b.getAttribute('aria-pressed'),
       h: Math.round(b.getBoundingClientRect().height), right: Math.round(b.getBoundingClientRect().right) })),
     rowRight: Math.round(r.right),
-    pop: { open: !pop.hidden, left: Math.round(pr.left), right: Math.round(pr.right), rows: [...pop.querySelectorAll('[data-tp-open]')].map(b => b.dataset.tpOpen) },
+    topics: { pop: !!document.getElementById('topics-pop'), oldNote: !!document.getElementById('topic-note'),
+      pill: !!row.querySelector('[data-filter=topics]'), words: /\\btopics?\\b/i.test(words(row) + ' ' + words(note)) },
     note: { shown: !!note && !note.hidden, text: words(note) },
     tl: [...document.querySelectorAll('#msgs .tl-row')].map(e => { const b = e.querySelector('.tl-hit'), r = e.getBoundingClientRect();
       return { id: e.querySelector('.tl-open').dataset.thr, title: words(e.querySelector('.tl-title')), meta: words(e.querySelector('.tl-meta')),
@@ -85,7 +87,6 @@ const VIEW = `(() => {
         focus: document.activeElement && document.activeElement.dataset ? document.activeElement.dataset.selAct || '' : '' }; })(),
     undo: words(document.querySelector('#msgs .tl-undo')),
     fold: words(document.querySelector('#msgs .tl-fold')),
-    popBar: words(pop.querySelector('.tl-bar')),
     stored: (() => { try { return localStorage.getItem('ens-chat-filter:' + ROOM); } catch (e) { return null; } })(),
     scrollX: document.documentElement.scrollWidth - innerWidth,
     width: innerWidth,
@@ -112,7 +113,7 @@ async function main() {
       const settled = async () => { await until('typeof THR_DRAWN !== "undefined" && THR_DRAWN && !THR_FETCHING', 30000); await sleep(500); };
       const go = async (q) => { await c.send('Page.navigate', { url: A.base + '/session?' + q }, sessionId); await settled(); };
       await go('room=' + room);
-      await until(pill('threads') + '.textContent.match(/\\d/) && ' + pill('topics') + '.textContent.match(/\\d/)', 20000);
+      await until(pill('threads') + '.textContent.match(/\\d/)', 20000);
       o.all = await evalIn(VIEW);
       await shot('1-all');
       // Threads: only the balloons of a thread.
@@ -152,39 +153,25 @@ async function main() {
       o.cancelled = await evalIn(VIEW);
       await evalIn(act('off') + '.click(); 0');
       await until('!document.querySelector("#msgs .tl-box")', 5000);
-      // Topics: the list, one picked, the chat shows that topic only.
-      await evalIn(pill('topics') + '.click(); 0');
-      await until('!document.getElementById("topics-pop").hidden && !!document.querySelector("#topics-pop [data-tp-open]")', 10000);
-      o.popOpen = await evalIn(VIEW);
-      await shot('3-topics');
-      // The topic's Delete… asks once; Escape cancels it and keeps the list open.
-      await evalIn('document.querySelector("#topics-pop [data-tp-action=delete]").click(); 0');
-      await until('!!document.querySelector("#topics-pop .tl-bar.confirm")', 5000);
-      o.popConfirm = await evalIn(VIEW);
-      await shot('3b-topic-delete');
-      await evalIn('document.dispatchEvent(new KeyboardEvent("keydown", {key: "Escape", bubbles: true})); 0');
-      await until('!document.querySelector("#topics-pop .tl-bar.confirm")', 5000);
-      o.popCancelled = await evalIn(VIEW);
-      await evalIn('document.querySelector("#topics-pop [data-sel-act=off]").click(); 0');
-      await until('!document.querySelector("#topics-pop .tl-box")', 5000);
-      await evalIn('document.querySelector("#topics-pop [data-tp-open]").click(); 0');
-      await until(pill('topics') + '.getAttribute("aria-pressed") === "true"', 5000); await settled();
-      o.topic = await evalIn(VIEW);
-      await shot('4-topic');
-      // A reload keeps the filter.
+      // Threads is still on: a reload keeps it.
       await go('room=' + room);
       o.reloaded = await evalIn(VIEW);
-      // Show all, under the topic's note.
-      await evalIn('document.querySelector("#topic-note button").click(); 0');
+      // Show all, under the filter's note.
+      await evalIn('document.querySelector("#filter-note button").click(); 0');
       await until(pill('all') + '.getAttribute("aria-pressed") === "true"', 5000); await settled();
       o.shownAll = await evalIn(VIEW);
+      // A topic filter stored before Topics were removed (P345): All, quietly, its key gone.
+      await evalIn(`localStorage.setItem('ens-chat-filter:' + ROOM, JSON.stringify({kind:'topic', topic:{id:'subject:P2', name:'Brake light'}})); 0`);
+      await go('room=' + room);
+      o.oldTopic = await evalIn(VIEW);
+      await shot('4-old-topic');
       // Unread: the threads with new replies.
       await evalIn(pill('unread') + '.click(); 0');
       await until(pill('unread') + '.getAttribute("aria-pressed") === "true"', 5000); await settled();
       o.unread = await evalIn(VIEW);
       await shot('5-unread');
       // A link to a balloon the filter hides: the filter steps aside, the balloon lands.
-      await evalIn(`localStorage.setItem('ens-chat-filter:' + ROOM, JSON.stringify({kind:'topic', topic:{id:'subject:P2', name:'Brake light'}})); 0`);
+      await evalIn(`localStorage.setItem('ens-chat-filter:' + ROOM, JSON.stringify({kind:'threads'})); 0`);
       await c.send('Page.navigate', { url: A.base + '/session?room=' + room + '&msg=' + encodeURIComponent(A.linkMid[String(w)]) }, sessionId);
       await until(`!!document.querySelector('#msgs .msg[data-mid="${A.linkMid[String(w)]}"]')`, 30000);
       await sleep(800);
@@ -216,12 +203,6 @@ class ChatFilters(unittest.TestCase):
         cls.tdir = base / "transcripts" / "C--po"
         cls.tdir.mkdir(parents=True)
         (base / "cs").mkdir()
-        now = time.time()
-
-        def view(project, room, rooms_dir, **_):
-            return {"topics": [{"id": "subject:P2", "name": "Brake light", "threads": ["P2"], "threadCount": 1,
-                                "unread": 1, "decisions": 0, "latest": {"ts": now - 60, "text": "the pads are worn"}}],
-                    "archived": [], "suggestions": {}}
 
         cls.patches = [
             mock.patch.object(dashboard, "PROJECTS_ROOT", root),
@@ -239,7 +220,6 @@ class ChatFilters(unittest.TestCase):
             mock.patch.object(dashboard, "_send_left_behind", return_value=""),
             mock.patch.object(dashboard.Handler, "_agent_peer", lambda h: ""),
             mock.patch.object(dashboard.Handler, "log_message", lambda *a, **k: None),
-            mock.patch.object(dashboard.topics, "view", side_effect=view),
             mock.patch.dict(os.environ, {"CODEX_HOME": str(base / "codex")}),
         ]
         for p in cls.patches:
@@ -251,7 +231,7 @@ class ChatFilters(unittest.TestCase):
         for w, _h, _m in SIZES:
             rid = cls._po_room(f"Motors {w}", f"cf{w}")
             cls.rooms[str(w)] = rid
-            cls.link[str(w)] = f"cf{w}:0"          # the PO's first note: in no topic, in no thread
+            cls.link[str(w)] = f"cf{w}:0"          # the PO's first note: in no thread
             threads.build(rid, show_progress=False)
         cls.server = ThreadingHTTPServer(("127.0.0.1", 0), dashboard.Handler)
         cls.server.daemon_threads = True
@@ -311,12 +291,11 @@ class ChatFilters(unittest.TestCase):
             with self.subTest(width=w):
                 a = o["all"]
                 self.assertTrue(a["rowShown"])
-                self.assertEqual([p["f"] for p in a["pills"]], ["all", "threads", "topics", "unread"])
+                self.assertEqual([p["f"] for p in a["pills"]], ["all", "threads", "unread"])
                 text = {p["f"]: p["text"] for p in a["pills"]}
                 self.assertEqual(text["threads"], "Threads 2", "P1 and P2 have replies; Team activity is no thread")
-                self.assertTrue(text["topics"].startswith("Topics 1"), text)
                 self.assertEqual(text["unread"], "Unread 2")
-                self.assertEqual([p["pressed"] for p in a["pills"]], ["true", "false", "false", "false"])
+                self.assertEqual([p["pressed"] for p in a["pills"]], ["true", "false", "false"])
                 self.assertEqual(sorted(a["lines"]), ["P1", "P2"])
                 if w != "1728":
                     self.assertTrue(all(p["h"] >= 44 for p in a["pills"]), "a finger's size on a phone")
@@ -364,32 +343,32 @@ class ChatFilters(unittest.TestCase):
                         self.assertGreaterEqual(v["bar"]["btnH"], 44, step)
                         self.assertTrue(all(r["box"] >= 44 for r in v["tl"] if r["box"]), step)
 
-    def test_a_topic_delete_asks_once_and_escape_cancels(self):
+    def test_no_topics_pill_list_or_filter(self):
+        # P345: Topics were removed, on the computer and the phone.
         for w, o in self._each():
             with self.subTest(width=w):
-                self.assertIn("Delete 1 topic?", o["popConfirm"]["popBar"])
-                self.assertIn("the topic and its threads are removed", o["popConfirm"]["popBar"])
-                self.assertTrue(o["popCancelled"]["pop"]["open"], "Escape cancelled the delete, not the list")
-                self.assertNotIn("Delete 1 topic?", o["popCancelled"]["popBar"])
+                for step in ("all", "threads", "shownAll", "oldTopic", "unread"):
+                    self.assertEqual(o[step]["topics"], {"pop": False, "oldNote": False, "pill": False, "words": False}, step)
 
-    def test_a_topic_picked_shows_that_topic_only_and_show_all_restores(self):
+    def test_a_reload_keeps_the_filter_and_show_all_restores(self):
         for w, o in self._each():
             with self.subTest(width=w):
-                sid = f"cf{w}"
-                self.assertTrue(o["popOpen"]["pop"]["open"])
-                self.assertEqual(o["popOpen"]["pop"]["rows"], ["subject:P2"])
-                p = o["popOpen"]["pop"]
-                self.assertGreaterEqual(p["left"], 0)
-                self.assertLessEqual(p["right"], o["popOpen"]["width"], "the list stays on screen")
-                t = o["topic"]
-                self.assertFalse(t["pop"]["open"], "picking a topic closes the list")
-                self.assertEqual(t["mids"], [f"{sid}:6"])
-                self.assertIn("Brake light", t["note"]["text"])
-                self.assertEqual(o["reloaded"]["mids"], [f"{sid}:6"], "a reload keeps the filter")
+                r = o["reloaded"]
+                self.assertEqual([p["pressed"] for p in r["pills"]], ["false", "true", "false"], "a reload keeps Threads")
+                self.assertEqual([x["id"] for x in r["tl"]], ["P2", "P1"])
                 s = o["shownAll"]
                 self.assertIsNone(s["stored"])
                 self.assertFalse(s["note"]["shown"])
                 self.assertEqual(s["mids"], o["all"]["mids"])
+
+    def test_a_stored_topic_filter_falls_back_to_all(self):
+        for w, o in self._each():
+            with self.subTest(width=w):
+                t = o["oldTopic"]
+                self.assertEqual([p["pressed"] for p in t["pills"]], ["true", "false", "false"])
+                self.assertIsNone(t["stored"], "the old key is removed")
+                self.assertFalse(t["note"]["shown"], "no note, no error")
+                self.assertEqual(t["mids"], o["all"]["mids"])
 
     def test_unread_lists_the_threads_with_new_replies(self):
         for w, o in self._each():
@@ -408,7 +387,7 @@ class ChatFilters(unittest.TestCase):
     def test_no_sideways_scroll_and_no_page_errors(self):
         for w, o in self._each():
             with self.subTest(width=w):
-                for step in ("all", "threads", "selOn", "confirm", "popOpen", "popConfirm", "topic", "unread", "linked"):
+                for step in ("all", "threads", "selOn", "confirm", "reloaded", "oldTopic", "unread", "linked"):
                     v = o[step]
                     self.assertLessEqual(v["scrollX"], 0, step)
                     self.assertLessEqual(v["rowRight"], v["width"], step)

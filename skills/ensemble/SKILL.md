@@ -1041,9 +1041,9 @@ it is live or answered), each with the facts it needs to stand alone. So:
   messages ("still waiting on you for …"); the card stays in their Needs you.
   Link it once more only when something about it changed (a deadline, a cost).
 - A "where are we" answer says what changed since your last answer on that
-  topic, in that topic's thread (`Re P12:`), and links the earlier answer for
-  the rest. One status per topic, not a fresh whole-project summary.
-- The newest answer on a topic carries the facts: write it so that it stands
+  point, in that point's thread (`Re P12:`), and links the earlier answer for
+  the rest. One status per point, not a fresh whole-project summary.
+- The newest answer on a point carries the facts: write it so that it stands
   alone (what is true now, the task number, what is next), because it is what
   they find when they come back hours later.
 

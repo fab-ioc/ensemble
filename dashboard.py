@@ -13315,7 +13315,7 @@ def thread_act(rid: str, room: dict, action: str, tids: list) -> list:
 def old_threads(cutoff: float, room_id: str = "") -> list:
     """Free disk space's "Old threads" (#319): in every PO chat (or
     ``room_id``'s), the threads not updated since ``cutoff``, none of them
-    archived. Rows: {kind thread, room, id, name, chat, at, threads}."""
+    archived. Rows: {kind thread, room, id, name, chat, at, openPoints}."""
     rows = []
     for p in load_projects():
         rid = (p.get("poRoomId") or "").strip() if isinstance(p, dict) else ""
@@ -13331,7 +13331,7 @@ def old_threads(cutoff: float, room_id: str = "") -> list:
             at = float(th.get("updatedAt") or 0)
             if 0 < at < cutoff:
                 rows.append({"kind": "thread", "room": rid, "id": tid, "name": th.get("title") or tid,
-                             "chat": chat, "at": at, "threads": [tid],
+                             "chat": chat, "at": at,
                              "openPoints": list(th.get("openPoints") or [])})
     return rows
 

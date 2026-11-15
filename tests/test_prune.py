@@ -548,9 +548,9 @@ class PruneTests(unittest.TestCase):
     def test_old_threads_preview_defaults_to_archive_and_accepts_delete(self):
         hub = self.hub()
         rows = [{"kind": "thread", "room": "po-1", "id": "t-1", "name": "Old", "chat": "PO",
-                 "at": OLD, "threads": []},
+                 "at": OLD},
                 {"kind": "thread", "room": "po-1", "id": "t-2", "name": "Older", "chat": "PO",
-                 "at": OLD - DAY, "threads": []}]
+                 "at": OLD - DAY}]
         calls = []
         reads = []
         hub.old_threads = lambda cutoff: reads.append(cutoff) or rows
