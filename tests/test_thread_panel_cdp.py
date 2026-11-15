@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 import chatroom  # noqa: E402
 import dashboard  # noqa: E402
+import threads  # noqa: E402
 from tests import chrome_profile  # noqa: E402
 from tests.test_page_update import CHROME  # noqa: E402
 
@@ -229,6 +230,9 @@ class ThreadPanel(unittest.TestCase):
         lines += [turn('user', 'And the thread opens beside it.', 20)]
         lines += [turn('assistant', f'Reply {i}: ' + 'Another line of the second thread. ' * 6, i + 21) for i in range(6)]
         (transcript / f'{po_sid}.jsonl').write_text(''.join(json.dumps(x)+'\n' for x in lines), encoding='utf-8')
+        # Both sent as new threads (#367: only the person starts one).
+        for text, offset in (('We need the chat to use the whole width of its panel.', 1), ('And the thread opens beside it.', 20)):
+            threads.note_send(cls.po, '', '', [], False, text, now=at + offset, new=True)
         task = chatroom.create_room('Wide chat', [{'identity':'claude','agent':'claude','cwd':str(home)}])
         chatroom.post_message(task['id'], 'user', 'A message above the composer')
         dashboard.assign_session_project(task['id'], cls.proj)
