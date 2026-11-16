@@ -17242,8 +17242,8 @@ function ibxOpen() {
 document.getElementById('inbox-btn').addEventListener('click', ibxOpen);
 // ---- The Projects panel of a computer's left strip (#322, P289): begin -------
 // It takes the Tasks panel's place, beside the Inbox on the strip (one open at
-// a time): All, each project (newest first, its PO or its Board one click
-// away) with its Inbox count, then each task and session in no project, the
+// a time): All, each project (pinned first, then by Inbox count and name, #376;
+// its PO or its Board one click away) with its Inbox count, then each task and session in no project, the
 // folded Unassigned group of the old list. Picking a row scopes the Inbox and
 // opens it in the middle. Make PO of a new
 // project is on a loose row's ⋯ and on its right click.
@@ -17275,7 +17275,8 @@ function ldpModel() {
     const n = ldpCount(e.pid);
     projs.push({ pid: e.pid, name: e.project || e.pid, n, k: inKey(e.pid, n) });
   }
-  projs.sort((a, b) => (b.k - a.k) || a.name.localeCompare(b.name));
+  // Two projects may share a name (other folders): then by id, never by activity.
+  projs.sort((a, b) => (b.k - a.k) || a.name.localeCompare(b.name) || (a.pid < b.pid ? -1 : a.pid > b.pid ? 1 : 0));
   const seenL = new Set(), loose = [];
   const add = (e, kind, at) => {
     if (!e || !e.key || seenL.has(e.key)) return;
@@ -17296,9 +17297,11 @@ function ldpModel() {
 }
 // #376: the projects you are in, the one picked in the list (ibxLdPid) and the
 // one whose PO chat or page is open (ldHere), are placed by the count each had
-// when you went in, or a higher one it has reached since: seeing or answering
-// what waits in it lowers its count, and that does not move it. Once you are in
-// another, it is placed by its own count again. Returns (pid, count) -> its key.
+// when you went in, or the highest it has reached since: a rise moves it up, and
+// seeing or answering what waits in it lowers its count, which never moves it
+// (also after a rise: the PO's ruling on #376, its own count falling never moves
+// the one you are in). Once you are in another, it is placed by its own count
+// again. Returns (pid, count) -> its key.
 function ldpInKey() {
   const ins = new Set();
   try { for (const v of [ibxLdPid(), ldHere()]) if (v && !v.startsWith('room:')) ins.add(v); } catch (e) {}

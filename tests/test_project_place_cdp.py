@@ -3,10 +3,13 @@
 serving the pages; nothing patched between the page and the Inbox, so opening a
 project's PO chat marks its answer seen, as it does live.
 
-Four projects with a PO each: Bee keeping, Cat shelter and Dog walks with one
-answer to check (an Inbox count of 1 each), Abacus notes with none. Checked:
+Five projects with a PO each: Bee keeping, Cat shelter, Dog walks and a second
+Cat shelter (another folder) with one answer to check (an Inbox count of 1
+each), Abacus notes with none. Checked:
 
-* the unpinned go by Inbox count, then by name: Bee, Cat, Dog, Abacus;
+* the unpinned go by Inbox count, then by name, then (the two Cat shelters) by
+  id: Bee, Cat, Cat, Dog, Abacus; the Cats keep their id order at every step,
+  also when the later one by id speaks;
 * a click on the top one (Bee) opens its PO chat, which lowers its count to 0,
   and no row moves: the project you are in keeps the count it had;
 * then its PO and its task speak, and you write in its PO chat: nothing moves;
@@ -45,8 +48,13 @@ from tests import test_left_panel_order_cdp as lpo  # noqa: E402
 
 NODE = shutil.which("node")
 # name, answers to check; registered and spoken in in this order
-SEED = [("Abacus notes", 0), ("Bee keeping", 1), ("Cat shelter", 1), ("Dog walks", 1)]
-START = ["Bee keeping", "Cat shelter", "Dog walks", "Abacus notes"]
+# key, answers to check, code folder outside the projects root ("": the name's own
+# in it); registered and spoken in in this order. "Cat shelter 2" is a second
+# project named Cat shelter, from a code folder of that name elsewhere.
+SEED = [("Abacus notes", 0, ""), ("Bee keeping", 1, ""), ("Cat shelter", 1, ""), ("Dog walks", 1, ""),
+        ("Cat shelter 2", 1, "code/Cat shelter")]
+NAME = {"Cat shelter 2": "Cat shelter"}
+START = ["Bee keeping", "Cat shelter", "Cat shelter", "Dog walks", "Abacus notes"]
 
 # The #337 test's launcher, CDP client and row reader (everything before its main).
 CDP_JS = lpo.CDP_JS[:lpo.CDP_JS.index("async function main()")] + r"""
@@ -80,7 +88,8 @@ async function main() {
   const cnt = name => `ldpCount(${J(P[name])})`;
   // the pointer away from the list, the hold over (2 s), the polls in
   const settle = async () => { await mouse('mouseMoved', 900, 600); await sleep(4000); };
-  const step = async (k) => { await settle(); out.steps[k] = { order: await names(), counts: await counts(), pd: await evalIn('PD.pid') }; await shot('place-' + k); };
+  const cats = async () => (await projRows()).filter(r => r.name === 'Cat shelter').map(r => r.proj);
+  const step = async (k) => { await settle(); out.steps[k] = { order: await names(), cats: await cats(), counts: await counts(), pd: await evalIn('PD.pid') }; await shot('place-' + k); };
   const open = async (name) => {
     const r = (await projRows()).find(x => x.proj === P[name]);
     await clickAt(r.cx, r.cy);
@@ -155,24 +164,27 @@ class ProjectKeepsItsPlaceInChrome(unittest.TestCase):
         members = lambda home: [{"identity": "claude", "agent": "claude", "cwd": str(home)},
                                 {"identity": "codex", "agent": "codex", "cwd": str(home)}]
         cls.ids, cls.po, cls.task = {}, {}, {}
-        for name, n in SEED:
-            ok, proj, _ = dashboard.register_project(name)
+        for key, n, folder in SEED:
+            name = NAME.get(key, key)
+            ok, proj, _ = dashboard.register_project(str(base / folder) if folder else name, name=name)
             assert ok, proj
-            cls.ids[name] = proj["id"]
+            cls.ids[key] = proj["id"]
             home = Path(proj.get("home") or proj["path"])
             po = chatroom.create_room(f"{name} PO", members(home))
             dashboard.assign_session_project(po["id"], proj["id"])
             ok, why = dashboard.set_project_po(proj["id"], po["id"])
             assert ok, why
-            cls.po[name] = po["id"]
+            cls.po[key] = po["id"]
             task = chatroom.create_room(f"A task in {name}", members(home))
             dashboard.assign_session_project(task["id"], proj["id"])
-            cls.task[name] = task["id"]
+            cls.task[key] = task["id"]
             if n:
                 cls.answer(po["id"], "k0")
             else:
                 chatroom.post_message(po["id"], "user", "hello", to="claude")
             time.sleep(1.1)  # the next project's conversation the later one
+        # the later of the two Cat shelters by id speaks (in its task) while you work in Bee
+        cls.cat_last = max(("Cat shelter", "Cat shelter 2"), key=lambda k: cls.ids[k])
         cls.server = ThreadingHTTPServer(("127.0.0.1", 0), dashboard.Handler)
         cls.server.daemon_threads = True
         cls.server.handle_error = lambda *a: None
@@ -185,7 +197,8 @@ class ProjectKeepsItsPlaceInChrome(unittest.TestCase):
         script = base / "project_place_cdp.js"
         script.write_text(CDP_JS, encoding="utf-8")
         steps = {
-            "bee-agent": lambda: chatroom.post_message(cls.po["Bee keeping"], "claude", "Working on the hive list now.", to="user"),
+            "bee-agent": lambda: (chatroom.post_message(cls.po["Bee keeping"], "claude", "Working on the hive list now.", to="user"),
+                                  chatroom.post_message(cls.task[cls.cat_last], "claude", "The pens are clean.", to="codex")),
             "bee-task": lambda: chatroom.post_message(cls.task["Bee keeping"], "claude", "Pushed a commit.", to="codex"),
             "bee-you": lambda: chatroom.post_message(cls.po["Bee keeping"], "user", "Good, carry on.", to="claude"),
             "dog-answer": lambda: chatroom.post_message(cls.po["Dog walks"], "claude", "Ask (yes/no): Walk the dogs at noon?", to="user"),
@@ -229,6 +242,13 @@ class ProjectKeepsItsPlaceInChrome(unittest.TestCase):
     def s(self, k):
         return self.got["steps"][k]
 
+    def test_two_of_a_name_go_by_id_whatever_is_said(self):
+        want = sorted([self.ids["Cat shelter"], self.ids["Cat shelter 2"]])
+        for k, v in self.got["steps"].items():
+            if "cats" in v:
+                with self.subTest(k=k):
+                    self.assertEqual(v["cats"], want)
+
     def test_unpinned_by_count_then_name(self):
         self.assertEqual(self.s("start")["order"], START)
         self.assertEqual(self.s("start")["counts"]["Bee keeping"], "1")
@@ -247,12 +267,12 @@ class ProjectKeepsItsPlaceInChrome(unittest.TestCase):
 
     def test_a_count_that_rises_moves_that_project_up(self):
         self.assertEqual(self.s("dogUp")["counts"]["Dog walks"], "2")
-        self.assertEqual(self.s("dogUp")["order"], ["Dog walks", "Bee keeping", "Cat shelter", "Abacus notes"])
+        self.assertEqual(self.s("dogUp")["order"], ["Dog walks", "Bee keeping", "Cat shelter", "Cat shelter", "Abacus notes"])
 
     def test_once_in_another_the_first_takes_its_place_by_count(self):
         self.assertEqual(self.got["steps"]["catUnder"]["order"], self.s("dogUp")["order"], "nothing moves under the pointer")
         self.assertTrue(self.got["catSeen"])
-        self.assertEqual(self.s("cat")["order"], ["Dog walks", "Cat shelter", "Abacus notes", "Bee keeping"])
+        self.assertEqual(self.s("cat")["order"], ["Dog walks", "Cat shelter", "Cat shelter", "Abacus notes", "Bee keeping"])
 
     def test_the_page_threw_nothing(self):
         self.assertEqual(self.got["errors"], [])
