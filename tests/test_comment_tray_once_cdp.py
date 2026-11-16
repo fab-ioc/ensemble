@@ -1,0 +1,403 @@
+"""A pending comment's tray shows once in the workspace, in the Send box (P360, #373).
+
+In the dashboard's workspace a chat's own box is hidden and the shared Send
+box (#workspace-compose-frame) sends for it. Both pages kept the same comments
+(one store per room), so before P360 the "1 comment · Submit · Clear" tray
+showed twice: in the chat above its hidden box and in the box under To: ….
+
+Driven in headless Chrome at 1440x900, the PO chat docked, as a person does
+it (the selection bar's 💬 Comment, Add, Submit, Clear pressed where the top
+page hits, through the frames), with the box
+
+  a. on the PO's main chat,
+  b. on a thread (its panel open beside the chat, To: <thread> with ×),
+  c. on the PO again, the thread closed.
+
+Each time: exactly one tray on screen across the top page and all its frames,
+in the box's frame; Submit hands the hub exactly one "## Review comments (1)"
+message, sent where the box sends (in b, the thread); Clear leaves no tray
+anywhere and nothing in the room's comment store.
+
+$ENSEMBLE_SHOTS: a screenshot of case b with its one pending comment.
+"""
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+import unittest
+from http.server import ThreadingHTTPServer
+from pathlib import Path
+from unittest import mock
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+import chatroom  # noqa: E402
+import dashboard  # noqa: E402
+import threads  # noqa: E402
+from tests import chrome_profile  # noqa: E402
+from tests.test_page_update import CHROME  # noqa: E402
+
+NODE = shutil.which("node")
+CDP_JS = chrome_profile.JS + r"""
+const A = JSON.parse(process.argv[1]);
+const { spawn } = require('child_process');
+const fs = require('fs'), path = require('path');
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+async function main() {
+  const ch = spawn(A.chrome, ['--headless=new', '--remote-debugging-port=0', '--user-data-dir=' + chromeProfile(A), '--no-first-run',
+    '--no-default-browser-check', '--disable-gpu', '--hide-scrollbars', 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] });
+  const wsUrl = await new Promise((res, rej) => {
+    let buf = ''; ch.stderr.on('data', d => { buf += d; const m = buf.match(/DevTools listening on (ws:\S+)/); if (m) res(m[1]); });
+    ch.on('exit', c => rej(new Error('chrome exited ' + c))); setTimeout(() => rej(new Error('no devtools ' + buf)), 20000);
+  });
+  const ws = new WebSocket(wsUrl); let id = 0; const waits = new Map(); const errs = [];
+  await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej; });
+  ws.onmessage = ev => { const m = JSON.parse(ev.data);
+    if (m.method === 'Runtime.exceptionThrown') errs.push(String(m.params.exceptionDetails.exception?.description || m.params.exceptionDetails.text).slice(0, 300));
+    if (m.id && waits.has(m.id)) { const w = waits.get(m.id); waits.delete(m.id); m.error ? w.rej(new Error(m.error.message)) : w.res(m.result); } };
+  const send = (method, params = {}, sessionId) => { const i = ++id; return new Promise((res, rej) => { waits.set(i, { res, rej }); ws.send(JSON.stringify({ id: i, method, params, sessionId })); }); };
+  const { targetId } = await send('Target.createTarget', { url: 'about:blank' });
+  const { sessionId: s } = await send('Target.attachToTarget', { targetId, flatten: true });
+  await send('Page.enable', {}, s); await send('Runtime.enable', {}, s);
+  await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false }, s);
+  const ev = async expr => { const r = await send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true }, s);
+    if (r.exceptionDetails) throw new Error(expr.slice(0, 160) + ' :: ' + JSON.stringify(r.exceptionDetails).slice(0, 600)); return r.result.value; };
+  const until = async (expr, label, ms = 25000) => { const t = Date.now(); while (Date.now() - t < ms) { let v = null; try { v = await ev(expr); } catch (e) {} if (v) return v; await sleep(150); } throw new Error('timeout: ' + (label || expr)); };
+  const press = async (x, y) => {
+    await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, buttons: 0 }, s);
+    await send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', buttons: 1, clickCount: 1 }, s);
+    await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', buttons: 0, clickCount: 1 }, s);
+    await sleep(450);
+  };
+  // A press on a control that sends, as a person aims it: the pointer on it
+  // first, still for longer than the page's click guard waits (#198: a click
+  // on such a control that moved or appeared under the pointer within 400 ms
+  // is dropped), and again where it is if it moved meanwhile.
+  const aimAndPress = async (el, label) => {
+    let p = await at(el), q = null;
+    for (let i = 0; p && i < 5; i++) {
+      await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: p.x, y: p.y, buttons: 0 }, s);
+      await sleep(600);
+      q = await at(el);
+      if (q && Math.abs(q.x - p.x) < 1 && Math.abs(q.y - p.y) < 1) break;
+      p = q;
+    }
+    if (!p) return null;
+    await press(p.x, p.y);
+    return p;
+  };
+  // `el` (an expression for an element, in any frame of the page): its centre
+  // on the top page, and whether a press there reaches it.
+  const at = el => ev(`(() => { const e = ${el}; if (!e) return null; e.scrollIntoView({ block: 'nearest' });
+    let x = 0, y = 0, w = e.ownerDocument.defaultView; const r = e.getBoundingClientRect();
+    x = r.left + r.width / 2; y = r.top + r.height / 2;
+    const chain = []; for (let f = w.frameElement; f; f = f.ownerDocument.defaultView.frameElement) chain.push(f);
+    for (const f of chain) { const b = f.getBoundingClientRect(); x += b.left + f.clientLeft; y += b.top + f.clientTop; }
+    let hit = document.elementFromPoint(x, y), lx = x, ly = y;
+    for (const f of chain.reverse()) { if (hit !== f) break; const b = f.getBoundingClientRect(); lx -= b.left + f.clientLeft; ly -= b.top + f.clientTop; hit = f.contentDocument.elementFromPoint(lx, ly); }
+    return { x, y, hits: !!hit && (hit === e || e.contains(hit)) }; })()`);
+  const pressOn = async (el, label) => { const p = await at(el); if (!p) throw new Error('missing: ' + label); await press(p.x, p.y); return p; };
+  const shot = async name => { if (!A.shots) return; const r = await send('Page.captureScreenshot', { format: 'png' }, s); fs.writeFileSync(path.join(A.shots, name + '.png'), Buffer.from(r.data, 'base64')); };
+
+  const PO = `PD.els['po-chat'].querySelector('iframe.po-session:not([hidden])')`;
+  const THR = `PD.rt.get('thread:po')?.el.querySelector('iframe')`;
+  const WCF = `document.getElementById('workspace-compose-frame')`;
+  // Every #cmt-tray on screen: in the top page and every same-origin frame,
+  // recursively, through frames that are themselves on screen. Each by the
+  // frames it is in (id, else first class), top first.
+  const TRAYS = `(() => { const out = [];
+    const shown = e => e.getClientRects().length > 0 && !e.hidden && !e.closest('[hidden]');
+    const walk = (d, where) => {
+      for (const t of d.querySelectorAll('#cmt-tray')) if (shown(t))
+        out.push({ where, text: t.querySelector('.cmt-tray-head')?.textContent.replace(/\\s+/g, ' ').trim() || '' });
+      for (const f of d.querySelectorAll('iframe')) { if (!shown(f)) continue; let cd = null; try { cd = f.contentDocument; } catch (e) {}
+        if (cd) walk(cd, where.concat(f.id || String(f.className).split(' ')[0] || 'iframe')); }
+    };
+    walk(document, []); return out; })()`;
+  // The tray to press: the box's, else the first on screen.
+  const TRAY_EL = `(() => { const shown = e => !!e && e.getClientRects().length > 0 && !e.closest('[hidden]');
+    const box = ${WCF}?.contentDocument?.getElementById('cmt-tray'); if (shown(box)) return box;
+    const all = []; const walk = d => { for (const t of d.querySelectorAll('#cmt-tray')) if (shown(t)) all.push(t);
+      for (const f of d.querySelectorAll('iframe')) { if (!shown(f)) continue; try { if (f.contentDocument) walk(f.contentDocument); } catch (e) {} } };
+    walk(document); return all[0] || null; })()`;
+  const STORE = `Object.keys(localStorage).filter(k => k.startsWith(${JSON.stringify('cd-comment:' + A.po + ':')})).length`;
+  const SENT = `fetch('/test/sent').then(x => x.json())`;
+  const BOX = `({ target: WC.target ? { kind: WC.target.kind, room: WC.target.room, thread: WC.target.thread || '' } : null,
+    to: document.getElementById('workspace-compose-link')?.textContent || '', back: !document.getElementById('workspace-compose-back').hidden,
+    shown: !document.getElementById('workspace-compose').hidden })`;
+  const boxReady = `!document.getElementById('workspace-compose').hidden && ${WCF}?.contentDocument?.getElementById('send')?.disabled === false`;
+  // The words `needle` selected in a balloon of the chat in `frame`.
+  const choose = (frame, needle) => `(() => { const d = ${frame}.contentDocument, w = d.defaultView; w.getSelection().removeAllRanges();
+    const t = [...d.querySelectorAll('#msgs .msg .text.md')].find(e => e.textContent.includes(${JSON.stringify(needle)}));
+    if (!t) return false; t.scrollIntoView({ block: 'center' });
+    const wk = d.createTreeWalker(t, NodeFilter.SHOW_TEXT); let x;
+    while ((x = wk.nextNode())) { const i = x.nodeValue.indexOf(${JSON.stringify(needle)}); if (i >= 0) { w.getSelection().setBaseAndExtent(x, i, x, i + ${JSON.stringify(needle)}.length); return true; } }
+    return false; })()`;
+  // A comment as the person makes one: words selected, 💬 Comment, typed, Add.
+  async function addComment(frame, needle, words) {
+    const r = {};
+    r.selected = await ev(choose(frame, needle));
+    await until(`!!${frame}.contentDocument.querySelector('.sel-bar:not([hidden]) .sel-cmt:not([hidden])')`, 'selection bar');
+    r.commentHit = (await pressOn(`${frame}.contentDocument.querySelector('.sel-bar .sel-cmt')`, 'Comment')).hits;
+    await until(`!!${frame}.contentDocument.querySelector('.cmt-composer textarea')`, 'comment box', 5000);
+    await send('Input.insertText', { text: words }, s);
+    r.addHit = (await pressOn(`${frame}.contentDocument.querySelector('.cmt-composer .cmt-add')`, 'Add')).hits;
+    await until(`${STORE} > 0`, 'stored', 5000).catch(() => null);
+    await sleep(700);
+    return r;
+  }
+  async function runCase(name, frame, needle, opts = {}) {
+    const r = { box: await ev(BOX) };
+    const words = 'Comment ' + name + ' one';
+    r.add = await addComment(frame, needle, words);
+    r.boxAfterAdd = await ev(BOX);
+    r.trays = await ev(TRAYS);
+    r.store = await ev(STORE);
+    if (opts.shot) await shot(opts.shot);
+    // Submit, in the tray on screen.
+    const sent0 = (await ev(SENT)).length;
+    r.submitState = await ev(`(() => { const b = ${TRAY_EL}?.querySelector('.cmt-submit'); return b ? { disabled: b.disabled, label: b.textContent,
+      note: b.closest('#cmt-tray').querySelector('.cmt-tray-note, .cmt-note')?.textContent || '' } : null; })()`);
+    const t = await aimAndPress(TRAY_EL + `?.querySelector('.cmt-submit')`);
+    r.submitHit = !!t && t.hits;
+    await until(`${SENT}.then(l => l.length > ${sent0})`, 'sent', 10000).catch(() => null);
+    await sleep(2500);   // a second send would be in by now
+    r.sent = (await ev(SENT)).slice(sent0).map(b => ({ room: b.roomId, thread: b.thread || '', text: (b.text || '').slice(0, 300) }));
+    if (opts.lands) {
+      r.inThread = !!(await until(`!!${THR}?.contentDocument?.querySelector('#msgs')?.textContent.includes(${JSON.stringify(words)})`, 'in the thread', 10000).catch(() => false));
+      r.inChat = await ev(`!!${PO}.contentDocument.querySelector('#msgs')?.textContent.includes(${JSON.stringify(words)})`);
+    }
+    r.traysAfterSubmit = await ev(TRAYS);
+    r.storeAfterSubmit = await ev(STORE);
+    // Another, then Clear.
+    r.add2 = await addComment(frame, needle, 'Comment ' + name + ' two');
+    r.trays2 = await ev(TRAYS);
+    const c = await aimAndPress(TRAY_EL + `?.querySelector('.cmt-clear')`);
+    r.clearHit = !!c && c.hits;
+    await sleep(800);
+    r.traysAfterClear = await ev(TRAYS);
+    r.storeAfterClear = await ev(STORE);
+    const sentAll = await ev(SENT);
+    r.sentAfterClear = sentAll.length - sent0 - r.sent.length;
+    return r;
+  }
+  const out = {};
+  try {
+    await send('Page.navigate', { url: A.base + '/' }, s);
+    await until(`typeof ALL_ROWS !== 'undefined' && ALL_ROWS.some(r => r.roomId === ${JSON.stringify(A.po)})`, 'rows', 40000);
+    await ev(`SELECTED_PROJECT = ${JSON.stringify(A.proj)}; PROJECT_TAB = 'tasks'; renderRows(); 0`);
+    await until(`document.body.classList.contains('po-dock') && !!${PO}?.contentDocument?.querySelector('#msgs .thr-open[data-thr]')`, 'PO chat');
+    await until(`WC.target?.kind === 'po' && ${boxReady}`, 'box on the PO');
+    await sleep(1000);
+    // The first topic's thread: its reply has the thread's words.
+    const THREAD = out.threadId = await ev(`${PO}.contentDocument.querySelector('#msgs .thr-open[data-thr]').dataset.thr`);
+    out.guest = await ev(`${PO}.contentDocument.body.classList.contains('workspace-guest')`);
+    const step = async (k, fn) => { try { out[k] = await fn(); } catch (e) { out[k] = { error: String(e && e.message || e).slice(0, 800) }; } };
+    // a. The box on the PO's main chat.
+    await step('po', () => runCase('po', PO, A.poWords));
+    // b. A thread opened from its reply line: the box is the thread's.
+    await step('thread', async () => {
+      await pressOn(`${PO}.contentDocument.querySelector('#msgs .thr-open[data-thr=${JSON.stringify(THREAD)}]')`, 'thread link');
+      await until(`WC.target?.thread === ${JSON.stringify(THREAD)} && ${WCF}.contentWindow.liveTailBoxThread?.() === ${JSON.stringify(THREAD)} && ${boxReady}
+        && !!${THR}?.contentDocument?.querySelector('#msgs .msg .text.md')`, 'box on the thread');
+      await sleep(1000);
+      return runCase('thread', THR, A.threadWords, { shot: 'thread-tray', lands: true });
+    });
+    // c. The thread closed: the box is the PO's again.
+    await step('closed', async () => {
+      await ev(`PD.dock.removePanel('thread:po'); 0`);
+      await until(`WC.target?.kind === 'po' && !${WCF}.contentWindow.liveTailBoxThread?.() && ${boxReady}`, 'box back on the PO');
+      await sleep(1000);
+      const r = await runCase('closed', PO, A.poWords);
+      r.panel = await ev(`PD.rt.has('thread:po')`);
+      return r;
+    });
+    out.errors = errs.slice();
+  } finally {
+    try { await send('Browser.close'); } catch (e) {}
+    ch.kill();
+  }
+  console.log(JSON.stringify(out));
+}
+main().catch(e => { console.error(e && e.stack || e); process.exit(1); });
+"""
+
+PO_WORDS = "I'm the PO for Motors"
+THREAD_WORDS = "The board is wider now"
+
+
+@unittest.skipUnless(NODE and CHROME, "node and Chrome are needed")
+class CommentTrayOnce(unittest.TestCase):
+    """A hub with one project whose PO chat has two threads. /api/room/resume
+    runs as the hub's (the PO's delivery stubbed: the text goes into its
+    transcript), and records what it was given; /test/sent lists it."""
+
+    @classmethod
+    def setUpClass(cls):
+        tmp = tempfile.TemporaryDirectory(prefix="ens-cmt-once-", ignore_cleanup_errors=True)
+        cls.addClassCleanup(tmp.cleanup)
+        base = Path(tmp.name)
+        state = base / "state"; state.mkdir()
+        root = base / "EnsembleProjects"; root.mkdir()
+        (base / "transcripts").mkdir(); (base / "cs").mkdir()
+        sent = cls.sent = []
+        real_room_resume = dashboard.Handler._room_resume
+
+        def room_resume(h, data):
+            sent.append(dict(data))
+            return real_room_resume(h, data)
+        transcript = base / "transcripts" / "C--po"; transcript.mkdir()
+        sid = "once-po"
+        path = transcript / f"{sid}.jsonl"
+        lock = threading.Lock()
+
+        def turn(role, text, ts):
+            stamp = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(ts)) + ".%03dZ" % int(ts % 1 * 1000)
+            msg = {"role": role, "content": text if role == "user" else [{"type": "text", "text": text}]}
+            if role == "assistant":
+                msg["stop_reason"] = "end_turn"
+            return {"type": role, "timestamp": stamp, "sessionId": sid, "message": msg}
+
+        def resume(h, room, text="", to="", key="", quiet=False, **kw):
+            # Typed into the PO's conversation at once, as a running PO reads it.
+            dashboard._typed_sends(room["id"], [{"key": key, "text": text}])
+            with lock, path.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(turn("user", text, time.time())) + "\n")
+            return {"delivered": 1}
+        for patch in [
+            mock.patch.object(dashboard, "PROJECTS_ROOT", root),
+            mock.patch.object(dashboard, "DASHBOARD_DIR", state),
+            mock.patch.object(dashboard, "PROJECTS_FILE", state / "projects.json"),
+            mock.patch.object(dashboard, "SESSION_PROJECTS_FILE", state / "session_projects.json"),
+            mock.patch.object(dashboard, "SETTINGS_FILE", state / "settings.json"),
+            mock.patch.object(dashboard, "LABELS_FILE", state / "labels.json"),
+            mock.patch.object(dashboard, "PROJ_DIR", base / "transcripts"),
+            mock.patch.object(dashboard, "CS_ROOT", base / "cs"),
+            mock.patch.object(chatroom, "ROOMS_DIR", base / "rooms"),
+            mock.patch.object(dashboard, "load_live", lambda: []),
+            mock.patch.object(dashboard, "_read_agent_session_files", lambda *a, **k: []),
+            mock.patch.object(dashboard, "_send_left_behind", lambda *a, **k: ""),
+            mock.patch.object(dashboard.Handler, "_agent_peer", lambda h: ""),
+            mock.patch.object(dashboard.Handler, "log_message", lambda *a, **k: None),
+            mock.patch.object(dashboard.Handler, "_room_resume", room_resume),
+            mock.patch.object(dashboard.Handler, "_resume_room", resume),
+            mock.patch.dict(os.environ, {"CODEX_HOME": str(base / "codex")}),
+        ]:
+            patch.start()
+            cls.addClassCleanup(patch.stop)
+        ok, proj, _ = dashboard.register_project("Motors")
+        assert ok, proj
+        cls.proj = proj["id"]
+        home = Path(proj.get("home") or proj["path"])
+        po = chatroom.create_room("PO talk", [{"identity": "claude", "agent": "claude", "role": "Product owner", "sessionId": sid, "cwd": str(home)}])
+        cls.po = po["id"]
+        room = chatroom.get_room(cls.po, public=False)
+        room["mode"] = "solo"
+        chatroom.update_room(room)
+        dashboard.assign_session_project(cls.po, cls.proj)
+        ok, why = dashboard.set_project_po(cls.proj, cls.po)
+        assert ok, why
+        t0 = time.time() - 3600
+        path.write_text("".join(json.dumps(x) + "\n" for x in [
+            turn("assistant", f"{PO_WORDS}: ask me anything about the board.", t0),
+            turn("user", "Make the board wider.", t0 + 10),
+            turn("assistant", f"{THREAD_WORDS}, and the panels fit.", t0 + 11),
+            turn("user", "And the motors faster.", t0 + 20),
+            turn("assistant", "The motors are twice as fast.", t0 + 21)]), encoding="utf-8")
+        # Each topic sent as a new thread (#367: only the person starts one).
+        for text, at in (("Make the board wider.", t0 + 10), ("And the motors faster.", t0 + 20)):
+            threads.note_send(cls.po, "", "", [], False, text, now=at, new=True)
+
+        class Handler(dashboard.Handler):
+            def do_GET(self):
+                if self.path == "/test/sent":
+                    return self._send_json(200, sent)
+                super().do_GET()
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        server.daemon_threads = True
+        server.handle_error = lambda *a: None
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        cls.addClassCleanup(server.server_close)
+        cls.addClassCleanup(server.shutdown)
+        base_url = f"http://127.0.0.1:{server.server_address[1]}"
+        shots = os.environ.get("ENSEMBLE_SHOTS", "")
+        if shots:
+            Path(shots).mkdir(parents=True, exist_ok=True)
+        args = {**chrome_profile.node_args(), "tmp": str(base), "base": base_url, "shots": shots,
+                "proj": cls.proj, "po": cls.po, "poWords": PO_WORDS, "threadWords": THREAD_WORDS}
+        run = subprocess.run([NODE, "-e", CDP_JS, json.dumps(args)], capture_output=True, encoding="utf-8", timeout=300)
+        assert run.returncode == 0, run.stderr[-4000:]
+        cls.got = json.loads(run.stdout.strip().splitlines()[-1])
+        cls.thread = cls.got["threadId"]
+        dump = os.environ.get("COMMENT_TRAY_DUMP", "")
+        if dump:
+            Path(dump).write_text(json.dumps(cls.got, indent=1, ensure_ascii=False), encoding="utf-8")
+
+    def check_case(self, name, thread=""):
+        r = self.got[name]
+        self.assertNotIn("error", r, r)
+        a = r["add"]
+        self.assertTrue(a["selected"] and a["commentHit"] and a["addHit"], ("the comment is made as a person makes it", a))
+        self.assertEqual(r["store"], 1, ("one comment pending", r))
+        # Once on screen, in the Send box's frame.
+        self.assertEqual(len(r["trays"]), 1, ("exactly one tray on screen", r["trays"]))
+        self.assertEqual(r["trays"][0]["where"][-1], "workspace-compose-frame", r["trays"])
+        self.assertIn("1 comment", r["trays"][0]["text"], r["trays"])
+        # Submit: one message, where the box sends.
+        self.assertTrue(r["submitHit"], r)
+        self.assertEqual(len(r["sent"]), 1, ("exactly one message", r["sent"]))
+        sent = r["sent"][0]
+        text = sent["text"]
+        if thread:
+            # A thread with no point of its own: the box sends its first
+            # message's link ahead of the words (sendResuming, #210).
+            link, _, text = text.partition("\n\n")
+            self.assertIn("msg=", link, sent)
+        self.assertTrue(text.startswith("## Review comments (1)"), sent)
+        self.assertEqual(sent["text"].count("## Review comments"), 1, sent)
+        self.assertIn(f"Comment {name} one", sent["text"], sent)
+        self.assertEqual(sent["room"], self.po, sent)
+        self.assertEqual(sent["thread"], thread, sent)
+        self.assertEqual(r["traysAfterSubmit"], [], ("the tray lets a sent comment go", r))
+        self.assertEqual(r["storeAfterSubmit"], 0, r)
+        # Another, then Clear: nothing on screen, nothing kept, nothing sent.
+        self.assertEqual(len(r["trays2"]), 1, r["trays2"])
+        self.assertEqual(r["trays2"][0]["where"][-1], "workspace-compose-frame", r["trays2"])
+        self.assertTrue(r["clearHit"], r)
+        self.assertEqual(r["traysAfterClear"], [], r)
+        self.assertEqual(r["storeAfterClear"], 0, r)
+        self.assertEqual(r["sentAfterClear"], 0, r)
+        return r
+
+    def test_box_on_the_po_shows_the_tray_once(self):
+        self.assertTrue(self.got["guest"], "the PO chat is the workspace's guest")
+        r = self.check_case("po")
+        self.assertEqual(r["boxAfterAdd"]["target"]["kind"], "po", r)
+
+    def test_box_on_a_thread_shows_the_tray_once_and_sends_in_the_thread(self):
+        r = self.check_case("thread", self.thread)
+        box = r["boxAfterAdd"]
+        self.assertEqual(box["target"], {"kind": "thread", "room": self.po, "thread": self.thread}, box)
+        self.assertTrue(box["back"], ("To: <thread> with its ×", box))
+        self.assertTrue(r["inThread"], ("the comments land in the thread", r))
+        self.assertFalse(r["inChat"], ("and not in the PO's main chat", r))
+
+    def test_thread_closed_box_back_on_the_po_shows_the_tray_once(self):
+        r = self.check_case("closed")
+        self.assertFalse(r["panel"], r)
+        self.assertEqual(r["boxAfterAdd"]["target"]["kind"], "po", r)
+        self.assertFalse(r["boxAfterAdd"]["back"], r)
+
+    def test_no_script_errors(self):
+        self.assertEqual(self.got["errors"], [])
+
+
+if __name__ == "__main__":
+    unittest.main()

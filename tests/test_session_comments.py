@@ -75,7 +75,7 @@ function page() {
     console, setTimeout, localStorage,
     document: { getElementById: id => els[id] || null, createElement: () => new El(),
                 querySelector: () => null, querySelectorAll: () => [],
-                body: { appendChild(n) { els[n.id] = n; } } },
+                body: { appendChild(n) { els[n.id] = n; }, classList: { contains: () => false } } },
     window: { addEventListener: (t, f) => { if (t === 'storage') storage.push(f); }, getSelection: () => null },
     fetch: async (url, o) => {
       posts.push([url, JSON.parse(o.body)]);
@@ -99,6 +99,9 @@ function page() {
     const ROOM = 'room-test0001';
     let ROOM_OBJ = { id: ROOM }, ROOM_LIVE = true, SOLO_MODE = true, SOLO_PTY = 'pty-1';
     let ROOM_RESUMING = false, ROOM_PENDING = null;
+    const WORKSPACE_COMPOSE = false;   // a chat's own page, not the workspace's Send box (P360)
+    // sendResuming's thread state (#210, #367): a chat's main box, no thread.
+    let THREAD_MODE = false, THREAD = '', THREAD_MID = '', SHARED_THREAD = null, THREADED = false, NEW_THREAD = false;
     const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
     const checkSolo = () => {}, refresh = () => {};
     ${code}
