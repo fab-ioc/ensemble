@@ -8864,43 +8864,48 @@ def set_project_icon(project_id: str, data_url, name: str = "",
     if proj is None:
         return False, "no_such_project", None
     home = Path(project_home(proj, create=True))
+
+    def drop_files(keep: str = "") -> None:
+        for f in home.glob("project-icon.*"):
+            if f.name != keep and project_icon.FILE_RE.match(f.name):
+                with contextlib.suppress(OSError):
+                    f.unlink()
+    # The icon's files change under the metadata lock with the record that
+    # names them: a Remove never deletes an upload made meanwhile, nor an
+    # upload the file of another.
     if data_url is None:
-        ok, msg = _set_project_fields(project_id, {"icon": None, "colour": None, "colourOf": None})
-        if ok:
-            for f in home.glob("project-icon.*"):
-                if project_icon.FILE_RE.match(f.name):
-                    with contextlib.suppress(OSError):
-                        f.unlink()
+        with _PROJECT_META_LOCK:
+            ok, msg = _set_project_fields(project_id, {"icon": None, "colour": None, "colourOf": None})
+            if ok:
+                drop_files()
         return ok, msg, None
     try:
         raw, ext = project_icon.accept(data_url)
     except project_icon.Refused as e:
         return False, e.code, None
     fname = f"project-icon.{ext}"
-    try:
-        tmp = home / (fname + ".tmp")
-        tmp.write_bytes(raw)
-        _replace_retrying(tmp, home / fname)
-    except OSError as e:
-        return False, f"cannot write the icon: {e}", None
     base = os.path.basename(str(name or "").replace("\\", "/")).strip() or fname
-    icon = {"file": fname, "name": base[:200], "size": len(raw), "v": int(time.time() * 1000)}
+    # The colour is worked out before the lock (it takes a moment).
     colour = None if generated else icon_colour.prevailing(raw, ext)
     if not generated and colour is None and ext != "svg" and thumbnail:
         colour = icon_colour.from_thumbnail(thumbnail)
     with _PROJECT_META_LOCK:
+        try:
+            tmp = home / (fname + ".tmp")
+            tmp.write_bytes(raw)
+            _replace_retrying(tmp, home / fname)
+        except OSError as e:
+            return False, f"cannot write the icon: {e}", None
+        icon = {"file": fname, "name": base[:200], "size": len(raw), "v": int(time.time() * 1000)}
         # The icon, its colour and the version it belongs to in one write: a
         # generated icon keeps the colour the project has at this moment.
         if generated:
             now = find_project(project_id) or proj
             colour = now.get("colour") if _icon_meta(now.get("icon")) else None
         ok, msg = _set_project_fields(project_id, {"icon": icon, "colour": colour or None, "colourOf": icon["v"]})
-    if not ok:
-        return ok, msg, None
-    for f in home.glob("project-icon.*"):
-        if f.name != fname and project_icon.FILE_RE.match(f.name):
-            with contextlib.suppress(OSError):
-                f.unlink()
+        if not ok:
+            return ok, msg, None
+        drop_files(fname)
     return True, "ok", icon
 
 

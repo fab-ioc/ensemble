@@ -329,6 +329,38 @@ class Stored(Hub):
                     self.assertEqual(m["colourOf"], m["icon"]["v"])
                     self.assertNotEqual(m["icon"]["v"], old_v)
 
+    def test_a_change_meanwhile_keeps_its_file(self):
+        """A Remove, or another upload, whose record is being written when an
+        upload comes in: the upload waits for it, so the file its record names
+        is never deleted by the other."""
+        import threading
+        svg = f'<svg {NS} viewBox="0 0 4 4"><rect width="4" height="4" fill="#3050e0"/></svg>'.encode()
+        for first in ("remove", "upload"):
+            with self.subTest(first):
+                self.upload(png(RED), name="red.png")
+                real, started = dashboard._set_project_fields, []
+
+                def meanwhile(pid, fields):
+                    got = real(pid, fields)          # the first change's record is written ...
+                    if not started:                  # ... and an upload comes in before its files are done
+                        t = threading.Thread(target=dashboard.set_project_icon,
+                                             args=(self.ed, data_url(svg, "image/svg+xml"), "blue.svg"))
+                        started.append(t)
+                        t.start()
+                        t.join(0.5)                  # it may not finish while the first holds the lock
+                    return got
+                with mock.patch.object(dashboard, "_set_project_fields", side_effect=meanwhile):
+                    if first == "remove":
+                        dashboard.set_project_icon(self.ed, None)
+                    else:
+                        dashboard.set_project_icon(self.ed, data_url(png(GREEN), "image/png"), "green.png")
+                    started[0].join(5)
+                m = self.meta(self.ed)
+                self.assertEqual(m["icon"]["file"], "project-icon.svg", m)
+                self.assertTrue((self.home(self.ed) / "project-icon.svg").is_file(), "the record's file is there")
+                self.assertFalse((self.home(self.ed) / "project-icon.png").exists(), "the older file is gone")
+                self.assertTrue(near(m["colour"], (0x30, 0x50, 0xe0)), m)
+
     def test_icons_kept_before_get_their_colour_once(self):
         self.upload(png(GREEN))
         for k in ("colour", "colourOf"):        # as an icon kept before P366 was
