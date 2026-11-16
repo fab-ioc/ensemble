@@ -64,7 +64,8 @@ async function main() {
     }
     const ev = async (expr) => { const r = await c.send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true }, s); if (r.exceptionDetails) throw new Error(expr.slice(0, 120) + ' :: ' + JSON.stringify(r.exceptionDetails).slice(0, 600)); return r.result.value; };
     const until = async (expr, ms = 20000) => { const t = Date.now(); while (Date.now() - t < ms) { let v = null; try { v = await ev(expr); } catch (e) {} if (v) return v; await sleep(120); } return null; };
-    const at = (expr) => ev(`(() => { const e = (${expr}); if (!e) return null; const r = e.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2, t: r.top, b: r.bottom, w: r.width, h: r.height }; })()`);
+    // #370: rows are 28px, so a row may sit below the list's fold; scroll it in as a person would.
+    const at = (expr) => ev(`(() => { const e = (${expr}); if (!e) return null; e.scrollIntoView({ block: 'nearest' }); const r = e.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2, t: r.top, b: r.bottom, w: r.width, h: r.height }; })()`);
     const mouse = (type, x, y, extra) => c.send('Input.dispatchMouseEvent', Object.assign({ type, x, y }, extra || {}), s);
     const click = async (expr) => {
       const p = await at(expr); if (!p) throw new Error('nothing at ' + expr);
@@ -88,6 +89,7 @@ async function main() {
       await mouse('mouseReleased', p.x, toY, { button: 'left', buttons: 0, clickCount: 1 });
       return mid;
     };
+    const key = async (k, code, vk) => { for (const type of ['keyDown', 'keyUp']) await c.send('Input.dispatchKeyEvent', { type, key: k, code, windowsVirtualKeyCode: vk }, s); };
     const touch = (type, x, y) => c.send('Input.dispatchTouchEvent', { type, touchPoints: type === 'touchEnd' ? [] : [{ x, y, id: 1 }] }, s);
     const tap = async (expr) => { const p = await at(expr); if (!p) throw new Error('nothing at ' + expr); await touch('touchStart', p.x, p.y); await sleep(40); await touch('touchEnd'); return p; };
     const tdrag = async (from, toY) => {
@@ -110,7 +112,7 @@ async function main() {
       await sleep(500);
     };
     await load();
-    return { ev, until, at, click, drag, tap, tdrag, load, mouse,
+    return { ev, until, at, click, drag, tap, tdrag, load, mouse, key,
       close: async () => { await c.send('Target.closeTarget', { targetId }); if (browserContextId) await c.send('Target.disposeBrowserContext', { browserContextId }); } };
   };
   const names = ids => (ids || []).map(id => NAME[id] || id);
@@ -121,6 +123,40 @@ async function main() {
   const settle = async p => { await p.until('PIN.busy === 0', 8000); await sleep(150); };
   const row = n => `document.querySelector('#ld-projs .ldp-row[data-ldp-proj="${ID[n]}"]')`;
   const hand = n => `document.querySelector('#ld-projs .ldp-hand[data-pin-row="${ID[n]}"] .ldp-row')`;
+  // #375: the pins a row shows to the eye: its pin button when shown, and its pin mark when shown
+  // and not under an opaque element (⋯'s hover background is see-through).
+  const PINS = n => `(() => {
+    const it = document.querySelector('#ld-projs [data-pin-row="${ID[n]}"]');
+    const shown = el => { for (let e = el; e && e.nodeType === 1; e = e.parentElement) { const st = getComputedStyle(e); if (st.visibility === 'hidden' || st.display === 'none' || +st.opacity === 0) return false; } return true; };
+    const opaque = e => { const c = getComputedStyle(e).backgroundColor, v = c.replace(/[^0-9.,]/g, '').split(','); return c !== 'transparent' && (v.length < 4 || +v[3] >= 1); };
+    let n = 0;
+    const b = it.querySelector('.ldp-pinb'); if (b && shown(b)) n++;
+    const m = it.querySelector('.ldp-pinmark'), r = m && m.getBoundingClientRect();
+    if (m && shown(m)) {
+      const over = document.elementsFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      const i = over.findIndex(e => m.contains(e));
+      if (i >= 0 && !over.slice(0, i).some(e => shown(e) && opaque(e))) n++;
+    }
+    return { n, x: r ? Math.round(r.left) : null };
+  })()`;
+  const onePin = async (p, n, pinned) => {
+    const S = {}, xs = new Set(), sel = `document.querySelector('#ld-projs [data-pin-row="${ID[n]}"]')`;
+    const rec = async k => { const v = await p.ev(PINS(n)); S[k] = v.n; if (v.x != null) xs.add(v.x); };
+    const away = async () => { await p.mouse('mouseMoved', 700, 600); await sleep(200); };
+    await away(); await rec('rest');
+    const r = await p.at(`${sel}.querySelector('.ldp-name')`); await p.mouse('mouseMoved', r.x, r.y); await sleep(200); await rec('rowHover');
+    const dt = await p.at(`${sel}.querySelector('.ldp-dots')`); await p.mouse('mouseMoved', dt.x, dt.y); await sleep(200); await rec('dotsHover');
+    await p.click(`${sel}.querySelector('.ldp-dots')`); await sleep(250); await rec('menuOnDots');
+    await away(); await rec('menuAway');
+    await p.ev('ldpMenuClose(), 0'); await sleep(150);
+    await p.ev(`${sel}.querySelector('.ldp-row').focus(), 0`); await p.key('Shift', 'ShiftLeft', 16);
+    await p.key('Tab', 'Tab', 9); await sleep(200); S.tab1 = await p.ev('document.activeElement.className'); await rec('pinbFocus');
+    await p.key('Tab', 'Tab', 9); await sleep(200); S.tab2 = await p.ev('document.activeElement.className'); await rec('dotsFocus');
+    await p.ev('document.activeElement.blur(), 0');
+    S.pinned = await p.ev(`${sel}.classList.contains('ldp-hand')`) === pinned;
+    S.markMoved = xs.size > 1;
+    return S;
+  };
   try {
     const d = await page(false);
     const D = out.desk = {};
@@ -132,6 +168,9 @@ async function main() {
     await d.click(`document.querySelector('#ld-projs [data-ldp-pin="${ID.Harbor}"]')`); await settle(d);
     D.afterPin1 = names(await d.ev(L)); D.hub1 = names(await d.ev(HUB));
     D.picks1 = await d.ev('PICKS.length');
+    // 1b. #375 (issue 52): the pinned row shows one pin in every state, the mark keeps its place
+    D.onePin = await onePin(d, 'Harbor', true);
+    D.unpinnedPins = await onePin(d, 'Atlas', false);
     // 2. ⋯ → Pin to the top
     await d.click(`document.querySelector('#ld-projs [data-ldp-pmenu="${ID.Atlas}"]')`); await sleep(250);
     D.menuRest = await d.ev(`[...document.querySelectorAll('.dcm [data-act]')].map(b => b.textContent)`);
@@ -355,6 +394,14 @@ class PinnedProjectsInChrome(unittest.TestCase):
         self.assertEqual(d["sw3"], ["Harbor", "Atlas", "Lumen"], d)
         self.assertEqual(d["hub3"], ["Harbor", "Atlas", "Lumen"], d)
         self.assertEqual(d["recentHasPinned"], 0, d)
+
+    def test_a_pinned_row_shows_one_pin(self):
+        # #375 (issue 52): the mark gives way to the pin button; ⋯'s see-through hover showed both.
+        one = {"rest": 1, "rowHover": 1, "dotsHover": 1, "menuOnDots": 1, "menuAway": 1, "pinbFocus": 1, "dotsFocus": 1,
+               "tab1": "ldp-pinb", "tab2": "ldp-dots", "pinned": True, "markMoved": False}
+        self.assertEqual(self.got["desk"]["onePin"], one)
+        # An unpinned row: no pin at rest, its outline pin button with the controls, as before.
+        self.assertEqual(self.got["desk"]["unpinnedPins"], {**one, "rest": 0, "dotsFocus": 0})
 
     def test_desktop_drag(self):
         d = self.got["desk"]

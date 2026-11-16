@@ -75,10 +75,13 @@ jobs:
           foreach ($page in "/", "/session", "/fileview", "/static/vendor/xterm/xterm.min.js") {
             if ($ok) { Invoke-WebRequest "http://127.0.0.1:8790$page" -UseBasicParsing | Out-Null }
           }
+          # The built app can notify (cryptography and cffi are inside it).
+          $noNotify = $ok -and -not (Invoke-RestMethod http://127.0.0.1:8790/api/notify -TimeoutSec 5).available
           '{"root":".","q":"VERSION"}' | dist\Ensemble\Ensemble.exe --run workspace_search | Out-Null
           Get-Process Ensemble -ErrorAction SilentlyContinue | Stop-Process -Force
           Get-Content (Join-Path $home_ ".ensemble\logs\ensemble.log") -ErrorAction SilentlyContinue | Select-Object -Last 40
           if (-not $ok) { throw "the built hub did not answer /api/version with $env:VERSION" }
+          if ($noNotify) { throw "the built hub cannot send notifications (cryptography is not in the build)" }
       - name: Zip (the update) and installer
         shell: pwsh
         run: |
@@ -108,6 +111,8 @@ jobs:
           sudo installer -pkg python.pkg -target /
           "$PY" -m venv venv
           venv/bin/python -m pip install pyinstaller==6.22.3 pillow -r requirements.txt
+          # cryptography and cffi (notifications) as universal2: pip took the arm64 ones.
+          sh packaging/mac-universal2-wheels.sh venv/bin/python
       - name: Build Ensemble.app
         run: |
           venv/bin/pyinstaller --noconfirm packaging/ensemble.spec
@@ -137,11 +142,15 @@ jobs:
             for page in / /session /fileview /static/vendor/xterm/xterm.min.js; do
               curl -fs -o /dev/null "http://127.0.0.1:8790$page"
             done
+            # The built app can notify (cryptography and cffi are inside it).
+            curl -fs http://127.0.0.1:8790/api/notify | grep -Eq '"available": ?true' \
+              || { echo "::error::the built hub cannot send notifications"; curl -s http://127.0.0.1:8790/api/notify; no_notify=1; }
           fi
           echo '{"root":".","q":"VERSION"}' | dist/Ensemble.app/Contents/MacOS/Ensemble --run workspace_search > /dev/null
           pkill -f Ensemble.app/Contents/MacOS/Ensemble || true
           tail -40 "$HOME/Library/Logs/ensemble.log" || true
           [ -n "$ok" ] || { echo "::error::the built hub did not answer /api/version with $VERSION"; exit 1; }
+          [ -z "${no_notify:-}" ] || exit 1
       - name: The bundle's (ad-hoc) signature verifies
         # A signature that does not verify reads as "Ensemble is damaged and
         # can't be opened", with no way past it. PyInstaller signs the bundle;

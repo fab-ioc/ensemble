@@ -1,7 +1,13 @@
-# The dashboard core is standard-library only. These are needed solely for the
-# headless PTY runtime (backends/ptyrun.py) — running agents with no visible
-# terminal and streaming them to the browser. Installed per-platform:
+# The dashboard core is standard-library only, apart from these:
+#
+# The headless PTY runtime (backends/ptyrun.py) — running agents with no
+# visible terminal and streaming them to the browser. Installed per-platform:
 #   Windows -> ConPTY via pywinpty
 #   macOS/Linux -> Unix pty via ptyprocess
 pywinpty>=2.0 ; platform_system == "Windows"
 ptyprocess>=0.7 ; platform_system != "Windows"
+# Notifications (webpush.py): P-256 signing and the aes128gcm payload
+# encryption. It brings cffi. The Mac build installs both as universal2
+# (packaging/mac-universal2-wheels.sh); a checkout's hub installs this file
+# by itself when cryptography is missing (notify.auto_install).
+cryptography>=41
