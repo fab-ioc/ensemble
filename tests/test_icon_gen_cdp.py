@@ -138,7 +138,7 @@ async function main() {
       focus: ae && (ae.id || ae.className), choice: (q('input[name="ps-icon"]:checked') || {}).value, img: t('.ps-choice-img small'),
       bigSrc: q('.ps-choice-img .ps-big img') ? q('.ps-choice-img .ps-big img').getAttribute('src').slice(0, 26) : '',
       sampleSrc: q('.ps-srow .ldp-ico img') ? q('.ps-srow .ldp-ico img').getAttribute('src').slice(0, 26) : '',
-      hint: [...d.querySelectorAll('.ps-hint')].map(e => e.textContent).slice(-1)[0], save: !!q('#ps-save') && !q('#ps-save').disabled,
+      hint: [...d.querySelectorAll('.ps-hint:not(.ps-chint)')].map(e => e.textContent).slice(-1)[0], chint: q('.ps-chint')?.textContent || '', save: !!q('#ps-save') && !q('#ps-save').disabled,
       dlg: ${R}(d), boxR: ${R}(box), upR: ${R}(q('#ps-up')), genR: ${R}(g), tR: ${R}(q('.ps-choice-img .ps-t')), tilesR: ${R}(q('.ps-tiles')),
       scrollW: d.scrollWidth, clientW: d.clientWidth, docW: document.documentElement.scrollWidth, W: document.documentElement.clientWidth,
       targets: [...d.querySelectorAll('#ps-gen-box button, #ps-up, #ps-gen')].map(e => [e.id || e.className, Math.round(e.getBoundingClientRect().height)]) };
@@ -358,6 +358,8 @@ class GenerateInChrome(unittest.TestCase):
         self.assertEqual(d["expanded"], "false")
         self.assertFalse(d["box"])
         self.assertTrue(d["hint"].startswith("PNG, JPEG, SVG or WebP, up to 1 MB, or Generate. A picture that is not square is cropped"), d["hint"])
+        # P366: the colour the upload gives, said under the sample.
+        self.assertRegex(d["chint"], r"^An uploaded picture's main colour becomes the \w+'s colour\.$")
         self.assertEqual(d["genR"]["y"], d["upR"]["y"], "beside Upload image…")
 
     def test_busy(self):

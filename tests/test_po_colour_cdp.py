@@ -25,6 +25,8 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 import chatroom  # noqa: E402
 import dashboard  # noqa: E402
+import icon_colour
+import icon_gen  # noqa: E402
 from tests import chrome_profile  # noqa: E402
 from tests.test_page_update import CHROME  # noqa: E402
 
@@ -96,6 +98,8 @@ async function main() {
       fg:kind?vars.getPropertyValue('--c-'+kind+'-fg').trim():null,
       violet:vars.getPropertyValue('--c-discovery-fg').trim(),
       icon:!!square?.querySelector('img'), own:d?.defaultView?.eval('ROOM_OBJ && ROOM_OBJ.projectId')||'',
+      ownColour:ProjectColour.own(PROJECTS.projects,pid)||'', dark:ProjectColour.darkTheme(),
+      theme:document.documentElement.dataset.theme||'',
       frame:f?.dataset.room||'', projects:(PROJECTS?.projects||[]).map(p=>({id:p.id,name:p.name,registered:p.registered,icon:!!p.icon?.v})),
       listVisible:!!square&&square.getBoundingClientRect().width>0,
       headerVisible:!!head&&head.getBoundingClientRect().width>0,
@@ -107,6 +111,10 @@ async function main() {
     const ratio=(a,b)=>{const x=lum(a),y=lum(b);return (Math.max(x,y)+.05)/(Math.min(x,y)+.05)};
     return els.map(e=>e?ratio(getComputedStyle(e).color,getComputedStyle(e).backgroundColor):0);
   })()`;
+  // ENSEMBLE_PO_COLOUR_SHOT: the light page before the upload and after it.
+  const shoot=async name=>{ if (!A.shots) return; await sleep(250);
+    const shot=await send('Page.captureScreenshot',{format:'png',captureBeyondViewport:false},s);
+    fs.writeFileSync(path.join(A.shots, 'po-colour-'+name+'.png'),Buffer.from(shot.data,'base64')); };
   try {
     await send('Page.navigate',{url:A.base+'/'},s);
     await until(`typeof PROJECTS!=='undefined' && !!PROJECTS && PROJECTS.projects.length===3 &&
@@ -121,16 +129,13 @@ async function main() {
       await sleep(150);
       out.light.push(await ev(inspect));
       out.light[i].ratios=await ev(ratios);
-      if (A.shots && i<2) {
-        const shot=await send('Page.captureScreenshot',{format:'png',captureBeyondViewport:false},s);
-        fs.writeFileSync(path.join(A.shots, 'po-colour-'+i+'.png'),Buffer.from(shot.data,'base64'));
-      }
     }
     for (const theme of ['dark','dim','paper','contrast','fjord','intellij-dark']) {
-      await ev(`localStorage.setItem('cd-theme',${JSON.stringify(theme)});cdTheme.apply();
-        document.querySelectorAll('iframe.po-session').forEach(f=>f.contentWindow?.cdTheme?.apply());0`);
+      // The hub's settings.theme wins over the local cache on the next sync: save it there too.
+      await ev(`cdTheme.put({theme:${JSON.stringify(theme)}}).then(()=>{localStorage.setItem('cd-theme',${JSON.stringify(theme)});cdTheme.apply();
+        document.querySelectorAll('iframe.po-session').forEach(f=>f.contentWindow?.cdTheme?.apply());return 0})`);
       const per=[];
-      for (let i=0;i<2;i++) {
+      for (let i=0;i<3;i++) {
         const pid=A.ids[i], room=A.rooms[i];
         await ev(`SELECTED_PROJECT=${JSON.stringify(pid)};PROJECT_TAB='tasks';renderRows();0`);
         await until(`document.querySelector('#po-panel .po-head')?.dataset.proj===${JSON.stringify(pid)} && ${PO}?.dataset.room===${JSON.stringify(room)}`,'theme '+theme+' project '+i);
@@ -140,6 +145,29 @@ async function main() {
       out.allThemes[theme]=per;
     }
     out.dark=out.allThemes.dark;
+    // P366: an upload gives project 0 its icon's colour; Remove brings its palette colour back.
+    await ev(`cdTheme.put({theme:'light'}).then(()=>{localStorage.setItem('cd-theme','light');cdTheme.apply();
+      document.querySelectorAll('iframe.po-session').forEach(f=>f.contentWindow?.cdTheme?.apply());return 0})`);
+    const pid0=JSON.stringify(A.ids[0]);
+    await ev(`SELECTED_PROJECT=${pid0};PROJECT_TAB='tasks';renderRows();0`);
+    await until(`document.querySelector('#po-panel .po-head')?.dataset.proj===${pid0} && ${PO}?.dataset.room===${JSON.stringify(A.rooms[0])}`,'project 0 again');
+    out.before=await ev(inspect); await shoot('before');
+    const post=async body=>ev(`(async()=>{ await api('/api/projects/icon',{method:'POST',headers:{'Content-Type':'application/json'},body:${JSON.stringify(JSON.stringify(body))}});
+      await refreshProjects(); renderRows(); ldpPaint(); poColourBroadcast(); return 1; })()`);
+    const green='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48"><rect width="48" height="48" fill="#ffffff"/><circle cx="24" cy="24" r="20" fill="#1f9d55"/></svg>';
+    await post({projectId:A.ids[0], dataUrl:'data:image/svg+xml;base64,'+Buffer.from(green).toString('base64'), name:'green.svg'});
+    await until(`!!ProjectColour.own(PROJECTS.projects,${pid0}) && document.querySelector('#po-panel .po-head .rl.po')?.dataset.poFill===ProjectColour.own(PROJECTS.projects,${pid0})
+      && ${PO}?.contentDocument?.querySelector('#msgs .msg .from .rl.po')?.dataset.poFill===ProjectColour.own(PROJECTS.projects,${pid0})`,'uploaded colour');
+    out.uploaded=await ev(inspect); out.uploaded.ratios=await ev(ratios); await shoot('after');
+    out.uploaded.pic=await ev(`document.querySelector('#ld-projs [data-ldp-proj="'+${pid0}+'"] .ldp-ico img')?.getAttribute('src')||''`);
+    await post({projectId:A.ids[0], dataUrl:null});
+    await until(`!ProjectColour.own(PROJECTS.projects,${pid0}) && !!document.querySelector('#ld-projs [data-ldp-proj="'+${pid0}+'"] .ldp-ico.ptile')
+      && document.querySelector('#po-panel .po-head .rl.po')?.dataset.poFill===${JSON.stringify(out.before.head?.token||'')}`,'removed');
+    out.removed=await ev(inspect); out.removed.ratios=await ev(ratios);
+    // A JPEG upload's PNG thumbnail, drawn by the page (a hub without Pillow reads that).
+    out.thumb=await ev(`(async()=>{ const c=document.createElement('canvas'); c.width=300; c.height=200;
+      const g=c.getContext('2d'); g.fillStyle='#ffffff'; g.fillRect(0,0,300,200); g.fillStyle='#1f9d55'; g.fillRect(40,20,220,160);
+      return psThumbnail(c.toDataURL('image/jpeg',.9)); })()`);
     console.log(JSON.stringify(out));
   } finally { c.close(); ch.kill(); }
 }
@@ -150,6 +178,13 @@ main().catch(e=>{console.error(e.stack||String(e));process.exit(1)});
 @unittest.skipUnless(NODE and CHROME, 'needs Node and Chrome')
 class PoColourCdp(unittest.TestCase):
     def check_coloured_view(self, view: dict, ratios: list[float]):
+        if view['ownColour']:
+            # P366: a project whose icon gave it a colour: that colour, this theme's shade of it.
+            self.assertEqual(view['head']['token'], view['ownColour'], view)
+            self.assertEqual(rgb(view['head']['fill']), rgb(view['ownColour']), view)
+            self.assertEqual(view['head']['fill'], view['balloon']['fill'], view)
+            self.assertTrue(all(r >= 4.5 for r in ratios), (ratios, view))
+            return
         bold_reads = max(contrast(view['bold'], '#ffffff'), contrast(view['bold'], '#1D2125')) >= 4.5
         expected_token = view['listToken'] if bold_reads else view['listToken'].replace('-bold', '-fg')
         expected_fill = view['bold'] if bold_reads else view['fg']
@@ -222,14 +257,23 @@ class PoColourCdp(unittest.TestCase):
         assert result.returncode == 0, result.stderr[-5000:]
         cls.got = json.loads(result.stdout.strip().splitlines()[-1])
         if os.environ.get('ENSEMBLE_PO_COLOUR_SHOT'):
-            from PIL import Image
-            left, right = (Image.open(base / f'po-colour-{i}.png').convert('RGB') for i in range(2))
-            # Keep the list, header and balloon without the empty lower chat area.
+            from PIL import Image, ImageDraw, ImageFont
+            left, right = (Image.open(base / f'po-colour-{n}.png').convert('RGB') for n in ('before', 'after'))
+            # Keep the list, header and balloon without the empty lower chat area,
+            # under a caption each: Orion before and after a green icon is uploaded.
             width = min(850, left.width, right.width)
             height = min(450, left.height, right.height)
-            out = Image.new('RGB', (width * 2, height), '#ffffff')
-            out.paste(left.crop((0, 0, width, out.height)), (0, 0))
-            out.paste(right.crop((0, 0, width, out.height)), (width, 0))
+            cap, gap = 34, 16
+            out = Image.new('RGB', (width * 2 + gap, height + cap), '#ffffff')
+            out.paste(left.crop((0, 0, width, height)), (0, cap))
+            out.paste(right.crop((0, 0, width, height)), (width + gap, cap))
+            draw = ImageDraw.Draw(out)
+            try:
+                font = ImageFont.truetype('DejaVuSans.ttf', 15)
+            except OSError:
+                font = ImageFont.load_default()
+            draw.text((10, 10), 'Before: Orion has no icon, its label takes the palette pick', fill='#1d2125', font=font)
+            draw.text((width + gap + 10, 10), 'After: a green icon uploaded, its colour is the label colour', fill='#1d2125', font=font)
             dest = Path(os.environ['ENSEMBLE_PO_COLOUR_SHOT'])
             dest.parent.mkdir(parents=True, exist_ok=True)
             out.save(dest)
@@ -245,15 +289,55 @@ class PoColourCdp(unittest.TestCase):
             self.assertTrue(view['listVisible'] and view['headerVisible'] and view['balloonVisible'], view)
             self.check_coloured_view(view, view['ratios'])
         self.assertTrue(icon['icon'], icon)
-        self.assertEqual(icon['head']['fill'], icon['balloon']['fill'])
-        self.assertEqual(icon['head']['token'], '')
-        self.assertEqual(rgb(icon['head']['fill']), rgb(icon['violet']), icon)
+        # P366: its icon is a #8367BB square, which is now its colour (white ink reads on it).
+        self.assertEqual(icon['ownColour'], '#8367bb', icon)
+        self.check_coloured_view(icon, icon['ratios'])
+
+    def test_upload_gives_its_colour_and_remove_takes_it_back(self):
+        before, up, gone = self.got['before'], self.got['uploaded'], self.got['removed']
+        self.assertFalse(before['ownColour'], before)
+        self.check_coloured_view(before, [5])
+        # The green icon's colour, as the hub works it out, in this (light) theme.
+        want = icon_colour.shades(icon_colour.prevailing(
+            b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48"><rect width="48" height="48" fill="#ffffff"/>'
+            b'<circle cx="24" cy="24" r="20" fill="#1f9d55"/></svg>', 'svg'))['light']
+        self.assertEqual(up['ownColour'], want, up)
+        self.assertEqual(up['listToken'], want, 'ldpColour is the stored colour')
+        self.check_coloured_view(up, up['ratios'])
+        self.assertIn('/api/projects/icon', up['pic'], 'the list shows the uploaded icon')
+        print(f"[P366] upload: palette {before['head']['fill']} -> own {want} "
+              f"(label {min(up['ratios']):.2f}:1); removed -> {gone['head']['fill']}")
+        # Remove: the palette pick (the tile and label as before) is back.
+        self.assertFalse(gone['ownColour'], gone)
+        self.assertEqual(gone['head']['fill'], before['head']['fill'])
+        self.assertEqual(gone['swatch'], before['swatch'])
+        self.check_coloured_view(gone, gone['ratios'])
+
+    def test_a_jpeg_thumbnail_from_the_page(self):
+        thumb = self.got['thumb']
+        self.assertTrue(thumb.startswith('data:image/png;base64,'), thumb[:40])
+        self.assertLessEqual(len(thumb), icon_colour.SAMPLE_MAX)
+        got = icon_colour.from_thumbnail(thumb)
+        self.assertIsNotNone(got)
+        self.assertLessEqual(icon_gen._dist(icon_gen.parse_colour(got), (0x1f, 0x9d, 0x55)), 12, got)
 
     def test_contrast_and_fill_in_every_theme(self):
         for theme, cases in self.got['allThemes'].items():
             for case in cases:
                 view, ratios = case['view'], case['ratios']
                 self.check_coloured_view(view, ratios)
+            icon = cases[2]['view']
+            self.assertEqual(icon['theme'], theme, 'the theme took')
+            self.assertEqual(icon['dark'], cdtheme_dark(theme), theme)
+            self.assertTrue(icon['ownColour'], (theme, icon))
+            # A dark theme paints the lighter shade (icon_colour.shades), under dark ink.
+            want = icon_colour.shades('#8367BB')['dark' if icon['dark'] else 'light']
+            self.assertEqual(icon['ownColour'], want, (theme, icon))
+            print(f"[P366] {theme}: own colour {want}, label contrast {min(cases[2]['ratios']):.2f}:1")
+
+
+def cdtheme_dark(theme):
+    return theme in ('dark', 'dim', 'fjord', 'intellij-dark')
 
 
 if __name__ == '__main__':
