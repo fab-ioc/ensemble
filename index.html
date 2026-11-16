@@ -4012,7 +4012,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   #ens-upd button::after { content: ''; position: absolute; left: -8px; right: -8px; top: -14px; bottom: -14px; }
   #ens-upd button:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
   /* #322 (P289 drawing): a computer's left strip has two panels, the Inbox (full height) and
-     Projects: PROJECTS, All, each project with its swatch and Inbox count, newest first, a line,
+     Projects: PROJECTS, All, each project with its swatch and Inbox count (pinned first, then by Inbox count and name, #376), a line,
      then each task and session in no project. Values are the drawing's (.panel .ph .proj .cnt .sw). Kept out of the PO screen's section: these panels are the list dock's. */
   .pd-inbox.ld-inbox { display: flex; flex-direction: column; padding: 0; overflow: hidden; }
   .pd-inbox.ld-inbox #ld-ibx-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
