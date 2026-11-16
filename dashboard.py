@@ -23907,8 +23907,16 @@ class Handler(BaseHTTPRequestHandler):
             if chatroom.get_room(rid) is None or not threads.is_threaded(rid):
                 self._send_json(404, {"error": "no_such_room"})
                 return
+            tid, name = data.get("thread"), data.get("name")
+            if not isinstance(tid, str) or not tid or not isinstance(name, (str, type(None))):
+                self._send_json(400, {"error": "bad_request",
+                                      "message": "thread and name are text"})
+                return
             try:
-                name = threads.rename(rid, str(data.get("thread") or ""), data.get("name") or "")
+                name = threads.rename(rid, tid, name or "", chatroom.get_room(rid))
+            except KeyError:
+                self._send_json(404, {"error": "no_such_thread"})
+                return
             except (TypeError, ValueError, OSError) as e:
                 self._send_json(400, {"error": "not_saved", "message": str(e)})
                 return

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import copy
 import json
+import sys
 from unittest import mock
 
 import chatroom
@@ -89,12 +90,75 @@ class ThreadNames(tp._World):
 
     def test_names_are_cleaned_and_team_activity_cannot_be_named(self):
         self.assertEqual(threads.rename(self.rid, "P1", "x" * 200), "x" * threads.NAME_MAX)
-        with self.assertRaises(ValueError):
+        with self.assertRaises(KeyError):
             threads.rename(self.rid, "team:activity", "Mine")
         status, out = self.post("/api/room/thread/name", {"roomId": self.rid, "thread": "", "name": "A"})
         self.assertEqual(status, 400, out)
         status, out = self.post("/api/room/thread/name", {"roomId": "room-00000000", "thread": "P1", "name": "A"})
         self.assertEqual(status, 404, out)
+
+    def test_only_a_thread_the_chat_has_is_named(self):
+        # Review 1: an id the chat has no thread for is refused, not kept for
+        # a later thread that happens to get it.
+        names = lambda: threads.load_side(self.rid)["names"]
+        status, out = self.post("/api/room/thread/name", {"roomId": self.rid, "thread": "P999", "name": "Ghost"})
+        self.assertEqual((status, out.get("error")), (404, "no_such_thread"))
+        with self.assertRaises(KeyError):
+            threads.rename(self.rid, "m:sid-9:9", "Ghost")
+        self.assertEqual(names(), {})
+        # A thread started on a balloon from its menu, not written in yet.
+        mid = next(m for m in threads.build(self.rid)["by_mid"] if m.endswith(":1"))
+        self.assertEqual(threads.rename(self.rid, "m:" + mid, "From its menu"), "From its menu")
+        # A name or thread that is not text is refused, the name kept as it was.
+        threads.rename(self.rid, "P2", "Login")
+        for body in ({"thread": "P2", "name": 42}, {"thread": "P2", "name": ["x"]}, {"thread": 2, "name": "A"}):
+            status, out = self.post("/api/room/thread/name", {"roomId": self.rid, **body})
+            self.assertEqual(status, 400, (body, out))
+        self.assertEqual(names()["P2"], "Login")
+        status, out = self.post("/api/room/thread/name", {"roomId": self.rid, "thread": "P2", "name": None})
+        self.assertEqual((status, out), (200, {"ok": True, "name": ""}), "no name: the automatic title")
+
+    def test_a_deleted_thread_started_again_has_its_own_words(self):
+        # Review 1: neither a rename nor the name given at creation outlives
+        # a delete; a message after it starts a thread named by its words.
+        threads.rename(self.rid, "P2", "Login")
+        self.assertEqual(threads.delete(self.rid, None, ["P1", "P2"], now=self.t0 + 700), ["P1", "P2"])
+        self.assertEqual(threads.load_side(self.rid)["names"], {})
+        status, out = self.post("/api/room/thread/name", {"roomId": self.rid, "thread": "P2", "name": "Late"})
+        self.assertEqual(status, 404, "a deleted thread is not named")
+        self.add("sid-1", tp.turn("assistant", "Re P1: one last thing on the chart.", self.t0 + 800),
+                 tp.turn("assistant", "Re P2: one last thing on the login.", self.t0 + 801))
+        self.rebuild()
+        self.assertEqual(self.titles(), {
+            "P1": ("Re P1: one last thing on the chart.", False, "Re P1: one last thing on the chart."),
+            "P2": ("Re P2: one last thing on the login.", False, "Re P2: one last thing on the login."),
+        })
+        # Named again once it is back: the name holds.
+        threads.rename(self.rid, "P2", "Login again")
+        self.rebuild()
+        self.assertEqual(self.titles()["P2"][0], "Login again")
+
+    def test_a_rename_saved_while_a_build_runs_is_not_lost(self):
+        # Review 1: a build stamps the record's signature of the names it
+        # applied, so the index served after it still takes a rename saved
+        # between its read of the record and its end.
+        threads.forget()
+        load, fired = threads.load_side, []
+
+        def load_then_rename(rid):
+            side = load(rid)
+            if not fired and sys._getframe(1).f_code.co_name == "build":
+                fired.append(1)
+                late = load(rid)
+                late["names"]["P2"] = "Login"
+                threads._save_side(rid, late)
+            return side
+        with mock.patch.object(threads, "load_side", load_then_rename):
+            idx = threads.build(self.rid)
+        self.assertTrue(fired)
+        self.assertEqual(idx["threads"]["P2"]["title"], "Fix the login page", "built from the names it read")
+        self.assertNotEqual(idx["namesSig"], threads._side_sig(self.rid))
+        self.assertEqual(threads._names_now(self.rid, idx)["threads"]["P2"]["title"], "Login")
 
     def test_a_rename_shows_before_the_chat_is_read_again(self):
         threads.ready(self.rid, chatroom.get_room(self.rid, public=False))

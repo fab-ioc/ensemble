@@ -79,6 +79,12 @@ log.status = [
 ];
 log.html = findHtml('brakes', res, 'done', 1);
 log.htmlDeep = findHtml('brakes', res, 'deep', -1);
+// Issue 51: a hit in a named thread says the name; an unnamed one does not.
+log.named = [
+  findRowHtml({ kind: 'messages', it: { ...res.messages.items[0], thread: 'P2', threadTitle: 'Brake pads', threadNamed: true } }, 0, false, parseSearchQuery('brakes')),
+  findRowHtml({ kind: 'messages', it: { ...res.messages.items[0], thread: 'P2', threadTitle: 'the brakes', threadNamed: false } }, 0, false, parseSearchQuery('brakes')),
+  findRowHtml({ kind: 'latest', it: { roomId: 'room-po', msgId: 'm2', query: 'brakes', project: 'Motors', thread: 'P2', threadTitle: 'Brake pads', threadNamed: true, threads: 1 } }, 0, false, parseSearchQuery('brakes')),
+];
 // The list's filter.
 const e = (key, row, more) => ({ key, row, it: null, project: 'Motors', ...more });
 const g = {
@@ -123,6 +129,12 @@ class TheDropDownsInside(unittest.TestCase):
     def test_the_order_the_arrows_walk(self):
         self.assertEqual(self.r["items"], ["tasks:room-a", "tasks:room-b", "sessions:s-1", "messages:room-po/m1"])
         self.assertEqual(self.r["none"], [])
+
+    def test_a_hit_in_a_named_thread_says_its_name(self):
+        named, auto, latest = self.r["named"]
+        self.assertIn('<span class="fd-m">sam → PO · Thread: Brake pads</span>', named)
+        self.assertNotIn("Thread:", auto, "an automatic title is the snippet's words already")
+        self.assertIn('<span class="fd-m">Motors · Thread: Brake pads · 1 thread</span>', latest)
 
     def test_the_status_line_says_why(self):
         self.assertEqual(self.r["status"], [
