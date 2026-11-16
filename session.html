@@ -1501,6 +1501,20 @@
   #new-thread .sp-wind { stroke:var(--surface); stroke-opacity:.6; stroke-width:1.4; }
   #new-thread .sp-tail { stroke:var(--spool-thread); stroke-width:2.1; }
   #new-thread:focus-visible { outline:none; box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  /* P367: dictation, the spool toggle's look; listening, pressed with a stop square and the word. */
+  #mic { height:32px; min-width:32px; padding:0; display:inline-flex; align-items:center; justify-content:center; gap:var(--s-100); background:transparent;
+    border:1px solid transparent; border-radius:var(--r-200); color:var(--fg-subtle); cursor:pointer; font-size:var(--fs-200); font-weight:500; }
+  #mic[hidden] { display:none; }
+  #mic:hover { background:var(--hover); color:var(--fg); }
+  /* Listening (P369): the same button, its mic in the accent and pulsing; the box does not move. */
+  #mic[aria-pressed="true"] { color:var(--accent); }
+  #mic[aria-pressed="true"]:hover { color:var(--accent-hover); }
+  #mic[aria-pressed="true"] .mic-ico { animation:mic-pulse 1.2s ease-in-out infinite; }
+  @keyframes mic-pulse { 0%,100% { opacity:1; transform:scale(1); } 50% { opacity:.45; transform:scale(.86); } }
+  @media (prefers-reduced-motion: reduce) { #mic[aria-pressed="true"] .mic-ico { animation:none; } }
+  #mic:focus-visible { outline:none; box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  /* The words still being heard are selected, so typing replaces them; drawn grey, not highlighted. */
+  #input.mic-live::selection { color:var(--fg-muted); background:transparent; }
   #add-point, #attach { height:32px; padding:0 var(--s-200); background:transparent; border:1px solid transparent; color:var(--fg-subtle); font-size:var(--fs-200); }
   #add-point:hover, #attach:hover { background:var(--hover); color:var(--fg); }
   #attach:focus-visible, #add-point:focus-visible { outline:none; box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
@@ -1606,7 +1620,7 @@
     #compose { padding: 8px; gap: 4px; }
     /* The editor's controls are a finger's size, and the box itself takes at
        most half of what the keyboard leaves. */
-    .ed-btn, #add-point, #send-more, #new-thread { min-height: var(--touch-min); min-width: var(--touch-min); }
+    .ed-btn, #add-point, #send-more, #new-thread, #mic { min-height: var(--touch-min); min-width: var(--touch-min); }
     .ed-pt .ed-n { padding-top: 12px; }
     .ed-pt textarea.ed-text { min-height: var(--touch-min); }
     .ed-refs a.ref-chip, .ed-refs a.task-chip { min-height: var(--touch-min); align-items: center; }
@@ -1685,6 +1699,7 @@
     .phone-compose-tools .phone-tools-menu { position:absolute; bottom:100%; right:0; width:220px; padding:var(--s-100); background:var(--surface-overlay); border:1px solid var(--border); border-radius:var(--r-200); box-shadow:var(--e-200); z-index:10; }
     .phone-tools-menu button { display:block; width:100%; text-align:left; }
     .phone-tools-menu button[hidden] { display:none; }
+    .phone-tools-menu button[data-phone-action="mic"] { display:none; }   /* P367: a wider box has the mic in its row */
     #compose:has(.ed-pt) { grid-template-columns:minmax(0,1fr); }
     #compose:has(.ed-pt) .ed-row { justify-content:flex-end; }
   }
@@ -1714,7 +1729,10 @@
 
   }
   /* A phone's box keeps 8px at its foot (#333; Message editor: 8px at its foot). */
-  @media (pointer: coarse) and (max-width: 767px) { #compose { padding-bottom:var(--s-200); } }
+  @media (pointer: coarse) and (max-width: 767px) { #compose { padding-bottom:var(--s-200); }
+    /* P367: the words keep their room (#232): dictation is in the + menu; the row shows it only while it listens. */
+    #compose .ed-row > #mic[aria-pressed="false"] { display:none; }
+    .phone-tools-menu button[data-phone-action="mic"]:not([hidden]) { display:block; } }
   /* ---- Session actions: begin shared block ---------------------------------
      The action bar (static/actions.js): one primary action and a More menu,
      the same in the dashboard's task panel, its list rows and the popped-out
@@ -1872,6 +1890,7 @@
         <details class="phone-compose-tools"><summary aria-label="Attach, add an ask, or chat filter">+</summary><div class="phone-tools-menu">
           <button type="button" data-phone-action="attach">Attach a file</button>
           <button type="button" data-phone-action="add-point">Add an ask</button>
+          <button type="button" data-phone-action="mic" hidden>Dictate</button>
           <button type="button" data-phone-action="team-all">Team activity</button>
           <button type="button" data-phone-action="threads-view" hidden>Threads</button>
           <button type="button" data-phone-action="earlier-threads" hidden>Earlier messages</button>
@@ -1885,6 +1904,9 @@
         <button type="button" id="new-thread" aria-pressed="false" aria-label="New thread" title="New thread: this message starts a thread" hidden><svg class="spool" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false" fill="none" stroke-linecap="round" stroke-linejoin="round"><rect class="sp-thread" x="4.5" y="5" width="10" height="14"/><path class="sp-wind" d="M4.5 10.5l10-1.8M4.5 14.6l10-1.8"/><rect class="sp-wood" x="2" y="1.5" width="15" height="4" rx="2"/><rect class="sp-wood" x="2" y="18.5" width="15" height="4" rx="2"/><path class="sp-tail" d="M14.5 15c3.5 0 5.5 1 5.5 3.5S21 22 22.5 21.5"/></svg></button>
         <span class="grow"></span>
         <div id="stop-wrap" hidden><button type="button" id="stop-agent" title="Stop the working agent (Esc)">Stop</button><div id="stop-choices" role="group" aria-label="Choose agent to stop" hidden></div></div>
+        <!-- P367: dictation. Shown only where the browser has speech recognition
+             in a secure context; words land at the caret, it never sends. -->
+        <button type="button" id="mic" aria-pressed="false" aria-label="Dictate" title="Dictate: press and talk (press again or Esc to stop)" hidden><svg class="mic-ico" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="5.5" y="1.5" width="5" height="8" rx="2.5"/><path d="M3 7.5a5 5 0 0 0 10 0M8 12.5v2"/></svg></button>
         <div id="send-split"><button id="send" disabled>Send</button><button type="button" id="send-more" aria-haspopup="menu" aria-expanded="false" aria-controls="send-menu" aria-label="More ways to send" title="More ways to send" hidden>&#9662;</button><div id="send-menu" role="menu" aria-label="Send" hidden><button type="button" role="menuitem" id="send-now"><span class="sm-name">Send now</span><span class="sm-sub"></span></button></div></div>
       </div>
       <label id="thr-also-l" hidden title="Show this reply in the chat too, not only in its thread"><input type="checkbox" id="thr-also"> Also send to chat</label>
@@ -1894,7 +1916,7 @@
   <!-- A thread beside the chat (#234), or over it on a phone: the thread page in a frame. -->
   <aside id="thr-side" hidden aria-label="Thread">
     <div class="ts-head"><button type="button" id="ts-back" title="Back to the chat">&lsaquo; Back</button><span id="ts-title">Thread</span><button type="button" id="ts-pen" class="thr-pen" title="Rename thread" aria-label="Rename thread" hidden><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10.5 2.5l3 3L5.5 13.5 2 14l.5-3.5z"/><path d="M9 4l3 3"/></svg></button><a id="ts-to-app" href="/" hidden aria-label="Open in Ensemble" title="Open this thread in Ensemble"><img src="/static/icons/favicon.svg" alt="" width="22" height="22"></a><button type="button" id="ts-close" title="Close the thread" aria-label="Close the thread">&times;</button></div>
-    <iframe id="ts-frame" title="Thread"></iframe>
+    <iframe id="ts-frame" title="Thread" allow="microphone"></iframe>
   </aside>
   <div id="agentcol"></div>
 </main>
@@ -7150,7 +7172,7 @@ function sharedThreadSelect(target, focus = false) {
   if (THREAD_MODE || !target?.thread) return;
   if (target.mid) sharedThreadPromote(target.mid, target.thread);
   const switching = SHARED_THREAD?.thread !== String(target.thread);
-  if (switching) edStoreNow();
+  if (switching) { micStop(true); edStoreNow(); }   // P367: the words, a point made of them, go with the old draft
   SHARED_THREAD = { thread:String(target.thread), title:String(target.title || 'Thread'), info:target.info || null };
   if (switching && !document.body.classList.contains('workspace-guest')) {
     sharedComposerYield(false); sharedComposerResume();
@@ -7191,7 +7213,7 @@ function sharedThreadPromote(mid, thread) {
 }
 function sharedThreadClear(closed = false) {
   const thread = SHARED_THREAD?.thread || TS?.tid || (TS?.mid && 'm:' + TS.mid);
-  if (SHARED_THREAD) edStoreNow();
+  if (SHARED_THREAD) { micStop(true); edStoreNow(); }   // P367: as in sharedThreadSelect
   SHARED_THREAD = null;
   if (thread && !document.body.classList.contains('workspace-guest')) {
     sharedComposerYield(false); sharedComposerResume();
@@ -8448,7 +8470,7 @@ function refreshShow(room, ticket, sendsGen) {
   const resuming = !!pend && pend.state !== 'failed';
   setText($('#hop'), notRunning ? '' : `hop ${room.hopCount || 0}/${room.maxHops || 0}`);
   // The box says only what happens to a send; the state is said once (#232).
-  setText($('#hint'), SEND_IN_FLIGHT ? 'Sending your message.' : SEND_ERR || '');
+  setText($('#hint'), SEND_IN_FLIGHT ? 'Sending your message.' : SEND_ERR || MIC_NOTE || '');
   $('#send').disabled = SEND_IN_FLIGHT;
   $('#input').disabled = false;
   const pendSig = JSON.stringify(pend);
@@ -10015,6 +10037,7 @@ async function sendNow(urgent = false) {
     setText($('#hint'), 'Finishing your text before sending.');
     return;
   }
+  micStop(true);   // P367: what was heard so far is the message; listening ends with the send
   const t = edText();
   const atts = sendAttachments();
   if (!atts) return;
@@ -10098,6 +10121,185 @@ async function sendNow(urgent = false) {
   }
 }
 $('#send').onclick = () => sendNow();
+// ---- Dictation (P367): begin --------------------------------------------------
+// The browser's own speech recognition writes what is said into the box, at the
+// caret: the words still being heard are selected and drawn grey (typing over
+// them replaces them), the heard ones are plain text. Press again, Esc, or a
+// few seconds of silence stops it; it never sends. Where the browser has no
+// recognition, or the page is not a secure context (plain http to another
+// machine), the button is not shown. The audio goes to the browser's speech
+// service (Safari: Apple; Chrome: Google).
+var MIC_NOTE = '';            // one line in the box's hint: a refused microphone, no speech heard
+var MIC = null;               // the session listening: {rec, start, text, sel, stopping, timer}
+const MIC_SILENCE_MS = 4000;  // after the last words heard
+const MIC_FIRST_MS = 8000;    // before the first word
+const MIC_ENGINE = () => window.SpeechRecognition || window.webkitSpeechRecognition || null;
+function micAvailable() { return !!MIC_ENGINE() && window.isSecureContext !== false; }
+function micNote(text) {
+  const was = MIC_NOTE;
+  MIC_NOTE = text || '';
+  if (!SEND_ERR && !SEND_IN_FLIGHT && (MIC_NOTE || $('#hint').textContent === was)) setText($('#hint'), MIC_NOTE);
+}
+function micButton() {
+  const b = $('#mic');
+  if (!b) return;
+  b.hidden = !micAvailable();
+  const item = document.querySelector('[data-phone-action="mic"]');
+  if (item) item.hidden = b.hidden;
+  const on = !!MIC && !MIC.stopping;
+  b.setAttribute('aria-pressed', on ? 'true' : 'false');
+  b.setAttribute('aria-label', on ? 'Listening, press to stop' : 'Dictate');
+  b.title = on ? 'Listening, press to stop' : 'Dictate: press and talk (press again or Esc to stop)';
+  $('#input').classList.toggle('mic-live', on);
+}
+// What the session heard, as one run of words: the heard part, then the part
+// still being heard. Engines differ in how they cut results (Chrome: one per
+// phrase; Safari: one growing result), so all of them are read each time.
+function micWords(results) {
+  const heard = [], hearing = [];
+  for (let i = 0; i < results.length; i++) {
+    const r = results[i], w = String((r[0] && r[0].transcript) || '').trim();
+    if (w) (r.isFinal ? heard : hearing).push(w);
+  }
+  return { heard: heard.join(' '), hearing: hearing.join(' ') };
+}
+function micWrite(heard, hearing) {
+  const m = MIC, input = $('#input');
+  if (!m) return;
+  // The box changed under the words (sent, or edited by other means): stop here.
+  if (input.value.slice(m.start, m.start + m.text.length) !== m.text) { micStop(true); return; }
+  const before = input.value.slice(0, m.start), after = input.value.slice(m.start + m.text.length);
+  const words = [heard, hearing].filter(Boolean).join(' ');
+  const pad = words && before && !/\s$/.test(before) ? ' ' : '';
+  const tail = words && after && !/^\s/.test(after) ? ' ' : '';
+  const text = words ? pad + words + tail : '';
+  if (!words && !m.wrote) return;   // a selection kept for the first words stays until they come
+  m.wrote = true;
+  input.setRangeText(text, m.start, m.start + m.text.length, 'end');
+  m.text = text;
+  // The words still being heard stay selected (grey); the caret after the rest.
+  const end = m.start + pad.length + words.length;
+  const from = hearing ? end - hearing.length : end;
+  input.setSelectionRange(from, end);
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  input.setSelectionRange(from, end);
+  m.sel = [from, end];
+}
+function micTimer(ms) {
+  if (!MIC) return;
+  clearTimeout(MIC.timer);
+  MIC.timer = setTimeout(() => micStop(), ms);
+}
+function micStart() {
+  const Engine = MIC_ENGINE();
+  if (!Engine || MIC) return;
+  const input = $('#input');
+  micNote('');
+  if (typeof speakStop === 'function') speakStop();
+  let rec;
+  try { rec = new Engine(); } catch (e) { micNote('Dictation is not available in this browser.'); return; }
+  rec.lang = navigator.language || document.documentElement.lang || 'en-US';
+  rec.continuous = true;
+  rec.interimResults = true;
+  rec.maxAlternatives = 1;
+  if (document.activeElement !== input) input.focus({ preventScroll: true });
+  // A selection is replaced by what is said, as typing would, once the first
+  // words come: refused, silent or stopped before them, it is left as it was.
+  const start = input.selectionStart ?? input.value.length;
+  const end = input.selectionEnd ?? start;
+  const m = MIC = { rec, start, text: input.value.slice(start, end), wrote: false, sel: [start, end], stopping: false, timer: 0, heardAny: false };
+  rec.onresult = e => {
+    if (MIC !== m) return;
+    const w = micWords(e.results);
+    if (w.heard || w.hearing) m.heardAny = true;
+    micWrite(w.heard, w.hearing);
+    if (!m.stopping) micTimer(MIC_SILENCE_MS);
+  };
+  rec.onerror = e => {
+    if (MIC !== m) return;
+    const err = e && e.error;
+    if (err === 'not-allowed' || err === 'service-not-allowed')
+      micNote('Microphone blocked: allow it for this site in the browser’s settings.');
+    else if (err === 'audio-capture') micNote('No microphone found.');
+    else if (err === 'network') micNote('Dictation needs the network: the browser’s speech service did not answer.');
+    else if (err === 'no-speech') micNote('No speech heard.');
+    else if (err === 'language-not-supported') micNote('Dictation does not support this browser’s language.');
+  };
+  rec.onend = () => { if (MIC === m) micDone(); };
+  try { rec.start(); } catch (e) { MIC = null; micNote('Dictation could not start.'); micButton(); return; }
+  micTimer(MIC_FIRST_MS);
+  micButton();
+}
+// Listening ends: the words still being heard stay as written, the caret after
+// them, unless the person put it somewhere else, or keepSel (a key typed over
+// the grey words: the key replaces them, as it would any selection).
+function micDone(keepSel = false) {
+  const m = MIC;
+  if (!m) return;
+  clearTimeout(m.timer);
+  MIC = null;
+  const input = $('#input');
+  const ours = input.selectionStart === m.sel[0] && input.selectionEnd === m.sel[1];
+  if (m.wrote && ours && !keepSel && input.value.slice(m.start, m.start + m.text.length) === m.text) {
+    const at = m.start + m.text.length;
+    input.setSelectionRange(at, at);
+  }
+  micButton();
+  if (m.wrote && !keepSel) edHeadInput();   // a key's own input event converts it otherwise   // "1. " said at the head's start becomes a point now, with all its words
+}
+// now: end at once (a send, a keystroke, another draft); otherwise let the engine finish the last words.
+function micStop(now = false, keepSel = false) {
+  const m = MIC;
+  if (!m) return;
+  if (now) {
+    try { m.rec.abort(); } catch (e) {}
+    micDone(keepSel);
+    return;
+  }
+  if (m.stopping) return;
+  m.stopping = true;
+  micButton();
+  try { m.rec.stop(); } catch (e) { micDone(); return; }
+  // An engine that never says it ended still lets go.
+  clearTimeout(m.timer);
+  m.timer = setTimeout(() => { if (MIC === m) { try { m.rec.abort(); } catch (e) {} micDone(); } }, 1500);
+}
+$('#mic').addEventListener('pointerdown', e => e.preventDefault());   // the caret stays in the box
+$('#mic').addEventListener('click', () => {
+  if (MIC && !MIC.stopping) { micStop(); return; }
+  if (MIC) micStop(true);   // still finishing the last words: they stay, and it listens again
+  micStart();
+});
+// Esc stops listening before anything else hears it (it would stop the agent).
+window.addEventListener('keydown', e => {
+  if (!MIC || e.key !== 'Escape') return;
+  if (document.querySelector('#send-menu:not([hidden]), #stop-choices:not([hidden]), #slashpop:not([hidden]), .phone-compose-tools[open]')) return;   // a menu closes first
+  const ae = document.activeElement;
+  if (ae && ae !== $('#input') && ae.matches?.('input, textarea, select, [contenteditable], [contenteditable] *')) return;   // so does another field (a thread's name): see below
+  e.preventDefault(); e.stopImmediatePropagation();
+  micStop();
+}, true);
+// In another field, Esc is that field's when it has a use for it (a rename
+// cancels and keeps it); otherwise, as a point's text, it stops listening.
+window.addEventListener('keydown', e => {
+  if (!MIC || e.key !== 'Escape' || e.defaultPrevented) return;
+  const ae = document.activeElement;
+  if (!ae || ae === $('#input') || !ae.matches?.('input, textarea, select, [contenteditable], [contenteditable] *')) return;
+  e.preventDefault();
+  micStop();
+});
+// A key typed in the box while listening ends it: the words heard stay, and
+// the key does what it does to the selection (it replaces the grey words).
+$('#input').addEventListener('keydown', e => {
+  if (!MIC || !e.isTrusted || e.key === 'Escape' || ['Shift', 'Control', 'Alt', 'Meta', 'CapsLock'].includes(e.key)) return;
+  // A send or add shortcut takes the words as they are, "1. " made a point first.
+  micStop(true, !edKeyAction(e, { part: 'head', empty: false, last: true }));
+}, true);
+// A press in the box ends it too: the words stay, the caret goes where pressed.
+$('#input').addEventListener('pointerdown', e => { if (MIC && e.isTrusted) micStop(true); }, true);
+$('#input').addEventListener('input', e => { if (e.isTrusted && MIC_NOTE) micNote(''); });
+micButton();
+// ---- Dictation (P367): end ----------------------------------------------------
 // Alt+Enter (\u2325Enter): Send now while it is offered, else a plain send.
 function sendNowKey() { if (!$('#send').disabled) sendNow(!!SEND_NOW_WAY); }
 $('#input').addEventListener('keydown', e => {
@@ -10296,7 +10498,7 @@ function edText() {
 // first point (while there is none).
 function edHeadInput() {
   const ta = $('#input');
-  const rest = ED.points.length ? null : edHeadTrigger(ta.value);
+  const rest = ED.points.length || MIC ? null : edHeadTrigger(ta.value);   // dictating: at its end (P367)
   if (rest != null) { ta.value = ''; edAddAt(0, rest); return; }
   edRefsDraw(); edSave();
 }
@@ -10416,6 +10618,7 @@ function edRefsDraw() {
 }
 // Sent, or kept by the hub: the box is empty again.
 function edClear() {
+  micStop(true);
   $('#input').value = '';
   fitSendInput();
   ATT.clear();
@@ -10426,6 +10629,7 @@ function edClear() {
   edDraftWrite(ED_KEY(), null);
 }
 function edStart() {
+  micStop(true);   // P367: dictation belongs to the draft it began in
   ED = edLoad();
   $('#input').value = ED.head;
   fitSendInput();
@@ -10462,6 +10666,7 @@ function workspaceComposeThread(target) {
     if (!WC_PAINTED) { WC_PAINTED = true; sharedTargetPaint(); }
     return;
   }
+  micStop(true);   // P367: the words so far stay with the destination they were said to
   edStoreNow();
   SHARED_THREAD = next ? { thread:next, title:String(target.title || 'Thread'), info:target.info || null } : null;
   sharedComposerYield(false);
@@ -10471,6 +10676,7 @@ function workspaceComposeThread(target) {
   sharedTargetPaint();
 }
 function sharedComposerYield(persist = true) {
+  micStop(true);   // P367: the words so far stay in the draft being put away
   if (!COMPOSER_SHARED_ACTIVE) return;
   if (persist) edStoreNow(); else clearTimeout(_edSave);
   COMPOSER_SHARED_ACTIVE = false;

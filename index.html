@@ -5359,7 +5359,7 @@ window.DOC_LISTENERS_PAUSED = false;
     <section id="po-panel" hidden aria-label="The project's PO" data-noun-aria-label="The {project}'s PO"></section>
 
   </div>
-  <div id="workspace-compose" hidden><div class="wc-to">To: <a href="#" id="workspace-compose-link"></a><input type="text" id="workspace-compose-thread-name" maxlength="80" placeholder="Name (optional)" aria-label="Name of the new thread (optional; empty: its first words)" autocomplete="off" hidden><button type="button" id="workspace-compose-back" hidden aria-label="Back to the PO" title="Back to the PO">&times;</button></div><iframe id="workspace-compose-frame" title="Workspace message box" allow="clipboard-read; clipboard-write"></iframe></div>
+  <div id="workspace-compose" hidden><div class="wc-to">To: <a href="#" id="workspace-compose-link"></a><input type="text" id="workspace-compose-thread-name" maxlength="80" placeholder="Name (optional)" aria-label="Name of the new thread (optional; empty: its first words)" autocomplete="off" hidden><button type="button" id="workspace-compose-back" hidden aria-label="Back to the PO" title="Back to the PO">&times;</button></div><iframe id="workspace-compose-frame" title="Workspace message box" allow="clipboard-read; clipboard-write; microphone"></iframe></div>
 </main>
 <dialog id="modal"></dialog>
 <aside id="detail-panel"></aside>
@@ -6816,7 +6816,7 @@ function renderDetail() {
       // Opened from @codex@18: at that agent.
       const ag = DETAIL_AGENT && DETAIL_AGENT.room === r.roomId ? '&agent=' + encodeURIComponent(DETAIL_AGENT.agent) : '';
       DETAIL_AGENT = null;
-      act.innerHTML = `<iframe class="dp-session" data-room="${esc(r.roomId)}" src="/session?id=${encodeURIComponent(r.roomId)}&embed=1${ag}" title="session" allow="clipboard-read; clipboard-write"></iframe>`;
+      act.innerHTML = `<iframe class="dp-session" data-room="${esc(r.roomId)}" src="/session?id=${encodeURIComponent(r.roomId)}&embed=1${ag}" title="session" allow="clipboard-read; clipboard-write; microphone"></iframe>`;
     }
   } else {
     const themeTok = (CHAT_THEME && CHAT_THEME.background) || '-';
@@ -14728,7 +14728,7 @@ function renderPo() {
     cur.className = 'po-session';
     cur.dataset.room = row.roomId;
     cur.title = `${pj.name} PO conversation`;
-    cur.allow = 'clipboard-read; clipboard-write';
+    cur.allow = 'clipboard-read; clipboard-write; microphone';   // P367: dictation in its box
     cur.src = '/session?id=' + encodeURIComponent(row.roomId) + '&embed=1';
     frames.appendChild(cur);
     try { ibxStrip(); } catch (e) {}   // #311: the new chat's phone strip knows its counts at load
@@ -15854,7 +15854,7 @@ function pdChatOpen(roomId, o) {
   el.dataset.room = roomId;
   // data-chat-slow: not the person's conversation, so it polls less while
   // it is not being typed in (session.html).
-  el.innerHTML = `<iframe class="dp-session" data-room="${esc(roomId)}" data-chat-slow src="/session?id=${encodeURIComponent(roomId)}&embed=1${at}" title="${esc(pdRowTitle(r))}" allow="clipboard-read; clipboard-write"></iframe>`;
+  el.innerHTML = `<iframe class="dp-session" data-room="${esc(roomId)}" data-chat-slow src="/session?id=${encodeURIComponent(roomId)}&embed=1${at}" title="${esc(pdRowTitle(r))}" allow="clipboard-read; clipboard-write; microphone"></iframe>`;
   PD.rt.set(id, { kind: 'chat', room: roomId, el });
   // Beside the chat panel last shown (else the conversation) while the row has
   // room for one more (pdFits); else a tab of its stack.
@@ -15942,7 +15942,7 @@ function pdThreadPanel(frameEl, o) {
   el.className = 'pd-chat pd-chat-x pd-thread';
   el.dataset.room = o.room;
   // Not iframe.dp-session / .po-session: balloon links (sendGotoMsg) go to the chat.
-  el.innerHTML = `<iframe class="po-thread" data-room="${esc(o.room)}" src="${esc(src)}" title="Thread" allow="clipboard-read; clipboard-write"></iframe>`;
+  el.innerHTML = `<iframe class="po-thread" data-room="${esc(o.room)}" src="${esc(src)}" title="Thread" allow="clipboard-read; clipboard-write; microphone"></iframe>`;
   PD.rt.set(PD_THREAD, { kind: 'thread', room: o.room, tid: o.tid || '', mid: o.tid ? '' : o.mid, el, title });
   // Dock sizes a panel docked at an edge by its least width (or a quarter of
   // the dock): while it is added, the thread's least width is its default.
