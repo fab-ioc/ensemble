@@ -15521,7 +15521,13 @@ function wcSync() {
     if (poppedId && PD.dock.popWindow(poppedId) && !WC.popped.has(poppedId))
       WC.popped.set(poppedId, {target:WC.target, pickSeq:WC.pickSeq});
     const next = wcFallback();
-    if (!next) { box.hidden = true; return; }
+    if (!next) {
+      box.hidden = true;
+      // No box to serve them: each chat shows its comments' tray again (P360).
+      for (const chat of document.querySelectorAll('iframe.po-session, iframe.dp-session, iframe.po-thread'))
+        try { chat.contentWindow?.renderCmtTray?.(); } catch (e) {}
+      return;
+    }
     if (wcKey(next) !== wcKey(WC.target)) {
       if (wcBase(next) !== WC.base) { wcLeaveFrame(f); WC.base = ''; }
       WC.target = next;

@@ -10305,9 +10305,11 @@ function workspaceComposerGuest(on) {
     workspaceComposerYield(false);
     document.body.classList.add('workspace-guest');
     fitPhoneComposer();
+    renderCmtTray();   // the box may be aimed here now, or elsewhere
   } else {
     document.body.classList.remove('workspace-guest');
     fitPhoneComposer();
+    renderCmtTray();
     if (WORKSPACE_YIELDED) {
       WORKSPACE_YIELDED = false;
       sharedComposerResume();
@@ -10997,9 +10999,37 @@ function cmtImagesHtml(c) {
   const imgs = Array.isArray(c.images) ? c.images : [];
   return imgs.length ? `<div class="cmt-item-img">${esc((imgs.length > 1 ? imgs.length + ' images: ' : 'Image: ') + imgs.map(i => i.name).join(', '))}</div>` : '';
 }
+// In the dashboard's workspace this chat's own box is hidden and the shared
+// box sends for it: when that box is aimed at this chat's room (its main chat
+// or a thread of it), the box's page draws the tray, under its To: line, and
+// this one draws none, so the comments show once (P360). The box aimed at
+// another chat, this one keeps its tray.
+function cmtBoxServes() {
+  if (WORKSPACE_COMPOSE || !document.body.classList.contains('workspace-guest')) return false;
+  try {
+    const host = window.top, box = host.document.getElementById('workspace-compose');
+    return !!box && !box.hidden && host.wcTargetNow?.()?.room === ROOM;
+  } catch (e) { return false; }
+}
+// The chats on screen in the workspace showing this room, for the box's page
+// (it shows no messages): a passage is found and shown in them.
+function cmtChatFrames() {
+  if (!WORKSPACE_COMPOSE) return [];
+  const out = [];
+  let frames = [];
+  try { frames = [...window.top.document.querySelectorAll('iframe')]; } catch (e) { return out; }
+  for (const f of frames) {
+    try {
+      const w = f.contentWindow, q = new URLSearchParams(w.location.search);
+      if ((q.get('id') || q.get('room')) === ROOM && !q.has('workspace-compose') && f.getClientRects().length && typeof w.cmtReveal === 'function') out.push(w);
+    } catch (e) {}   // another origin's frame
+  }
+  return out;
+}
 function renderCmtTray() {
   let tray = document.getElementById('cmt-tray');
-  if (!COMMENTS.length) { CMT_ERROR = ''; if (tray) tray.remove(); return; }
+  if (!COMMENTS.length) CMT_ERROR = '';
+  if (!COMMENTS.length || cmtBoxServes()) { if (tray) tray.remove(); return; }
   const s = cmtSubmitState(), n = COMMENTS.length;
   const html = `<div class="cmt-tray-head"><strong>${n} comment${n > 1 ? 's' : ''}</strong><span class="grow"></span>`
     + `<button class="cmt-submit"${s.can ? '' : ' disabled'}>${esc(s.label)}</button><button class="cmt-clear">Clear</button></div>`
@@ -11031,6 +11061,11 @@ function cmtTrayClick(e) {
   if (!item) return;
   const cid = item.dataset.cid;
   if (t.closest('.cmt-item-x')) { cmtRemove([cid]); return; }
+  if (WORKSPACE_COMPOSE) { cmtChatFrames().some(w => { try { return w.cmtReveal(cid); } catch (x) { return false; } }); return; }
+  cmtReveal(cid);
+}
+// The passage a comment is on, scrolled to; false when this chat has not got it.
+function cmtReveal(cid) {
   let mk = document.querySelector(`#msgs mark.cmt-hl[data-cid="${cid}"]`);
   // Its passage is in a folded balloon the quote could not be matched to: open
   // the balloon it was made on.
@@ -11048,6 +11083,7 @@ function cmtTrayClick(e) {
       || [...document.querySelectorAll('#msgs .msg')].find(b => b.dataset.key === key);
   }
   if (mk) mk.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  return !!mk;
 }
 // `only`: the comments to send (a quick reaction's own); all of them without.
 // A quick reaction always goes in a message of its own, under its own key, so
@@ -11116,6 +11152,10 @@ renderCmtTray();
 // ---- In-place review comments: end
 // A highlighted passage points at its comment in the tray.
 function showTrayItem(cid) {
+  if (cmtBoxServes()) {
+    try { window.top.document.getElementById('workspace-compose-frame').contentWindow.showTrayItem(cid); } catch (e) {}
+    return;
+  }
   const it = document.querySelector(`#cmt-tray .cmt-item[data-cid="${cid}"]`);
   if (!it) return;
   it.scrollIntoView({ block: 'nearest' });
