@@ -1555,7 +1555,7 @@ def seat_stamp(room: dict, identity: str) -> dict | None:
 
 def post_message(room_id: str, sender: str, text: str, to: str = "",
                  wait_for_human: bool = True, structured_asks: list[dict] | None = None,
-                 ask_audience: str = "") -> dict | None:
+                 ask_audience: str = "", points: list[str] | None = None) -> dict | None:
     """Append a message from ``sender`` to the room. ``to`` may be a specific
     participant identity or '' / 'all' to address every other participant.
 
@@ -1586,6 +1586,8 @@ def post_message(room_id: str, sender: str, text: str, to: str = "",
             msg["asks"] = structured_asks
         if ask_audience:
             msg["askAudience"] = ask_audience
+        if points:
+            msg["points"] = list(points)    # the points its cards are about (#379)
         room["messages"].append(msg)
         room["updatedAt"] = _now()
 

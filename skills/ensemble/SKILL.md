@@ -1090,6 +1090,11 @@ and closes the ask. A question sent without options gets Yes and No when it is
 a yes/no question; any other comes back with a `warnings` line and a card with
 a comment box only, so give the options. In a plain
 reply, use the `Ask:` format below. Never put a question to them in prose.
+A card about one of their points takes `points: ["P12"]` (or opens its context
+with `Re P12:`): when that point has its own thread, the card is shown in that
+thread, not in the main chat. A reply to points in several threads is cut at
+its `Re Pn:` heads, each part shown in its point's thread, so open every part
+with its own `Re Pn:`.
 
 Mention an open card only with a link to it, written as its name:
 `[Project icons: A vs B](<its reference>)`. `ensemble_ask` returns one

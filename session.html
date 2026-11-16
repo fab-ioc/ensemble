@@ -6063,6 +6063,8 @@ function landPending() {
       return;
     }
   }
+  // A thread asked for a card it does not hold (#379): its window around it first.
+  if (typeof THREAD_MODE !== 'undefined' && THREAD_MODE && THR_DRAWN && thrUptoId()) { renderThreaded(true); return; }
   if (!GOTO || !CHAT_DRAWN || _landing || !box || !box.clientHeight || _cmtComposerOpen || selShown()) return;
   // From the Inbox: once the highlight's length is known (the hub's settings read).
   if (ibxPart(GOTO_PART) && !IBX_HL_READ) return;
@@ -6753,7 +6755,10 @@ document.addEventListener('click', e => {
 // sender's line (#357) is a turn once typed; one the agent was not running
 // for (typed false) is only in the room, so it goes in from there, by its
 // time even above the first turn (it is no turn of any page of them).
-function withHubRows(items, room, hub) {
+// ``top``: nothing comes before the items (a thread from its start): an
+// older row goes in above them (#379 review 2: a card asked before the
+// thread's first reply).
+function withHubRows(items, room, hub, top = false) {
   if (!hub && room === ROOM_OBJ && roomHasOlder() && items.length) {
     const first = items.find(m => m.ts), oldest = (room.messages || [])[0];
     if (first && oldest && first.ts < (oldest.ts || 0)) setTimeout(() => loadOlder(), 0);
@@ -6768,7 +6773,7 @@ function withHubRows(items, room, hub) {
   const out = items.slice();
   for (const r of rows) {
     const first = out.find(m => m.ts);
-    if ((!first || r.ts < first.ts) && !(r.noticeKind === 'external' && !r.typed)) continue;
+    if ((!first || r.ts < first.ts) && !top && !(r.noticeKind === 'external' && !r.typed)) continue;
     let at = out.length;
     for (let i = out.length - 1; i >= 0; i--) { if (out[i].ts && out[i].ts > r.ts) at = i; }
     out.splice(at, 0, r);
@@ -7225,7 +7230,6 @@ let THR_ANY = null, THR_ANY_MISSING = null, THR_ANY_TIMER = 0;
 // Newest items already reread for once: another reread would not show them (#273).
 const THR_ANY_TRIED = new Set();
 const THR_AUTO_OPENED = new Set();
-const THR_INLINE_TURNS = new Map(); // full answers shown together in the channel
 let THR_REPAIR_FAIL = null;  // one failed log per missing mid; later retries back off
 let THR_HUB = new Map();   // the room's hub rows of the time the pages span (the hub's hubRows)
 // A PO chat seen before is asked for its channel beside the room's first read,
@@ -7326,8 +7330,17 @@ function thrBase() {
 }
 // The first read is light (&lite=1); a link's balloon asks for as many as
 // reach it (&upto=), which starts the pages again.
+// What a page asks the hub to reach (&upto=): the channel, a link's
+// balloon; a thread, a link's card it has not drawn (#379: a question card
+// older than the thread's newest page), once.
+function thrUptoId() {
+  if (!GOTO) return '';
+  if (!THREAD_MODE) return GOTO;
+  return !String(GOTO).includes(':') && THR_ASKED !== GOTO && !(LAST_ITEMS || []).some(m => m.id === GOTO) ? GOTO : '';
+}
 function thrUrl(sig) {
-  const page = !THREAD_MODE && GOTO ? '&n=' + THR_N + '&upto=' + encodeURIComponent(THR_ASKED = GOTO)
+  const upto = thrUptoId();
+  const page = upto ? '&n=' + THR_N + '&upto=' + encodeURIComponent(THR_ASKED = upto)
     : THR_FROM ? '&from=' + encodeURIComponent(THR_FROM) + (THR_AFTER && thrLast() ? '&to=' + encodeURIComponent(thrLast()) : '')
     : '&n=' + THR_N + (THREAD_MODE ? '' : '&lite=1');
   const watch = !THREAD_MODE && RECENT_SENDS.size ? '&watch=' + encodeURIComponent([...RECENT_SENDS.keys()].join(',')) : '';
@@ -7380,32 +7393,16 @@ function thrWatchedReplies(d) {
   const replies = [...new Map((THR_VIEW?.watchedReplies || d?.watchedReplies || [])
     .map(r => [r.mid, r])).values()];
   const pending = replies.filter(r => RECENT_SENDS.has(r.send) && !THR_AUTO_OPENED.has(r.mid));
-  if (pending.length > 1) for (const r of pending) if (r.turn) {
-    THR_INLINE_TURNS.set(r.mid, r);
-    if (THR_INLINE_TURNS.size > 100) THR_INLINE_TURNS.delete(THR_INLINE_TURNS.keys().next().value);
-  }
-  if (!thrNewestView()) return;
-  if (pending.length > 1 && TS_NARROW.matches && TS && TS_AUTO) sideClose();
-  if (THR_VIEW && [...THR_INLINE_TURNS.keys()].some(mid => !thrMidDrawn(mid))) {
-    // Several answers can land in one poll. Their full turns are copied into
-    // the channel, so one side pane cannot replace another before it loads.
-    const was = THR_FORCE_DRAW;
-    THR_FORCE_DRAW = true;
-    try { thrDraw(roomLatestTs(ROOM_OBJ), THR_VIEW); } finally { THR_FORCE_DRAW = was; }
-  }
-  for (const reply of pending) {
-    if (!RECENT_SENDS.has(reply.send) || THR_AUTO_OPENED.has(reply.mid)) continue;
-    if (THR_INLINE_TURNS.has(reply.mid)) {
-      if (!thrMidDrawn(reply.mid) || (TS_NARROW.matches && TS)) continue; // wait until exposed
-      THR_AUTO_OPENED.add(reply.mid);
-      chatCatchup('thread-reply', reply.mid);
-    } else if (!TS || (TS_AUTO && TS.tid !== reply.thread)) {
-      THR_AUTO_OPENED.add(reply.mid);
-      sideOpen({ tid: reply.thread, msg: reply.mid, auto: true });
-      chatCatchup('thread-reply', reply.mid);
-    }
-    if (THR_AUTO_OPENED.size > 100) THR_AUTO_OPENED.delete(THR_AUTO_OPENED.values().next().value);
-  }
+  if (!pending.length || !thrNewestView()) return;
+  // An answer stays in its thread, never copied into the chat (#379). Several
+  // landing in one poll: the newest opens beside, the others' threads show
+  // their unread rows in the chat, so one pane never replaces another.
+  const reply = pending.reduce((a, r) => ((r.turn?.ts || 0) >= (a.turn?.ts || 0) ? r : a));
+  if (TS && !(TS_AUTO && TS.tid !== reply.thread)) return;
+  for (const r of pending) THR_AUTO_OPENED.add(r.mid);
+  sideOpen({ tid: reply.thread, msg: reply.mid, auto: true });
+  chatCatchup('thread-reply', reply.mid);
+  while (THR_AUTO_OPENED.size > 100) THR_AUTO_OPENED.delete(THR_AUTO_OPENED.values().next().value);
 }
 function thrNewestView() { return !chatFiltered() && !GOTO && !THR_AFTER && !THR_LIST; }
 function thrAnyWatch(d) {
@@ -7556,18 +7553,19 @@ async function renderThreaded(force) {
   if (THR_FETCHING) { if (force) THR_AGAIN = true; return; }
   THR_FETCHING = true;
   const roomTs = roomLatestTs(ROOM_OBJ), gen = THR_GEN;
+  let asked = false;
   try {
-    const asked = !THREAD_MODE && !!GOTO;
+    asked = !!thrUptoId();
     const url = thrUrl(force ? '' : THR_SIG), pre = THR_PRE;
     THR_PRE = null;
     const r = pre && pre.url === url ? await pre.p.catch(() => pollFetch(url, null, 90000)) : await pollFetch(url, null, 90000);
     let d = await r.json();
     // Asked for the pages before they started again ("Latest", a send from a
     // link's window): the old window's, so asked again from the new start.
-    if (gen !== THR_GEN) { THR_AGAIN = true; return; }
+    if (gen !== THR_GEN) { if (asked) THR_ASKED = ''; THR_AGAIN = true; return; }
     if (d && d.delta) {
       const v = THR_VIEW && thrApply(THR_VIEW, d);
-      if (!v) { THR_SIG = ''; THR_AGAIN = true; return; }    // not the view held: ask for it whole
+      if (!v) { if (asked) THR_ASKED = ''; THR_SIG = ''; THR_AGAIN = true; return; }    // not the view held: ask for it whole
       d = Object.assign(v, d.progress ? { progress: d.progress } : {});
       delete d.delta;
     }
@@ -7586,6 +7584,8 @@ async function renderThreaded(force) {
       // Keep the channel empty while its roots are being built. The progress
       // notice stays visible, and a balloon link waits for its thread.
       if (THREAD_MODE) setText($('#hint'), 'Reading the chat’s threads…');
+      // A link's card not reached yet (#379 review 2): asked again next time.
+      if (asked) THR_ASKED = '';
       clearTimeout(THR_WAIT);
       THR_WAIT = setTimeout(() => renderThreaded(true), 1500);
       return;
@@ -7644,6 +7644,7 @@ async function renderThreaded(force) {
     thrAnyWatch(d);
     showLatest();
   } catch (e) {
+    if (asked) THR_ASKED = '';      // a link's card: asked again on the next poll
     if (e?.name === 'AbortError') chatCatchup('poll-timeout', THR_LATEST_MID);
     globalThis.EnsembleProgress?.clear('thread-build');
     if (!THREAD_MODE && !CHAT_DRAWN) renderSolo(SOLO_SID, SOLO_AGENT, true);
@@ -7660,19 +7661,18 @@ function thrDraw(roomTs, d = THR_VIEW) {
       t.workLog ? { workLog: true } : {}));
     items.forEach(m => { if (m.from === 'user' && m.text) m.text = stripRefBlocks(m.text); });
     if (!THREAD_MODE) {
-      items = withHubRows(items, ROOM_OBJ, THR_HUB);
-      if (THR_INLINE_TURNS.size && thrNewestView()) {
-        const held = new Set(items.map(m => m.id));
-        for (const r of THR_INLINE_TURNS.values()) if (r.turn && !held.has(r.mid)) {
-          const turn = soloItems([r.turn], 's', SOLO_AGENT, 1)[0];
-          items.push(Object.assign(turn, { id: r.mid, inThr: r.thread }));
-          held.add(r.mid);
-        }
-      }
+      // A question card in a thread is drawn there, not in the chat (#379).
+      const inThread = (d && d.cardThreads) || {};
+      items = withHubRows(items, ROOM_OBJ, THR_HUB).filter(m => !inThread[m.id]);
+    } else if (THR_HUB.size) {
+      // The thread's own cards (the hub's hubRows), among its balloons by
+      // time; one older than its first, above it when the view starts there.
+      items = withHubRows(items, { messages: [...THR_HUB.values()] }, null, !THR_BEFORE);
     }
     // A balloon link lands in the thread containing that balloon, once the
-    // channel was asked to reach it (else landPending asks first). A card or
-    // a PO's message is among the hub's rows, never in a thread (#262).
+    // channel was asked to reach it (else landPending asks first). A PO's
+    // message is among the hub's rows, never in a thread (#262); a card is
+    // in its thread when the hub placed it there (#379).
     if (!THREAD_MODE && GOTO && THR_ASKED === GOTO && !items.some(m => m.id === GOTO)) thrNotShown(d);
     document.body.classList.toggle('po-thread-channel', !THREAD_MODE);
     const earlier = $('#earlier-threads'); if (earlier) earlier.hidden = !!THREAD_MODE || !THR_BEFORE;
@@ -7700,6 +7700,8 @@ function thrNotShown(d) {
     return;
   }
   if (at === 'balloon' || (at === undefined && !room)) { openThread('', target, part); return; }
+  const cardTid = at === 'thread' && ((d && d.cardThreads) || {})[target];
+  if (cardTid) { openThread(cardTid, target, part); return; }
   showGotoNote(at === 'room' || (at == null && room) ? 'The linked message is not shown in this chat.'
     : 'The linked message was not found in this conversation.');
 }
@@ -8228,7 +8230,6 @@ function sideClose() {
   sideMark();
   sharedThreadClear(true);
   sharedComposerResume();
-  if (THR_INLINE_TURNS.size) setTimeout(() => thrWatchedReplies(THR_VIEW), 0);
 }
 function sideRestore() {
   let o = null;
