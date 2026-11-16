@@ -30,8 +30,8 @@ MAC = sys.platform == "darwin"
 # hub that cannot notify, so it stops here instead. On the Mac they must be
 # universal2: packaging/mac-universal2-wheels.sh, after requirements.txt.
 try:
-    import _cffi_backend  # noqa: E402,F401
     import cryptography.hazmat.bindings._rust  # noqa: E402,F401
+    import _cffi_backend  # noqa: E402,F401
     import webpush  # noqa: E402,F401
 except ImportError as e:
     raise SystemExit(f"ensemble.spec: notifications would not work ({e}); "
