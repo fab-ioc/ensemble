@@ -20,6 +20,7 @@ fill in a dark one, as the palette's dark shades are).
 """
 from __future__ import annotations
 
+import base64
 import colorsys
 import io
 import struct
@@ -36,7 +37,7 @@ HUE_BINS = 24       # 15 degrees each
 MIN_SHARE = 0.01    # of the covered area: a few stray pixels are not the icon's hue
 SAMPLE = 64         # a raster is read at most this many pixels a side
 GRID = 48           # points a side over an SVG's viewBox
-PNG_MAX_BYTES = 3 * 1024 * 1024   # decoded scanlines the stdlib PNG reader takes on
+PNG_MAX_BYTES = 16 * 1024 * 1024  # decoded scanlines the stdlib PNG reader takes on (2048² RGBA)
 
 
 # ---- the hue that covers most ------------------------------------------------
@@ -83,6 +84,29 @@ def prevailing(raw: bytes, ext: str) -> str | None:
         return None
 
 
+SAMPLE_MAX = 48 * 1024   # a page-made thumbnail's data URL, at most
+SAMPLE_SIDE = 128        # and its side
+
+
+def from_thumbnail(data_url) -> str | None:
+    """The prevailing colour of a small PNG the page drew from an upload
+    (``data:image/png;base64,...``, at most SAMPLE_SIDE a side): how a JPEG or
+    WebP gets its colour on a hub without Pillow, read by the stdlib PNG reader."""
+    prefix = "data:image/png;base64,"
+    if not isinstance(data_url, str) or not data_url.startswith(prefix) or len(data_url) > SAMPLE_MAX:
+        return None
+    try:
+        raw = base64.b64decode(data_url[len(prefix):], validate=True)
+        if raw[12:16] != b"IHDR":
+            return None
+        w, h = struct.unpack(">II", raw[16:24])
+        if not 0 < w <= SAMPLE_SIDE or not 0 < h <= SAMPLE_SIDE:
+            return None
+        return from_samples(png_samples(raw))
+    except Exception:
+        return None
+
+
 # ---- rasters -----------------------------------------------------------------
 
 def raster_samples(raw: bytes, ext: str) -> list:
@@ -113,7 +137,10 @@ def _paeth(a, b, c):
 
 
 def png_samples(raw: bytes) -> list:
-    """A PNG's pixels without Pillow: every colour type and bit depth, not interlaced."""
+    """A PNG's pixels without Pillow: every colour type and bit depth, not
+    interlaced. The scanlines are inflated and unfiltered one at a time (only
+    the previous one is kept), up to PNG_MAX_BYTES of them; a pixel whose value
+    is the image's tRNS key is transparent."""
     if not raw.startswith(b"\x89PNG\r\n\x1a\n"):
         return []
     pos, ihdr, plte, trns, idat = 8, None, b"", b"", []
@@ -122,7 +149,7 @@ def png_samples(raw: bytes) -> list:
         body = raw[pos + 8:pos + 8 + n]
         pos += 12 + n
         if kind == b"IHDR":
-            ihdr = struct.unpack(">IIBBBBB", body[:13])
+            ihdr = struct.unpack(">IIBBBBB", body[:13]) if len(body) >= 13 else None
         elif kind == b"PLTE":
             plte = body
         elif kind == b"tRNS":
@@ -141,25 +168,34 @@ def png_samples(raw: bytes) -> list:
     stride = (w * bpp_bits + 7) // 8
     if stride * h > PNG_MAX_BYTES:
         return []
-    z = zlib.decompressobj()
-    data = z.decompress(b"".join(idat), (stride + 1) * h + 1)
+    # The transparent key of a grey or RGB image: its samples at full depth.
+    key = None
+    if ctype == 0 and len(trns) >= 2:
+        key = (struct.unpack(">H", trns[:2])[0],)
+    elif ctype == 2 and len(trns) >= 6:
+        key = struct.unpack(">HHH", trns[:6])
     bpp = max(1, bpp_bits // 8)
     step_y, step_x = max(1, h // SAMPLE), max(1, w // SAMPLE)
-    prev = bytearray(stride)
-    out = []
     maxv = (1 << depth) - 1
+    z, chunks = zlib.decompressobj(), iter(idat)
+    buf, prev, out = bytearray(), bytearray(stride), []
     for y in range(h):
-        off = y * (stride + 1)
-        if off + 1 + stride > len(data):
+        # Inflate no more than the next scanline needs (a bomb stays a bomb on disk).
+        while len(buf) < stride + 1:
+            src = z.unconsumed_tail or next(chunks, b"")
+            if not src:
+                break
+            buf += z.decompress(src, stride + 1 - len(buf) + 65536)
+        if len(buf) < stride + 1:
             break
-        f = data[off]
-        line = bytearray(data[off + 1:off + 1 + stride])
+        f = buf[0]
+        line = buf[1:stride + 1]
+        del buf[:stride + 1]
         if f == 1:
             for i in range(bpp, stride):
                 line[i] = (line[i] + line[i - bpp]) & 255
         elif f == 2:
-            for i in range(stride):
-                line[i] = (line[i] + prev[i]) & 255
+            line = bytearray((a + b) & 255 for a, b in zip(line, prev))
         elif f == 3:
             for i in range(stride):
                 line[i] = (line[i] + ((line[i - bpp] if i >= bpp else 0) + prev[i]) // 2) & 255
@@ -168,18 +204,21 @@ def png_samples(raw: bytes) -> list:
                 a = line[i - bpp] if i >= bpp else 0
                 c = prev[i - bpp] if i >= bpp else 0
                 line[i] = (line[i] + _paeth(a, prev[i], c)) & 255
+        elif f:
+            return []
         prev = line
         if y % step_y:
             continue
         for x in range(0, w, step_x):
             if depth < 8:
                 bit = x * depth
-                v = (line[bit // 8] >> (8 - depth - bit % 8)) & maxv
-                vals = [v]
+                full = [(line[bit // 8] >> (8 - depth - bit % 8)) & maxv]
+                vals = full
             elif depth == 8:
-                vals = list(line[x * chans:(x + 1) * chans])
+                full = vals = list(line[x * chans:(x + 1) * chans])
             else:
-                vals = [line[(x * chans + k) * 2] for k in range(chans)]   # the high byte
+                full = [line[(x * chans + k) * 2] << 8 | line[(x * chans + k) * 2 + 1] for k in range(chans)]
+                vals = [v >> 8 for v in full]   # the high byte
             if ctype == 3:
                 i = vals[0]
                 if 3 * i + 3 > len(plte):
@@ -189,10 +228,10 @@ def png_samples(raw: bytes) -> list:
             elif ctype in (0, 4):
                 g = vals[0] * 255 // maxv if depth < 8 else vals[0]
                 rgb = (g, g, g)
-                a = vals[1] if ctype == 4 else 255
+                a = vals[1] if ctype == 4 else (0 if key and full[0] == key[0] else 255)
             else:
                 rgb = tuple(vals[:3])
-                a = vals[3] if ctype == 6 else 255
+                a = vals[3] if ctype == 6 else (0 if key and tuple(full[:3]) == key else 255)
             if a >= 16:
                 out.append((rgb, a / 255))
     return out

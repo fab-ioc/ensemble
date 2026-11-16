@@ -8664,6 +8664,11 @@ _PROJECT_META_LOCK = threading.RLock()
 def _set_project_meta(project_id: str, key: str, value) -> tuple[bool, str]:
     """Set (or, with None, remove) one key of a project's own ``project.json``
     in its home. Only that one key is touched."""
+    return _set_project_metas(project_id, {key: value})
+
+
+def _set_project_metas(project_id: str, fields: dict) -> tuple[bool, str]:
+    """Several keys of a project's ``project.json`` in one write (None removes one)."""
     if os.environ.get("ENSEMBLE_PTY_PREFLIGHT"):
         return False, "read_only_preflight"
     proj = find_project(project_id)
@@ -8680,10 +8685,11 @@ def _set_project_meta(project_id: str, key: str, value) -> tuple[bool, str]:
             meta = {k: proj.get(k) for k in ("id", "name", "createdAt")}
         if meta.get("id") != proj["id"]:
             return False, "project_json_belongs_to_another_project"
-        if value is None:
-            meta.pop(key, None)
-        else:
-            meta[key] = value
+        for key, value in fields.items():
+            if value is None:
+                meta.pop(key, None)
+            else:
+                meta[key] = value
         try:
             tmp = pj.with_suffix(".json.tmp")
             durable.write_tmp(tmp, json.dumps(meta, indent=2))
@@ -8751,10 +8757,16 @@ def _set_project_field(project_id: str, key: str, value) -> tuple[bool, str]:
     """One key of a project's record: its project.json, and its projects.json
     entry when it has one (an external project or a legacy one, whose name
     and icon load from there)."""
-    ok, msg = _set_project_meta(project_id, key, value)
-    if not ok:
-        return ok, msg
+    return _set_project_fields(project_id, {key: value})
+
+
+def _set_project_fields(project_id: str, fields: dict) -> tuple[bool, str]:
+    """Several keys of a project's record, written together under the
+    metadata lock (None removes one)."""
     with _PROJECT_META_LOCK:
+        ok, msg = _set_project_metas(project_id, fields)
+        if not ok:
+            return ok, msg
         try:
             d = json.loads(PROJECTS_FILE.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
@@ -8762,10 +8774,11 @@ def _set_project_field(project_id: str, key: str, value) -> tuple[bool, str]:
         if isinstance(d, list) and any(isinstance(e, dict) and e.get("id") == project_id for e in d):
             for e in d:
                 if isinstance(e, dict) and e.get("id") == project_id:
-                    if value is None:
-                        e.pop(key, None)
-                    else:
-                        e[key] = value
+                    for key, value in fields.items():
+                        if value is None:
+                            e.pop(key, None)
+                        else:
+                            e[key] = value
             try:
                 save_projects(d)
             except OSError as e:
@@ -8833,27 +8846,26 @@ def _project_colour(p: dict) -> dict | None:
 
 def _set_project_colour(project_id: str, colour: str | None, of: int | None) -> tuple[bool, str]:
     """The project's own colour and the icon version it belongs to (None clears each)."""
-    ok, msg = _set_project_field(project_id, "colour", colour or None)
-    return _set_project_field(project_id, "colourOf", of) if ok else (ok, msg)
+    return _set_project_fields(project_id, {"colour": colour or None, "colourOf": of})
 
 
 def set_project_icon(project_id: str, data_url, name: str = "",
-                     generated: bool = False) -> tuple[bool, str, dict | None]:
+                     generated: bool = False, thumbnail=None) -> tuple[bool, str, dict | None]:
     """Keep an uploaded image as the project's icon, or (``data_url`` None)
     remove it so the coloured square shows again.
 
     P366: an uploaded icon's prevailing colour becomes the project's own colour
     (none when it has no real hue: the palette pick stays). A generated icon
     (``generated``) was drawn in the colour the project has now, so that stays
-    as it is. Removing the icon clears the colour."""
+    as it is. Removing the icon clears the colour. ``thumbnail`` is a small PNG
+    the page drew from an upload: a raster this hub cannot read (a JPEG or WebP
+    without Pillow) takes its colour from that."""
     proj = find_project(project_id)
     if proj is None:
         return False, "no_such_project", None
     home = Path(project_home(proj, create=True))
     if data_url is None:
-        ok, msg = _set_project_field(project_id, "icon", None)
-        if ok:
-            ok, msg = _set_project_colour(project_id, None, None)
+        ok, msg = _set_project_fields(project_id, {"icon": None, "colour": None, "colourOf": None})
         if ok:
             for f in home.glob("project-icon.*"):
                 if project_icon.FILE_RE.match(f.name):
@@ -8873,10 +8885,16 @@ def set_project_icon(project_id: str, data_url, name: str = "",
         return False, f"cannot write the icon: {e}", None
     base = os.path.basename(str(name or "").replace("\\", "/")).strip() or fname
     icon = {"file": fname, "name": base[:200], "size": len(raw), "v": int(time.time() * 1000)}
-    ok, msg = _set_project_field(project_id, "icon", icon)
-    if ok:
-        ok, msg = (_set_project_colour(project_id, proj.get("colour"), icon["v"]) if generated
-                   else _set_project_colour(project_id, icon_colour.prevailing(raw, ext), icon["v"]))
+    colour = None if generated else icon_colour.prevailing(raw, ext)
+    if not generated and colour is None and ext != "svg" and thumbnail:
+        colour = icon_colour.from_thumbnail(thumbnail)
+    with _PROJECT_META_LOCK:
+        # The icon, its colour and the version it belongs to in one write: a
+        # generated icon keeps the colour the project has at this moment.
+        if generated:
+            now = find_project(project_id) or proj
+            colour = now.get("colour") if _icon_meta(now.get("icon")) else None
+        ok, msg = _set_project_fields(project_id, {"icon": icon, "colour": colour or None, "colourOf": icon["v"]})
     if not ok:
         return ok, msg, None
     for f in home.glob("project-icon.*"):
@@ -8903,8 +8921,15 @@ def derive_icon_colours() -> int:
         except OSError:
             continue
         colour = icon_colour.prevailing(raw, f.suffix.lstrip(".").lower())
-        if _set_project_colour(p["id"], colour, icon["v"])[0] and colour:
-            n += 1
+        with _PROJECT_META_LOCK:
+            # Written only for the icon it was worked out from: an upload, a
+            # generated icon or a Remove meanwhile has the last word.
+            now = find_project(p["id"])
+            cur = _icon_meta(now.get("icon")) if now else None
+            if not cur or cur["v"] != icon["v"] or now.get("colourOf") == icon["v"]:
+                continue
+            if _set_project_colour(p["id"], colour, icon["v"])[0] and colour:
+                n += 1
     return n
 
 
@@ -23639,7 +23664,8 @@ class Handler(BaseHTTPRequestHandler):
                 du = data.get("dataUrl")
                 ok, msg, icon = set_project_icon(str(data.get("projectId") or ""),
                                                  None if du is None else str(du), str(data.get("name") or ""),
-                                                 generated=data.get("generated") is True)
+                                                 generated=data.get("generated") is True,
+                                                 thumbnail=data.get("thumbnail"))
                 extra = {"icon": icon} if ok else {}
                 refusals = project_icon.REFUSALS
             if ok:

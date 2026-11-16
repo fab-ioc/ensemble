@@ -7,6 +7,10 @@
   generated icon keeps the colour the project had, Remove clears it, and
   /api/projects serves it as {hex, light, dark}; icons kept before this get
   theirs once (derive_icon_colours);
+* the stdlib PNG reader: a 1024² icon, tRNS keys of grey and RGB images (8
+  and 16 bit); a JPEG or WebP on a hub without Pillow takes its colour from
+  the page's PNG thumbnail;
+* the startup migration never writes over an icon changed meanwhile;
 * icon_colour.shades: in a light and a dark theme the label's text keeps 4.5:1
   on the fill, the hue kept, the lightness moved only when it must.
 """
@@ -14,9 +18,12 @@ from __future__ import annotations
 
 import builtins
 import colorsys
+import base64
 import io
 import json
+import struct
 import sys
+import zlib
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -161,6 +168,51 @@ class Shades(unittest.TestCase):
         self.assertIsNone(icon_colour.shades("not a colour"))
 
 
+def mkpng(w: int, h: int, depth: int, ctype: int, rows: list[bytes], trns: bytes = b"") -> bytes:
+    """A PNG written by hand (filter 0 rows), for the stdlib reader."""
+    chunk = lambda k, b: struct.pack(">I", len(b)) + k + b + struct.pack(">I", zlib.crc32(k + b))
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, depth, ctype, 0, 0, 0))
+            + (chunk(b"tRNS", trns) if trns else b"")
+            + chunk(b"IDAT", zlib.compress(b"".join(b"\x00" + r for r in rows))) + chunk(b"IEND", b""))
+
+
+class StdlibPng(unittest.TestCase):
+    def test_a_large_icon_reads(self):
+        """A 1024² solid RGBA icon (a few KB compressed) is read, a row at a time."""
+        raw = mkpng(1024, 1024, 8, 6, [bytes(BLUE + (255,)) * 1024] * 1024)
+        self.assertLess(len(raw), 10_000)
+        self.assertTrue(near(icon_colour.from_samples(icon_colour.png_samples(raw)), BLUE))
+        too_big = mkpng(4096, 4096, 8, 6, [bytes(4 * 4096)] * 4096)   # past PNG_MAX_BYTES
+        self.assertEqual(icon_colour.png_samples(too_big), [])
+
+    def test_transparent_keys(self):
+        # RGB, 8 bit: most of it is the key colour (red, transparent); blue is what shows.
+        rows = [bytes(RED) * 6 + bytes(BLUE) * 2] * 8
+        raw = mkpng(8, 8, 8, 2, rows, trns=struct.pack(">HHH", *RED))
+        self.assertTrue(near(icon_colour.from_samples(icon_colour.png_samples(raw)), BLUE))
+        self.assertTrue(near(icon_colour.from_samples(icon_colour.png_samples(mkpng(8, 8, 8, 2, rows))), RED),
+                        "without the key, red covers most")
+        # RGB, 16 bit: the key is the full 16-bit value, not only its high byte.
+        w16 = lambda c, lo=0: b"".join(struct.pack(">H", v << 8 | lo) for v in c)
+        rows16 = [w16(RED) * 6 + w16(BLUE) * 2] * 8
+        raw16 = mkpng(8, 8, 16, 2, rows16, trns=struct.pack(">HHH", *(v << 8 for v in RED)))
+        self.assertTrue(near(icon_colour.from_samples(icon_colour.png_samples(raw16)), BLUE))
+        near_key = [w16(RED, 1) * 6 + w16(BLUE) * 2] * 8   # one step off the key: opaque
+        self.assertTrue(near(icon_colour.from_samples(icon_colour.png_samples(
+            mkpng(8, 8, 16, 2, near_key, trns=struct.pack(">HHH", *(v << 8 for v in RED))))), RED))
+        # Grey, 8 bit: the keyed grey drops out (and a grey gives no hue anyway).
+        grey = icon_colour.png_samples(mkpng(4, 4, 8, 0, [bytes([200, 200, 90, 90])] * 4, trns=struct.pack(">H", 200)))
+        self.assertEqual({px for px, _ in grey}, {(90, 90, 90)})
+
+    def test_a_thumbnail_from_the_page(self):
+        thumb = "data:image/png;base64," + base64.b64encode(mkpng(8, 8, 8, 6, [bytes(GREEN + (255,)) * 8] * 8)).decode()
+        self.assertTrue(near(icon_colour.from_thumbnail(thumb), GREEN))
+        big = "data:image/png;base64," + base64.b64encode(mkpng(200, 2, 8, 2, [bytes(GREEN) * 200] * 2)).decode()
+        for bad in (big, thumb.replace("image/png", "image/jpeg"), "data:image/png;base64,!!", None, 5,
+                    "data:image/png;base64," + "A" * icon_colour.SAMPLE_MAX):
+            self.assertIsNone(icon_colour.from_thumbnail(bad), str(bad)[:40])
+
+
 def png(colour, ground=(255, 255, 255, 0)) -> bytes:
     if Image is None:   # a solid 1x1 PNG, written by hand
         import struct
@@ -214,6 +266,68 @@ class Stored(Hub):
         self.assertNotIn("colour", self.meta(self.ed))
         self.assertNotIn("colourOf", self.meta(self.ed))
         self.assertNotIn("colour", self.group())
+
+    def no_pillow(self):
+        real = builtins.__import__
+
+        def imp(name, *a, **k):
+            if name == "PIL" or name.startswith("PIL."):
+                raise ImportError(name)
+            return real(name, *a, **k)
+        return mock.patch.object(builtins, "__import__", imp)
+
+    def test_a_jpeg_without_pillow_takes_the_page_thumbnail(self):
+        jpeg = b"\xff\xd8\xff\xe0" + bytes(200) + b"\xff\xd9"   # read by nothing on this hub
+        thumb = "data:image/png;base64," + base64.b64encode(mkpng(8, 8, 8, 2, [bytes(GREEN) * 8] * 8)).decode()
+        with self.no_pillow():
+            self.upload(jpeg, "image/jpeg", "logo.jpg")
+            self.assertNotIn("colour", self.meta(self.ed), "no Pillow, no thumbnail: the palette pick")
+            self.upload(jpeg, "image/jpeg", "logo.jpg", thumbnail=thumb)
+            self.assertTrue(near(self.meta(self.ed)["colour"], GREEN), self.meta(self.ed))
+            # A generated icon never takes one: it keeps the colour it was drawn in.
+            red = "data:image/png;base64," + base64.b64encode(mkpng(8, 8, 8, 2, [bytes(RED) * 8] * 8)).decode()
+            svg = f'<svg {NS} viewBox="0 0 4 4"><rect width="4" height="4" fill="#e03030"/></svg>'.encode()
+            self.upload(svg, "image/svg+xml", "generated-icon.svg", generated=True, thumbnail=red)
+            self.assertTrue(near(self.meta(self.ed)["colour"], GREEN), self.meta(self.ed))
+
+    def test_the_migration_never_writes_over_a_newer_icon(self):
+        """An upload, a Remove or a generated icon while the startup migration
+        works out the old icon's colour: the newer one has the last word."""
+        for change in ("upload", "remove", "generated"):
+            with self.subTest(change):
+                self.upload(png(RED), name="red.png")
+                old_v = self.meta(self.ed)["icon"]["v"]
+                for k in ("colour", "colourOf"):        # an icon kept before P366
+                    dashboard._set_project_field(self.ed, k, None)
+                real, busy = icon_colour.prevailing, []
+
+                def meanwhile(raw, ext):
+                    got = real(raw, ext)                  # the old icon's red, worked out ...
+                    if busy:                              # (the upload's own reading)
+                        return got
+                    busy.append(1)
+                    if change == "upload":                # ... while the person uploads blue
+                        dashboard.set_project_icon(self.ed, data_url(png(BLUE), "image/png"), "blue.png")
+                    elif change == "remove":
+                        dashboard.set_project_icon(self.ed, None)
+                    else:
+                        dashboard.set_project_icon(self.ed, data_url(
+                            f'<svg {NS} viewBox="0 0 4 4"><rect width="4" height="4" fill="#3050e0"/></svg>'.encode(),
+                            "image/svg+xml"), "generated-icon.svg", generated=True)
+                    return got
+                with mock.patch.object(icon_colour, "prevailing", side_effect=meanwhile), \
+                     mock.patch.object(dashboard.time, "time", side_effect=lambda: old_v / 1000 + 5):
+                    self.assertEqual(dashboard.derive_icon_colours(), 0)
+                m = self.meta(self.ed)
+                if change == "upload":
+                    self.assertTrue(near(m["colour"], BLUE), m)
+                    self.assertEqual(m["colourOf"], m["icon"]["v"])
+                elif change == "remove":
+                    self.assertFalse({"icon", "colour", "colourOf"} & set(m), m)
+                else:   # the generated icon kept the colour the project had: none
+                    self.assertNotIn("colour", m)
+                    self.assertEqual(m["colourOf"], m["icon"]["v"])
+                    self.assertNotEqual(m["icon"]["v"], old_v)
 
     def test_icons_kept_before_get_their_colour_once(self):
         self.upload(png(GREEN))

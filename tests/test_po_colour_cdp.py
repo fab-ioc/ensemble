@@ -25,7 +25,8 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 import chatroom  # noqa: E402
 import dashboard  # noqa: E402
-import icon_colour  # noqa: E402
+import icon_colour
+import icon_gen  # noqa: E402
 from tests import chrome_profile  # noqa: E402
 from tests.test_page_update import CHROME  # noqa: E402
 
@@ -163,6 +164,10 @@ async function main() {
     await until(`!ProjectColour.own(PROJECTS.projects,${pid0}) && !!document.querySelector('#ld-projs [data-ldp-proj="'+${pid0}+'"] .ldp-ico.ptile')
       && document.querySelector('#po-panel .po-head .rl.po')?.dataset.poFill===${JSON.stringify(out.before.head?.token||'')}`,'removed');
     out.removed=await ev(inspect); out.removed.ratios=await ev(ratios);
+    // A JPEG upload's PNG thumbnail, drawn by the page (a hub without Pillow reads that).
+    out.thumb=await ev(`(async()=>{ const c=document.createElement('canvas'); c.width=300; c.height=200;
+      const g=c.getContext('2d'); g.fillStyle='#ffffff'; g.fillRect(0,0,300,200); g.fillStyle='#1f9d55'; g.fillRect(40,20,220,160);
+      return psThumbnail(c.toDataURL('image/jpeg',.9)); })()`);
     console.log(JSON.stringify(out));
   } finally { c.close(); ch.kill(); }
 }
@@ -307,6 +312,14 @@ class PoColourCdp(unittest.TestCase):
         self.assertEqual(gone['head']['fill'], before['head']['fill'])
         self.assertEqual(gone['swatch'], before['swatch'])
         self.check_coloured_view(gone, gone['ratios'])
+
+    def test_a_jpeg_thumbnail_from_the_page(self):
+        thumb = self.got['thumb']
+        self.assertTrue(thumb.startswith('data:image/png;base64,'), thumb[:40])
+        self.assertLessEqual(len(thumb), icon_colour.SAMPLE_MAX)
+        got = icon_colour.from_thumbnail(thumb)
+        self.assertIsNotNone(got)
+        self.assertLessEqual(icon_gen._dist(icon_gen.parse_colour(got), (0x1f, 0x9d, 0x55)), 12, got)
 
     def test_contrast_and_fill_in_every_theme(self):
         for theme, cases in self.got['allThemes'].items():
