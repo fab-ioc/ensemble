@@ -164,9 +164,12 @@ async function main() {
   const TASK = `document.querySelector('iframe.dp-session[data-room=${JSON.stringify(A.task)}]')`;
   const WCF = `document.getElementById('workspace-compose-frame')`;
   const WS_READY = `typeof ALL_ROWS !== 'undefined' && ALL_ROWS.some(r => r.roomId === ${JSON.stringify(A.po)})`;
-  const chatSteps = (frame, room, shot, words) => [
-    ['sel', P => selComment(P, { doc: `${frame}.contentDocument`, select: choose(`${frame}.contentDocument`, '#msgs .msg .text.md', words),
-      box: '.cmt-composer', add: '.cmt-composer .cmt-add', tray: `${frame}.contentDocument.getElementById('cmt-tray')`, words: 'Comment on ' + shot, shot })],
+  // A docked chat's tray is the Send box's while the box is aimed at that
+  // chat's room (P360: shown once, under To: …), else the chat's own.
+  const chatSteps = (name, frame, room, shot, words) => [
+    [name, P => selComment(P, { doc: `${frame}.contentDocument`, select: choose(`${frame}.contentDocument`, '#msgs .msg .text.md', words),
+      box: '.cmt-composer', add: '.cmt-composer .cmt-add', tray: `(WC.target && WC.target.room === ${JSON.stringify(room)} ? ${WCF} : ${frame}).contentDocument.getElementById('cmt-tray')`,
+      words: 'Comment on ' + shot, shot })],
   ];
   try {
     // The workspace at 1440: the PO chat and a task chat docked, one Send box under them.
@@ -178,8 +181,8 @@ async function main() {
         await P.until(`!document.getElementById('workspace-compose').hidden && !!${WCF}.contentWindow?.eval('typeof ED === "undefined" ? null : ED')`, 'workspace box');
         await sleep(800);
         return P.ev(`({ guests: [${PO}, ${TASK}].map(f => f.contentDocument.body.classList.contains('workspace-guest')) })`); }],
-      ...chatSteps(PO, A.po, 'ws1440-po', A.words.po),
-      ...chatSteps(TASK, A.task, 'ws1440-task', A.words.task),
+      ...chatSteps('selPo', PO, A.po, 'ws1440-po', A.words.po),
+      ...chatSteps('selTask', TASK, A.task, 'ws1440-task', A.words.task),
       // The PO's answer is in its thread: its Comment is checked in ws1440-thread (#311).
       ['taskPoint', P => pointComment(P, { btn: ptBtn(`${TASK}.contentDocument`), box: `${WCF}.contentWindow`,
         own: `${TASK}.contentWindow`, mid: A.taskAnswer, shot: 'ws1440-task-point' })],
@@ -439,7 +442,9 @@ class EveryComment(unittest.TestCase):
 
     def test_selection_comment_in_the_workspace(self):
         self.assertEqual(self.got["ws1440"]["open"], {"guests": [True, True]})
-        self.sel_ok("ws1440", "sel", None)
+        for step, room in (("selPo", self.po), ("selTask", self.task)):
+            with self.subTest(chat=step):
+                self.sel_ok("ws1440", step, room)
 
     def test_selection_comment_in_a_chat_page_and_on_the_phone(self):
         for tag in ("pg1440", "ph390"):

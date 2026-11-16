@@ -15599,7 +15599,13 @@ function wcSync() {
     if (poppedId && PD.dock.popWindow(poppedId) && !WC.popped.has(poppedId))
       WC.popped.set(poppedId, {target:WC.target, pickSeq:WC.pickSeq});
     const next = wcFallback();
-    if (!next) { box.hidden = true; return; }
+    if (!next) {
+      box.hidden = true;
+      // No box to serve them: each chat shows its comments' tray again (P360).
+      for (const chat of document.querySelectorAll('iframe.po-session, iframe.dp-session, iframe.po-thread'))
+        try { chat.contentWindow?.renderCmtTray?.(); } catch (e) {}
+      return;
+    }
     if (wcKey(next) !== wcKey(WC.target)) {
       if (wcBase(next) !== WC.base) { wcLeaveFrame(f); WC.base = ''; }
       WC.target = next;
@@ -15672,12 +15678,14 @@ document.getElementById('workspace-compose-link').addEventListener('click', e =>
 // The box's frame takes the box's height. A drag on its handle calls this
 // straight from the frame (P226), so frame, Dock and chats change in the same
 // paint as the box; other changes come by message.
-function wcFrameFit(height, sized) {
+// tray: the height of the unsent comments' tray above the box in the frame
+// (P360), capped there at 30% of the window, given on top of the box's own.
+function wcFrameFit(height, sized, tray) {
   const f = document.getElementById('workspace-compose-frame');
   // A height set by hand (#274) may take about 70% of the window, To: line included.
   const cap = sized ? Math.floor(innerHeight * .7) - (f.parentElement.querySelector('.wc-to')?.offsetHeight || 0) : Math.floor(innerHeight * .4);
   // Unsized, the frame is as tall as the box it holds (#333: no blank under the input).
-  WC.boxH = Math.min(Math.max(sized ? 80 : 40, +height || 110), cap);
+  WC.boxH = Math.min(Math.max(sized ? 80 : 40, +height || 110), cap) + Math.max(0, Math.ceil(+tray || 0));
   wcFrameApply(f);
 }
 // A menu opening upward from the box (+, Send's, Stop's, the / list) needs
@@ -15702,7 +15710,7 @@ function wcFrameApply(f) {
 window.addEventListener('message', e => {
   if (e.origin !== location.origin) return;
   const f = document.getElementById('workspace-compose-frame');
-  if (e.data?.type === 'workspace-compose-size' && e.source === f.contentWindow) wcFrameFit(e.data.height, e.data.sized);
+  if (e.data?.type === 'workspace-compose-size' && e.source === f.contentWindow) wcFrameFit(e.data.height, e.data.sized, e.data.tray);
   if (e.data?.type !== 'workspace-pick' || e.source === f.contentWindow || !e.data.roomId) return;
   const chat = [...document.querySelectorAll('iframe.po-session, iframe.dp-session, iframe.po-thread')].find(x => x.contentWindow === e.source);
   if (!chat || !chat.contentDocument?.body.classList.contains('workspace-guest')) return;

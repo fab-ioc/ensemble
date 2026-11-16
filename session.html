@@ -1287,6 +1287,7 @@
   /* Why Submit is off, or why the last send did not arrive. */
   #cmt-tray .cmt-state { padding:8px 12px; border-bottom:1px solid var(--border); font-size:var(--fs-200); line-height:16px; color:var(--fg-muted); }
   #cmt-tray .cmt-state.err { color:var(--c-danger-fg); }
+  body.workspace-compose #cmt-tray { max-height:calc(var(--host-h, 100vh) * .3); }
   .to { font-weight:400; color:var(--fg-muted); text-transform:none; }
   .mention { color:var(--c-discovery-fg); font-weight:600; background:var(--c-discovery-bg); border-radius:var(--r-100); padding:0 3px; }
   .msg .from .mention { text-transform:none; letter-spacing:0; }
@@ -9633,7 +9634,7 @@ function composeHeightLimits() {
   let hostH = innerHeight;
   try { if (WORKSPACE_COMPOSE) hostH = window.parent.innerHeight; } catch (e) {}
   const min = Math.ceil(parseFloat(getComputedStyle($('#input')).minHeight) || 40);
-  const rest = box.offsetHeight - ed.offsetHeight + (WORKSPACE_COMPOSE ? 28 : 0);
+  const rest = box.offsetHeight - ed.offsetHeight + (WORKSPACE_COMPOSE ? 28 + cmtTrayHeight() : 0);
   return { min, max: Math.max(min, Math.floor(hostH * .7) - rest) };
 }
 function composeHeightApply(h) {
@@ -9663,7 +9664,7 @@ function composeHeightSet(h) {
 // came a paint late, and the Dock with it (P226).
 function composeFrameFit() {
   if (!WORKSPACE_COMPOSE) return;
-  try { window.parent.wcFrameFit(Math.ceil($('#compose').getBoundingClientRect().height), $('#compose').classList.contains('sized')); } catch (e) {}
+  try { window.parent.wcFrameFit(Math.ceil($('#compose').getBoundingClientRect().height), $('#compose').classList.contains('sized'), cmtTrayHeight()); } catch (e) {}
 }
 // The height under a drag, until it is let go and kept (0: no drag).
 let COMPOSE_H_DRAG = 0;
@@ -10447,9 +10448,11 @@ function workspaceComposerGuest(on) {
     workspaceComposerYield(false);
     document.body.classList.add('workspace-guest');
     fitPhoneComposer();
+    renderCmtTray();   // the box may be aimed here now, or elsewhere
   } else {
     document.body.classList.remove('workspace-guest');
     fitPhoneComposer();
+    renderCmtTray();
     if (WORKSPACE_YIELDED) {
       WORKSPACE_YIELDED = false;
       sharedComposerResume();
@@ -10459,14 +10462,24 @@ function workspaceComposerGuest(on) {
 if (WORKSPACE_COMPOSE) {
   const hostSize = () => { try { document.documentElement.style.setProperty('--host-h', window.parent.innerHeight + 'px'); } catch (e) {} };
   hostSize();
-  try { window.parent.addEventListener('resize', hostSize); addEventListener('pagehide', () => window.parent.removeEventListener('resize', hostSize)); } catch (e) {}
+  // The dashboard resized: its height caps the box and its tray, so both are
+  // fitted again to it (the frame keeps its own height, so no resize here).
+  const hostResize = () => { hostSize(); composeHeightApply(COMPOSE_H_DRAG || composeHeightGet()); composeFrameFit(); };
+  try { window.parent.addEventListener('resize', hostResize); addEventListener('pagehide', () => window.parent.removeEventListener('resize', hostResize)); } catch (e) {}
   const reportSize = () => {
     // A drag sizes the frame itself; a message sent before its last move would be older.
     if (COMPOSE_H_DRAG) return;
-    try { window.parent.postMessage({type:'workspace-compose-size', height:Math.ceil($('#compose').getBoundingClientRect().height), sized:$('#compose').classList.contains('sized')}, location.origin); } catch (e) {}
+    try { window.parent.postMessage({type:'workspace-compose-size', height:Math.ceil($('#compose').getBoundingClientRect().height), sized:$('#compose').classList.contains('sized'), tray:cmtTrayHeight()}, location.origin); } catch (e) {}
   };
   new ResizeObserver(reportSize).observe($('#compose'));
   setTimeout(reportSize, 0);
+  // This page now draws its room's comment tray: the chats drop theirs (P360);
+  // going, it hands the tray back to them before the next page loads.
+  // Until then it draws none, so the tray is never in both at once.
+  const own = () => { window.cmtBoxRoom = ROOM || ''; renderCmtTray(); cmtGuestTrays(); };
+  addEventListener('load', own);
+  addEventListener('pageshow', e => { if (e.persisted) own(); });   // back from the browser's cache
+  addEventListener('pagehide', () => { window.cmtBoxRoom = ''; cmtGuestTrays(); });
   // This frame is as tall as the box, so a menu opening upward from it was
   // cut at its top (P227). While one is open the host grows the frame up by
   // the menu's height, over the chats (wcFrameRoom); the page above the box
@@ -11139,9 +11152,56 @@ function cmtImagesHtml(c) {
   const imgs = Array.isArray(c.images) ? c.images : [];
   return imgs.length ? `<div class="cmt-item-img">${esc((imgs.length > 1 ? imgs.length + ' images: ' : 'Image: ') + imgs.map(i => i.name).join(', '))}</div>` : '';
 }
+// In the dashboard's workspace this chat's own box is hidden and the shared
+// box sends for it: while the box's page for this chat's room (its main chat
+// or a thread of it) is loaded and shown, that page draws the tray, under its
+// To: line, and this one draws none, so the comments show once (P360). Until
+// the box's page for this room has loaded, and from the moment it goes, this
+// chat keeps its tray: a switch of the box never leaves the comments unshown.
+window.cmtBoxRoom = '';
+function cmtBoxServes() {
+  if (WORKSPACE_COMPOSE || !document.body.classList.contains('workspace-guest')) return false;
+  try {
+    const host = window.top, box = host.document.getElementById('workspace-compose');
+    const w = host.document.getElementById('workspace-compose-frame')?.contentWindow;
+    return !!box && !box.hidden && !!w && w.cmtBoxRoom === ROOM;
+  } catch (e) { return false; }
+}
+// The box's page loaded or going: the chats of the workspace draw or drop their trays.
+function cmtGuestTrays() {
+  try {
+    for (const f of window.top.document.querySelectorAll('iframe'))
+      try { if (f.contentWindow !== window) f.contentWindow.renderCmtTray?.(); } catch (e) {}
+  } catch (e) {}
+}
+// In the box's page the tray is inside the frame, above the box: the frame
+// is sized for both (composeFrameFit), and the tray is capped by the
+// dashboard's height, not the frame's own.
+function cmtTrayHeight() {
+  const tray = WORKSPACE_COMPOSE && document.getElementById('cmt-tray');
+  if (!tray) return 0;
+  const c = $('#compose').getBoundingClientRect();
+  return Math.max(0, Math.ceil(c.top - tray.getBoundingClientRect().top));
+}
+// The chats on screen in the workspace showing this room, for the box's page
+// (it shows no messages): a passage is found and shown in them.
+function cmtChatFrames() {
+  if (!WORKSPACE_COMPOSE) return [];
+  const out = [];
+  let frames = [];
+  try { frames = [...window.top.document.querySelectorAll('iframe')]; } catch (e) { return out; }
+  for (const f of frames) {
+    try {
+      const w = f.contentWindow, q = new URLSearchParams(w.location.search);
+      if ((q.get('id') || q.get('room')) === ROOM && !q.has('workspace-compose') && f.getClientRects().length && typeof w.cmtReveal === 'function') out.push(w);
+    } catch (e) {}   // another origin's frame
+  }
+  return out;
+}
 function renderCmtTray() {
   let tray = document.getElementById('cmt-tray');
-  if (!COMMENTS.length) { CMT_ERROR = ''; if (tray) tray.remove(); return; }
+  if (!COMMENTS.length) CMT_ERROR = '';
+  if (!COMMENTS.length || cmtBoxServes() || (WORKSPACE_COMPOSE && !window.cmtBoxRoom)) { if (tray) { tray.remove(); composeFrameFit(); } return; }
   const s = cmtSubmitState(), n = COMMENTS.length;
   const html = `<div class="cmt-tray-head"><strong>${n} comment${n > 1 ? 's' : ''}</strong><span class="grow"></span>`
     + `<button class="cmt-submit"${s.can ? '' : ' disabled'}>${esc(s.label)}</button><button class="cmt-clear">Clear</button></div>`
@@ -11163,6 +11223,7 @@ function renderCmtTray() {
   tray._html = html;
   tray.innerHTML = html;
   const nl = tray.querySelector('.cmt-list'); if (nl) nl.scrollTop = top;
+  composeFrameFit();
 }
 function cmtTrayClick(e) {
   const t = e.target;
@@ -11173,6 +11234,11 @@ function cmtTrayClick(e) {
   if (!item) return;
   const cid = item.dataset.cid;
   if (t.closest('.cmt-item-x')) { cmtRemove([cid]); return; }
+  if (WORKSPACE_COMPOSE) { cmtChatFrames().some(w => { try { return w.cmtReveal(cid); } catch (x) { return false; } }); return; }
+  cmtReveal(cid);
+}
+// The passage a comment is on, scrolled to; false when this chat has not got it.
+function cmtReveal(cid) {
   let mk = document.querySelector(`#msgs mark.cmt-hl[data-cid="${cid}"]`);
   // Its passage is in a folded balloon the quote could not be matched to: open
   // the balloon it was made on.
@@ -11190,6 +11256,7 @@ function cmtTrayClick(e) {
       || [...document.querySelectorAll('#msgs .msg')].find(b => b.dataset.key === key);
   }
   if (mk) mk.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  return !!mk;
 }
 // `only`: the comments to send (a quick reaction's own); all of them without.
 // A quick reaction always goes in a message of its own, under its own key, so
@@ -11258,6 +11325,10 @@ renderCmtTray();
 // ---- In-place review comments: end
 // A highlighted passage points at its comment in the tray.
 function showTrayItem(cid) {
+  if (cmtBoxServes()) {
+    try { window.top.document.getElementById('workspace-compose-frame').contentWindow.showTrayItem(cid); } catch (e) {}
+    return;
+  }
   const it = document.querySelector(`#cmt-tray .cmt-item[data-cid="${cid}"]`);
   if (!it) return;
   it.scrollIntoView({ block: 'nearest' });
