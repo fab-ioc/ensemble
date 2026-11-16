@@ -436,6 +436,34 @@ class LabelColour(unittest.TestCase):
         self.assertIn('fill="white"', r)
         self.assertTrue(icon_gen.check(r, BLUE)["ok"])
 
+    def test_a_detail_lost_on_the_ground_is_not_ok(self):
+        # Review 2: a disc in the ground's colour, off the white symbol, cannot be seen.
+        s = icon(BLUE, '<rect x="4" y="4" width="28" height="28" fill="#fff"/>'
+                       f'<rect x="36" y="36" width="8" height="8" fill="{BLUE}"/>')
+        self.assertFalse(icon_gen.check(s, BLUE)["legible"])
+        r = icon_gen.recolour(s, BLUE)
+        self.assertIn('<rect x="36" y="36" width="8" height="8" fill="#ffffff"/>', r, "it takes the symbol's colour")
+        self.assertTrue(icon_gen.check(r, BLUE)["ok"])
+
+    def test_a_hole_in_the_symbol_shows(self):
+        hole = f'<circle cx="24" cy="24" r="12" fill="#fff"/><circle cx="24" cy="24" r="4" fill="{BLUE}"/>'
+        self.assertTrue(icon_gen.check(icon(BLUE, hole), BLUE)["ok"])
+        moved = f'<g transform="translate(2 -3)">{hole}</g>'
+        self.assertTrue(icon_gen.check(icon(BLUE, moved), BLUE)["ok"], "a translate keeps the box")
+        turned = (f'<circle cx="24" cy="24" r="12" fill="#fff"/>'
+                  f'<circle cx="24" cy="24" r="4" fill="{BLUE}" transform="rotate(30 24 24)"/>')
+        self.assertFalse(icon_gen.check(icon(BLUE, turned), BLUE)["ok"], "a box it cannot tell: not offered")
+
+    def test_an_accent_alone_does_not_carry_the_colour(self):
+        # Review 2: black symbol on white with a small accent in the label colour.
+        s = icon("#FFFFFF", '<rect x="4" y="4" width="40" height="40" fill="#000"/>'
+                            f'<rect x="22" y="22" width="4" height="4" fill="{BLUE}"/>')
+        self.assertFalse(icon_gen.check(s, BLUE)["ok"])
+        r = icon_gen.recolour(s, BLUE)
+        self.assertIn('<rect x="4" y="4" width="40" height="40" fill="#0055cc"/>', r, "the symbol takes it")
+        self.assertIn('<rect x="22" y="22" width="4" height="4" fill="#ffffff"/>', r, "the accent stays seen")
+        self.assertTrue(icon_gen.check(r, BLUE)["ok"])
+
     def test_a_neutral_that_would_read_faintly_turns_white_or_dark(self):
         r = icon_gen.recolour(icon("#FACC15", '<path d="M10 10H38V38H10Z" fill="#000"/>'), "#1f3a8a")
         self.assertIn('fill="#ffffff"', r, "black on a deep blue ground is under 3:1: white")

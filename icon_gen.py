@@ -401,60 +401,87 @@ def _num(el, k: str, default: float = 0.0) -> float:
         return default
 
 
-def _box(el, tag: str) -> tuple[float, float]:
-    """An element's rough size (width, height) in the viewBox's units, for weighing colours."""
+def _bounds(el, tag: str):
+    """An element's rough box (x0, y0, x1, y1) in its own units, its transform left
+    out; None for a shape it cannot tell."""
     if tag == "rect":
-        return _num(el, "width"), _num(el, "height")
-    if tag == "circle":
-        return 2 * _num(el, "r"), 2 * _num(el, "r")
-    if tag == "ellipse":
-        return 2 * _num(el, "rx"), 2 * _num(el, "ry")
+        x, y = _num(el, "x"), _num(el, "y")
+        return x, y, x + _num(el, "width"), y + _num(el, "height")
+    if tag in ("circle", "ellipse"):
+        cx, cy = _num(el, "cx"), _num(el, "cy")
+        rx, ry = (_num(el, "r"),) * 2 if tag == "circle" else (_num(el, "rx"), _num(el, "ry"))
+        return cx - rx, cy - ry, cx + rx, cy + ry
     if tag == "line":
-        return abs(_num(el, "x2") - _num(el, "x1")), abs(_num(el, "y2") - _num(el, "y1"))
+        xs, ys = (_num(el, "x1"), _num(el, "x2")), (_num(el, "y1"), _num(el, "y2"))
+        return min(xs), min(ys), max(xs), max(ys)
     if tag == "path":
         pts = _path_points(el.get("d") or "")
     elif tag in ("polygon", "polyline"):
         ns = [float(v) for v in re.findall(r"[+-]?(?:\d+\.?\d*|\.\d+)", el.get("points") or "")[:4000]]
         pts = list(zip(ns[0::2], ns[1::2]))
     else:
-        return 0.0, 0.0
+        return None
     if not pts:
-        return 0.0, 0.0
+        return None
     xs, ys = [p[0] for p in pts], [p[1] for p in pts]
-    return max(xs) - min(xs), max(ys) - min(ys)
+    return min(xs), min(ys), max(xs), max(ys)
+
+
+def _box(el, tag: str) -> tuple[float, float]:
+    """An element's rough size (width, height) in the viewBox's units, for weighing colours."""
+    b = _bounds(el, tag)
+    return (b[2] - b[0], b[3] - b[1]) if b else (0.0, 0.0)
+
+
+_TRANSLATE = re.compile(r"\s*translate\(\s*([+-]?(?:\d+\.?\d*|\.\d+))(?:[\s,]+([+-]?(?:\d+\.?\d*|\.\d+)))?\s*\)\s*")
+
+
+def _shift(el, at):
+    """The offset at, moved by el's transform; None once a transform is more than a translate."""
+    tr = _style(el).get("transform") or el.get("transform")
+    if at is None or not tr or not tr.strip():
+        return at
+    m = _TRANSLATE.fullmatch(tr)
+    return (at[0] + float(m.group(1)), at[1] + float(m.group(2) or 0)) if m else None
 
 
 def _paints(root) -> list[dict]:
     """Each painted fill and stroke of an icon's shapes: {el, src, prop, rgb, raw, area,
-    ground}; src is the element that sets it. Fill and stroke are inherited from the
+    ground, box}; src is the element that sets it. Fill and stroke are inherited from the
     <g> and <svg> around a shape; an unset fill is black, as SVG draws it. area is a
     rough weight (a shape's box; a stroke's length times its width). The ground is
-    the first shape when it covers the icon."""
+    the first shape when it covers the icon. box is where the paint lies (x0, y0, x1,
+    y1) in the viewBox, None when a transform other than a translate moves it."""
     out, first = [], [True]
 
-    def walk(el, fill, stroke, sw):
+    def walk(el, fill, stroke, sw, at):
         tag = _local(el.tag)
+        at = _shift(el, at)
         f, s_ = _paint(el, "fill"), _paint(el, "stroke")
         fill = (f, el) if f is not None else fill
         stroke = (s_, el) if s_ is not None else stroke
         sw = _num(el, "stroke-width", sw) if (_style(el).get("stroke-width") or el.get("stroke-width")) else sw
         if tag in ("svg", "g"):
             for c in el:
-                walk(c, fill, stroke, sw)
+                walk(c, fill, stroke, sw, at)
             return
         w, h = _box(el, tag)
+        b = _bounds(el, tag)
+        box = (b[0] + at[0], b[1] + at[1], b[2] + at[0], b[3] + at[1]) if b and at is not None else None
         ground = first[0] and tag == "rect" and w >= 40 and h >= 40
         first[0] = False
         if tag != "line":   # a line has no inside; every other shape fills, black when unset
             raw, src = fill if fill is not None else ("black", el)
             rgb = parse_colour(raw)
             if rgb is not None or raw.strip().lower() not in NO_PAINT:
-                out.append({"el": el, "src": src, "prop": "fill", "rgb": rgb, "raw": raw, "area": w * h, "ground": ground})
+                out.append({"el": el, "src": src, "prop": "fill", "rgb": rgb, "raw": raw, "area": w * h, "ground": ground,
+                            "box": box})
         if stroke is not None and stroke[0].strip().lower() not in NO_PAINT:
             out.append({"el": el, "src": stroke[1], "prop": "stroke", "rgb": parse_colour(stroke[0]), "raw": stroke[0],
-                        "area": (w + h) * max(sw, 0.5), "ground": False})
+                        "area": (w + h) * max(sw, 0.5), "ground": False,
+                        "box": box and (box[0] - sw / 2, box[1] - sw / 2, box[2] + sw / 2, box[3] + sw / 2)})
 
-    walk(root, None, None, 1.0)
+    walk(root, None, None, 1.0, (0.0, 0.0))
     return out
 
 
@@ -493,11 +520,43 @@ def _symbol_main(ps: list[dict], colour_of):
     return max(weight, key=weight.get) if weight else None
 
 
+def _inside(a, b, slack: float = 0.5) -> bool:
+    return a is not None and b is not None and a[0] >= b[0] - slack and a[1] >= b[1] - slack \
+        and a[2] <= b[2] + slack and a[3] <= b[3] + slack
+
+
+def _hidden(ps: list[dict], colour_of) -> list[dict]:
+    """The symbol's paints that would not show: under 3:1 on the ground and not
+    drawn on an earlier shape they read on at 3:1 (a hole in the ground's colour on a
+    white gear shows; the same disc off to the side does not)."""
+    ground = next((p for p in ps if p["ground"]), None)
+    g = colour_of(ground) if ground is not None else None
+    if g is None:
+        return []
+    out = []
+    for i, p in enumerate(ps):
+        c = colour_of(p)
+        if p["ground"] or c is None or _contrast(c, g) >= MIN_CONTRAST:
+            continue
+        if not any(not q["ground"] and colour_of(q) is not None and _contrast(c, colour_of(q)) >= MIN_CONTRAST
+                   and _inside(p["box"], q["box"]) for q in ps[:i]):
+            out.append(p)
+    return out
+
+
+def _carried(ps: list[dict], colour_of, label) -> bool:
+    """Whether the label colour is the ground's or the symbol's main colour: not
+    only an accent on a neutral icon."""
+    ground = next((p for p in ps if p["ground"]), None)
+    return (ground is not None and colour_of(ground) == label) or _symbol_main(ps, colour_of) == label
+
+
 def check(svg: str, colour: str) -> dict:
     """How an icon stands to the label colour: {ok, dominant, foreign, legible}. ok
-    when its main colour (the hued one with the most area: the ground's or the
-    symbol's) is exactly the label colour, every other colour a neutral or a tint or
-    shade of it, and the symbol's main colour reads on the ground at 3:1."""
+    when its main colour (the hued one with the most area) is exactly the label
+    colour and is the ground's or the symbol's main colour, every other colour a
+    neutral or a tint or shade of it, and the symbol reads on the ground: its main
+    colour at 3:1, and no other paint of it lost on the ground (_hidden)."""
     label = parse_colour(norm_hex(colour))
     if label is None:
         return {"ok": True, "dominant": None, "foreign": [], "legible": True}
@@ -506,9 +565,11 @@ def check(svg: str, colour: str) -> dict:
     dom = _dominant(hued)
     foreign = sorted({_hex(k) if isinstance(k, tuple) else k for k in map(_key, hued) if _foreign(k, label)})
     ground = next((p for p in ps if p["ground"]), None)
-    sym = _symbol_main(ps, lambda p: p["rgb"])
-    legible = ground is None or ground["rgb"] is None or sym is None or _contrast(sym, ground["rgb"]) >= MIN_CONTRAST
-    return {"ok": dom == label and not foreign and legible,
+    rgb = lambda p: p["rgb"]
+    sym = _symbol_main(ps, rgb)
+    legible = ground is None or ground["rgb"] is None or (
+        (sym is None or _contrast(sym, ground["rgb"]) >= MIN_CONTRAST) and not _hidden(ps, rgb))
+    return {"ok": dom == label and _carried(ps, rgb, label) and not foreign and legible,
             "dominant": _hex(dom) if isinstance(dom, tuple) else dom, "foreign": foreign, "legible": legible}
 
 
@@ -540,8 +601,9 @@ def recolour(svg: str, colour: str) -> str:
     passes it; else its main colour becomes exactly the label colour, each other
     hue a tint or shade of it at 3:1 on the ground, and the symbol's main colour,
     when it then reads too faintly on the ground, white or near-black (or the
-    ground does). All neutral (black on white), the symbol's main colour becomes
-    the label colour. Each change is made where the colour is set (a <g> for the
+    ground does). All neutral (black on white), or neutral but for an accent, the
+    symbol's main colour becomes the label colour. A paint of the symbol still lost
+    on the ground takes the symbol's main colour. Each change is made where the colour is set (a <g> for the
     shapes in it)."""
     label = parse_colour(norm_hex(colour))
     if label is None or check(svg, colour)["ok"]:
@@ -561,10 +623,20 @@ def recolour(svg: str, colour: str) -> str:
         k = _key(p)
         if id(p) not in new and _foreign(k, label):
             new[id(p)] = _apart(label, k, on) if isinstance(k, tuple) else label
+    final = lambda p: new.get(id(p), p["rgb"])
+    # A neutral icon with a hued accent: the label colour goes on the symbol itself,
+    # and the accent, so as not to vanish into it, white or near-black.
+    if not _carried(ps, final, label):
+        sym = _symbol_main(ps, final)
+        for p in ps:
+            if not p["ground"]:
+                if final(p) == sym:
+                    new[id(p)] = label
+                elif final(p) == label:
+                    new[id(p)] = _ink(label)
     # The symbol's main colour must read on the ground (3:1): on a ground in the
     # label colour, it becomes white or near-black; else the ground does.
     if ground is not None:
-        final = lambda p: new.get(id(p), p["rgb"])
         sym = _symbol_main(ps, final)
         g = final(ground)
         if sym is not None and _contrast(sym, g) < MIN_CONTRAST:
@@ -574,6 +646,10 @@ def recolour(svg: str, colour: str) -> str:
                         new[id(p)] = _ink(label)
             else:
                 new[id(ground)] = _ink(sym)
+        # Any other paint lost on the ground takes the symbol's main colour (or ink).
+        sym, g = _symbol_main(ps, final), final(ground)
+        for p in _hidden(ps, final):
+            new[id(p)] = sym if sym is not None and _contrast(sym, g) >= MIN_CONTRAST else _ink(g)
     for p in ps:
         c = new.get(id(p))
         if c is None:
