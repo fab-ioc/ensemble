@@ -1460,7 +1460,8 @@ def _span(idx: dict, seq: list[str], n: int, upto: str = "", before: str = "",
             end = len(seq) if end is None else max(start, end)
             return start, min(end, start + CHANNEL_LIMIT)
     if upto and (upto in idx["by_mid"] or upto_ts):
-        i = at(upto) if upto in idx["by_mid"] else             next((k for k, m in enumerate(seq) if (idx["by_mid"][m]["ts"] or 0) >= upto_ts), len(seq))
+        i = at(upto) if upto in idx["by_mid"] else \
+            next((k for k, m in enumerate(seq) if (idx["by_mid"][m]["ts"] or 0) >= upto_ts), len(seq))
         if i is not None:
             start = max(0, i - LINK_ABOVE)
             end = max(start + n, i + 1 + LINK_BELOW)

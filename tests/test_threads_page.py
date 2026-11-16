@@ -347,7 +347,8 @@ async function main() {
       return [...f.contentDocument.querySelectorAll('#msgs .msg[data-mid]')].map(e => e.dataset.mid); } catch (e) { return null; } })()`;
     const cardOut = {};
     await c.send('Page.navigate', { url: A.base + '/session?room=' + A.cardRoom }, cardSession);
-    cardOut.chatShowsChatCard = !!await cardUntil(`typeof THR_DRAWN !== 'undefined' && THR_DRAWN && ${chatMids}.includes(${JSON.stringify(A.chatCard)})`);
+    // The whole view, not the quick first page of a cold read (#247: no threads yet).
+    cardOut.chatShowsChatCard = !!await cardUntil(`typeof THR_DRAWN !== 'undefined' && THR_DRAWN && !String(THR_SIG).startsWith('quick:') && ${chatMids}.includes(${JSON.stringify(A.chatCard)})`);
     cardOut.chatShowsThreadCard = await cardEval(`${chatMids}.includes(${JSON.stringify(A.threadCard)})`);
     await cardEval(`sideOpen({ tid: 'P1' }); true`);
     cardOut.threadShowsCard = !!await cardUntil(`(${frameMids} || []).includes(${JSON.stringify(A.threadCard)})`);
@@ -361,6 +362,22 @@ async function main() {
       && (${frameMids} || []).includes(${JSON.stringify(A.threadCard)})`);
     cardOut.linkNote = await cardEval(`(e => e && !e.hidden ? e.textContent.trim() : '')(document.getElementById('goto-note'))`);
     out.cardLink = cardOut;
+    // Review 1, finding 1: a link to a card far back in a long thread (older
+    // than its newest page) asks the hub for the window around it and lands.
+    await c.send('Page.navigate', { url: A.base + '/session?room=' + A.longCardRoom + '&msg=' + encodeURIComponent(A.longCard) }, cardSession);
+    let deep = null;
+    for (let i = 0; i < 200; i++) {
+      deep = await cardEval(`(() => { const f = document.getElementById('ts-frame');
+        try { if (!f || !f.contentWindow || !f.contentWindow.eval('THREAD_MODE && THR_DRAWN')) return null; } catch (e) { return null; }
+        const d = f.contentDocument, box = d.getElementById('msgs');
+        const el = [...d.querySelectorAll('#msgs .msg[data-mid]')].find(x => x.dataset.mid === ${JSON.stringify(A.longCard)});
+        const a = el?.getBoundingClientRect(), b = box?.getBoundingClientRect();
+        return { thread: f.contentWindow.eval('THREAD'), drawn: !!el, visible: !!a && a.top < b.bottom && a.bottom > b.top,
+          landed: !!el?.classList.contains('landed'), side: !document.getElementById('thr-side').hidden }; })()`);
+      if (deep?.drawn && deep.landed && deep.visible) break;
+      await sleep(150);
+    }
+    out.longCardLink = deep;
     await c.send('Target.closeTarget', { targetId: cardTarget });
     // Review 4, finding 2: a link far from the newest gets a window around
     // its balloon; scrolled down, the entries after it come a page at a
@@ -507,6 +524,31 @@ class ThreadsPage(unittest.TestCase):
         threads.forget()
         card_idx = threads.build(cls.card_room, show_progress=False)
         assert card_idx["cards"] == {cls.thread_card: "P1"}, card_idx["cards"]
+        # Review 1, finding 1: a thread of 80 replies, a card about it after
+        # the 10th: older than the thread's newest page.
+        cls.long_card_room = cls._po_room("Long card room", "longcard")
+        lc_rid = cls.long_card_room
+        lc_sid, lc_lines = cls.sids[lc_rid], cls.lines[lc_rid]
+        lc_t0 = time.time() - 1800
+        go_on = "Re P1: go on, one step at a time."
+        threads.note_send(lc_rid, "P1", "", [], False, go_on, now=lc_t0)
+        lc_lines.append(_turn(lc_sid, "user", go_on, lc_t0))
+        lc_lines.extend(_turn(lc_sid, "assistant", f"Step {i} is done.", lc_t0 + 1 + i) for i in range(80))
+        cls._write(lc_sid, lc_lines)
+        points.sync(lc_rid, force=True)
+        sent = chatroom.post_message(lc_rid, "claude", "About step 10.", to="user", ask_audience="user",
+                                     structured_asks=[{"n": 0, "question": "Keep step 10 as it is?", "kind": "yesno", "recommended": -1,
+                                                       "options": [{"label": "Yes", "detail": "", "recommended": False},
+                                                                   {"label": "No", "detail": "", "recommended": False}]}],
+                                     points=["P1"])["message"]
+        room = chatroom.get_room(lc_rid, public=False)
+        next(m for m in room["messages"] if m["id"] == sent["id"])["ts"] = lc_t0 + 10.5
+        chatroom.update_room(room)
+        cls.long_card = sent["id"]
+        threads.forget()
+        lc_idx = threads.build(lc_rid, show_progress=False)
+        assert lc_idx["cards"].get(cls.long_card) == "P1", lc_idx["cards"]
+        assert len(lc_idx["threads"]["P1"]["members"]) > 80, len(lc_idx["threads"]["P1"]["members"])
         # A long chat: 400 plain entries after the talk (review 4, finding 2).
         cls.long_room = cls._po_room("Long room", "longlink")
         long_sid, long_lines = cls.sids[cls.long_room], cls.lines[cls.long_room]
@@ -544,7 +586,7 @@ class ThreadsPage(unittest.TestCase):
                 if not waited[0]:
                     waited[0] = True
                     time.sleep(2.2)
-            return original_assign(*args[:4], report, **kwargs)
+            return original_assign(*args[:4], report, *args[5:], **kwargs)     # its claimed sends and cards too
         assign_patch = mock.patch.object(threads, "assign", side_effect=slow_assign)
         assign_patch.start()
         cls.addClassCleanup(assign_patch.stop)
@@ -602,6 +644,7 @@ class ThreadsPage(unittest.TestCase):
                 "rooms": cls.rooms, "coldRoom": cls.cold_link_room,
                 "workRoom": cls.work_link_room, "workMid": cls.work_mid,
                 "cardRoom": cls.card_room, "threadCard": cls.thread_card, "chatCard": cls.chat_card,
+                "longCardRoom": cls.long_card_room, "longCard": cls.long_card,
                 "longRoom": cls.long_room, "longMid": cls.long_mid, "longLast": cls.long_last,
                 "sizes": SIZES, "shots": cls.shots}
         script = base / "threads_cdp.js"
@@ -782,6 +825,10 @@ class ThreadsPage(unittest.TestCase):
             "threadShowsCard": True, "threadShowsChatCard": False, "threadCardButtons": True,
             "linkOpensThread": True, "linkNote": "",
         })
+
+    def test_a_link_to_an_old_card_in_a_long_thread_opens_the_window_around_it(self):
+        self.assertEqual(self.got["longCardLink"], {
+            "thread": "P1", "drawn": True, "visible": True, "landed": True, "side": True})
 
     def test_a_link_far_back_gets_a_window_around_it_and_latest_goes_to_the_newest(self):
         got = self.got["longLink"]
