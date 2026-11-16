@@ -6755,7 +6755,10 @@ document.addEventListener('click', e => {
 // sender's line (#357) is a turn once typed; one the agent was not running
 // for (typed false) is only in the room, so it goes in from there, by its
 // time even above the first turn (it is no turn of any page of them).
-function withHubRows(items, room, hub) {
+// ``top``: nothing comes before the items (a thread from its start): an
+// older row goes in above them (#379 review 2: a card asked before the
+// thread's first reply).
+function withHubRows(items, room, hub, top = false) {
   if (!hub && room === ROOM_OBJ && roomHasOlder() && items.length) {
     const first = items.find(m => m.ts), oldest = (room.messages || [])[0];
     if (first && oldest && first.ts < (oldest.ts || 0)) setTimeout(() => loadOlder(), 0);
@@ -6770,7 +6773,7 @@ function withHubRows(items, room, hub) {
   const out = items.slice();
   for (const r of rows) {
     const first = out.find(m => m.ts);
-    if ((!first || r.ts < first.ts) && !(r.noticeKind === 'external' && !r.typed)) continue;
+    if ((!first || r.ts < first.ts) && !top && !(r.noticeKind === 'external' && !r.typed)) continue;
     let at = out.length;
     for (let i = out.length - 1; i >= 0; i--) { if (out[i].ts && out[i].ts > r.ts) at = i; }
     out.splice(at, 0, r);
@@ -7550,18 +7553,19 @@ async function renderThreaded(force) {
   if (THR_FETCHING) { if (force) THR_AGAIN = true; return; }
   THR_FETCHING = true;
   const roomTs = roomLatestTs(ROOM_OBJ), gen = THR_GEN;
+  let asked = false;
   try {
-    const asked = !!thrUptoId();
+    asked = !!thrUptoId();
     const url = thrUrl(force ? '' : THR_SIG), pre = THR_PRE;
     THR_PRE = null;
     const r = pre && pre.url === url ? await pre.p.catch(() => pollFetch(url, null, 90000)) : await pollFetch(url, null, 90000);
     let d = await r.json();
     // Asked for the pages before they started again ("Latest", a send from a
     // link's window): the old window's, so asked again from the new start.
-    if (gen !== THR_GEN) { THR_AGAIN = true; return; }
+    if (gen !== THR_GEN) { if (asked) THR_ASKED = ''; THR_AGAIN = true; return; }
     if (d && d.delta) {
       const v = THR_VIEW && thrApply(THR_VIEW, d);
-      if (!v) { THR_SIG = ''; THR_AGAIN = true; return; }    // not the view held: ask for it whole
+      if (!v) { if (asked) THR_ASKED = ''; THR_SIG = ''; THR_AGAIN = true; return; }    // not the view held: ask for it whole
       d = Object.assign(v, d.progress ? { progress: d.progress } : {});
       delete d.delta;
     }
@@ -7580,6 +7584,8 @@ async function renderThreaded(force) {
       // Keep the channel empty while its roots are being built. The progress
       // notice stays visible, and a balloon link waits for its thread.
       if (THREAD_MODE) setText($('#hint'), 'Reading the chat’s threads…');
+      // A link's card not reached yet (#379 review 2): asked again next time.
+      if (asked) THR_ASKED = '';
       clearTimeout(THR_WAIT);
       THR_WAIT = setTimeout(() => renderThreaded(true), 1500);
       return;
@@ -7638,6 +7644,7 @@ async function renderThreaded(force) {
     thrAnyWatch(d);
     showLatest();
   } catch (e) {
+    if (asked) THR_ASKED = '';      // a link's card: asked again on the next poll
     if (e?.name === 'AbortError') chatCatchup('poll-timeout', THR_LATEST_MID);
     globalThis.EnsembleProgress?.clear('thread-build');
     if (!THREAD_MODE && !CHAT_DRAWN) renderSolo(SOLO_SID, SOLO_AGENT, true);
@@ -7658,8 +7665,9 @@ function thrDraw(roomTs, d = THR_VIEW) {
       const inThread = (d && d.cardThreads) || {};
       items = withHubRows(items, ROOM_OBJ, THR_HUB).filter(m => !inThread[m.id]);
     } else if (THR_HUB.size) {
-      // The thread's own cards (the hub's hubRows), among its balloons by time.
-      items = withHubRows(items, { messages: [...THR_HUB.values()] }, null);
+      // The thread's own cards (the hub's hubRows), among its balloons by
+      // time; one older than its first, above it when the view starts there.
+      items = withHubRows(items, { messages: [...THR_HUB.values()] }, null, !THR_BEFORE);
     }
     // A balloon link lands in the thread containing that balloon, once the
     // channel was asked to reach it (else landPending asks first). A PO's

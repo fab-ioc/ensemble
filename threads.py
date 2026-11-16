@@ -89,6 +89,7 @@ NAME_MAX = 80                   # a name the person gives a thread (issue 51), a
 PREVIEW_MAX = 240               # what a reply line quotes of the last reply
 ALSO_SLACK_S = 600              # a reply sent to the chat too: its balloon within this
 SIDE_KEEP = 400                 # thread box sends kept whole (what they hold, to find their balloon)
+NOTICES_KEEP = 2000             # the hub's card notices kept with their send key (#379 review 2)
 YIELD_BUDGET_S = 1.0            # a build stands aside for the pages this long in all (#266)
 SLOW_BUILD_S = 2.0              # a build taking longer says so in the log
 
@@ -190,7 +191,7 @@ def _path(room_id: str) -> Path:
 
 def _empty_side() -> dict:
     return {"version": 1, "since": 0.0, "seen": {}, "anchors": {}, "also": [], "sent": [],
-            "archived": {}, "deleted": {}, "names": {}}
+            "archived": {}, "deleted": {}, "names": {}, "notices": {}}
 
 
 def load_side(room_id: str) -> dict:
@@ -230,6 +231,12 @@ def load_side(room_id: str) -> dict:
             if isinstance(d.get("names"), dict):
                 side["names"] = {t: v for t, v in d["names"].items()
                                  if isinstance(t, str) and isinstance(v, str)}
+            # #379 review 2: the hub's notices about a card ({balloon: {key,
+            # card}}), kept past the sends' own record (pruned after a day).
+            if isinstance(d.get("notices"), dict):
+                side["notices"] = {m: {"key": v["key"], "card": v["card"]} for m, v in d["notices"].items()
+                                   if isinstance(m, str) and isinstance(v, dict)
+                                   and isinstance(v.get("key"), str) and isinstance(v.get("card"), str)}
             for k in ("also", "sent"):
                 if isinstance(d.get(k), list):
                     side[k] = [x for x in d[k] if isinstance(x, dict)]
@@ -242,6 +249,9 @@ def _save_side(room_id: str, side: dict) -> None:
     p.parent.mkdir(parents=True, exist_ok=True)
     tmp = p.with_name(f"{p.name}.{os.getpid()}.{threading.get_ident()}.tmp")
     side["also"] = side.get("also", [])[-SIDE_KEEP:]
+    notices = side.get("notices") or {}
+    if len(notices) > NOTICES_KEEP:
+        side["notices"] = dict(list(notices.items())[-NOTICES_KEEP:])
     sent = side.get("sent", [])
     if len(sent) > SIDE_KEEP:
         # A reply's place lasts as long as its balloon (#237 reviews 1, 2):
@@ -647,11 +657,17 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
     # The hub's notices about a card (closed without an answer, reopened):
     # their send key names the card (card_tag), or the ledger keeps the key
     # of a close; a reopen's key is "reopen:" + its close's.
+    # Which card a notice is about is kept in the room's record (review 2):
+    # the sends' record is pruned after a day, and a reopen drops the
+    # ledger's key. ``notices`` out: the ones learnt now ({balloon: {key, card}}).
+    kept_notices = side.get("notices") or {}
     key_of = {m: k for k, m in (claimed or {}).items() if isinstance(k, str)}
+    notice_keys: dict[str, dict] = {}
     tag_card = {t: c["id"] for c in card_list for t in c.get("tags") or ()}
     key_card = {got["noticeKey"]: cmid for cmid, per in (led.get("asks") or {}).items() if isinstance(per, dict)
                 for got in per.values() if isinstance(got, dict) and isinstance(got.get("noticeKey"), str)}
     notice_thread: dict[str, str] = {}      # a close notice's key → the thread it went to
+    notice_card: dict[str, str] = {}        # a close notice's key → its card
 
     def closed_card(r: dict) -> str:
         """The thread of the card a hub "closed without an answer" or
@@ -659,13 +675,18 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
         q = _card_question(r["turn"].get("text") or "")
         if not q:
             return ""
-        key = key_of.get(r["mid"], "")
-        if key.startswith("reopen:"):
-            key = key[len("reopen:"):]
-            if key in notice_thread:
-                return notice_thread[key]
-        parts = key.split(":")
-        cid = key_card.get(key) or (tag_card.get(parts[1]) if len(parts) == 3 and parts[0] == "ask-close" else None)
+        kept = kept_notices.get(r["mid"]) or {}
+        key = key_of.get(r["mid"]) or kept.get("key") or ""
+        close = key[len("reopen:"):] if key.startswith("reopen:") else key
+        parts = close.split(":")
+        cid = key_card.get(close) or (tag_card.get(parts[1]) if len(parts) == 3 and parts[0] == "ask-close" else None) \
+            or notice_card.get(close) or kept.get("card") or ""
+        if key and cid and (kept.get("key"), kept.get("card")) != (key, cid):
+            notice_keys[r["mid"]] = {"key": key, "card": cid}
+        if close and cid:
+            notice_card[close] = cid
+        if key != close and close in notice_thread:
+            return notice_thread[close]
         if cid:
             homes = {(card_home.get(cid) or [""])[-1]}
         else:
@@ -675,8 +696,8 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
                      if q in (c.get("questions") or [])}
         t = homes.pop() if len(homes) == 1 else ""
         t = t if t in chosen else ""
-        if key:
-            notice_thread[key] = t
+        if close:
+            notice_thread[close] = t
         return t
 
     for number, r in enumerate(recs, 1):
@@ -866,7 +887,7 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
         threads[t].setdefault("cards", []).append(c)
     return {"threads": threads, "of": of, "parent": parent, "also": also,
             "work": work, "order": order, "paired": paired, "answered": answered,
-            "cards": in_thread, "split": split}
+            "cards": in_thread, "split": split, "notices": notice_keys}
 
 
 PAIR_SLACK_S = 120              # a transcript's clock behind the hub's, at most (sends.SLACK_S)
@@ -1226,6 +1247,11 @@ def build(room_id: str, room: dict | None = None, *, show_progress: bool = True,
             confirmed(room_id, settled)
         except Exception as e:      # noqa: BLE001 — paired again by what they hold next time
             print(f"[threads] {room_id}: replies not kept with their balloons: {e!r}", flush=True)
+    if out.get("notices") and keep:
+        try:
+            keep_notices(room_id, out["notices"])
+        except Exception as e:      # noqa: BLE001 — kept on the next build while the send is
+            print(f"[threads] {room_id}: card notices not kept: {e!r}", flush=True)
     by_mid = {r["mid"]: r for r in recs}
     hidden = _drop_deleted(out, by_mid, side.get("deleted") or {})
     _apply_names(out, side.get("names") or {})
@@ -1998,6 +2024,23 @@ def confirmed(room_id: str, mids: dict) -> None:
                 a["mid"] = mid
                 changed = True
         if changed:
+            _save_side(room_id, side)
+
+
+def keep_notices(room_id: str, keys: dict) -> None:
+    """The hub's notices about a card ``{balloon: {key, card}}`` (#379
+    review 2): which card a "closed / reopened your question" line is about,
+    for good, though the sends' record of it is pruned after a day and a
+    reopen drops the ledger's key."""
+    if not _ROOM_ID.fullmatch(room_id or "") or not keys:
+        return
+    with _LOCK:
+        side = load_side(room_id)
+        got = side.setdefault("notices", {})
+        new = {m: {"key": v["key"], "card": v["card"]} for m, v in keys.items()
+               if isinstance(m, str) and isinstance(v, dict) and got.get(m) != v}
+        if new:
+            got.update(new)
             _save_side(room_id, side)
 
 

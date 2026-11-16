@@ -862,6 +862,34 @@ class ThreadStaysTest(unittest.TestCase):
                         asks={"c1": {"0": {"closed": True, "noticeKey": "ask-close:feedbeef"}}})
         self.assertIn("s:4", out["threads"]["P1"]["members"])
 
+    def test_a_notice_key_is_kept_past_the_sends_record_and_a_reopen_after_it(self):
+        # Review 2, finding 2: the sends' record is pruned after a day and a
+        # reopen drops the ledger's noticeKey; the room's record keeps both keys.
+        recs, pts, sd, cards = self.two_threads_same_question()
+        key = "ask-close:feedbeef"
+        recs = recs + [self.notice("s:4", 100), self.notice("s:5", 110, "reopened")]
+        first = self.run_(recs, pts, sd, cards, claimed={key: "s:4", "reopen:" + key: "s:5"},
+                          asks={"c1": {"0": {"closed": True, "noticeKey": key}}})
+        self.assertEqual(first["notices"], {"s:4": {"key": key, "card": "c1"},
+                                            "s:5": {"key": "reopen:" + key, "card": "c1"}})
+        later = self.run_(recs, pts, {**sd, "notices": first["notices"]}, cards, claimed={},
+                          asks={"c1": {"0": {}}})
+        for mid in ("s:4", "s:5"):
+            self.assertIn(mid, later["threads"]["P1"]["members"])
+        self.assertNotIn("team:activity", later["threads"])
+        self.assertEqual(later["notices"], {}, "nothing new to keep")
+        # Without it, as before: Team activity.
+        lost = self.run_(recs, pts, sd, cards, claimed={}, asks={"c1": {"0": {}}})
+        self.assertIn("s:4", lost["threads"]["team:activity"]["members"])
+
+    def test_notice_keys_are_saved_in_the_rooms_record(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(threads, "_dir", lambda: Path(d)):
+            rid = "room-0123abcd"
+            threads.keep_notices(rid, {"s:4": {"key": "ask-close:x", "card": "c1"}})
+            threads.keep_notices(rid, {"s:5": {"key": "reopen:ask-close:x", "card": "c1"}})
+            self.assertEqual(threads.load_side(rid)["notices"], {"s:4": {"key": "ask-close:x", "card": "c1"},
+                                                                 "s:5": {"key": "reopen:ask-close:x", "card": "c1"}})
+
     def test_a_notice_without_its_key_and_two_cards_asking_it_is_in_no_thread(self):
         recs, pts, sd, cards = self.two_threads_same_question()
         recs = recs + [self.notice("s:4", 100)]
