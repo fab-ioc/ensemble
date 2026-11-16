@@ -63,6 +63,13 @@ def hub_host(host: str) -> bool:
     return ip.is_loopback or ip in ipaddress.ip_network("100.64.0.0/10")
 
 
+def _loopback(host: str) -> bool:
+    try:
+        return ipaddress.ip_address((host or "").strip("[]")).is_loopback
+    except ValueError:
+        return False
+
+
 def target(url: str) -> dict | None:
     """What a hub address opens: {"card": (room, msg, n)}, {"msg": (room,
     msg)}, {"task": room}, {"thread": room}, {"file": path} or {"page": path};
@@ -88,6 +95,16 @@ def target(url: str) -> dict | None:
         return {"task": q["task"]}
     if u.path == "/fileview" and q.get("path"):
         return {"file": q["path"]}
+    # Any other page is the hub's only on its own port (as the chat page's
+    # hubUrlOf reads it): a dev server on localhost:5173 is another website.
+    try:
+        port = u.port
+    except ValueError:
+        return None
+    hub_port = getattr(_d, "HUB_PORT", 0) or 8765
+    loop = host.strip("[]").lower() == "localhost" or _loopback(host)
+    if port != hub_port and (loop or port is not None):
+        return None
     return {"page": u.path}
 
 
