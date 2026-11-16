@@ -4070,7 +4070,10 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .ldp-hand:hover .ldp-pinmark,
   .ldp-hand:has(.ldp-pinb:focus-visible, .ldp-dots:focus-visible, .ldp-dots[aria-expanded="true"]) .ldp-pinmark { visibility: hidden; }
   .ldp-hand .ldp-row { cursor: grab; }
-  .ldp-grip { display: none; flex: none; width: 22px; height: 12px; color: var(--fg-subtle); }
+  /* #378 (P363): the grip takes the tile's whole 22px box (its dots still 12px, centred), so the
+     row keeps its 28px on hover: 12px tall, it shrank the row out from under a pointer near its
+     bottom edge, which lost the hover, grew back and flickered every frame. */
+  .ldp-grip { display: none; flex: none; box-sizing: border-box; width: 22px; height: 22px; padding: 5px 0; color: var(--fg-subtle); }
   .ldp-hand:hover .ldp-row > .ldp-ico, .ldp-hand.ldp-lifted .ldp-row > .ldp-ico { display: none; }
   .ldp-hand:hover .ldp-grip, .ldp-hand.ldp-lifted .ldp-grip { display: block; }
   .ldp-slot, .pm-slot { flex: none; height: var(--slot-h, 28px); border-radius: var(--r-200); background: var(--selected-bg); box-shadow: inset 0 0 0 2px var(--accent); }
