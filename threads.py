@@ -556,6 +556,10 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
             # human point raised from it starts a thread of its own.
             if anc == "team:activity":
                 anc = ""
+            if anc and anc not in threads and anc in pts and anc != pid:
+                # Sent from a point's own name (a review comment on a point,
+                # #379): the thread that point is in.
+                anc = point_thread(anc) or ""
             if anc in threads:
                 out = anc
                 choose(anc)

@@ -815,6 +815,137 @@ class AssignTest(unittest.TestCase):
         self.assertEqual(out["threads"]["P2"]["members"], ["s:2", "s:3", "s:4", "s:5"])
 
 
+class ThreadStaysTest(unittest.TestCase):
+    """#379: a PO's answer to a point in a thread stays in that thread, its
+    question cards, its later replies and the hub's notices about them too."""
+
+    def run_(self, recs, pts, sd=None, cards=None):
+        return threads.assign(recs, {"points": pts}, sd or side(), None, cards=cards or [])
+
+    @staticmethod
+    def card(cid, ts, text="Which one?", pts=(), q="Which one?"):
+        return {"id": cid, "ts": T0 + ts, "text": text, "points": list(pts), "questions": [q]}
+
+    @staticmethod
+    def channel(out, recs):
+        return threads._channel({**out, "recs": recs})
+
+    def thread_case(self):
+        """P1 sent as a new thread and answered there; P2 in the main chat."""
+        recs = [human("s:0", 0, "make the chart wider"), po("s:1", 5, "On it."),
+                human("s:2", 50, "and the colours?"), po("s:3", 55, "Re P2: noted", re_=["P2"])]
+        pts = [point("P1", "s:0", "make the chart wider"), point("P2", "s:2", "and the colours?", 50)]
+        return recs, pts, side(sent=[new_row("s:0")])
+
+    def test_a_card_asked_while_answering_a_thread_is_in_it_and_a_hub_woken_one_is_not(self):
+        recs, pts, sd = self.thread_case()
+        recs = recs[:2] + [note("s:9", 20)] + recs[2:]
+        cards = [self.card("c1", 6), self.card("c2", 21, q="Other?")]
+        out = self.run_(recs, pts, sd, cards)
+        self.assertEqual(out["cards"], {"c1": "P1"}, "c2 was woken by a digest: the main chat's")
+        self.assertEqual(out["threads"]["P1"]["cards"], ["c1"])
+
+    def test_a_card_naming_a_threaded_point_is_in_its_thread_by_points_or_by_re(self):
+        recs, pts, sd = self.thread_case()
+        # Asked after the main-chat P2 answer: the input before it is the main chat.
+        by_points = self.card("c1", 60, pts=["P1"])
+        by_re = self.card("c2", 61, text="Re P1: which width?", q="Which width?")
+        plain = self.card("c3", 62, q="Anything else?")
+        out = self.run_(recs, pts, sd, [by_points, by_re, plain])
+        self.assertEqual(out["cards"], {"c1": "P1", "c2": "P1"})
+        # A card naming a main-chat point stays in the main chat.
+        out = self.run_(recs, pts, sd, [self.card("c4", 60, pts=["P2"])])
+        self.assertEqual(out["cards"], {})
+
+    def test_a_link_to_a_card_never_takes_it_out_of_its_thread(self):
+        recs, pts, sd = self.thread_case()
+        recs = recs + [po("s:4", 70, "See [the question](/session?room=r&msg=c1abcdef01)")]
+        out = self.run_(recs, pts, sd, [self.card("c1abcdef01", 6)])
+        self.assertEqual(out["cards"], {"c1abcdef01": "P1"})
+
+    def test_a_later_re_pn_after_a_report_stays_in_the_thread(self):
+        recs, pts, sd = self.thread_case()
+        recs = recs + [report("s:4", 100, "#77"), po("s:5", 101, "Re P1: it is live", re_=["P1"])]
+        out = self.run_(recs, pts, sd)
+        self.assertIn("s:5", out["threads"]["P1"]["members"])
+        self.assertNotIn("s:5", self.channel(out, recs))
+        self.assertEqual(out["also"], {})
+
+    def test_answers_to_a_threaded_and_a_main_chat_point_are_split_never_shown_twice(self):
+        recs, pts, sd = self.thread_case()
+        both = "Here is where we are.\n\nRe P1: wider now\n\nRe P2: colours next"
+        recs = recs + [po("s:4", 100, both, re_=["P1", "P2"])]
+        out = self.run_(recs, pts, sd)
+        self.assertEqual(out["split"]["s:4"], {"P1": "Here is where we are.\n\nRe P1: wider now",
+                                               "": "Re P2: colours next"})
+        self.assertIn("s:4", out["threads"]["P1"]["members"])
+        self.assertIn("s:4", self.channel(out, recs), "its main chat part")
+        self.assertEqual(out["also"], {})
+        idx = {**out, "recs": recs, "by_mid": {r["mid"]: r for r in recs}}
+        self.assertEqual(threads._turn(idx, "s:4", "P1")["text"], "Here is where we are.\n\nRe P1: wider now")
+        self.assertEqual(threads._turn(idx, "s:4")["text"], "Re P2: colours next")
+        self.assertNotIn("alsoIn", threads._turn(idx, "s:4", "P1"))
+
+    def test_answers_to_points_in_two_threads_are_split_and_left_out_of_the_chat(self):
+        recs = [human("s:0", 0, "make the chart wider"), po("s:1", 5, "On it."),
+                human("s:2", 50, "and the colours?"), po("s:3", 55, "Looking.")]
+        pts = [point("P1", "s:0", "make the chart wider"), point("P2", "s:2", "and the colours?", 50)]
+        sd = side(sent=[new_row("s:0"), new_row("s:2", key="k2", at=50)])
+        recs = recs + [po("s:4", 100, "Re P1: wider\n\nRe P2: blue", re_=["P1", "P2"])]
+        out = self.run_(recs, pts, sd)
+        self.assertEqual(out["split"]["s:4"], {"P1": "Re P1: wider", "P2": "Re P2: blue"})
+        self.assertNotIn("s:4", self.channel(out, recs))
+        self.assertIn("s:4", out["threads"]["P1"]["members"])
+        self.assertIn("s:4", out["threads"]["P2"]["members"])
+
+    def test_without_re_heads_a_two_place_answer_goes_whole_to_the_first(self):
+        recs, pts, sd = self.thread_case()
+        recs = recs + [po("s:4", 100, "P1 and P2 are both done.")]
+        out = self.run_(recs, pts, sd)
+        self.assertNotIn("s:4", out["split"])
+        self.assertIn("s:4", out["threads"]["P1"]["members"])
+        self.assertNotIn("s:4", self.channel(out, recs))
+
+    def test_a_send_named_by_a_point_inside_a_thread_goes_to_that_thread(self):
+        recs = [human("s:0", 0, "make the chart wider"), po("s:1", 5, "On it."),
+                human("s:2", 10, "## Review comments (1)\n**1.** the axis"), po("s:3", 15, "Re P5: fixed", re_=["P5"])]
+        pts = [point("P1", "s:0", "make the chart wider"), point("P5", "s:2", "**1.** the axis", 10)]
+        sd = side(sent=[new_row("s:0"), {"thread": "P1", "key": "k2", "mid": "s:2", "at": T0 + 10,
+                                         "also": False, "pids": []}],
+                  anchors={"P5": "P1"})
+        recs = recs + [human("s:4", 20, "## Review comments (1)\n**1.** still off"), po("s:5", 25, "Re P6: fixed now", re_=["P6"])]
+        pts = pts + [point("P6", "s:4", "**1.** still off", 20)]
+        sd["sent"].append({"thread": "P5", "key": "k4", "mid": "s:4", "at": T0 + 20, "also": False, "pids": []})
+        sd["anchors"]["P6"] = "P5"      # note_send anchors its points to the name it was sent on
+        out = self.run_(recs, pts, sd)
+        self.assertEqual(list(out["threads"]), ["P1"])
+        self.assertEqual(out["threads"]["P1"]["members"], ["s:0", "s:1", "s:2", "s:3", "s:4", "s:5"])
+        self.assertEqual(self.channel(out, recs), ["s:0"])
+
+    def test_a_card_closed_without_an_answer_notice_joins_the_cards_thread(self):
+        recs, pts, sd = self.thread_case()
+        closed = {"mid": "s:4", "sid": "s", "role": "user", "kind": "hub", "ts": T0 + 100,
+                  "turn": {"role": "user", "text": '[asks] The CEO closed your question "Which one?" without an answer.'}}
+        recs = recs + [closed, po("s:5", 101, "Understood, I will pick one.")]
+        out = self.run_(recs, pts, sd, [self.card("c1", 6)])
+        self.assertIn("s:4", out["threads"]["P1"]["members"])
+        self.assertIn("s:4", out["work"])
+        self.assertIn("s:5", out["threads"]["P1"]["members"])
+        self.assertNotIn("s:4", self.channel(out, recs))
+        self.assertNotIn("s:5", self.channel(out, recs))
+        # The same notice about a main-chat card is Team activity.
+        out = self.run_(recs, pts, sd, [self.card("c1", 60)])
+        self.assertIn("s:4", out["threads"]["team:activity"]["members"])
+
+    def test_room_cards_reads_the_points_and_skips_questions_to_the_po(self):
+        room = {"messages": [
+            {"id": "a1", "ts": T0 + 2, "text": "ctx", "asks": [{"question": "Which  one?"}], "points": ["P1"]},
+            {"id": "a0", "ts": T0 + 1, "text": "", "asks": [{"question": "To the PO?"}], "askAudience": "po"},
+            {"id": "a2", "ts": T0 + 3, "text": "plain"}]}
+        self.assertEqual(threads.room_cards(room), [
+            {"id": "a1", "ts": T0 + 2, "text": "ctx", "points": ["P1"], "questions": ["Which one?"]}])
+
+
 class PoRoomsTest(unittest.TestCase):
     def test_the_po_chats_are_read_once_per_ttl_and_again_when_a_po_changes(self):
         threads.forget()

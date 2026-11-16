@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import collections
 import json
+import re
 import threading
 import time
 from datetime import datetime
@@ -224,7 +225,10 @@ _ALL_TOOLS = [
                                               "required": ["label"]}}},
                               "required": ["question"]}},
             "context": {"type": "string", "description": "Optional Markdown shown above the cards."},
-            "forCeo": {"type": "boolean", "description": "A task with a PO: send the card to the user instead."}},
+            "forCeo": {"type": "boolean", "description": "A task with a PO: send the card to the user instead."},
+            "points": {"type": "array", "maxItems": 10, "items": {"type": "string", "pattern": "^P[0-9]+[a-z]?$"},
+                       "description": "The user's points the cards are about (e.g. [\"P12\"]): a card about "
+                                      "a point that has its own thread is shown in that thread, not in the main chat."}},
                         "required": ["questions"]},
     },
     {
@@ -1378,6 +1382,11 @@ def _ask_once(ctx, args, handler):
         raise ToolError("context must be at most 8000 characters")
     if not isinstance(args.get("forCeo", False), bool):
         raise ToolError("forCeo must be true or false")
+    about = args.get("points") or []
+    if not isinstance(about, list) or len(about) > 10 or not all(
+            isinstance(i, str) and re.fullmatch(r"P[0-9]+[a-z]?", i) for i in about):
+        raise ToolError('points must be a list of point ids such as ["P12"]')
+    about = list(dict.fromkeys(about))
     lines = [context.strip()] if context.strip() else []
     for ask in questions:
         lines.append(f"{ask['n'] + 1}. {ask['question']}")
@@ -1429,7 +1438,7 @@ def _ask_once(ctx, args, handler):
     mid = ""
     if fresh:
         result = _d.chatroom.post_message(room["id"], identity, context.strip() or "Questions for you.", to="user",
-                                          structured_asks=fresh, ask_audience="user")
+                                          structured_asks=fresh, ask_audience="user", points=about)
         if result is None:
             raise ToolError("your room no longer exists")
         handler._ring_recipients(room["id"], result)

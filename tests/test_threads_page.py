@@ -333,6 +333,35 @@ async function main() {
     }
     out.workLink = work;
     await c.send('Target.closeTarget', { targetId: workTarget });
+    // #379: a card about a threaded point is drawn in its thread, not in the
+    // chat; a link to it opens that thread on it.
+    const { targetId: cardTarget } = await c.send('Target.createTarget', { url: 'about:blank' });
+    const { sessionId: cardSession } = await c.send('Target.attachToTarget', { targetId: cardTarget, flatten: true });
+    await c.send('Page.enable', {}, cardSession);
+    const cardEval = async expr => { const r = await c.send('Runtime.evaluate',
+      { expression: expr, awaitPromise: true, returnByValue: true }, cardSession);
+      if (r.exceptionDetails) throw new Error(JSON.stringify(r.exceptionDetails)); return r.result.value; };
+    const cardUntil = async (expr, ms = 20000) => { const t = Date.now(); while (Date.now() - t < ms) { let v = null; try { v = await cardEval(expr); } catch (e) {} if (v) return v; await sleep(150); } return null; };
+    const chatMids = `[...document.querySelectorAll('#msgs .msg[data-mid]')].map(e => e.dataset.mid)`;
+    const frameMids = `(() => { const f = document.getElementById('ts-frame'); try { if (!f.contentWindow.eval('THREAD_MODE && THR_DRAWN')) return null;
+      return [...f.contentDocument.querySelectorAll('#msgs .msg[data-mid]')].map(e => e.dataset.mid); } catch (e) { return null; } })()`;
+    const cardOut = {};
+    await c.send('Page.navigate', { url: A.base + '/session?room=' + A.cardRoom }, cardSession);
+    cardOut.chatShowsChatCard = !!await cardUntil(`typeof THR_DRAWN !== 'undefined' && THR_DRAWN && ${chatMids}.includes(${JSON.stringify(A.chatCard)})`);
+    cardOut.chatShowsThreadCard = await cardEval(`${chatMids}.includes(${JSON.stringify(A.threadCard)})`);
+    await cardEval(`sideOpen({ tid: 'P1' }); true`);
+    cardOut.threadShowsCard = !!await cardUntil(`(${frameMids} || []).includes(${JSON.stringify(A.threadCard)})`);
+    cardOut.threadShowsChatCard = await cardEval(`(${frameMids} || []).includes(${JSON.stringify(A.chatCard)})`);
+    cardOut.threadCardButtons = await cardEval(`(() => { const f = document.getElementById('ts-frame');
+      const el = [...f.contentDocument.querySelectorAll('#msgs .msg[data-mid]')].find(e => e.dataset.mid === ${JSON.stringify(A.threadCard)});
+      return el ? el.querySelectorAll('.qa-optw, .qa-no, button').length > 0 : false; })()`);
+    await cardEval(`sideClose(); true`);
+    await c.send('Page.navigate', { url: A.base + '/session?room=' + A.cardRoom + '&msg=' + encodeURIComponent(A.threadCard) }, cardSession);
+    cardOut.linkOpensThread = !!await cardUntil(`typeof TS !== 'undefined' && TS?.tid === 'P1' && !document.getElementById('thr-side').hidden
+      && (${frameMids} || []).includes(${JSON.stringify(A.threadCard)})`);
+    cardOut.linkNote = await cardEval(`(e => e && !e.hidden ? e.textContent.trim() : '')(document.getElementById('goto-note'))`);
+    out.cardLink = cardOut;
+    await c.send('Target.closeTarget', { targetId: cardTarget });
     // Review 4, finding 2: a link far from the newest gets a window around
     // its balloon; scrolled down, the entries after it come a page at a
     // time; Latest goes to the newest.
@@ -454,6 +483,30 @@ class ThreadsPage(unittest.TestCase):
         cls.work_mid = f"{work_sid}:{len(work_lines) - 2}"
         work_idx = threads.build(work_rid, show_progress=False)
         assert cls.work_mid in work_idx["threads"]["P3"]["members"]
+        # #379: a card about a threaded point is in that thread, not the chat;
+        # one woken by a digest is the chat's.
+        cls.card_room = cls._po_room("Card room", "cardlink")
+        card_sid, card_lines = cls.sids[cls.card_room], cls.lines[cls.card_room]
+        card_t0 = time.time() - 300
+        card_lines.extend([_turn(card_sid, "user", "[digest] Motors: all quiet.", card_t0),
+                           _turn(card_sid, "assistant", "Noted.", card_t0 + 1)])
+        cls._write(card_sid, card_lines)
+        points.sync(cls.card_room, force=True)
+        def card(text, q, about, at):
+            sent = chatroom.post_message(cls.card_room, "claude", text, to="user", ask_audience="user",
+                                         structured_asks=[{"n": 0, "question": q, "kind": "yesno", "recommended": -1,
+                                                           "options": [{"label": "Yes", "detail": "", "recommended": False},
+                                                                       {"label": "No", "detail": "", "recommended": False}]}],
+                                         points=about)["message"]
+            room = chatroom.get_room(cls.card_room, public=False)
+            next(m for m in room["messages"] if m["id"] == sent["id"])["ts"] = at
+            chatroom.update_room(room)
+            return sent["id"]
+        cls.thread_card = card("About the chart.", "Make it wider still?", ["P1"], card_t0 + 2)
+        cls.chat_card = card("A question.", "Ship it tonight?", None, card_t0 + 3)
+        threads.forget()
+        card_idx = threads.build(cls.card_room, show_progress=False)
+        assert card_idx["cards"] == {cls.thread_card: "P1"}, card_idx["cards"]
         # A long chat: 400 plain entries after the talk (review 4, finding 2).
         cls.long_room = cls._po_room("Long room", "longlink")
         long_sid, long_lines = cls.sids[cls.long_room], cls.lines[cls.long_room]
@@ -548,6 +601,7 @@ class ThreadsPage(unittest.TestCase):
         args = {**chrome_profile.node_args(), "tmp": cls.tmp.name, "base": f"http://127.0.0.1:{cls.server.server_address[1]}",
                 "rooms": cls.rooms, "coldRoom": cls.cold_link_room,
                 "workRoom": cls.work_link_room, "workMid": cls.work_mid,
+                "cardRoom": cls.card_room, "threadCard": cls.thread_card, "chatCard": cls.chat_card,
                 "longRoom": cls.long_room, "longMid": cls.long_mid, "longLast": cls.long_last,
                 "sizes": SIZES, "shots": cls.shots}
         script = base / "threads_cdp.js"
@@ -720,6 +774,13 @@ class ThreadsPage(unittest.TestCase):
         self.assertEqual(self.got["workLink"], {
             "thread": "P3", "open": True, "expanded": "true",
             "visible": True, "landed": True, "side": True,
+        })
+
+    def test_a_card_about_a_threaded_point_is_in_its_thread_and_a_link_opens_it_there(self):
+        self.assertEqual(self.got["cardLink"], {
+            "chatShowsChatCard": True, "chatShowsThreadCard": False,
+            "threadShowsCard": True, "threadShowsChatCard": False, "threadCardButtons": True,
+            "linkOpensThread": True, "linkNote": "",
         })
 
     def test_a_link_far_back_gets_a_window_around_it_and_latest_goes_to_the_newest(self):

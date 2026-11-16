@@ -196,26 +196,30 @@ async function main() {
     await sleep(1200);
     await hub('/__test/report', {});
     await hub('/__test/release-channel', {});
-    out.batchBoth = await until(`document.querySelector('#msgs')?.textContent.includes('Here it is, answer BATCHA.') &&
-      document.querySelector('#msgs')?.textContent.includes('Here it is, answer BATCHB.')`, 8000)
+    // #379: each answer stays in its thread; the newest opens beside, nothing
+    // is copied into the chat.
+    const batchThreads = `(THR_VIEW?.watchedReplies || []).filter(r => [...document.querySelectorAll('#msgs .msg[data-mid]')]
+      .some(e => e.dataset.mid === r.send && /BATCH[AB] (First|Second) pending reply/.test(e.textContent))).map(r => r.thread)`;
+    out.batchOpen = await until(`(${batchThreads}).includes(TS?.tid) && !document.querySelector('#thr-side').hidden`, 8000)
       .then(() => true).catch(() => false);
-    out.batchExposed = await evalIn(`!document.querySelector('#thr-side')?.classList.contains('layer') ||
-      document.querySelector('#thr-side').hidden`);
+    await sleep(1500);
+    out.batchNotInChat = await evalIn(`!document.querySelector('#msgs')?.textContent.includes('Here it is, answer BATCHA.') &&
+      !document.querySelector('#msgs')?.textContent.includes('Here it is, answer BATCHB.')`);
+    out.batchSide = await evalIn(`TS?.tid || ''`);
     out.batchThreadCount = await evalIn(`(() => { const mids = [...document.querySelectorAll('#msgs .msg[data-mid]')]
       .filter(e => /BATCH[AB] (First|Second) pending reply/.test(e.textContent)).map(e => e.dataset.mid);
       return new Set((THR_VIEW?.watchedReplies || []).filter(r => mids.includes(r.send)).map(r => r.thread)).size; })()`);
     out.batchDebug = await evalIn(`({watch:[...RECENT_SENDS.keys()].slice(-3),
       replies:(THR_VIEW?.watchedReplies||[]).slice(-4).map(r=>[r.send,r.mid,r.thread,!!r.turn]),
-      inline:typeof THR_INLINE_TURNS !== 'undefined' ? [...THR_INLINE_TURNS.keys()] : [],
       shown:[...document.querySelectorAll('#msgs .msg[data-mid]')]
         .filter(e=>/BATCH|answer BATCH/.test(e.textContent)).map(e=>e.textContent.slice(0,90)),
       open:TS?.tid || ''})`);
     const batchSig = await evalIn(`THR_SIG`);
     await hub('/__test/report', {});
-    out.batchAfterChange = await until(`THR_SIG !== ${JSON.stringify(batchSig)} &&
-      document.querySelector('#msgs')?.textContent.includes('Here it is, answer BATCHA.') &&
-      document.querySelector('#msgs')?.textContent.includes('Here it is, answer BATCHB.')`, 8000)
-      .then(() => true).catch(() => false);
+    out.batchAfterChange = await until(`THR_SIG !== ${JSON.stringify(batchSig)}`, 8000)
+      .then(() => evalIn(`TS?.tid === ${JSON.stringify(out.batchSide)} &&
+        !document.querySelector('#msgs')?.textContent.includes('Here it is, answer BATCHA.') &&
+        !document.querySelector('#msgs')?.textContent.includes('Here it is, answer BATCHB.')`)).catch(() => false);
     // Long enough for a confirmed send to have left the hub's list.
     await sleep(A.holdMs);
     sampling = false;
@@ -227,7 +231,7 @@ async function main() {
     // New activity elsewhere must leave an intentionally selected view alone.
     await evalIn(`sideOpen({tid:'P1'}); true`);
     await until(`TS?.tid === 'P1' && !document.querySelector('#thr-side').hidden`, 4000);
-    const batchMids = await evalIn(`[...THR_INLINE_TURNS.keys()]`);
+    const batchMids = await evalIn(`(THR_VIEW?.watchedReplies || []).map(r => r.mid)`);
     // The Threads filter picked (Topics were removed, P345: the filter left).
     await evalIn(`chatFilterSet({kind:'threads'}, {persist:false}); true`);
     await until(`CHAT_FILTER.kind === 'threads' && !THR_FETCHING && THR_DRAWN`, 8000);
@@ -334,17 +338,16 @@ async function main() {
       await sleep(1200);
       await hub('/__test/report', {});
       await hub('/__test/release-channel', {});
-      out.dockBatchBoth = await until(`document.querySelector('iframe.po-session')?.contentWindow?.document
-        ?.querySelector('#msgs')?.textContent.includes('Here it is, answer DOCKA.') &&
-        document.querySelector('iframe.po-session')?.contentWindow?.document
-        ?.querySelector('#msgs')?.textContent.includes('Here it is, answer DOCKB.')`, 8000)
-        .then(() => true).catch(() => false);
+      // #379: each answer stays in its thread; the newest opens beside.
+      const dockWin = `document.querySelector('iframe.po-session')?.contentWindow`;
+      const dockClean = `!${dockWin}?.document?.querySelector('#msgs')?.textContent.includes('Here it is, answer DOCKA.') &&
+        !${dockWin}?.document?.querySelector('#msgs')?.textContent.includes('Here it is, answer DOCKB.')`;
+      out.dockBatchBoth = await until(`!!${dockWin}?.TS?.tid && !${dockWin}.document.querySelector('#thr-side').hidden`, 8000)
+        .then(() => evalIn(dockClean)).catch(() => false);
+      const dockTid = await evalIn(`${dockWin}?.TS?.tid || ''`);
       await hub('/__test/report', {});
       await sleep(3000);
-      out.dockBatchAfterChange = await evalIn(`document.querySelector('iframe.po-session')?.contentWindow?.document
-        ?.querySelector('#msgs')?.textContent.includes('Here it is, answer DOCKA.') &&
-        document.querySelector('iframe.po-session')?.contentWindow?.document
-        ?.querySelector('#msgs')?.textContent.includes('Here it is, answer DOCKB.')`);
+      out.dockBatchAfterChange = await evalIn(`${dockWin}?.TS?.tid === ${JSON.stringify(dockTid)} && ${dockClean}`);
     }
     out.catchups = (await hub('/api/health')).chatCatchups || {};
     await c.send('Target.closeTarget', { targetId });
@@ -628,10 +631,11 @@ class PoChatRotationSequence(unittest.TestCase):
         self.assertTrue(self.got.get("answerMaskedByLaterEvent"), self.got)
         self.assertTrue(self.got.get("openAnswer"), self.got)
         self.assertTrue(self.got.get("mobileAnswer"), self.got)
-        self.assertTrue(self.got.get("batchBoth"), f"both same-poll replies must be visible: {self.got.get('batchDebug')}")
-        self.assertTrue(self.got.get("batchExposed"), "mobile thread layer hid the replies")
+        # #379: same-poll replies stay in their threads; the newest opens beside.
+        self.assertTrue(self.got.get("batchOpen"), f"a same-poll reply's thread must open beside: {self.got.get('batchDebug')}")
+        self.assertTrue(self.got.get("batchNotInChat"), f"a thread's answer was copied into the chat: {self.got.get('batchDebug')}")
         self.assertEqual(self.got.get("batchThreadCount"), 2, "the replies must be in different threads")
-        self.assertTrue(self.got.get("batchAfterChange"), "inline replies vanished on the next changed poll")
+        self.assertTrue(self.got.get("batchAfterChange"), "the next changed poll moved the pane or copied a reply")
 
     def test_unrelated_activity_preserves_selected_filter_and_link_window(self):
         self.assertTrue(self.got.get("filterPreserved"), self.got)
@@ -649,8 +653,8 @@ class PoChatRotationSequence(unittest.TestCase):
         self.assertTrue(self.got.get("dockedTask"), self.got)
         self.assertTrue(self.got.get("dockReady"), self.got)
         self.assertTrue(self.got.get("dockedPoAnswer"), self.got)
-        self.assertTrue(self.got.get("dockBatchBoth"), "both Dock replies must appear in the channel")
-        self.assertTrue(self.got.get("dockBatchAfterChange"), "Dock replies vanished after a changed poll")
+        self.assertTrue(self.got.get("dockBatchBoth"), "a Dock reply's thread must open beside, nothing copied into the chat")
+        self.assertTrue(self.got.get("dockBatchAfterChange"), "a changed poll moved the Dock pane or copied a reply")
         self.assertTrue(self.got.get("taskRepairMid"), self.got)
         self.assertTrue(self.got.get("taskRepaired"), self.got)
         self.assertGreater(self.got.get("catchups", {}).get("thread-reply", 0), 0, self.got)
