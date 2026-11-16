@@ -512,9 +512,13 @@ class Paths(unittest.TestCase):
         # The thread's first message and the main chat's are in the channel.
         self.assertEqual(notify._msg_path("room-p1", "sid-1:3"), "/?room=room-p1&msg=sid-1:3&part=inbox")
         self.assertEqual(notify._msg_path("room-p1", "sid-1:7"), "/?room=room-p1&msg=sid-1:7&part=inbox")
-        # Shown in the chat too: the chat is where it lands.
+        # Shown in the chat too: still a reply in its thread, which opens.
         idx["also"]["sid-1:5"] = "m:sid-1:3"
-        self.assertEqual(notify._msg_path("room-p1", "sid-1:5"), "/?room=room-p1&msg=sid-1:5&part=inbox")
+        self.assertEqual(notify._msg_path("room-p1", "sid-1:5"),
+                         "/?room=room-p1&msg=sid-1:5&part=inbox&thread=m:sid-1:3")
+        # The thread's first message, listed in its own thread: the main chat.
+        idx["of"]["sid-1:3"] = ["m:sid-1:3"]
+        self.assertEqual(notify._msg_path("room-p1", "sid-1:3"), "/?room=room-p1&msg=sid-1:3&part=inbox")
         # A chat not read yet: no thread; the chat finds it from the message.
         notify.threads._INDEX.pop("room-p1")
         self.assertEqual(notify._msg_path("room-p1", "sid-1:5"), "/?room=room-p1&msg=sid-1:5&part=inbox")

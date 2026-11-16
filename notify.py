@@ -633,17 +633,21 @@ def _q(v: str) -> str:
 
 def _thread_of(rid: str, mid: str) -> str:
     """The thread a PO chat's message is a reply in (#367), from the chat's
-    index as it stands (never built here); "" when the message is in the main
-    chat, the chat is not threaded or not read yet (the chat then finds the
+    index as it stands (never built here): its newest, as thread_view's, also
+    for a reply shown in the chat too. "" for a message of the main chat
+    only, a thread's first message (it is in the main chat, its thread line
+    under it), a chat not threaded or not read yet (the chat then finds the
     thread itself from the message)."""
     try:
         with threads._LOCK:
             hit = threads._INDEX.get(rid)
         idx = hit[1] if hit else None
-        if not idx or mid not in idx.get("by_mid", {}) or threads._in_channel(idx, mid):
+        if not idx or mid not in idx.get("by_mid", {}):
             return ""
         tids = [t for t in idx["of"].get(mid) or [] if t != "team:activity"]
-        return tids[-1] if tids else ""      # its newest, as thread_view's
+        if not tids or tids[-1] in (idx.get("parent", {}).get(mid) or ()):
+            return ""
+        return tids[-1]
     except Exception:       # noqa: BLE001 — a link without its thread still lands
         return ""
 
