@@ -8826,17 +8826,19 @@ def project_icon_gen_info(project_id: str) -> dict | None:
             "name": proj.get("name") or "", "about": project_icon_about(proj)}
 
 
-def generate_project_icons(project_id: str, name: str = "") -> tuple[bool, str, dict]:
+def generate_project_icons(project_id: str, name: str = "", colour: str = "") -> tuple[bool, str, dict]:
     """Four icons for a project, drawn by the CLI the hub runs (#335). Nothing is
     kept: the page shows them and saves the picked one through /api/projects/icon.
-    `name` is the one typed in the settings, not saved yet; else the project's."""
+    `name` is the one typed in the settings, not saved yet; else the project's.
+    `colour` (P362) is its PO label colour as #rrggbb, which the page works out
+    (the colour is the list's pick, in the theme painted): every icon is drawn in it."""
     proj = find_project(project_id)
     if proj is None:
         return False, "no_such_project", {}
     # A lone surrogate (JSON's "\ud800") cannot be encoded for the CLI: it becomes "?".
     name = str(name or "").encode("utf-8", "replace").decode("utf-8")
     name = " ".join(name.split())[:120] or proj.get("name") or ""
-    return icon_gen.generate(project_id, name, project_icon_about(proj))
+    return icon_gen.generate(project_id, name, project_icon_about(proj), colour=colour)
 
 
 def project_icon_file(project_id: str) -> Path | None:
@@ -23526,8 +23528,9 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(data, dict):
                 self._send_json(400, {"error": "bad_json"})
                 return
-            nm = data.get("name")
-            ok, code, res = generate_project_icons(str(data.get("projectId") or ""), nm if isinstance(nm, str) else "")
+            nm, col = data.get("name"), data.get("colour")
+            ok, code, res = generate_project_icons(str(data.get("projectId") or ""), nm if isinstance(nm, str) else "",
+                                                   col if isinstance(col, str) else "")
             if ok:
                 self._send_json(200, {"ok": True, **res})
             else:

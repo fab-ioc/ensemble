@@ -15,6 +15,8 @@ Three projects: Motors and Wheels (a PO each), Alpha (none). Checked at
   the project's icon; an SVG uploaded there replaces the square at exactly
   12x12 in the left list, the bar and the Inbox; a file over 1 MB is refused
   on the page; a PNG from a row's menu; the square brings the square back;
+* P362: choosing Image opens no file picker, Upload image… does; a picker's
+  cancel (it bubbles) leaves the settings open, the choice as it was;
 * the board word names the menu and the dialog; Escape closes it;
 * a phone (390x844): the switcher offers only Project settings…; the dialog
   fits the width less 8px gutters, its targets 44px, its field 16px;
@@ -255,6 +257,27 @@ async function main() {
     await q.until(`!(projectById(${JSON.stringify(P.Motors)}) || {}).icon`, 8000);
     await sleep(800);
     out.square = await q.evalIn(ICONS(P.Motors));
+    // ---- P362: Image only shows its row; the picker opens from Upload image… alone,
+    // and a cancelled picker (its 'cancel' bubbles, as Chrome and Safari fire it) leaves the settings open.
+    await q.evalIn(`(() => { window.__picks = 0; const c = HTMLInputElement.prototype.click;
+      window.__realClick = c;
+      HTMLInputElement.prototype.click = function () { if (this.type === 'file') { window.__picks++; return; } return c.call(this); }; return 0; })()`);
+    q.evalIn(`(projSettings(${JSON.stringify(P.Motors)}), 0)`).catch(() => null);
+    await q.until(DLG, 5000);
+    out.pickBefore = await q.evalIn(DLG);
+    await q.evalIn(`document.querySelector('#modal input[name="ps-icon"][value="image"]').click()`);
+    await sleep(300);
+    out.pickImage = { dlg: await q.evalIn(DLG), picks: await q.evalIn('window.__picks') };
+    await q.evalIn(`document.querySelector('#modal #ps-up').click()`);
+    await sleep(100);
+    out.pickUp = { dlg: await q.evalIn(DLG), picks: await q.evalIn('window.__picks') };
+    await q.evalIn(`document.querySelector('#modal #ps-file').dispatchEvent(new Event('cancel', { bubbles: true }))`);
+    await sleep(300);
+    out.pickCancel = { dlg: await q.evalIn(DLG), open: await q.evalIn(`document.getElementById('modal').open`), icon: await q.evalIn(`(projectById(${JSON.stringify(P.Motors)}) || {}).icon || null`) };
+    await q.key('Escape');
+    await sleep(200);
+    out.pickEsc = await q.evalIn(`!document.getElementById('modal').open`);
+    await q.evalIn(`(() => { HTMLInputElement.prototype.click = window.__realClick; return 0; })()`);
     // ---- the board word
     await q.evalIn(`(() => { setNoun({ one: 'Initiative', many: 'Initiatives' }); window.dispatchEvent(new CustomEvent('cd-noun')); return 0; })()`);
     await q.evalIn(`(() => { document.querySelector('#ld-projs [data-ldp-pmenu="${P.Wheels}"]').click(); return 0; })()`);
@@ -492,6 +515,21 @@ class ProjectSettingsInChrome(unittest.TestCase):
         self.assertEqual(s["row"]["tag"], "span")  # #370: the initials tile
         self.assertEqual((s["row"]["w"], s["row"]["h"]), (22, 22))
         self.assertEqual(s["bar"]["tag"], "span")  # #370: the initials tile
+
+    def test_image_does_not_open_the_picker_and_a_cancelled_one_keeps_the_settings(self):
+        self.assertEqual(self.g("pickBefore")["choice"], "square")
+        im = self.g("pickImage")
+        self.assertEqual((im["dlg"]["choice"], im["picks"]), ("image", 0), "choosing Image opens no picker")
+        self.assertEqual(im["dlg"]["up"], "Upload image…")
+        up = self.g("pickUp")
+        self.assertEqual(up["picks"], 1, "Upload image… opens it")
+        c = self.g("pickCancel")
+        self.assertTrue(c["open"], "a cancelled picker leaves the settings open")
+        self.assertIsNotNone(c["dlg"])
+        self.assertEqual(c["dlg"]["choice"], "image", "the choice is unchanged")
+        self.assertTrue(c["dlg"]["img"].startswith("none yet"), c["dlg"]["img"])
+        self.assertIsNone(c["icon"], "nothing saved")
+        self.assertTrue(self.g("pickEsc"), "Escape on the dialog still closes it")
 
     def test_the_board_word(self):
         self.assertEqual(self.g("nounMenu"), ["Open", "Rename initiative…", "Initiative settings…"])
