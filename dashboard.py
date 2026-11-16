@@ -70,6 +70,7 @@ import attachments
 import project_icon
 # An initiative's icon drawn by an AI model (#335).
 import icon_gen
+import icon_colour
 # Which Ensemble this is (its version; built app or a checkout), and Update now
 # for the built app (from GitHub Releases).
 import app_version
@@ -7218,6 +7219,8 @@ def _load_projects_uncached(dirs: list[str], codes: list[str]) -> list[dict]:
                          if "digestIntervalMin" in meta else {}),
                       # Its own icon in place of the coloured square (#329).
                       **({"icon": _icon_meta(meta["icon"])} if _icon_meta(meta.get("icon")) else {}),
+                      # Its own colour, from that icon (P366), and the icon it was worked out for.
+                      **{k: meta[k] for k in ("colour", "colourOf") if k in meta},
                       **({"taskAgentTools": (TASK_AGENT_TOOLS_OWN
                                              if meta.get("taskAgentTools") == TASK_AGENT_TOOLS_OWN
                                              else TASK_AGENT_TOOLS_ENSEMBLE)}
@@ -8820,15 +8823,37 @@ def _icon_meta(v) -> dict | None:
             "v": v.get("v") if isinstance(v.get("v"), int) else 0}
 
 
-def set_project_icon(project_id: str, data_url, name: str = "") -> tuple[bool, str, dict | None]:
+def _project_colour(p: dict) -> dict | None:
+    """A project's own colour (P366) as the page takes it: {hex, light, dark}; None
+    without one (the page then picks from the palette by its place)."""
+    if not _icon_meta(p.get("icon")):
+        return None
+    return icon_colour.shades(p.get("colour") or "")
+
+
+def _set_project_colour(project_id: str, colour: str | None, of: int | None) -> tuple[bool, str]:
+    """The project's own colour and the icon version it belongs to (None clears each)."""
+    ok, msg = _set_project_field(project_id, "colour", colour or None)
+    return _set_project_field(project_id, "colourOf", of) if ok else (ok, msg)
+
+
+def set_project_icon(project_id: str, data_url, name: str = "",
+                     generated: bool = False) -> tuple[bool, str, dict | None]:
     """Keep an uploaded image as the project's icon, or (``data_url`` None)
-    remove it so the coloured square shows again."""
+    remove it so the coloured square shows again.
+
+    P366: an uploaded icon's prevailing colour becomes the project's own colour
+    (none when it has no real hue: the palette pick stays). A generated icon
+    (``generated``) was drawn in the colour the project has now, so that stays
+    as it is. Removing the icon clears the colour."""
     proj = find_project(project_id)
     if proj is None:
         return False, "no_such_project", None
     home = Path(project_home(proj, create=True))
     if data_url is None:
         ok, msg = _set_project_field(project_id, "icon", None)
+        if ok:
+            ok, msg = _set_project_colour(project_id, None, None)
         if ok:
             for f in home.glob("project-icon.*"):
                 if project_icon.FILE_RE.match(f.name):
@@ -8849,6 +8874,9 @@ def set_project_icon(project_id: str, data_url, name: str = "") -> tuple[bool, s
     base = os.path.basename(str(name or "").replace("\\", "/")).strip() or fname
     icon = {"file": fname, "name": base[:200], "size": len(raw), "v": int(time.time() * 1000)}
     ok, msg = _set_project_field(project_id, "icon", icon)
+    if ok:
+        ok, msg = (_set_project_colour(project_id, proj.get("colour"), icon["v"]) if generated
+                   else _set_project_colour(project_id, icon_colour.prevailing(raw, ext), icon["v"]))
     if not ok:
         return ok, msg, None
     for f in home.glob("project-icon.*"):
@@ -8856,6 +8884,28 @@ def set_project_icon(project_id: str, data_url, name: str = "") -> tuple[bool, s
             with contextlib.suppress(OSError):
                 f.unlink()
     return True, "ok", icon
+
+
+def derive_icon_colours() -> int:
+    """P366, once per icon: a project whose icon was kept before its colour was
+    worked out (``colourOf`` is not that icon's version) gets it from the file
+    now, as an upload would. Run at the hub's start; returns how many it set."""
+    n = 0
+    for p in load_projects():
+        icon = _icon_meta(p.get("icon"))
+        if not icon or p.get("colourOf") == icon["v"]:
+            continue
+        f = project_icon_file(p["id"])
+        if f is None:
+            continue
+        try:
+            raw = f.read_bytes()
+        except OSError:
+            continue
+        colour = icon_colour.prevailing(raw, f.suffix.lstrip(".").lower())
+        if _set_project_colour(p["id"], colour, icon["v"])[0] and colour:
+            n += 1
+    return n
 
 
 def project_icon_about(proj: dict) -> str:
@@ -10159,6 +10209,9 @@ def build_projects() -> dict:
                               if p.get("taskAgentTools") in TASK_AGENT_TOOLS_VALUES else {}),
                            # Its own icon (#329): the page shows it in place of the square.
                            **({"icon": _icon_meta(p.get("icon"))} if _icon_meta(p.get("icon")) else {}),
+                           # P366: the colour its uploaded icon gave it, as the PO label paints it
+                           # in a light and a dark theme (ProjectColour.pick returns it).
+                           **({"colour": _project_colour(p)} if _project_colour(p) else {}),
                            "isGit": p.get("isGit", False), "registered": True,
                            "sessions": [], "live": 0, "working": 0, "poLive": False,
                            "waiting": 0, "updatedAt": 0}
@@ -23585,7 +23638,8 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 du = data.get("dataUrl")
                 ok, msg, icon = set_project_icon(str(data.get("projectId") or ""),
-                                                 None if du is None else str(du), str(data.get("name") or ""))
+                                                 None if du is None else str(du), str(data.get("name") or ""),
+                                                 generated=data.get("generated") is True)
                 extra = {"icon": icon} if ok else {}
                 refusals = project_icon.REFUSALS
             if ok:
@@ -24890,6 +24944,13 @@ def main():
             print(f"[lost] retention not checked: {str(e)[:200]}", flush=True)
     threading.Thread(target=_warn_retention, daemon=True, name="retention-warn").start()
     threading.Thread(target=_learn_tailscale_origins, daemon=True, name="tailscale-origins").start()
+    # P366: icons kept before their colour was worked out get it once, off the startup path.
+    def _icon_colours():
+        try:
+            derive_icon_colours()
+        except Exception as e:   # a project it cannot read keeps its palette pick
+            print(f"[icon-colours] {e}", file=sys.stderr)
+    threading.Thread(target=_icon_colours, daemon=True, name="icon-colours").start()
 
     # Tailnet requested but its listener isn't up yet (never resolved, or bind
     # failed above): keep retrying in the background, without ever blocking startup.
