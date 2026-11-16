@@ -336,12 +336,46 @@ async function main() {
       r.zeroCount = seen.filter(x => x.n === 0).length;
       r.maxN = Math.max(0, ...seen.map(x => x.n));
       r.twice = seen.filter(x => x.n > 1).length;
+      r.twiceAt = seen.filter(x => x.n > 1).slice(0, 5);
       r.boxes = [...new Set(samp.map(x => x.box + ':' + x.rs))];
       const c = await aimAndPress(TRAY_EL + `?.querySelector('.cmt-clear')`);
       r.clearHit = !!c && c.hits;
       await sleep(800);
       r.storeAfterClear = await ev(STORE);
       r.afterClear = await ev(PO_TRAYS);
+      return r;
+    });
+    // f. The box sized by hand to its limit at 900 px tall, a comment in its
+    // tray, then the window 600 px tall: box and tray are fitted again (P360
+    // review 2), the frame and its To: line within 70% of the window.
+    await step('resize', async () => {
+      const r = {};
+      const FIT = `(() => { const f = ${WCF}, b = f.getBoundingClientRect(), to = f.parentElement.querySelector('.wc-to');
+        const d = f.contentDocument, c = d.getElementById('compose');
+        return { win: innerHeight, frame: Math.round(b.height * 10) / 10, frameBottom: Math.round(b.bottom * 10) / 10, to: to ? to.offsetHeight : 0,
+          compose: Math.round(c.getBoundingClientRect().height), sized: c.classList.contains('sized'),
+          tray: d.getElementById('cmt-tray') ? Math.round(d.getElementById('cmt-tray').getBoundingClientRect().height) : 0,
+          max: f.contentWindow.composeHeightLimits?.().max ?? null }; })()`;
+      await ev(`localStorage.setItem('cd-compose-h', '5000'); 0`);
+      await ev('window.__before = 1; 0');
+      await send('Page.reload', {}, s);
+      await until(`!window.__before && typeof WC !== 'undefined' && !!${PO}?.contentDocument?.querySelector('#msgs .msg .text.md') && WC.target?.kind === 'po' && ${boxReady}`, 'reloaded', 40000);
+      await sleep(1500);
+      r.add = await addComment(PO, A.poWords, 'Comment resize one');
+      await sleep(1000);
+      r.at900 = await ev(FIT);
+      r.trays900 = await ev(TRAYS);
+      await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 600, deviceScaleFactor: 1, mobile: false }, s);
+      await sleep(2000);
+      r.at600 = await ev(FIT);
+      r.trays600 = await ev(TRAYS);
+      r.vis600 = await ev(VIS(`(() => { const o = ${ITEMS('')}; return { head: o.head, submit: o.submit, input: o.input }; })()`));
+      const c = await aimAndPress(TRAY_EL + `?.querySelector('.cmt-clear')`);
+      r.clearHit = !!c && c.hits;
+      await sleep(800);
+      r.storeAfterClear = await ev(STORE);
+      await ev(`localStorage.removeItem('cd-compose-h'); 0`);
+      await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false }, s);
       return r;
     });
     out.errors = errs.slice();
@@ -565,6 +599,7 @@ class CommentTrayOnce(unittest.TestCase):
         self.assertGreater(r["samplesShown"], 100, r)
         self.assertEqual(r["sampleErrors"], [], r)
         self.assertEqual(r["zeroCount"], 0, ("never unshown while the PO chat is on screen", r["zero"]))
+        self.assertEqual(r["twice"], 0, ("never shown twice, the box's page loading or not", r["twiceAt"]))
         # Settled: once, in the PO chat while the box is the task's, in the box once it is the PO's.
         self.assertEqual(r["onTaskTarget"], self.task, r)
         self.assertEqual(r["onTask"]["n"], 1, r["onTask"])
@@ -574,6 +609,21 @@ class CommentTrayOnce(unittest.TestCase):
         self.assertTrue(r["clearHit"], r)
         self.assertEqual(r["storeAfterClear"], 0, r)
         self.assertEqual(r["afterClear"]["n"], 0, r)
+
+    def test_a_smaller_window_fits_the_hand_sized_box_and_its_tray_again(self):
+        r = self.got["resize"]
+        self.assertNotIn("error", r, r)
+        a, b = r["at900"], r["at600"]
+        self.assertTrue(a["sized"], ("the box is sized by hand", a))
+        self.assertGreater(a["tray"], 0, a)
+        self.assertEqual(len(r["trays900"]), 1, r["trays900"])
+        self.assertEqual(b["win"], 600, b)
+        self.assertLessEqual(b["frame"] + b["to"], .7 * 600 + 2, ("frame and To: line within 70% of the window", b))
+        self.assertLessEqual(b["frameBottom"], b["win"], ("the frame ends inside the window", b))
+        self.assertEqual(len(r["trays600"]), 1, r["trays600"])
+        self.whole(r["vis600"], ("head", "submit", "input"))
+        self.assertTrue(r["clearHit"], r)
+        self.assertEqual(r["storeAfterClear"], 0, r)
 
     def test_no_script_errors(self):
         self.assertEqual(self.got["errors"], [])
