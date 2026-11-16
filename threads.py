@@ -1660,6 +1660,18 @@ def can_name(idx: dict, tid: str) -> bool:
     return bool(mid) and mid in idx["by_mid"] and mid not in idx.get("hidden", ())
 
 
+def _deleted_since(idx: dict, tid: str, rec: dict | None) -> bool:
+    """The thread ``tid`` as ``idx`` has it is gone by the delete ``rec``
+    (written after ``idx`` was built): none of its balloons outlives it, as
+    :func:`_drop_deleted` would drop them."""
+    if not rec:
+        return False
+    at, mids = _num(rec.get("at")), set(rec.get("mids") or [])
+    th = idx["threads"].get(tid)
+    members = th["members"] if th is not None else [tid[2:]]
+    return all(m in mids or ((idx["by_mid"].get(m) or {}).get("ts") or 0) <= at for m in members)
+
+
 def rename(room_id: str, tid: str, name: str, room: dict | None = None) -> str:
     """The person names a thread (issue 51): kept in the chat's record, the
     messages untouched. An empty name is its automatic title again. Returns
@@ -1678,6 +1690,10 @@ def rename(room_id: str, tid: str, name: str, room: dict | None = None) -> str:
     name = clean_name(name)
     with _LOCK:
         side = load_side(room_id)
+        if _deleted_since(idx, tid, side["deleted"].get(tid)):
+            # Deleted while this was on its way (review 2): its name is not
+            # kept for the thread a later message would start.
+            raise KeyError(f"thread {tid!r} was deleted")
         if side["names"].get(tid) != name:
             side["names"][tid] = name
             _save_side(room_id, side)

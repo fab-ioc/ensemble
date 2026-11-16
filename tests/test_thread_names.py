@@ -138,6 +138,27 @@ class ThreadNames(tp._World):
         self.rebuild()
         self.assertEqual(self.titles()["P2"][0], "Login again")
 
+    def test_a_delete_landing_during_a_rename_wins(self):
+        # Review 2: a delete saved between the rename's look at the chat and
+        # its save: the name is refused, not kept for a thread started later.
+        build, fired = threads.build, []
+
+        def build_then_delete(rid, room=None, **kw):
+            idx = build(rid, room, **kw)
+            if not fired:
+                fired.append(1)
+                self.assertEqual(threads.delete(rid, None, ["P2"], now=self.t0 + 700), ["P2"])
+            return idx
+        with mock.patch.object(threads, "build", build_then_delete), self.assertRaises(KeyError):
+            threads.rename(self.rid, "P2", "Late")
+        self.assertTrue(fired)
+        self.assertNotIn("P2", threads.load_side(self.rid)["names"])
+        self.add("sid-1", tp.turn("assistant", "Re P2: one last thing on the login.", self.t0 + 800))
+        self.rebuild()
+        self.assertEqual(self.titles()["P2"][0], "Re P2: one last thing on the login.")
+        # Started again by that message, it is named as any thread is.
+        self.assertEqual(threads.rename(self.rid, "P2", "Login again"), "Login again")
+
     def test_a_rename_saved_while_a_build_runs_is_not_lost(self):
         # Review 1: a build stamps the record's signature of the names it
         # applied, so the index served after it still takes a rename saved
