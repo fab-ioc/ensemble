@@ -104,6 +104,7 @@ function page() {
     let THREAD_MODE = false, THREAD = '', THREAD_MID = '', SHARED_THREAD = null, THREADED = false, NEW_THREAD = false;
     const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
     const checkSolo = () => {}, refresh = () => {};
+    const composeFrameFit = () => {};   // the workspace box's frame fit (P360 review 1): not this page
     ${code}
     globalThis.t = {
       set: (k, v) => eval(k + ' = v'),

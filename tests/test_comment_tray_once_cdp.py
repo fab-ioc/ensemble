@@ -57,8 +57,16 @@ async function main() {
     ch.on('exit', c => rej(new Error('chrome exited ' + c))); setTimeout(() => rej(new Error('no devtools ' + buf)), 20000);
   });
   const ws = new WebSocket(wsUrl); let id = 0; const waits = new Map(); const errs = [];
+  // The box's page held back this long while Fetch is on (the switching case).
+  let FETCH_DELAY = 0, PAUSED = 0, BOX_FRAME = '';
   await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej; });
   ws.onmessage = ev => { const m = JSON.parse(ev.data);
+    if (m.method === 'Fetch.requestPaused') { const rq = m.params.requestId, sid = m.sessionId;
+      // The box's page, or what it loads before its load event (the page's own
+      // request, a subframe's navigation, is not paused here).
+      const box = m.params.frameId === BOX_FRAME || (m.params.request.url.includes('workspace-compose=1') && m.params.resourceType === 'Document');
+      if (box) PAUSED++;
+      setTimeout(() => send('Fetch.continueRequest', { requestId: rq }, sid).catch(() => {}), box ? FETCH_DELAY : 0); }
     if (m.method === 'Runtime.exceptionThrown') errs.push(String(m.params.exceptionDetails.exception?.description || m.params.exceptionDetails.text).slice(0, 300));
     if (m.id && waits.has(m.id)) { const w = waits.get(m.id); waits.delete(m.id); m.error ? w.rej(new Error(m.error.message)) : w.res(m.result); } };
   const send = (method, params = {}, sessionId) => { const i = ++id; return new Promise((res, rej) => { waits.set(i, { res, rej }); ws.send(JSON.stringify({ id: i, method, params, sessionId })); }); };
@@ -79,12 +87,13 @@ async function main() {
   // first, still for longer than the page's click guard waits (#198: a click
   // on such a control that moved or appeared under the pointer within 400 ms
   // is dropped), and again where it is if it moved meanwhile.
+  // Nothing is scrolled: the control is pressed where the person sees it.
   const aimAndPress = async (el, label) => {
-    let p = await at(el), q = null;
+    let p = await at(el, true), q = null;
     for (let i = 0; p && i < 5; i++) {
       await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: p.x, y: p.y, buttons: 0 }, s);
       await sleep(600);
-      q = await at(el);
+      q = await at(el, true);
       if (q && Math.abs(q.x - p.x) < 1 && Math.abs(q.y - p.y) < 1) break;
       p = q;
     }
@@ -94,7 +103,7 @@ async function main() {
   };
   // `el` (an expression for an element, in any frame of the page): its centre
   // on the top page, and whether a press there reaches it.
-  const at = el => ev(`(() => { const e = ${el}; if (!e) return null; e.scrollIntoView({ block: 'nearest' });
+  const at = (el, still = false) => ev(`(() => { const e = ${el}; if (!e) return null; ${still ? '' : "e.scrollIntoView({ block: 'nearest' });"}
     let x = 0, y = 0, w = e.ownerDocument.defaultView; const r = e.getBoundingClientRect();
     x = r.left + r.width / 2; y = r.top + r.height / 2;
     const chain = []; for (let f = w.frameElement; f; f = f.ownerDocument.defaultView.frameElement) chain.push(f);
@@ -126,6 +135,55 @@ async function main() {
     const all = []; const walk = d => { for (const t of d.querySelectorAll('#cmt-tray')) if (shown(t)) all.push(t);
       for (const f of d.querySelectorAll('iframe')) { if (!shown(f)) continue; try { if (f.contentDocument) walk(f.contentDocument); } catch (e) {} } };
     walk(document); return all[0] || null; })()`;
+  // Each of `items` (an expression for {name: element}), as it is now, nothing
+  // scrolled: wholly inside its frame's viewport and the top window's at
+  // once, and what a press at its centre reaches, through the frames.
+  const VIS = items => `(() => { const res = {};
+    for (const [k, e] of Object.entries(${items})) {
+      if (!e) { res[k] = null; continue; }
+      const w = e.ownerDocument.defaultView, r = e.getBoundingClientRect();
+      const inFrame = r.width > 0 && r.height > 0 && r.left >= -0.5 && r.top >= -0.5 && r.right <= w.innerWidth + 0.5 && r.bottom <= w.innerHeight + 0.5;
+      const chain = []; for (let f = w.frameElement; f; f = f.ownerDocument.defaultView.frameElement) chain.push(f);
+      let x = 0, y = 0; for (const f of chain) { const b = f.getBoundingClientRect(); x += b.left + f.clientLeft; y += b.top + f.clientTop; }
+      const T = { l: r.left + x, t: r.top + y, r: r.right + x, b: r.bottom + y };
+      const inTop = T.l >= -0.5 && T.t >= -0.5 && T.r <= innerWidth + 0.5 && T.b <= innerHeight + 0.5;
+      const cx = (T.l + T.r) / 2, cy = (T.t + T.b) / 2;
+      let hit = document.elementFromPoint(cx, cy), lx = cx, ly = cy;
+      for (const f of [...chain].reverse()) { if (hit !== f) break; const b = f.getBoundingClientRect(); lx -= b.left + f.clientLeft; ly -= b.top + f.clientTop; hit = f.contentDocument.elementFromPoint(lx, ly); }
+      res[k] = { inFrame, inTop, hits: !!hit && (hit === e || e.contains(hit)), top: Math.round(T.t), bottom: Math.round(T.b), h: Math.round(r.height),
+        hit: hit ? (hit.id || String(hit.className) || hit.tagName).slice(0, 40) : null };
+    }
+    return res; })()`;
+  // The box's tray and the box in its frame: the tray's measured height and
+  // the height its content needs (each part at its full height: the list
+  // without scrolling), the list's, the frame's and the window's.
+  const ITEMS = words => `(() => { const d = ${WCF}.contentDocument, t = d.getElementById('cmt-tray');
+    const item = ${JSON.stringify(words || '')} ? [...(t?.querySelectorAll('.cmt-item') || [])].find(i => i.textContent.includes(${JSON.stringify(words || '')})) : null;
+    const o = { head: t?.querySelector('.cmt-tray-head strong') || null, submit: t?.querySelector('.cmt-submit') || null,
+      clear: t?.querySelector('.cmt-clear') || null, input: d.getElementById('input') };
+    if (${JSON.stringify(words || '')}) o.text = item?.querySelector('.cmt-item-n') || null;
+    return o; })()`;
+  const TRAYM = `(() => { const f = ${WCF}, w = f.contentWindow, d = f.contentDocument, t = d.getElementById('cmt-tray');
+    if (!t) return null;
+    const cs = w.getComputedStyle(t), list = t.querySelector('.cmt-list');
+    const natural = [...t.children].reduce((a, c) => a + Math.max(c.offsetHeight, c.scrollHeight + c.offsetHeight - c.clientHeight), 0)
+      + parseFloat(cs.borderTopWidth) + parseFloat(cs.borderBottomWidth);
+    return { tray: Math.round(t.getBoundingClientRect().height * 10) / 10, natural, listScroll: list ? list.scrollHeight : 0, listClient: list ? list.clientHeight : 0,
+      frame: Math.round(f.getBoundingClientRect().height), compose: Math.round(d.getElementById('compose').getBoundingClientRect().height),
+      win: innerHeight, frameScroll: d.scrollingElement ? d.scrollingElement.scrollTop : 0, items: t.querySelectorAll('.cmt-item').length }; })()`;
+  // The PO room's trays on screen, in any frame whose page is that room's.
+  const PO_TRAYS_FN = `() => { const out = { n: 0, where: [] };
+    const shown = e => e.getClientRects().length > 0 && !e.hidden && !e.closest('[hidden]');
+    const walk = (d, where) => {
+      let room = ''; try { const q = new URLSearchParams(d.defaultView.location.search); room = q.get('id') || q.get('room') || ''; } catch (e) {}
+      if (room === ${JSON.stringify(A.po)}) for (const t of d.querySelectorAll('#cmt-tray')) if (shown(t)) { out.n++; out.where.push(where.join('>')); }
+      for (const f of d.querySelectorAll('iframe')) { if (!shown(f)) continue; let cd = null; try { cd = f.contentDocument; } catch (e) {}
+        if (cd) walk(cd, where.concat(f.id || String(f.className).split(' ')[0] || 'iframe')); }
+    };
+    walk(document, []);
+    const po = ${PO}; out.poShown = !!po && shown(po);
+    return out; }`;
+  const PO_TRAYS = `(${PO_TRAYS_FN})()`;
   const STORE = `Object.keys(localStorage).filter(k => k.startsWith(${JSON.stringify('cd-comment:' + A.po + ':')})).length`;
   const SENT = `fetch('/test/sent').then(x => x.json())`;
   const BOX = `({ target: WC.target ? { kind: WC.target.kind, room: WC.target.room, thread: WC.target.thread || '' } : null,
@@ -159,6 +217,8 @@ async function main() {
     r.boxAfterAdd = await ev(BOX);
     r.trays = await ev(TRAYS);
     r.store = await ev(STORE);
+    r.vis = await ev(VIS(ITEMS(words)));
+    r.traym = await ev(TRAYM);
     if (opts.shot) await shot(opts.shot);
     // Submit, in the tray on screen.
     const sent0 = (await ev(SENT)).length;
@@ -216,6 +276,72 @@ async function main() {
       await sleep(1000);
       const r = await runCase('closed', PO, A.poWords);
       r.panel = await ev(`PD.rt.has('thread:po')`);
+      return r;
+    });
+    // d. A long tray: eight comments. It stays capped, its list scrolls, the box stays whole.
+    await step('long', async () => {
+      const r = { adds: [] };
+      for (let i = 1; i <= 8; i++) r.adds.push(await addComment(PO, A.poWords, 'Comment long ' + i));
+      await sleep(800);
+      r.store = await ev(STORE);
+      r.trays = await ev(TRAYS);
+      r.vis = await ev(VIS(ITEMS('')));
+      r.traym = await ev(TRAYM);
+      const c = await aimAndPress(TRAY_EL + `?.querySelector('.cmt-clear')`);
+      r.clearHit = !!c && c.hits;
+      await sleep(800);
+      r.traysAfterClear = await ev(TRAYS);
+      r.storeAfterClear = await ev(STORE);
+      return r;
+    });
+    // e. The box aimed at a task chat (another room) and back, the PO's
+    // comments pending, the box's page held back 1.5 s each time it loads:
+    // sampled every 10 ms, the PO chat on screen, its comments always show.
+    await step('switch', async () => {
+      const r = {};
+      r.add = await addComment(PO, A.poWords, 'Comment switch one');
+      await sleep(600);
+      r.before = await ev(PO_TRAYS);
+      FETCH_DELAY = 1500; PAUSED = 0;
+      const tree = (await send('Page.getFrameTree', {}, s)).frameTree;
+      const frames = []; (function walk(n) { frames.push(n.frame); (n.childFrames || []).forEach(walk); })(tree);
+      BOX_FRAME = (frames.find(f => (f.url || '').includes('workspace-compose=1')) || {}).id || '';
+      r.boxFrame = !!BOX_FRAME;
+      await send('Network.enable', {}, s); await send('Network.setCacheDisabled', { cacheDisabled: true }, s);
+      await send('Fetch.enable', { patterns: [{ urlPattern: '*', requestStage: 'Request' }] }, s);
+      await ev(`(() => { window.__samp = []; const f = ${PO_TRAYS_FN};
+        window.__sampT = setInterval(() => { try { const x = f(), b = document.getElementById('workspace-compose-frame');
+          __samp.push({ t: Math.round(performance.now()), n: x.n, where: x.where, poShown: x.poShown, target: WC.target?.room || '',
+            box: new URLSearchParams(b.contentWindow.location.search).get('id') || '', rs: b.contentDocument?.readyState || '' }); }
+          catch (e) { __samp.push({ err: String(e).slice(0, 120) }); } }, 10); return 0; })()`);
+      const TASKF = `document.querySelector('iframe.dp-session[data-room=${JSON.stringify(A.task)}]')`;
+      const boxOn = room => `${WCF}.contentWindow.location.search.includes(${JSON.stringify('id=' + encodeURIComponent(room))}) && ${WCF}.contentDocument.readyState === 'complete' && ${boxReady}`;
+      await ev(`pdChatOpen(${JSON.stringify(A.task)}); 0`);
+      await until(`WC.target?.room === ${JSON.stringify(A.task)} && !!${TASKF}?.contentDocument?.querySelector('#msgs') && ${boxOn(A.task)}`, 'box on the task', 30000);
+      await sleep(1500);
+      r.onTask = await ev(PO_TRAYS);
+      r.onTaskTarget = await ev(`WC.target?.room || ''`);
+      await ev(`${PO}.contentDocument.getElementById('msgpane').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })); 0`);
+      await until(`WC.target?.room === ${JSON.stringify(A.po)}`, 'box aimed back', 3000)
+        .catch(() => ev(`wcChoose({ kind: 'po', room: ${JSON.stringify(A.po)} }); 0`));
+      await until(`WC.target?.room === ${JSON.stringify(A.po)} && ${boxOn(A.po)}`, 'box back on the PO', 30000);
+      await sleep(1500);
+      r.onPo = await ev(PO_TRAYS);
+      const samp = await ev(`(() => { clearInterval(window.__sampT); return window.__samp; })()`);
+      await send('Fetch.disable', {}, s); FETCH_DELAY = 0;
+      r.paused = PAUSED;
+      const seen = samp.filter(x => !x.err && x.poShown);
+      r.samples = samp.length; r.samplesShown = seen.length; r.sampleErrors = samp.filter(x => x.err).slice(0, 3);
+      r.zero = seen.filter(x => x.n === 0).slice(0, 5);
+      r.zeroCount = seen.filter(x => x.n === 0).length;
+      r.maxN = Math.max(0, ...seen.map(x => x.n));
+      r.twice = seen.filter(x => x.n > 1).length;
+      r.boxes = [...new Set(samp.map(x => x.box + ':' + x.rs))];
+      const c = await aimAndPress(TRAY_EL + `?.querySelector('.cmt-clear')`);
+      r.clearHit = !!c && c.hits;
+      await sleep(800);
+      r.storeAfterClear = await ev(STORE);
+      r.afterClear = await ev(PO_TRAYS);
       return r;
     });
     out.errors = errs.slice();
@@ -310,6 +436,12 @@ class CommentTrayOnce(unittest.TestCase):
             turn("assistant", f"{THREAD_WORDS}, and the panels fit.", t0 + 11),
             turn("user", "And the motors faster.", t0 + 20),
             turn("assistant", "The motors are twice as fast.", t0 + 21)]), encoding="utf-8")
+        # A task chat of the project: another room for the box to be aimed at.
+        task = chatroom.create_room("Faster motors", [{"identity": "claude", "agent": "claude", "sessionId": "once-task", "cwd": str(home)}])
+        cls.task = task["id"]
+        dashboard.assign_session_project(cls.task, cls.proj)
+        dashboard.assign_task_number(cls.task, cls.proj)
+        chatroom.post_message(cls.task, "user", "Please double the motor speeds")
         # Each topic sent as a new thread (#367: only the person starts one).
         for text, at in (("Make the board wider.", t0 + 10), ("And the motors faster.", t0 + 20)):
             threads.note_send(cls.po, "", "", [], False, text, now=at, new=True)
@@ -331,7 +463,7 @@ class CommentTrayOnce(unittest.TestCase):
         if shots:
             Path(shots).mkdir(parents=True, exist_ok=True)
         args = {**chrome_profile.node_args(), "tmp": str(base), "base": base_url, "shots": shots,
-                "proj": cls.proj, "po": cls.po, "poWords": PO_WORDS, "threadWords": THREAD_WORDS}
+                "proj": cls.proj, "po": cls.po, "task": cls.task, "poWords": PO_WORDS, "threadWords": THREAD_WORDS}
         run = subprocess.run([NODE, "-e", CDP_JS, json.dumps(args)], capture_output=True, encoding="utf-8", timeout=300)
         assert run.returncode == 0, run.stderr[-4000:]
         cls.got = json.loads(run.stdout.strip().splitlines()[-1])
@@ -350,6 +482,11 @@ class CommentTrayOnce(unittest.TestCase):
         self.assertEqual(len(r["trays"]), 1, ("exactly one tray on screen", r["trays"]))
         self.assertEqual(r["trays"][0]["where"][-1], "workspace-compose-frame", r["trays"])
         self.assertIn("1 comment", r["trays"][0]["text"], r["trays"])
+        # Readable and usable as it is, nothing scrolled (review 1 of P360).
+        self.whole(r["vis"], ("head", "text", "submit", "clear", "input"))
+        m = r["traym"]
+        self.assertGreaterEqual(m["tray"] + 1, m["natural"], ("the tray is as tall as its comment needs", m))
+        self.assertLessEqual(m["listScroll"], m["listClient"] + 1, ("one comment needs no scrolling", m))
         # Submit: one message, where the box sends.
         self.assertTrue(r["submitHit"], r)
         self.assertEqual(len(r["sent"]), 1, ("exactly one message", r["sent"]))
@@ -376,6 +513,14 @@ class CommentTrayOnce(unittest.TestCase):
         self.assertEqual(r["sentAfterClear"], 0, r)
         return r
 
+    def whole(self, vis, names):
+        for k in names:
+            with self.subTest(part=k):
+                v = vis.get(k)
+                self.assertIsNotNone(v, (k, vis))
+                self.assertTrue(v["inFrame"] and v["inTop"], (k, "wholly inside its frame's viewport and the window's", v))
+                self.assertTrue(v["hits"], (k, "a press at its centre reaches it", v))
+
     def test_box_on_the_po_shows_the_tray_once(self):
         self.assertTrue(self.got["guest"], "the PO chat is the workspace's guest")
         r = self.check_case("po")
@@ -394,6 +539,41 @@ class CommentTrayOnce(unittest.TestCase):
         self.assertFalse(r["panel"], r)
         self.assertEqual(r["boxAfterAdd"]["target"]["kind"], "po", r)
         self.assertFalse(r["boxAfterAdd"]["back"], r)
+
+    def test_a_long_tray_is_capped_and_scrolls_inside(self):
+        r = self.got["long"]
+        self.assertNotIn("error", r, r)
+        self.assertTrue(all(a["selected"] and a["commentHit"] and a["addHit"] for a in r["adds"]), r["adds"])
+        self.assertEqual(r["store"], 8, r)
+        self.assertEqual(len(r["trays"]), 1, r["trays"])
+        self.assertEqual(r["trays"][0]["where"][-1], "workspace-compose-frame", r["trays"])
+        self.assertIn("8 comments", r["trays"][0]["text"], r["trays"])
+        m = r["traym"]
+        self.assertEqual(m["items"], 8, m)
+        self.assertLessEqual(m["tray"], m["win"] * .3 + 3, ("capped at about 30% of the window", m))
+        self.assertGreater(m["listScroll"], m["listClient"] + 10, ("its list scrolls inside it", m))
+        self.whole(r["vis"], ("head", "submit", "clear", "input"))
+        self.assertTrue(r["clearHit"], r)
+        self.assertEqual(r["traysAfterClear"], [], r)
+        self.assertEqual(r["storeAfterClear"], 0, r)
+
+    def test_a_switch_of_the_box_never_leaves_the_comments_unshown(self):
+        r = self.got["switch"]
+        self.assertNotIn("error", r, r)
+        self.assertEqual(r["before"]["n"], 1, r["before"])
+        self.assertGreaterEqual(r["paused"], 2, ("the box's page was held back on both loads", r))
+        self.assertGreater(r["samplesShown"], 100, r)
+        self.assertEqual(r["sampleErrors"], [], r)
+        self.assertEqual(r["zeroCount"], 0, ("never unshown while the PO chat is on screen", r["zero"]))
+        # Settled: once, in the PO chat while the box is the task's, in the box once it is the PO's.
+        self.assertEqual(r["onTaskTarget"], self.task, r)
+        self.assertEqual(r["onTask"]["n"], 1, r["onTask"])
+        self.assertEqual(r["onTask"]["where"], ["po-session"], r["onTask"])
+        self.assertEqual(r["onPo"]["n"], 1, r["onPo"])
+        self.assertEqual(r["onPo"]["where"], ["workspace-compose-frame"], r["onPo"])
+        self.assertTrue(r["clearHit"], r)
+        self.assertEqual(r["storeAfterClear"], 0, r)
+        self.assertEqual(r["afterClear"]["n"], 0, r)
 
     def test_no_script_errors(self):
         self.assertEqual(self.got["errors"], [])
