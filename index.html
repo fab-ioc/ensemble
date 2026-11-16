@@ -19172,8 +19172,9 @@ function psDialogHtml(pj, d, phone) {
     + (d.iconErr ? `<p class="ps-err" role="alert">${esc(d.iconErr)}</p>` : '')
     + `<p class="ps-hint">${phone ? 'PNG, JPEG, SVG or WebP, up to 1 MB, or Generate. Cropped to a square.'
         : "PNG, JPEG, SVG or WebP, up to 1 MB, or Generate. A picture that is not square is cropped to its middle. It shows in place of the square at the square's size:"}</p>`
-    + `<p class="ps-hint">${esc(nounText("An uploaded picture's main colour becomes the {project}'s colour."))}</p>`
     + (phone ? '' : `<div class="ps-sample"><span class="ldp-row ps-srow" aria-current="true">${small}<span class="ldp-name">${esc(psName(d.name) || pj.name)}</span>${n ? `<span class="ldp-n">${n}</span>` : ''}</span></div>`)
+    // P366: the hint under the sample (the hint above ends on it with a colon).
+    + `<p class="ps-hint ps-chint">${esc(nounText("An uploaded picture's main colour becomes the {project}'s colour."))}</p>`
     + '</div>'
     + `<div class="ps-more"><div class="ps-lg">More settings</div>${psSettingsRowsHtml(pj, phone)}</div>`
     + `<div class="ps-foot"><button type="button" class="ps-btn" id="ps-cancel">Cancel</button>`
