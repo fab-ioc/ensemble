@@ -62,19 +62,28 @@ FULL = _Hub(questions={(ROOM, "abc123def456"): QUESTIONS, (ROOM, "long00000000")
             rooms={TASK: {"id": TASK, "no": 18, "title": "Billing export"}, ROOM: {"id": ROOM, "title": "PO"}})
 
 
-# This machine is "box" on its tailnet (box.tail1234.ts.net), and the hub has
-# not been reached at any address yet.
+# This machine is "box" on its tailnet (tailscale says box.tail1234.ts.net),
+# and the hub has not been reached at any address yet.
+TS = "box.tail1234.ts.net"
+
+
+def _reset():
+    hub_links._SEEN.clear()
+    hub_links._TS_NAMES.clear()
+    hub_links._TS_NAMES.add(TS)
+
 _OWN = mock.patch.object(hub_links, "_own_names", lambda: frozenset({"box", "box.lan", socket.gethostname().lower()}))
 
 
 def setUpModule():
     _OWN.start()
-    hub_links._SEEN.clear()
+    _reset()
 
 
 def tearDownModule():
     _OWN.stop()
     hub_links._SEEN.clear()
+    hub_links._TS_NAMES.clear()
 
 
 class Origins(unittest.TestCase):
@@ -84,8 +93,23 @@ class Origins(unittest.TestCase):
     A host a request merely claims is never one."""
 
     def tearDown(self):
-        hub_links._SEEN.clear()
+        _reset()
+
+    def test_the_same_short_name_in_another_tailnet_is_another_machine(self):
+        # Review 3: box.other-tailnet.ts.net is not this box; neither a link to
+        # it nor a proxy header naming it makes it the hub.
+        for u in (f"http://box.other-tailnet.ts.net:8765/?task={TASK}", f"https://box.other-tailnet.ts.net/?task={TASK}",
+                  f"https://box.other-tailnet.ts.net:9443/session?room={TASK}"):
+            with self.subTest(url=u):
+                self.assertIsNone(hub_links.target(u))
+        self.assertFalse(hub_links.own_host("box.other-tailnet.ts.net"))
+        hub_links.seen("box.other-tailnet.ts.net:9443", "https")
+        hub_links.seen("box.other-tailnet.ts.net:8765", local=("127.0.0.1", 8765))
+        self.assertEqual(hub_links.origins()["seen"], [])
+        self.assertIsNone(hub_links.target(f"https://box.other-tailnet.ts.net:9443/session?room={TASK}"))
+        # Without tailscale's word, this machine's own tailnet name is not guessed either.
         hub_links._TS_NAMES.clear()
+        self.assertIsNone(hub_links.target(f"http://{TS}:8765/?task={TASK}"))
 
     def test_the_hubs_port_on_this_machine(self):
         for u in ("http://127.0.0.1:8765/", "http://localhost:8765/", "http://[::1]:8765/", "http://box:8765/",

@@ -86,19 +86,12 @@ def _names() -> set[str]:
     return set(_own_names()) | _TS_NAMES
 
 
-def _own_tailnet_name(h: str) -> bool:
-    """This machine's tailnet name: the one tailscale gave, or its hostname
-    in front of a tailnet domain (``<hostname>.<tailnet>.ts.net``)."""
-    if h in _TS_NAMES:
-        return True
-    return h.endswith(".ts.net") and h.split(".")[0] in {n.split(".")[0] for n in _names()}
-
-
 def own_host(host: str) -> bool:
-    """A name or address of this machine: loopback, its own names, its tailnet
-    name. Not another machine's, not a LAN or tailnet address by itself."""
+    """A name or address of this machine: loopback, its own names, the tailnet
+    name tailscale gave it (exactly: the same short name in another tailnet is
+    another machine). Not a LAN or tailnet address by itself."""
     h = _norm(host)
-    return bool(h) and (_loopback(h) or h in _names() or _own_tailnet_name(h))
+    return bool(h) and (_loopback(h) or h in _names())
 
 
 def _split(host: str, scheme: str) -> tuple[str, int] | None:

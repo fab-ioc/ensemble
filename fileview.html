@@ -841,7 +841,7 @@ const hubPort = () => HUB_PORT || location.port || (location.protocol === 'https
 let HUB_ORIGINS = { seen: [], names: [] };
 // Whether a URL is this hub's (P358), as hub_links.hub_origin reads it: this
 // page's own origin; an address the hub is known to answer at; the hub's
-// port on this machine's loopback, names or tailnet name. Another port or
+// port on this machine's loopback, names or exact tailnet name. Another port or
 // service on this machine, another machine or another website is not.
 function hubOrigin(x) {
   if (!x || !/^https?:$/.test(x.protocol)) return false;
@@ -853,8 +853,9 @@ function hubOrigin(x) {
   if ((HUB_ORIGINS.seen || []).includes((h.includes(':') ? '[' + h + ']' : h) + ':' + port)) return true;
   if (port !== hubPort()) return false;
   const names = HUB_ORIGINS.names || [];
-  return LOOPBACK_HOST_RE.test(x.hostname) || names.includes(h)
-    || (/\.ts\.net$/.test(h) && names.some(n => n.split('.')[0] === h.split('.')[0]));
+  // Its tailnet name only as tailscale gave it: the same short name in
+  // another tailnet is another machine.
+  return LOOPBACK_HOST_RE.test(x.hostname) || names.includes(h);
 }
 const onHubMachine = () => LOOPBACK_HOST_RE.test(location.hostname);
 // file:///C:/a%20b.md is C:/a b.md; file://srv/share/x is \\srv\share\x; file:///home/x is /home/x

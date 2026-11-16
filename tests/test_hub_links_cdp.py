@@ -217,6 +217,8 @@ class HubLinksInBalloons(unittest.TestCase):
         cls.task_url = f"http://localhost:{port}/session?room={cls.other}"
         cls.away_card = f"https://example.com/session?room={cls.room}&msg={cls.card_mid}&part=ask:0"
         cls.away_file = f"http://localhost:{port + 1 if port < 65535 else port - 1}/fileview?path={quote(str(cls.picture), safe='')}"
+        cls.template = f"http://127.0.0.1:{port}/fileview?path=<path to the png>"
+        cls.template_curly = f"http://127.0.0.1:{port}/session?room={{room}}"
         cls.mids = {
             "card": post(f"The card is still open: {cls.card_url}"),
             "file": post(f"The two icons side by side: {cls.file_url}"),
@@ -224,6 +226,8 @@ class HubLinksInBalloons(unittest.TestCase):
             "web": post(f"Upstream bug: {GITHUB}"),
             # In a fenced code block too (review 1): the code's text, its hub addresses as names.
             "fence": post(f"The links:\n\n```\ncard {cls.card_url}\nfile {cls.file_url}\nweb {GITHUB}\n```"),
+            # A template in code (review 3): the address and its placeholder are code to fill in.
+            "template": post(f"Template:\n\n```\n{cls.template}\n{cls.template_curly}\n```"),
             # The hub's paths on another website or a dev server's port are that site's (review 1).
             "away": post(f"Elsewhere: {cls.away_card} and {cls.away_file}"),
         }
@@ -305,8 +309,8 @@ class HubLinksInBalloons(unittest.TestCase):
             with self.subTest(width=w):
                 self.assertTrue(o["view"]["balloons"])
                 for text in o["view"]["balloons"]:
-                    if text.find("Elsewhere:") >= 0:
-                        continue    # other sites' addresses, as written
+                    if text.find("Elsewhere:") >= 0 or text.find("Template:") >= 0:
+                        continue    # other sites' addresses and templates, as written
                     for bare in ("127.0.0.1", "localhost:", "session?room=", "fileview?"):
                         self.assertNotIn(bare, text)
 
@@ -330,6 +334,16 @@ class HubLinksInBalloons(unittest.TestCase):
                 self.assertEqual(len(f), 1, links)
                 self.assertEqual(parse_qs(urlsplit(f[0]["href"]).query)["path"], [str(self.picture)])
                 self.assertNotIn(GITHUB, [a["text"] for a in links])
+
+    def test_a_template_in_code_stays_as_written(self):
+        # Review 3: an address followed by its <placeholder> or {placeholder} is
+        # not a page; it is neither cut at the placeholder nor a link.
+        for w, o in self._each():
+            with self.subTest(width=w):
+                v = o["view"]["template"]
+                self.assertIn(self.template, v["text"])
+                self.assertIn(self.template_curly, v["text"])
+                self.assertEqual([a for a in v["links"] if a["href"]], [], v["links"])
 
     def test_a_click_on_the_cards_name_in_code_lands_on_the_card(self):
         for w, o in self._each():

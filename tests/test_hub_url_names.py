@@ -166,7 +166,10 @@ class HubUrlNames(unittest.TestCase):
                f"see https://example.com/?task={ROOM} now",
                f"see https://example.com/fileview?path={ENC} now",
                # Another machine on the tailnet.
-               f"see https://other.tail1234.ts.net/?task={ROOM} now"]
+               f"see https://other.tail1234.ts.net/?task={ROOM} now",
+               # A machine of the same name in another tailnet (review 3), on the hub's port too.
+               f"see http://hub.other-tailnet.ts.net:8765/?task={ROOM} now",
+               f"see https://hub.other-tailnet.ts.net:9443/?task={ROOM} now"]
         for where, r in self.both(ext).items():
             for case in ext:
                 with self.subTest(where=where, case=case):
