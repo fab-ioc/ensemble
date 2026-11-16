@@ -133,30 +133,16 @@ class OldThreads(tp._World):
         self.assertEqual(self.post("/api/room/threads", {"roomId": self.rid, "action": "archive", "threads": "P1"})[0], 400)
         self.assertEqual(self.post("/api/room/threads", {"roomId": "room-0", "action": "archive", "threads": ["P1"]})[0], 404)
 
-    def test_a_topic_archived_or_deleted_takes_its_threads_with_it(self):
-        project = {"id": "proj-abcdef99", "poRoomId": self.rid}
-        dashboard.topics._CACHE.pop(project["id"], None)
-        dashboard.topics._STATE.pop(project["id"], None)
-        with mock.patch.object(dashboard, "load_projects", return_value=[project]):
-            grouping = dashboard.topics._build_view(project, threads.build(self.rid), dashboard.chatroom.ROOMS_DIR)
-            one = next(r["id"] for r in grouping["topics"] if "P1" in r["threads"])
-            status, out = self.post("/api/room/topics", {"roomId": self.rid, "action": "archive", "topics": [one]})
-            self.assertEqual(status, 200, out)
-            self.assertIn("P1", out["threads"])
-            self.assertIn("P1", threads.load_side(self.rid)["archived"])
-            status, out = self.post("/api/room/topics", {"roomId": self.rid, "action": "restore", "topics": [one]})
-            self.assertNotIn("P1", threads.load_side(self.rid)["archived"])
-            status, out = self.post("/api/room/topics", {"roomId": self.rid, "action": "delete", "topics": [one]})
-            self.assertEqual(status, 200, out)
-            self.assertIn("P1", threads.load_side(self.rid)["deleted"])
-            self.assertEqual(self.post("/api/room/topics", {"roomId": self.rid, "action": "archive",
-                                                            "topics": "x"})[0], 400)
-        # The handler starts a background topics rebuild; let it finish before
-        # the temp directory goes away.
-        import threading as _th
-        for t in _th.enumerate():
-            if t.name.startswith("topics-"):
-                t.join(10)
+    def test_the_old_topics_endpoint_answers_gone(self):
+        # P345: Topics were removed; GET and POST /api/room/topics answer 410
+        # with a short JSON body, and nothing is archived.
+        side = json.dumps(threads.load_side(self.rid), sort_keys=True)
+        status, out = self.post("/api/room/topics", {"roomId": self.rid, "action": "archive", "topics": ["subject:P1"]})
+        self.assertEqual((status, out.get("error")), (410, "gone"), out)
+        self.assertTrue(out.get("message"))
+        status, out = http_get(f"/api/room/topics?id={self.rid}")
+        self.assertEqual((status, out.get("error")), (410, "gone"), out)
+        self.assertEqual(json.dumps(threads.load_side(self.rid), sort_keys=True), side)
 
     def test_open_points_are_named(self):
         ch = self.channel(threads=1)
@@ -164,7 +150,7 @@ class OldThreads(tp._World):
         open_ = {p["id"] for p in points.load(self.rid)["points"] if p["state"] in points.LIVE}
         self.assertEqual(set(p1["openPoints"]), open_ & {"P1"})
 
-    def test_cleanup_selects_old_topics_and_records_archive_delete_without_touching_memory(self):
+    def test_cleanup_selects_old_threads_and_records_archive_delete_without_touching_memory(self):
         project = {"id": "proj-abcdef99", "name": "PO", "poRoomId": self.rid}
         cutoff = self.t0 + 250
         state = Path(self.temp.name)
@@ -172,9 +158,9 @@ class OldThreads(tp._World):
             rows = dashboard.old_threads(cutoff)
             self.assertTrue(rows)
             self.assertTrue(all(r["at"] < cutoff for r in rows))
-            self.assertTrue(any(r["kind"] == "topic" for r in rows))
+            self.assertTrue(all(r["kind"] == "thread" for r in rows), "threads only (P345)")
             self.assertTrue(all("openPoints" in r for r in rows))
-            row = next(r for r in rows if r["kind"] == "topic")
+            row = next(r for r in rows if r["id"] == "P2")
             room = chatroom.get_room(self.rid, public=False)
             transcript = [dict(t) for t in self.turns["sid-1"]]
             ledger = points._path(self.rid).read_bytes()
@@ -186,19 +172,20 @@ class OldThreads(tp._World):
                 forget_checkpoints=lambda *a: 0, checkpoint_counts=lambda *a: {},
                 project_home=lambda p: str(state), documents_dir=lambda p: str(state / "Documents"),
                 old_threads=dashboard.old_threads, thread_act=dashboard.old_thread_act)
-            item = prune._old_threads(hub, cutoff)[0]
+            item = next(i for i in prune._old_threads(hub, cutoff) if i["tid"] == "P2")
+            self.assertEqual(item["label"], "PO · Thread: " + row["name"])
             preview = {"days": 0, "groups": [{"id": "threads", "items": [item]}]}
             archived = prune.run(hub, preview, [item["id"]])
             self.assertEqual(archived["done"][0]["action"], "archive")
-            self.assertTrue(set(row["threads"]) <= set(threads.load_side(self.rid)["archived"]))
+            self.assertIn("P2", threads.load_side(self.rid)["archived"])
             self.assertEqual(dashboard.old_thread_act({"kind": row["kind"], "room": self.rid, "id": row["id"]}, "delete", cutoff), "updated since, archived or gone")
-            dashboard.topic_act(project, room, "restore", [row["id"]])
+            self.assertEqual(self.post("/api/room/threads", {"roomId": self.rid, "action": "restore", "threads": ["P2"]})[0], 200)
             threads.forget(); points.sync(self.rid, force=True); threads.build(self.rid)
-            item = prune._old_threads(hub, cutoff)[0]
+            item = next(i for i in prune._old_threads(hub, cutoff) if i["tid"] == "P2")
             deleted = prune.run(hub, {"days": 0, "groups": [{"id": "threads", "items": [item]}]},
                                 [item["id"]], actions={item["id"]: "delete"})
             self.assertEqual(deleted["done"][0]["action"], "delete")
-            self.assertTrue(set(row["threads"]) <= set(threads.load_side(self.rid)["deleted"]))
+            self.assertIn("P2", threads.load_side(self.rid)["deleted"])
             self.assertEqual(self.turns["sid-1"], transcript)
             self.assertEqual(points._path(self.rid).read_bytes(), ledger)
             log = (state / "logs" / "prune.log").read_text(encoding="utf-8")

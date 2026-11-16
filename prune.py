@@ -27,7 +27,7 @@ The groups of a preview:
   worktrees git still lists whose folder is gone.
 * ``housekeeping``: rotated logs, uploads, sends and terminal spools of tasks
   that are gone, launch files older than a day.
-* ``threads`` (#319): old threads and topics of the PO chats, not updated in
+* ``threads`` (#319): old threads of the PO chats, not updated in
   N days and not archived. An item is archived by default (it comes back by
   itself on a new message) or deleted when the person picks Delete for it
   (only the threads record changes: transcripts and points are kept). It
@@ -98,8 +98,8 @@ class Hub:
     documents_dir: Callable[[dict], str]
     scratch_root: Callable[[str], str] = lambda cwd: ""
     pty_ids: Callable[[], set] = lambda: set()  # every terminal the hub lists, live or kept
-    # #319: cutoff -> old threads and topics of the PO chats (rows: kind,
-    # room, id, name, chat, at, threads); (row, action, cutoff) -> "" or why not.
+    # #319: cutoff -> old threads of the PO chats (rows: kind, room, id, name,
+    # chat, at, openPoints); (row, action, cutoff) -> "" or why not.
     old_threads: Callable[[float], list] = lambda cutoff: []
     thread_act: Callable[[dict, str, float], str] = lambda row, action, cutoff: "not available"
     progress: Callable[..., None] = lambda *a, **k: None
@@ -652,7 +652,7 @@ def scan(hub: Hub, days: int = DEFAULT_DAYS, groups=GROUPS, stop: Callable[[], b
     if "housekeeping" in groups and not (stop and stop()):
         items += _housekeeping(hub, room_ids | unread_ids, live, cutoff)
     if "threads" in groups and not (stop and stop()):
-        hub.progress("Reading old threads and topics")
+        hub.progress("Reading old threads")
         items += _old_threads(hub, cutoff)
 
     out_groups = []
@@ -883,7 +883,7 @@ def _housekeeping(hub: Hub, room_ids: set, live: set, cutoff: float) -> list[dic
 
 
 def _old_threads(hub: Hub, cutoff: float) -> list[dict]:
-    """One item per old thread or topic, oldest first: archive by default."""
+    """One item per old thread, oldest first: archive by default."""
     try:
         rows = hub.old_threads(cutoff) or []
     except Exception as e:                          # noqa: BLE001
@@ -891,20 +891,19 @@ def _old_threads(hub: Hub, cutoff: float) -> list[dict]:
         return []
     items = []
     for r in rows:
-        noun = "Topic" if r.get("kind") == "topic" else "Thread"
-        n = len(r.get("threads") or [])
-        label = (f"{r.get('chat') or ''} · {noun}: {r.get('name') or r.get('id')}"
-                 + (f" ({n} thread{'' if n == 1 else 's'})" if noun == "Topic" else ""))
+        if r.get("kind") != "thread":
+            continue
+        label = f"{r.get('chat') or ''} · Thread: {r.get('name') or r.get('id')}"
         items.append(_item("threads", f"th:{r.get('kind')}:{r.get('room')}:{r.get('id')}", label, [],
                            kind=r.get("kind"), room=r.get("room"), tid=r.get("id"), name=r.get("name"),
-                           chat=r.get("chat"), at=r.get("at"), threads=list(r.get("threads") or []),
+                           chat=r.get("chat"), at=r.get("at"),
                            openPoints=list(r.get("openPoints") or []),
                            action="archive"))
     return items
 
 
 def _old_thread_run(hub: Hub, it: dict, action: str, cutoff: float, how: str) -> str:
-    """Archive or delete one old thread or topic, its age checked again by
+    """Archive or delete one old thread, its age checked again by
     the hub; logged. "" when done, else why not."""
     row = {"kind": it.get("kind"), "room": it.get("room"), "id": it.get("tid")}
     why = hub.thread_act(row, action, cutoff)
@@ -923,7 +922,7 @@ def run(hub: Hub, preview: dict, ids, *, how: str = "manual", stop: Callable[[],
     again first against the state now (a task still Done and not running, a
     PO's conversation still past, a folder still safe); what fails a check, or
     cannot be deleted, is reported and left. Returns what went and what not.
-    ``actions`` (#319): {id: "delete"} for an old thread or topic to delete
+    ``actions`` (#319): {id: "delete"} for an old thread to delete
     rather than archive."""
     want = set(ids or [])
     actions = actions if isinstance(actions, dict) else {}

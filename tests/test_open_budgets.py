@@ -1,4 +1,4 @@
-"""#247: any chat, thread, task or topic shows its latest messages at once,
+"""#247: any chat, thread or task shows its latest messages at once,
 on a hub just started too. tests/open_budget_hub.py fills a throwaway hub
 with a PO chat of a 10 MB transcript (300 points in threads) and 10 MB of
 messages, and a task chat of 10 MB with a 10 MB transcript; then starts it
@@ -17,7 +17,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 MODES = ("fill", "restart", "restart-now", "cold", "cold-now")
-OPENS = ("poRoom", "poChannel", "poThread", "poTopic", "taskRoom", "soloTail", "soloLink")
+OPENS = ("poRoom", "poChannel", "poThread", "taskRoom", "soloTail", "soloLink")
 
 FIRST_BYTES = 100_000       # the spec: a first answer of at most 100 KB
 FIRST_MS = 300              # the first answer after a start (the spec's warm open, all of it)
@@ -97,8 +97,6 @@ class OpenBudgets(unittest.TestCase):
     def test_the_opens_show_what_they_should(self):
         m = self.at["restart"]
         self.assertTrue(m["poThread"]["thread"].startswith("P"))
-        self.assertTrue(m["poTopic"]["topic"])
-        self.assertGreater(m["poTopic"]["items"], 0)
 
 
 if __name__ == "__main__":
