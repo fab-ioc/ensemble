@@ -35,7 +35,8 @@ case "$action" in
       exit 1
     fi
 
-    # Install the headless-PTY dependency (ptyprocess) for this python3.
+    # Install requirements.txt for this python3: ptyprocess (the headless PTY)
+    # and cryptography (notifications).
     REQ="$DIR/requirements.txt"
     if [[ -f "$REQ" ]]; then
       echo "Installing Python dependencies…"

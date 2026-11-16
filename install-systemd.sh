@@ -94,9 +94,10 @@ case "$action" in
       exit 1
     fi
 
-    # Install the headless-PTY dependency (ptyprocess) for this python3.
+    # Install requirements.txt for this python3: ptyprocess (the headless PTY)
+    # and cryptography (notifications).
     REQ="$DIR/requirements.txt"
-    if [[ -f "$REQ" ]] && ! "$PYTHON" -c "import ptyprocess" 2>/dev/null; then
+    if [[ -f "$REQ" ]] && ! "$PYTHON" -c "import ptyprocess, cryptography" 2>/dev/null; then
       echo "Installing Python dependencies…"
       "$PYTHON" -m pip install --user -r "$REQ" 2>/dev/null \
         || "$PYTHON" -m pip install --user --break-system-packages -r "$REQ" \
