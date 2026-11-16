@@ -338,16 +338,26 @@ async function main() {
       await sleep(1200);
       await hub('/__test/report', {});
       await hub('/__test/release-channel', {});
-      // #379: each answer stays in its thread; the newest opens beside.
+      // #379: each answer stays in its thread, never copied into the chat. In
+      // the Dock a thread opens in the dashboard's own panel (#236); the pane
+      // here was restored there before (not opened by a reply), so it stays,
+      // and the answers' threads show as their cards in the chat.
       const dockWin = `document.querySelector('iframe.po-session')?.contentWindow`;
       const dockClean = `!${dockWin}?.document?.querySelector('#msgs')?.textContent.includes('Here it is, answer DOCKA.') &&
         !${dockWin}?.document?.querySelector('#msgs')?.textContent.includes('Here it is, answer DOCKB.')`;
-      out.dockBatchBoth = await until(`!!${dockWin}?.TS?.tid && !${dockWin}.document.querySelector('#thr-side').hidden`, 8000)
-        .then(() => evalIn(dockClean)).catch(() => false);
-      const dockTid = await evalIn(`${dockWin}?.TS?.tid || ''`);
+      const dockThreads = `${dockWin}.eval(\`(THR_VIEW?.watchedReplies || []).filter(r => [...document.querySelectorAll('#msgs .msg[data-mid]')]
+        .some(e => e.dataset.mid === r.send && /DOCK[AB] (First|Second) pending dock reply/.test(e.textContent))).map(r => r.thread)\`)`;
+      const dockCards = `${dockWin}.eval(\`[...document.querySelectorAll('#msgs [data-thr]')].map(e => e.dataset.thr)\`)`;
+      const dockPanelTid = `(PD.rt.get('thread:po')?.tid || '')`;
+      const dockPanelBefore = await evalIn(dockPanelTid);
+      out.dockBatchBoth = await until(`(() => { const t = ${dockThreads}, c = ${dockCards};
+        return t.length === 2 && ${dockPanelTid} === ${JSON.stringify(dockPanelBefore)} && t.every(x => c.includes(x)); })()`, 8000)
+        .then(() => sleep(1500)).then(() => evalIn(dockClean)).catch(() => false);
+      const dockTid = await evalIn(dockPanelTid);
+      out.dockDebug = await evalIn(`({before:${JSON.stringify(dockPanelBefore)}, panel:${dockPanelTid}, threads:${dockThreads}, cards:${dockCards}})`).catch(e => String(e));
       await hub('/__test/report', {});
       await sleep(3000);
-      out.dockBatchAfterChange = await evalIn(`${dockWin}?.TS?.tid === ${JSON.stringify(dockTid)} && ${dockClean}`);
+      out.dockBatchAfterChange = await evalIn(`${dockPanelTid} === ${JSON.stringify(dockTid)} && ${dockClean}`);
     }
     out.catchups = (await hub('/api/health')).chatCatchups || {};
     await c.send('Target.closeTarget', { targetId });
@@ -653,7 +663,7 @@ class PoChatRotationSequence(unittest.TestCase):
         self.assertTrue(self.got.get("dockedTask"), self.got)
         self.assertTrue(self.got.get("dockReady"), self.got)
         self.assertTrue(self.got.get("dockedPoAnswer"), self.got)
-        self.assertTrue(self.got.get("dockBatchBoth"), "a Dock reply's thread must open beside, nothing copied into the chat")
+        self.assertTrue(self.got.get("dockBatchBoth"), f"a held Dock pane must stay, the answers' threads show as cards, nothing copied into the chat: {self.got.get('dockDebug')}")
         self.assertTrue(self.got.get("dockBatchAfterChange"), "a changed poll moved the Dock pane or copied a reply")
         self.assertTrue(self.got.get("taskRepairMid"), self.got)
         self.assertTrue(self.got.get("taskRepaired"), self.got)
