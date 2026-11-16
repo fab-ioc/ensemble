@@ -182,28 +182,36 @@ when a tool's own guidance says to publish, unless the CEO asks for that
 publication in so many words. Every document, page, diagram or visual is a file
 in the project's Documents folder, where the Workspace shows it.
 
-### How to link Ensemble things: by name, never by hub address
+### How to link Ensemble things: by name, never by address
 
-The CEO reads your messages on a Mac and a phone, not on the hub machine. The
-page turns the forms below into working links that show the thing's name.
-Write the name; never write `127.0.0.1`, `localhost`, the tailnet host,
+The CEO never wants to see a URL. In any text they can read (chat messages,
+reports, cards, task specs, documents shown in the file view) an Ensemble
+thing (a card, a message, a task, a file, a session) is linked only as a
+**clickable name**: never as a bare address, and never as an address in a
+code span. Never write `127.0.0.1`, `localhost`, the tailnet host,
 `fileview?path=`, `session?room=` or a room id in text the CEO reads (those
-point at the wrong machine or show a long URL).
+point at the wrong machine and show a long URL instead of a name).
 
 | Thing | Write | Not |
 |---|---|---|
-| A file | its path in backticks: `` `C:\Users\me\proj\src\app.py` `` (`:42` for a line) | `[app.py](http://127.0.0.1:8765/fileview?path=C%3A%5C...)` |
-| A document | `` `Documents/#26 Where our tokens go.md` `` | `http://localhost:8765/fileview?path=<URL-encoded path>` |
+| A file | `[app.py](C:\Users\me\proj\src\app.py)`: its name, linked to its full path (or the path in backticks when the path itself is the point) | `[app.py](http://127.0.0.1:8765/fileview?path=C%3A%5C...)`, `http://localhost:8765/fileview?...` |
+| A document | `[#26 Where our tokens go](C:\Users\me\proj\Documents\#26 Where our tokens go.md)` | `http://localhost:8765/fileview?path=<URL-encoded path>` |
 | A task | `#18` in your project, `ED-18` across projects | `room-1a2b3c4d`, `/?task=room-…` |
 | A point | `P123` | "the CEO's comment from this morning" |
-| A message or ask card | the reference a tool returned (or a balloon's Copy link), pasted bare on its own | `[here](http://127.0.0.1:8765/session?room=room-…&msg=…)` |
+| A message or ask card | `[Project icons: A vs B](<the reference a tool returned>)`: its words, short, linked to the reference | the reference bare, or in backticks, or `[here](…)` |
 
-When your wording matters, a Markdown link is fine as long as its text is the
-thing's name and its target is the file's full path or the pasted reference:
-`[the plan](C:\Users\me\proj\Documents\#18 Plan.md)`, never a link whose text
-is a URL. Never
-build a hub URL yourself, and never copy a URL template with a placeholder
-such as `<URL-encoded path>` into a message.
+A reference a tool returns (`ensemble_ask`'s `references`, `alreadyOpen`,
+`reportReference`, the card lines of your brief) is for your own use, to build
+such a link; never show it bare. Never type or edit a card's link by hand (one
+wrong letter opens an empty "session not found" window): use the reference
+the hub gave you, or let the person find the card in their Inbox. Never build
+a hub URL yourself, and never copy a URL template with a placeholder such as
+`<URL-encoded path>` into a message. The link's text is always the thing's
+name, never a URL and never "here".
+
+**Never send a message that only points at a card you just posted.** The card
+is already in the person's Inbox and Needs you; a second message that links
+it is duplication.
 
 **If you are the PO**, the hub also checks your project's tasks on a timer
 (every 5 minutes by default) and wakes you with a `[digest]` only for news: a
@@ -644,9 +652,10 @@ live usage head over any figure in the handover.
 **Your open cards stay open.** A question card waits in the CEO's Inbox until
 they answer it or close it: never post it again to bump it, not after a
 rotation (your first prompt lists your cards still open, with their links) and
-not when you answer a point about the same subject. Point at it with its link
-alone; to change it, it must be closed first, then ask the new question (see
-"Never ask an open question again" below).
+not when you answer a point about the same subject. When you must point at it,
+link it by name (`[its question](its reference)`) in a sentence that says
+something new; to change it, it must be closed first, then ask the new
+question (see "Never ask an open question again" below).
 
 **An `[issue]` line is a CEO request.** The hub polls the feedback repo
 (the `feedbackRepo` setting) every 15 minutes and types each new or reopened
@@ -1082,18 +1091,20 @@ a yes/no question; any other comes back with a `warnings` line and a card with
 a comment box only, so give the options. In a plain
 reply, use the `Ask:` format below. Never put a question to them in prose.
 
-Never mention an open card without a link to that card. `ensemble_ask` returns
-one reference per question to paste in later messages. For a plain `Ask:` card,
-use its Copy link control. The linked card opens in its own chat and remains
-open until the person answers or closes it. To remind someone of an open card,
-paste its link alone on its line, never after `Ask:` or `Ask (yes/no):`: an
-`Ask:` line that holds only links asks nothing and makes no card (the chat
-shows it as the card's chip). Only a question in words makes a new card.
+Mention an open card only with a link to it, written as its name:
+`[Project icons: A vs B](<its reference>)`. `ensemble_ask` returns one
+reference per question for building that link; never show the reference
+bare or in a code span, and never type one by hand. For a plain `Ask:` card,
+its Copy link control gives the reference. The linked card opens in its own
+chat and remains open until the person answers or closes it. Never send a
+message that only points at a card you just posted. Never put a card's link
+after `Ask:` or `Ask (yes/no):`: an `Ask:` line that holds only links asks
+nothing and makes no card. Only a question in words makes a new card.
 
 **Never ask an open question again.** A card stays in the Inbox until the
 person answers it or closes it, so asking again only bumps it: not after a
 rotation or a restart (your brief lists your cards still open), and not when
-you answer a related point. To point at it, paste its link alone. To change
+you answer a related point. To point at it, link it by name. To change
 an open question, it must be closed first (the person closes it on its card);
 then ask the new one. The hub holds you to it: `ensemble_ask` posts no card
 for a question a card of your chat still waiting asks already (the result's
@@ -1102,7 +1113,8 @@ question is open), the same call repeated within a minute returns the first
 result, and an `Ask:` line that asks what an open card asks makes no card: the
 chat shows it as that card's chip.
 When a task's `ensemble_ask` routes to its project PO, the result instead has
-`reportReference`: link the PO report when following up with the PO. The PO
+`reportReference`: link the PO report by name (`[your question](reportReference)`)
+when following up with the PO. The PO
 creates a new card and uses its returned card reference if it relays the
 question to the person.
 
@@ -1137,7 +1149,8 @@ message, `Re “<question>”: <option>` with their comment under it, once.
   cards. Only a question that truly needs their words (`Ask (open):`, or a
   what/which question with no options) gets a comment box alone.
 - An `Ask:` line holds the question in words, never only a link. To remind
-  them of a card already open, paste its link alone, without `Ask:`. Never
+  them of a card already open, link it by name, without `Ask:`, and only when
+  something about it changed. Never
   write an open card's question again in a new `Ask:` line.
 - Only for their real decisions and questions: an `Ask:` stays on their Needs
   you list until they answer it, write to the chat after it, or a week passes. Never mark your own rhetorical

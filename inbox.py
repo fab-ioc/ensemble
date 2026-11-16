@@ -54,6 +54,7 @@ import threading
 import time
 
 from asks import title as _ask_title    # pure: an ask's words, never a bare link (P321)
+import hub_links                        # a hub address reads as its name (P358)
 
 _d = None   # the dashboard module (bind)
 
@@ -120,7 +121,7 @@ def _task_states():
 
 
 def _line(text: str, n: int = 160) -> str:
-    s = " ".join(str(text or "").split())
+    s = " ".join(hub_links.names(str(text or "")).split())
     return s if len(s) <= n else s[: n - 1].rstrip() + "…"
 
 

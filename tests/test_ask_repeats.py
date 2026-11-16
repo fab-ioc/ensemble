@@ -78,7 +78,7 @@ class EnsembleAsk(_Repeats):
         self.assertEqual(again["alreadyOpen"][0]["reference"], first["references"][0])
         self.assertRegex(again["alreadyOpen"][0]["openSince"], r"^\d\d-\d\d \d\d:\d\d$")
         self.assertIn("already open since", again["note"])
-        self.assertIn("paste its reference", again["note"])
+        self.assertIn("link it by name", again["note"])
         self.assertEqual(len(asks.open_cards(chatroom.get_room(rid))), 1)
 
     def test_a_mixed_batch_posts_only_the_new_question(self):
@@ -284,7 +284,7 @@ class Brief(_Repeats):
         block = asks.prompt_block(room)
         lines = block.split("\n")
         self.assertIn("do not ask them again", lines[0])
-        self.assertIn("paste its link alone", lines[0])
+        self.assertIn("link it by name", lines[0])
         self.assertIn("closes it", lines[0])
         self.assertEqual(len(lines), 1 + 10 + 1)
         self.assertIn(refs[-1], lines[1], "newest first")

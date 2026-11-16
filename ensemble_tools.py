@@ -1398,7 +1398,8 @@ def _ask_once(ctx, args, handler):
         host = headers.get("Host", "127.0.0.1:8765")
         scheme = "https" if headers.get("X-Forwarded-Proto") == "https" else "http"
         ref = f"{scheme}://{host}/session?room={po['roomId']}&msg={mid}" if mid else ""
-        return {**routed, "questions": len(questions), "note": "Question sent to your PO for a decision or relay. Paste reportReference as it is when following up with the PO: it shows as the message's chip.",
+        return {**routed, "questions": len(questions), "note": "Question sent to your PO for a decision or relay. reportReference is for your own use: "
+                                     "when following up with the PO, link it by name, [your question](reportReference); never show it bare.",
                 **({"reportReference": ref} if ref else {}),
                 **({"warnings": warnings} if warnings else {})}
     headers = getattr(handler, "headers", {}) or {}
@@ -1436,11 +1437,12 @@ def _ask_once(ctx, args, handler):
         mid = result["message"]["id"]
     refs = [f"{base}/session?room={room['id']}&msg={mid}&part=ask:{x}" if kind == "new" else x
             for kind, x in plan]
-    note = ("Paste the matching reference as it is (not in a code span or a [label](link)) whenever you mention "
-            "an open card: it shows as the card's chip. The card is waiting for the user's answer.")
+    note = ("The card is waiting in the user's Inbox: do not send a message that only points to it. "
+            "The references are for your own use: when you later mention an open card, link it by name, "
+            "[its question](its reference); never show a reference bare or in a code span, and never type one by hand.")
     if already:
         note = ("; ".join(f"“{a['question'][:80]}” is already open since {a['openSince']}" for a in already)
-                + ": not posted again; paste its reference if you need to point to it. A card stays open "
+                + ": not posted again; to point to it, link it by name with its reference. A card stays open "
                   "until the user answers or closes it. " + (note if fresh else ""))
     return {"ok": True, "deliveredTo": "user", "posted": bool(fresh),
             **({"messageId": mid} if mid else {}),

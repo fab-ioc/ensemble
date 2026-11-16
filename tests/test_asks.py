@@ -241,7 +241,7 @@ class TheMarker(unittest.TestCase):
         self.assertEqual(asks.title("Which one? https://example.org/" + "a" * 210, "claude")[:10], "Which one?")
         with self.assertRaises(ValueError) as e:
             asks.validated([{"question": CARD_URL, "yesno": True}])
-        self.assertIn("paste its link alone", str(e.exception))
+        self.assertIn("link it by name", str(e.exception))
         self.assertEqual(len(asks.validated([{"question": "Ship it?", "yesno": True}])), 1)
 
     def test_the_answer_quotes_its_ask(self):

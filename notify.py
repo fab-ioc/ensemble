@@ -60,6 +60,8 @@ import time
 from pathlib import Path
 from urllib.parse import quote, urlparse
 
+import hub_links
+
 try:
     import webpush
     _IMPORT_ERROR = ""
@@ -460,6 +462,7 @@ def clip(text: str, n: int) -> str:
     """One short line for a lock screen: the first line, links as their words,
     no markup, no address, no file path, no token."""
     text = str(text or "").strip().split("\n", 1)[0]
+    text = hub_links.names(text)       # a hub address reads as its name (P358)
     text = _LINK.sub(r"\1", text)
     text = _TAG.sub("", text)
     text = _URL.sub("…", text)

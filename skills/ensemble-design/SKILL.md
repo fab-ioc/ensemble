@@ -1294,6 +1294,12 @@ a glance. **A chat fills its panel** (#236): no column, no line-length cap in a 
 the person sizes is the measure (a cap that keeps prose readable on a wide screen would leave a
 third of the panel empty).
 
+- **An Ensemble address never shows (P358).** A bare link to this hub (loopback, this page's
+  host, a tailnet name or address), or one alone in a code span, draws as the thing's name: a
+  card as a `ref-chip` with its question clipped to 60 characters, a message as its chip, a
+  file view as the file's name, a task's chat as its task chip (`#N`). The stored text is not
+  changed; another website's address stays as written. Where a message is plain text (an Inbox
+  row, a notification) the hub writes the name in its place (`hub_links.names`).
 - **A balloon is authored by whoever supplied its input, not by the transcript role.** Agent
   transcripts call every input `user`, including lines and first prompts typed by the hub. The
   hub's persisted input provenance is authoritative: draw those as **Hub** in the hub's sunken,

@@ -132,6 +132,7 @@ import peer_process
 # The person's points: every point they raise is kept until they acknowledge its answer.
 import points
 import asks
+import hub_links
 # A PO chat's threads (#210): derived from its transcripts and points ledger.
 import threads
 import inbox
@@ -230,6 +231,7 @@ seat_folders.bind(sys.modules[__name__])
 move_check.bind(sys.modules[__name__])
 points.bind(sys.modules[__name__])
 asks.bind(sys.modules[__name__])
+hub_links.bind(sys.modules[__name__])
 threads.bind(sys.modules[__name__])
 inbox.bind(sys.modules[__name__])
 notify.bind(sys.modules[__name__])
@@ -3307,19 +3309,28 @@ OWNER_OUTPUT_NOTE = (
     "No progress narration; tool calls need no preamble. Reports: outcome, evidence "
     "and tests, files or commit, blocker or next decision. Do not repeat the spec.")
 
+# Links are clickable names, never addresses (P358): the CEO never sees a URL.
+LINK_NOTE = (
+    "Link an Ensemble thing (a card, a message, a task, a file, a session) only as a "
+    "clickable name, never as an address, bare or in a code span: a task as #18, a file "
+    "as [its name](its full path), a card or a message as [its words, short](its "
+    "reference). A reference a tool returns is for building such a link; never show it "
+    "bare, and never type or edit one by hand. Never send a message that only points "
+    "at a card you just posted: the card is already in the Inbox.")
+
 ASK_NOTE = (
     "A question for the user goes through ensemble_ask (or, in a plain reply, "
     "a standalone Ask: marker); never put a question to them in prose. "
     "Every question carries its answers: options (ensemble_ask options, or a "
     "list under the Ask: line), or Yes and No (yesno: true, or Ask (yes/no):). "
     "A task with a PO routes its question to that PO unless forCeo is true; "
-    "reviewers ask the owner. Never mention an open card without its link: "
-    "ensemble_ask returns a reference to paste, and a plain Ask card's "
-    "Copy link control provides one too. To remind them of an open card, paste "
-    "its link alone on its line, never after Ask: (that line asks nothing). "
+    "reviewers ask the owner. Mention an open card only by its link, written as "
+    "its name: [its question](the reference ensemble_ask returned, or a plain Ask "
+    "card's Copy link), never after Ask: (that line asks nothing). "
     "A card stays open until it is answered or closed: never ask an open "
     "question again (not after a restart or a rotation, not when answering "
-    "a related point); to change one, have it closed first, then ask the new question.")
+    "a related point); to change one, have it closed first, then ask the new question. "
+    + LINK_NOTE)
 
 # How a task is named in text (P166): its number, never its room id.
 TASK_NAME_NOTE = (
@@ -5020,6 +5031,19 @@ def _turn_epoch(stamp) -> float:
         return 0.0
 
 
+def _ref_questions(m: dict) -> dict:
+    """``{"questions": [...]}``, the words of a message's question cards in
+    their order (a link to card n shows question n, P358), or {} when it asks
+    nothing."""
+    try:
+        qs = asks.of_message(m)
+    except Exception:       # noqa: BLE001 — a chip without its question is still a chip
+        return {}
+    words = [" ".join(asks.title(str(q.get("question") or ""), m.get("from") or "").split())
+             for q in qs if isinstance(q, dict)]
+    return {"questions": words} if words else {}
+
+
 def resolve_message_ref(room_id: str, msg_id: str) -> dict | None:
     """The message a balloon link points at: ``{roomId, id, from, who,
     taskTitle, ts, text, where, isPo}``, or None. A room's message is found by
@@ -5039,7 +5063,7 @@ def resolve_message_ref(room_id: str, msg_id: str) -> dict | None:
     for m in room.get("messages") or []:
         if m.get("id") == msg_id:
             return {**out, "from": m.get("from", ""), "who": who(m.get("from", "")),
-                    "ts": float(m.get("ts") or 0),
+                    "ts": float(m.get("ts") or 0), **_ref_questions(m),
                     "text": (points.strip_point_lines(m.get("text") or "")
                              if m.get("from") == chatroom.HUMAN_IDENTITY else m.get("text") or ""),
                     "where": chatroom.messages_file(room_id)}

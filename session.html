@@ -2346,6 +2346,9 @@ function codeSpanHtml(body) {
   if (chip) return chip;
   if (/^room-[0-9a-f]{8}$/.test(t)) return taskLinkHtml(t, code);
   if (/^(?:https?|file):\/\/\S+$/i.test(t)) {
+    // A link to a balloon or card in code is its chip too: never an address (P358).
+    const ref = typeof refOfUrl === 'function' ? refOfUrl(t) : null, refChip = ref && !ref.tail && typeof refChipHtml === 'function' ? refChipHtml(ref) : null;
+    if (refChip) return refChip;
     const nm = hubUrlName(t);
     return urlLinkHtml(t, nm != null ? `<code class="ic">${esc(nm)}</code>` : code, 'code', nm != null);
   }
@@ -2647,18 +2650,25 @@ function refPreview(r) {
   return t.length > 60 ? t.slice(0, 59) + '…' : t;
 }
 // The chip for a link the hub has resolved, else null: the text keeps the link.
+// A link to a question card names the card by its question, clipped (P358);
+// the hub gives a message's questions in their order (/api/room/msg).
+function refQuestion(r, part) {
+  const n = /^ask:(\d{1,4})$/.exec(part || ''), q = n && Array.isArray(r.questions) ? String(r.questions[+n[1]] || '').replace(/\s+/g, ' ').trim() : '';
+  return q.length > 60 ? q.slice(0, 59) + '…' : q;
+}
 function refChipHtml(ref) {
   const r = refInfo(ref.room, ref.msg);
   if (r.state !== 'ok') return null;
-  const prev = refPreview(r), label = refLabel(r);
-  return `<a class="ref-chip${ref.part.startsWith('ask:') ? ' card-jump' : ''}" href="${esc(refHref(ref.room, ref.msg, ref.part))}" data-ref-room="${esc(ref.room)}" data-ref-msg="${esc(ref.msg)}" data-ref-part="${esc(ref.part)}"`
-    + ` title="${esc('Open this message: ' + label + (prev ? ' — ' + prev : ''))}"><span class="ref-arrow" aria-hidden="true">↗</span>`
-    + `<span class="ref-who">${esc(ref.part.startsWith('ask:') ? 'Question · ' + label : label)}</span>${prev ? `<span class="ref-prev">${esc(prev)}</span>` : ''}</a>`;
+  const card = ref.part.startsWith('ask:'), q = card ? refQuestion(r, ref.part) : '';
+  const prev = q ? '' : refPreview(r), label = refLabel(r);
+  return `<a class="ref-chip${card ? ' card-jump' : ''}" href="${esc(refHref(ref.room, ref.msg, ref.part))}" data-ref-room="${esc(ref.room)}" data-ref-msg="${esc(ref.msg)}" data-ref-part="${esc(ref.part)}"`
+    + ` title="${esc((card ? 'Open this question card: ' : 'Open this message: ') + label + (q || prev ? ' — ' + (q || prev) : ''))}"><span class="ref-arrow" aria-hidden="true">↗</span>`
+    + `<span class="ref-who">${esc(q || (card ? 'Question · ' + label : label))}</span>${prev ? `<span class="ref-prev">${esc(prev)}</span>` : ''}</a>`;
 }
 // A folded row's line: a resolved link reads as its chip's words.
 const refPlain = t => String(t || '').replace(REF_URL_RE, u => {
   const ref = refOfUrl(u), r = ref && refInfo(ref.room, ref.msg);
-  return r && r.state === 'ok' ? '↗ ' + refLabel(r) + ref.tail : u;
+  return r && r.state === 'ok' ? '↗ ' + (refQuestion(r, ref.part) || refLabel(r)) + ref.tail : u;
 });
 // ---- PO message names: begin ----------------------------------------------
 // A PO message's id (pm-1a2b3c4d, po_messages.py) is a handle for the tools.
