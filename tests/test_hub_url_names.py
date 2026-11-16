@@ -33,6 +33,9 @@ const esc = s => (s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':
 const fileHref = (p, line) => '/fileview?path=' + encodeURIComponent(p) + (line ? '&line=' + line : '');
 %s
 HUB_PORT = '8765';   // what /api/config says
+// This machine is "hub" on its tailnet, served at :9443 by tailscale serve and
+// bound to its tailnet address (P358).
+HUB_ORIGINS = {seen: ['hub.tail1234.ts.net:9443', '100.101.2.3:8765'], names: ['hub']};
 const render = t => {
   if (t.length > 1 && t.startsWith('`') && t.endsWith('`')) return codeSpanHtml(t.slice(1, -1));
   const keep = [];
@@ -87,7 +90,6 @@ class HubUrlNames(unittest.TestCase):
                 f"see http://127.0.0.1:8765/fileview?path={ENC_SLASH.replace('%2F', '%2f')} now",
                 f"see {TAILNET}/fileview?path={ENC} now",
                 f"see http://100.101.2.3:8765/fileview?path={ENC} now",
-                f"see http://127.0.0.1:9443/fileview?path={ENC} now",     # a proxy's port on this machine
                 f"see [http://127.0.0.1:8765/fileview?path={ENC}](http://127.0.0.1:8765/fileview?path={ENC}) now"]
         for where, r in self.both(bare).items():
             for case in bare:
@@ -162,7 +164,12 @@ class HubUrlNames(unittest.TestCase):
         ext = [f"see https://example.com/session?room={ROOM}&msg=m-1 now",
                f"see https://example.com/session?room={ROOM}&msg=m-1&part=ask:0 now",
                f"see https://example.com/?task={ROOM} now",
-               f"see https://example.com/fileview?path={ENC} now"]
+               f"see https://example.com/fileview?path={ENC} now",
+               # Another machine on the tailnet.
+               f"see https://other.tail1234.ts.net/?task={ROOM} now",
+               # A machine of the same name in another tailnet (review 3), on the hub's port too.
+               f"see http://hub.other-tailnet.ts.net:8765/?task={ROOM} now",
+               f"see https://hub.other-tailnet.ts.net:9443/?task={ROOM} now"]
         for where, r in self.both(ext).items():
             for case in ext:
                 with self.subTest(where=where, case=case):
@@ -171,6 +178,18 @@ class HubUrlNames(unittest.TestCase):
                     self.assertEqual((href, words), (url, url))
                     self.assertNotIn("msg-link", r[case])
                     self.assertNotIn("task-link", r[case])
+        # Another port on this machine is another program's (P358): a dev server's, a proxy the hub was never
+        # opened through. It is never named; from another computer a loopback address may show as unreachable.
+        loop = [f"see http://127.0.0.1:9443/fileview?path={ENC} now",
+                f"see http://localhost:5173/session?room={ROOM}&msg=m-1 now"]
+        for where, r in self.both(loop).items():
+            for case in loop:
+                with self.subTest(where=where, case=case):
+                    html = r[case]
+                    self.assertNotIn("Plan.md", html.replace(case[4:-4], ""))
+                    self.assertNotIn("msg-link", html)
+                    self.assertNotIn("task-link", html)
+                    self.assertIn(case[4:-4].replace("&", "&amp;"), html.replace("&amp;amp;", "&amp;"))
 
     def test_a_template_copied_literally_is_text(self):
         case = "open it (http://127.0.0.1:8765/fileview?path=<URL-encoded absolute path>) here"
@@ -250,6 +269,10 @@ class HubUrlNamesInChrome(Hub):
         p = mock.patch.object(dashboard, 'SETTINGS_FILE', base / 'settings.json'); p.start(); self.addCleanup(p.stop)
         # Another computer needs the token, as on every hub (ED-341).
         p = mock.patch.object(dashboard, 'ACCESS_TOKEN', 'token-for-the-test'); p.start(); self.addCleanup(p.stop)
+        # The hub's machine is "hub" on its tailnet: its tailnet links are the hub's (P358).
+        p = mock.patch.object(dashboard.hub_links, '_own_names', lambda: frozenset({'hub'})); p.start(); self.addCleanup(p.stop)
+        # tailscale serve gives it https on :9443 (what learn_tailscale reads from tailscale).
+        p = mock.patch.object(dashboard.hub_links, '_SEEN', {('hub.tail1234.ts.net', 9443)}); p.start(); self.addCleanup(p.stop)
         rid = self.room('Task chat', self.ed)
         other = self.room('Another task', self.ed, numbered=True)
         first = chatroom.post_message(rid, 'claude', 'Plan is ready for a look.', to='user')['message']['id']
@@ -261,8 +284,8 @@ class HubUrlNamesInChrome(Hub):
         hub = f"http://127.0.0.1:{port}"
         text = "\n".join([
             "LINKS:",
-            f"- md: [the plan](http://127.0.0.1:8765/fileview?path={ENC})",
-            f"- bare: http://localhost:8765/fileview?path={ENC_SLASH}",
+            f"- md: [the plan](http://127.0.0.1:{port}/fileview?path={ENC})",
+            f"- bare: http://localhost:{port}/fileview?path={ENC_SLASH}",
             f"- tailnet: {TAILNET}/fileview?path={REPORT}",
             f"- message: {hub}/session?room={rid}&msg={first}",
             f"- task: {hub}/?task={other}",

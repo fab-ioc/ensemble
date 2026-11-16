@@ -558,7 +558,7 @@ def validated(questions, warnings: list | None = None) -> list[dict]:
             raise ValueError(f"{where}.question must be 1-{QUESTION_MAX} characters")
         if links_only(q):
             raise ValueError(f"{where}.question is only a link; write the question in words "
-                             "(to remind them of an open card, paste its link alone in your message)")
+                             "(to remind them of an open card, link it by name in your message: [its question](its reference))")
         yesno = item.get("yesno", False)
         if not isinstance(yesno, bool):
             raise ValueError(f"{where}.yesno must be true or false")
@@ -1430,8 +1430,9 @@ NOTE_PREFIX = "[asks] "     # dashboard.HUB_INPUT_KINDS
 NOTE_MAX = 900              # a typed line (points._WAKE_MAX)
 ASK_AGAIN_RULE = ("These are still open in the Inbox; do not ask them again: not after a "
                   "rotation or a restart, and not when you answer a related point. A card stays "
-                  "there until the person answers or closes it. To point at one, paste its link "
-                  "alone on its line. To change one, have it closed first, then ask the new question.")
+                  "there until the person answers or closes it. To point at one, link it by name as the line "
+                  "below gives it, [its question](its link); never show the link bare. To change one, "
+                  "have it closed first, then ask the new question.")
 
 
 def _own_open(room: dict, identity: str = "") -> list[dict]:
@@ -1451,7 +1452,8 @@ def _card_line(rid: str, c: dict, now: float, width: int) -> str:
     q = " ".join(title(c["question"], c.get("who") or "").split())
     if len(q) > width:
         q = q[:width - 1] + "…"
-    return f"“{q}” {card_url(rid, c['mid'], c['n'])} (open {_age(c['ts'], now)})"
+    q = q.replace("[", "(").replace("]", ")")
+    return f"[{q}]({card_url(rid, c['mid'], c['n'])}) (open {_age(c['ts'], now)})"
 
 
 def prompt_block(room: dict, identity: str = "", now: float | None = None) -> str:

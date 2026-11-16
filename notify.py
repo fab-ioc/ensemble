@@ -63,6 +63,7 @@ from pathlib import Path
 from urllib.parse import quote, urlparse
 
 import app_version
+import hub_links
 
 # The packages webpush needs that are not part of Python: cryptography and the
 # cffi it loads (_cffi_backend). One of these missing is what the hub can add
@@ -614,6 +615,7 @@ def clip(text: str, n: int) -> str:
     """One short line for a lock screen: the first line, links as their words,
     no markup, no address, no file path, no token."""
     text = str(text or "").strip().split("\n", 1)[0]
+    text = hub_links.names(text)       # a hub address reads as its name (P358)
     text = _LINK.sub(r"\1", text)
     text = _TAG.sub("", text)
     text = _URL.sub("…", text)

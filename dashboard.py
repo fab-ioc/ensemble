@@ -132,6 +132,7 @@ import peer_process
 # The person's points: every point they raise is kept until they acknowledge its answer.
 import points
 import asks
+import hub_links
 # A PO chat's threads (#210): derived from its transcripts and points ledger.
 import threads
 import inbox
@@ -230,6 +231,7 @@ seat_folders.bind(sys.modules[__name__])
 move_check.bind(sys.modules[__name__])
 points.bind(sys.modules[__name__])
 asks.bind(sys.modules[__name__])
+hub_links.bind(sys.modules[__name__])
 threads.bind(sys.modules[__name__])
 inbox.bind(sys.modules[__name__])
 notify.bind(sys.modules[__name__])
@@ -435,16 +437,42 @@ def may_restart_hub(room_id: str, identity: str) -> bool:
     return bool(room) and chatroom.po_identity(room) == identity
 
 
+_TAILSCALE_EXES = (
+    "tailscale",
+    r"C:\Program Files\Tailscale\tailscale.exe",
+    "/usr/bin/tailscale",
+    "/usr/local/bin/tailscale",
+    "/Applications/Tailscale.app/Contents/MacOS/Tailscale",
+)
+
+
+def _tailscale_json(*args: str) -> dict | None:
+    """`tailscale <args> --json`, parsed; None without tailscale."""
+    for exe in _TAILSCALE_EXES:
+        try:
+            out = _run([exe, *args, "--json"], capture_output=True, text=True, timeout=5)
+        except (FileNotFoundError, OSError, subprocess.SubprocessError):
+            continue
+        try:
+            got = json.loads(out.stdout or "")
+        except ValueError:
+            return None
+        return got if isinstance(got, dict) else None
+    return None
+
+
+def _learn_tailscale_origins() -> None:
+    """This machine's tailnet name and the https addresses tailscale serve
+    gives the hub (P358): links to them read as names, other services' do not."""
+    try:
+        hub_links.learn_tailscale(_tailscale_json("status"), _tailscale_json("serve", "status"))
+    except Exception:   # noqa: BLE001 — best effort; the hub's own port still counts
+        pass
+
+
 def _detect_tailscale_ip() -> str | None:
     """Best-effort lookup of this machine's Tailscale IPv4, for --bind tailscale."""
-    candidates = [
-        "tailscale",
-        r"C:\Program Files\Tailscale\tailscale.exe",
-        "/usr/bin/tailscale",
-        "/usr/local/bin/tailscale",
-        "/Applications/Tailscale.app/Contents/MacOS/Tailscale",
-    ]
-    for exe in candidates:
+    for exe in _TAILSCALE_EXES:
         try:
             out = _run([exe, "ip", "-4"], capture_output=True,
                        text=True, timeout=5)
@@ -3312,19 +3340,28 @@ OWNER_OUTPUT_NOTE = (
     "No progress narration; tool calls need no preamble. Reports: outcome, evidence "
     "and tests, files or commit, blocker or next decision. Do not repeat the spec.")
 
+# Links are clickable names, never addresses (P358): the CEO never sees a URL.
+LINK_NOTE = (
+    "Link an Ensemble thing (a card, a message, a task, a file, a session) only as a "
+    "clickable name, never as an address, bare or in a code span: a task as #18, a file "
+    "as [its name](its full path), a card or a message as [its words, short](its "
+    "reference). A reference a tool returns is for building such a link; never show it "
+    "bare, and never type or edit one by hand. Never send a message that only points "
+    "at a card you just posted: the card is already in the Inbox.")
+
 ASK_NOTE = (
     "A question for the user goes through ensemble_ask (or, in a plain reply, "
     "a standalone Ask: marker); never put a question to them in prose. "
     "Every question carries its answers: options (ensemble_ask options, or a "
     "list under the Ask: line), or Yes and No (yesno: true, or Ask (yes/no):). "
     "A task with a PO routes its question to that PO unless forCeo is true; "
-    "reviewers ask the owner. Never mention an open card without its link: "
-    "ensemble_ask returns a reference to paste, and a plain Ask card's "
-    "Copy link control provides one too. To remind them of an open card, paste "
-    "its link alone on its line, never after Ask: (that line asks nothing). "
+    "reviewers ask the owner. Mention an open card only by its link, written as "
+    "its name: [its question](the reference ensemble_ask returned, or a plain Ask "
+    "card's Copy link), never after Ask: (that line asks nothing). "
     "A card stays open until it is answered or closed: never ask an open "
     "question again (not after a restart or a rotation, not when answering "
-    "a related point); to change one, have it closed first, then ask the new question.")
+    "a related point); to change one, have it closed first, then ask the new question. "
+    + LINK_NOTE)
 
 # How a task is named in text (P166): its number, never its room id.
 TASK_NAME_NOTE = (
@@ -5025,6 +5062,19 @@ def _turn_epoch(stamp) -> float:
         return 0.0
 
 
+def _ref_questions(m: dict) -> dict:
+    """``{"questions": [...]}``, the words of a message's question cards in
+    their order (a link to card n shows question n, P358), or {} when it asks
+    nothing."""
+    try:
+        qs = asks.of_message(m)
+    except Exception:       # noqa: BLE001 — a chip without its question is still a chip
+        return {}
+    words = [" ".join(asks.title(str(q.get("question") or ""), m.get("from") or "").split())
+             for q in qs if isinstance(q, dict)]
+    return {"questions": words} if words else {}
+
+
 def resolve_message_ref(room_id: str, msg_id: str) -> dict | None:
     """The message a balloon link points at: ``{roomId, id, from, who,
     taskTitle, ts, text, where, isPo}``, or None. A room's message is found by
@@ -5044,7 +5094,7 @@ def resolve_message_ref(room_id: str, msg_id: str) -> dict | None:
     for m in room.get("messages") or []:
         if m.get("id") == msg_id:
             return {**out, "from": m.get("from", ""), "who": who(m.get("from", "")),
-                    "ts": float(m.get("ts") or 0),
+                    "ts": float(m.get("ts") or 0), **_ref_questions(m),
                     "text": (points.strip_point_lines(m.get("text") or "")
                              if m.get("from") == chatroom.HUMAN_IDENTITY else m.get("text") or ""),
                     "where": chatroom.messages_file(room_id)}
@@ -18531,6 +18581,27 @@ class Handler(BaseHTTPRequestHandler):
             return False
         return _host_is_loopback(self.headers.get("Host") or "")
 
+    def _note_origin(self, u) -> None:
+        """The address this page was opened at is one of the hub's (P358):
+        its links read as names (hub_links.hub_origin). Only for a reader the
+        gate let in on its own merits: a program here, or the access token."""
+        tok = self._presented_token(u)
+        if not (self._is_local() or (ACCESS_TOKEN and tok and _same_secret(tok, ACCESS_TOKEN))):
+            return
+        # A proxy here (tailscale serve) names the address it was opened at;
+        # it counts only when it names this machine (hub_links.seen). A direct
+        # request's Host counts on the port its socket came in on.
+        fwd = (self.headers.get("X-Forwarded-Host") or "").split(",")[0].strip()
+        if fwd and _addr_is_loopback(self._client_ip()):
+            proto = (self.headers.get("X-Forwarded-Proto") or "https").split(",")[0].strip().lower()
+            hub_links.seen(fwd, "http" if proto == "http" else "https")
+        else:
+            try:
+                local = self.connection.getsockname()[:2]
+            except (OSError, AttributeError):
+                return
+            hub_links.seen(self.headers.get("Host") or "", local=local)
+
     def _presented_token(self, u) -> str:
         q = parse_qs(u.query)
         if q.get("token"):
@@ -18995,6 +19066,8 @@ class Handler(BaseHTTPRequestHandler):
             return
         u = urlparse(self.path)
         p = u.path
+        if p in ("/", "/session", "/fileview"):
+            self._note_origin(u)
         if os.environ.get("ENSEMBLE_PTY_PREFLIGHT") and p not in (
                 "/", "/startup", "/api/health", "/api/platform", "/api/version",
                 "/api/sessions", "/api/projects"):
@@ -19927,6 +20000,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(200, {
                 "instance": INSTANCE,
                 "port": actual_port,
+                # The hub's other addresses (P358): their links are names too.
+                "origins": hub_links.origins(),
                 "os": BACKEND.os_name,
                 "stateDir": str(DASHBOARD_DIR),
                 "sessionsDir": str(SESS_DIR),
@@ -24759,6 +24834,7 @@ def main():
     asks.mark_repeats_since()
 
     def _announce_remote(ip: str) -> None:
+        hub_links.listens(f"[{ip}]:{port}" if ":" in ip else f"{ip}:{port}")
         print(f"ensemble [{BACKEND.os_name}]: http://{ip}:{port} (remote)", flush=True)
         if ACCESS_TOKEN:
             print(f"remote access token: {ACCESS_TOKEN}", flush=True)
@@ -24813,6 +24889,7 @@ def main():
         except Exception as e:      # noqa: BLE001
             print(f"[lost] retention not checked: {str(e)[:200]}", flush=True)
     threading.Thread(target=_warn_retention, daemon=True, name="retention-warn").start()
+    threading.Thread(target=_learn_tailscale_origins, daemon=True, name="tailscale-origins").start()
 
     # Tailnet requested but its listener isn't up yet (never resolved, or bind
     # failed above): keep retrying in the background, without ever blocking startup.

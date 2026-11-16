@@ -64,6 +64,8 @@ globalThis.location = new URL(process.argv[1]);
 const esc = s => (s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const fileHref = (p, line) => '/fileview?path=' + encodeURIComponent(p) + (line ? '&line=' + line : '');
 %s
+// The hub's machine is "hub" on its tailnet, served at https://hub.tail1234.ts.net, as /api/config says (P358).
+HUB_ORIGINS = {seen: ['hub.tail1234.ts.net:443'], names: ['hub']};
 const render = t => {
   if (t.length > 1 && t.startsWith('`') && t.endsWith('`')) return codeSpanHtml(t.slice(1, -1));
   const keep = [];

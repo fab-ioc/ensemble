@@ -5539,6 +5539,27 @@ function resolvePath(p, base) {
 const LOOPBACK_HOST_RE = /^(?:127(?:\.\d{1,3}){3}|localhost|\[::1\])$/i;
 let HUB_PORT = '';   // the hub's port, from /api/config; until it arrives, this page's own
 const hubPort = () => HUB_PORT || location.port || (location.protocol === 'https:' ? '443' : '80');
+// The hub's other addresses, from /api/config (hub_links.origins): those it
+// was reached at ("host:port") and this machine's own names.
+let HUB_ORIGINS = { seen: [], names: [] };
+// Whether a URL is this hub's (P358), as hub_links.hub_origin reads it: this
+// page's own origin; an address the hub is known to answer at; the hub's
+// port on this machine's loopback, names or exact tailnet name. Another port or
+// service on this machine, another machine or another website is not.
+function hubOrigin(x) {
+  if (!x || !/^https?:$/.test(x.protocol)) return false;
+  if (x.host === location.host && x.protocol === location.protocol) return true;
+  const port = x.port || (x.protocol === 'https:' ? '443' : '80');
+  const h = x.hostname.replace(/^\[|\]$/g, '').replace(/\.$/, '').toLowerCase();
+  // An address the hub is known to answer at (hub_links.origins: a page opened
+  // there, its bind, tailscale serve), or its own port on this machine.
+  if ((HUB_ORIGINS.seen || []).includes((h.includes(':') ? '[' + h + ']' : h) + ':' + port)) return true;
+  if (port !== hubPort()) return false;
+  const names = HUB_ORIGINS.names || [];
+  // Its tailnet name only as tailscale gave it: the same short name in
+  // another tailnet is another machine.
+  return LOOPBACK_HOST_RE.test(x.hostname) || names.includes(h);
+}
 const onHubMachine = () => LOOPBACK_HOST_RE.test(location.hostname);
 // file:///C:/a%20b.md is C:/a b.md; file://srv/share/x is \\srv\share\x; file:///home/x is /home/x
 function filePathOfUrl(u) {
@@ -5556,9 +5577,8 @@ function urlTarget(raw) {
   let x = null;
   try { x = new URL(u); } catch (e) { return { href: u }; }
   // One of this hub's own files or tasks, by whatever address it was written
-  // (#296), opens from this page's origin. A file is this machine's at any
-  // loopback port (the file view of a test hub reads the same file); a task
-  // there is another hub's, so only on the hub's own port.
+  // (#296), opens from this page's origin; on another loopback port it is
+  // another program's page (P358).
   const h = hubUrlOf(u), loop = LOOPBACK_HOST_RE.test(x.hostname);
   if (h && h.file != null) return hubFileOk(h.file) ? { file: h.file, line: h.line } : { text: true };
   if (h && h.task && !h.msg && x.pathname === '/' && (!loop || (x.port || (x.protocol === 'https:' ? '443' : '80')) === hubPort()))
@@ -5570,7 +5590,7 @@ function urlTarget(raw) {
     if (!onHubMachine()) return { dead: x.host };
     return { href: u };
   }
-  return msg && hubHost(x) ? { msg } : { href: u };
+  return msg && hubOrigin(x) ? { msg } : { href: u };
 }
 // A sentence's full stop, comma or closing bracket is not part of its URL.
 function trimUrlTail(u) {
@@ -5585,7 +5605,7 @@ const A_NEW = ' target="_blank" rel="noopener"';
 const taskLinkHtml = (id, text) => `<a href="/?task=${id}" data-task="${id}"${A_NEW} class="task-link">${text}</a>`;
 const fileLinkHtml = (p, text, line, title) => `<a href="${fileHref(p, line)}"${A_NEW} class="file-link"${title ? ` title="${esc(title)}"` : ''}>${text}</a>`;
 // A link to a chat message or card (/session?room=room-…&msg=…[&part=…]) is
-// Ensemble's own on any address this hub answers on (hubHost: 127.0.0.1, localhost,
+// Ensemble's own on any address of this hub (hubOrigin: its port on 127.0.0.1, localhost,
 // the tailnet name, this page's host): it opens in place, in the chat that
 // holds it (the page's click handler for a.msg-link), never in a window of its
 // own. Its href is this page's origin, so Ctrl-click or a middle click opens it
@@ -5605,18 +5625,13 @@ const msgLinkHtml = (r, text) => !r.msg ? taskLinkHtml(r.room, text)
 // A link to one of the hub's own pages, whatever address it was written with
 // (#238): { msg } for a message or card (msgLinkOf), { file, line } for a file
 // view, { task } for a task's chat, { thread } for a thread, { href } for any
-// other page on this hub; null for any other URL. A file view or a task is
-// the hub's only on an address the hub answers on (hubHost): this machine's
-// loopback on any port (the hub, a proxy in front of it), this page's own
-// host, a tailnet name (*.ts.net) or address (100.64.0.0/10); the same path
-// on any other host is someone else's page and stays as written.
-const TAILNET_HOST_RE = /\.ts\.net\.?$|^100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d{1,3}\.\d{1,3}$/i;
-const hubHost = x => LOOPBACK_HOST_RE.test(x.hostname) || x.hostname === location.hostname || TAILNET_HOST_RE.test(x.hostname);
+// other page on this hub; null for any other URL. Only at one of the hub's
+// addresses (hubOrigin, P358): the same path on a dev server's port, another
+// machine or any other host is someone else's page and stays as written.
 function hubUrlOf(u) {
   let x = null;
   try { x = new URL(u); } catch (e) { return null; }
-  if (!/^https?:$/.test(x.protocol)) return null;
-  if (!hubHost(x)) return null;
+  if (!hubOrigin(x)) return null;
   const msg = msgLinkOf(x);
   if (msg) return msg.msg ? { msg } : { task: msg.room };
   const room = (x.searchParams.get('room') || x.searchParams.get('id') || '').trim();
@@ -5624,9 +5639,7 @@ function hubUrlOf(u) {
   if (x.pathname === '/fileview' && x.searchParams.get('path')) return { file: x.searchParams.get('path').trim(), line: +(x.searchParams.get('line') || 0) || 0 };
   const task = (x.searchParams.get('task') || '').trim();
   if (x.pathname === '/' && /^room-[0-9a-f]{8}$/.test(task)) return { task };
-  const port = x.port || (x.protocol === 'https:' ? '443' : '80');
-  if (x.host === location.host || (LOOPBACK_HOST_RE.test(x.hostname) && port === hubPort())) return { href: x.pathname + x.search + x.hash };
-  return null;
+  return { href: x.pathname + x.search + x.hash };
 }
 // A file view's path that names a file: not a template's placeholder
 // ("?path=<URL-encoded absolute path>"), which stays text.
@@ -5755,6 +5768,9 @@ function codeSpanHtml(body) {
   if (chip) return chip;
   if (/^room-[0-9a-f]{8}$/.test(t)) return taskLinkHtml(t, code);
   if (/^(?:https?|file):\/\/\S+$/i.test(t)) {
+    // A link to a balloon or card in code is its chip too: never an address (P358).
+    const ref = typeof refOfUrl === 'function' ? refOfUrl(t) : null, refChip = ref && !ref.tail && typeof refChipHtml === 'function' ? refChipHtml(ref) : null;
+    if (refChip) return refChip;
     const nm = hubUrlName(t);
     return urlLinkHtml(t, nm != null ? `<code class="ic">${esc(nm)}</code>` : code, 'code', nm != null);
   }
@@ -8809,6 +8825,7 @@ async function loadRuntimeConfig() {
   try {
     RUNTIME_CFG = await api('/api/config');
     if (RUNTIME_CFG && RUNTIME_CFG.port) HUB_PORT = String(RUNTIME_CFG.port);
+    if (RUNTIME_CFG && RUNTIME_CFG.origins) HUB_ORIGINS = RUNTIME_CFG.origins;
     renderRuntimeConfig();
   } catch {}
 }
@@ -24460,7 +24477,7 @@ const ntSafari = () => /Safari\//.test(navigator.userAgent) && !/Chrome\/|Chromi
 // tab (no switch at all), { why } for a switch that cannot be turned on.
 function ntBlocker() {
   if (!window.isSecureContext) {
-    const there = TAILNET_HOST_RE.test(location.hostname) && !/^100\./.test(location.hostname)
+    const there = /\.ts\.net\.?$/i.test(location.hostname)
       ? `https://${location.hostname}/` : 'the hub’s https address (README, “Ensemble as an app”)';
     return { why: `Notifications need the https address. Open ${there} and turn them on there.` };
   }

@@ -8,19 +8,33 @@ from tests.test_task_refs import SESSION, fn, node
 @unittest.skipUnless(shutil.which("node"), "node is not installed")
 class CardLinks(unittest.TestCase):
     def test_reference_becomes_chip_targeting_the_card(self):
-        source = "\n".join([fn(SESSION, "refOfUrl"), fn(SESSION, "refChipHtml")])
+        source = "\n".join([fn(SESSION, "hubOrigin"), fn(SESSION, "refOfUrl"), fn(SESSION, "refQuestion"), fn(SESSION, "refChipHtml")])
         result = node(r"""
+globalThis.location = {host: '127.0.0.1:8765', hostname: '127.0.0.1', port: '8765', protocol: 'http:'};
+const LOOPBACK_HOST_RE = /^(?:127(?:\.\d{1,3}){3}|localhost|\[::1\])$/i;
+const HUB_PORT = '8765', hubPort = () => HUB_PORT, HUB_ORIGINS = {seen: [], names: []};
 const esc = s => String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;');
-const refInfo = () => ({state:'ok'});
+let INFO = {state:'ok'};
+const refInfo = () => INFO;
 const refPreview = () => 'Which path?';
 const refLabel = () => 'PO · 10/13 08:00';
 const refHref = (room, msg, part) => '/session?room=' + room + '&msg=' + msg + (part ? '&part=' + part : '');
 %s
-const ref = refOfUrl('http://hub:8765/session?room=room-1234abcd&msg=abc123&part=ask:0');
-console.log(JSON.stringify({ref, html:refChipHtml(ref)}));
+const ref = refOfUrl('http://127.0.0.1:8765/session?room=room-1234abcd&msg=abc123&part=ask:0');
+// Another website's page of the same shape is not this hub's message (review 1).
+const away = ['https://example.com/session?room=room-1234abcd&msg=abc123&part=ask:0',
+  'http://localhost:5173/session?room=room-1234abcd&msg=abc123'].map(refOfUrl);
+const html = refChipHtml(ref);
+// The hub gives the message's questions (P358): the chip names card 0 by its question.
+INFO = {state:'ok', questions: ['Project icons: A or B?', 'Second one?']};
+console.log(JSON.stringify({ref, html, named: refChipHtml(ref), away}));
 """ % source)
         self.assertEqual(result['ref']['part'], 'ask:0')
+        self.assertEqual(result['away'], [None, None])
         self.assertIn('class="ref-chip card-jump"', result['html'])
         self.assertIn('data-ref-part="ask:0"', result['html'])
         self.assertIn('part=ask:0', result['html'])
-        self.assertIn('Question · PO', result['html'])
+        self.assertIn('Question · PO', result['html'], "no questions from the hub: the generic words")
+        self.assertIn('>Project icons: A or B?</span>', result['named'])
+        self.assertNotIn('Question · PO<', result['named'])
+        self.assertNotIn('Second one?', result['named'])
