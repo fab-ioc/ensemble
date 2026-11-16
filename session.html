@@ -7169,7 +7169,7 @@ function sharedThreadSelect(target, focus = false) {
   if (THREAD_MODE || !target?.thread) return;
   if (target.mid) sharedThreadPromote(target.mid, target.thread);
   const switching = SHARED_THREAD?.thread !== String(target.thread);
-  if (switching) edStoreNow();
+  if (switching) { micStop(true); edStoreNow(); }   // P367: the words, a point made of them, go with the old draft
   SHARED_THREAD = { thread:String(target.thread), title:String(target.title || 'Thread'), info:target.info || null };
   if (switching && !document.body.classList.contains('workspace-guest')) {
     sharedComposerYield(false); sharedComposerResume();
@@ -7210,7 +7210,7 @@ function sharedThreadPromote(mid, thread) {
 }
 function sharedThreadClear(closed = false) {
   const thread = SHARED_THREAD?.thread || TS?.tid || (TS?.mid && 'm:' + TS.mid);
-  if (SHARED_THREAD) edStoreNow();
+  if (SHARED_THREAD) { micStop(true); edStoreNow(); }   // P367: as in sharedThreadSelect
   SHARED_THREAD = null;
   if (thread && !document.body.classList.contains('workspace-guest')) {
     sharedComposerYield(false); sharedComposerResume();
@@ -10272,15 +10272,25 @@ window.addEventListener('keydown', e => {
   if (!MIC || e.key !== 'Escape') return;
   if (document.querySelector('#send-menu:not([hidden]), #stop-choices:not([hidden]), #slashpop:not([hidden]), .phone-compose-tools[open]')) return;   // a menu closes first
   const ae = document.activeElement;
-  if (ae && ae !== $('#input') && ae.matches?.('input, textarea, select, [contenteditable], [contenteditable] *')) return;   // so does another field (a thread's name)
+  if (ae && ae !== $('#input') && ae.matches?.('input, textarea, select, [contenteditable], [contenteditable] *')) return;   // so does another field (a thread's name): see below
   e.preventDefault(); e.stopImmediatePropagation();
   micStop();
 }, true);
+// In another field, Esc is that field's when it has a use for it (a rename
+// cancels and keeps it); otherwise, as a point's text, it stops listening.
+window.addEventListener('keydown', e => {
+  if (!MIC || e.key !== 'Escape' || e.defaultPrevented) return;
+  const ae = document.activeElement;
+  if (!ae || ae === $('#input') || !ae.matches?.('input, textarea, select, [contenteditable], [contenteditable] *')) return;
+  e.preventDefault();
+  micStop();
+});
 // A key typed in the box while listening ends it: the words heard stay, and
 // the key does what it does to the selection (it replaces the grey words).
 $('#input').addEventListener('keydown', e => {
   if (!MIC || !e.isTrusted || e.key === 'Escape' || ['Shift', 'Control', 'Alt', 'Meta', 'CapsLock'].includes(e.key)) return;
-  micStop(true, true);
+  // A send or add shortcut takes the words as they are, "1. " made a point first.
+  micStop(true, !edKeyAction(e, { part: 'head', empty: false, last: true }));
 }, true);
 // A press in the box ends it too: the words stay, the caret goes where pressed.
 $('#input').addEventListener('pointerdown', e => { if (MIC && e.isTrusted) micStop(true); }, true);

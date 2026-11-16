@@ -124,6 +124,12 @@ async function main() {
     await send('Input.dispatchKeyEvent', {type: 'keyUp', key: k, code, windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk}, s);
   };
   const type = async text => { for (const ch of text) await key(ch); };
+  // A special key with modifiers (2 = Ctrl).
+  const keyMod = async (k, modifiers) => {
+    const vk = VK[k];
+    await send('Input.dispatchKeyEvent', {type: 'rawKeyDown', key: k, code: k, windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk, modifiers}, s);
+    await send('Input.dispatchKeyEvent', {type: 'keyUp', key: k, code: k, windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk, modifiers}, s);
+  };
   const click = async sel => {
     const r = await ev(`(() => { const b = document.querySelector(${JSON.stringify(sel)}).getBoundingClientRect(); return {x: b.left + b.width / 2, y: b.top + b.height / 2}; })()`);
     await send('Input.dispatchMouseEvent', {type: 'mouseMoved', x: r.x, y: r.y}, s);
@@ -425,14 +431,55 @@ async function main() {
     await click('#compose-thread-name');
     await type('Plans');
     out.nameListening = {...await st(), active: await ev('document.activeElement.id')};
+    // A rename field has a use for Esc (it cancels): listening goes on.
+    await ev(`(() => { const i = document.createElement('input'); i.id = 'rn'; i.value = 'Old'; document.body.append(i);
+      window.__renamed = []; nameEdit(i, (save, v) => window.__renamed.push([save, v])); i.focus(); return 0; })()`);
+    await key('Escape');
+    await sleep(200);
+    out.renameEsc = {...await st(), renamed: await ev('window.__renamed')};
+    // The name field has none: Esc there stops listening, and the field keeps its words and the focus.
+    await ev(`document.getElementById('compose-thread-name').focus(); 0`);
     await key('Escape');
     await sleep(200);
     out.nameEsc = {...await st(), active: await ev('document.activeElement.id'), name: await ev(`document.getElementById('compose-thread-name').value`)};
-    await ev(`document.getElementById('input').focus(); 0`);
-    await key('Escape');
-    await sleep(200);
-    out.nameEsc2 = await st();
     await ev('window.__end(); 0');
+    // A point's text has none either: Esc there stops listening, not the agent.
+    await open();
+    await ev(`(() => { edAddAt(0, 'milk'); document.getElementById('input').focus(); window.__posts.length = 0; return 0; })()`);
+    await click('#mic');
+    await click('#ed-points textarea.ed-text');
+    out.ptFieldListening = {...await st(), inPoint: await ev(`document.activeElement.matches('#ed-points textarea.ed-text')`)};
+    await key('Escape');
+    await sleep(300);
+    out.ptFieldEsc = {...await st(), inPoint: await ev(`document.activeElement.matches('#ed-points textarea.ed-text')`),
+      posts: await ev('window.__posts.map(p => p.path)')};
+    await ev('window.__end(); 0');
+
+    // 20. Ctrl+Enter while "1. buy milk" is still grey: it is sent as a point.
+    await open();
+    await click('#mic');
+    await emit([['1. buy milk', false]]);
+    await keyMod('Enter', 2);
+    await until(`window.__posts.some(p => p.path === '/api/room/resume')`, 'the send', 5000).catch(() => {});
+    await sleep(500);
+    out.ctrlEnter = await st();
+
+    // 21. The PO chat's box changes thread: "1. buy milk" said in the chat stays there as a point.
+    await open('', A.po);
+    await click('#mic');
+    await emit([['1. buy milk', false]]);
+    await ev(`sharedThreadSelect({thread: 'P1', title: 'Some thread'}); 0`);
+    await sleep(200);
+    out.poSwitched = {...await st(), points: await ev(PTS)};
+    await click('#mic');
+    await emit([['1. eggs', false]]);
+    await ev(`sharedThreadClear(); 0`);
+    await sleep(200);
+    out.poBack = {...await st(), points: await ev(PTS)};
+    await ev(`sharedThreadSelect({thread: 'P1', title: 'Some thread'}); 0`);
+    await sleep(200);
+    out.poThread = {...await st(), points: await ev(PTS)};
+    await ev(`sharedThreadClear(); 0`);
 
     // 13. A phone: no mic in the row at rest; the + menu's Dictate listens, then the pressed mic shows.
     await send('Emulation.setDeviceMetricsOverride', {width: 390, height: 844, deviceScaleFactor: 1, mobile: true}, s);
@@ -772,11 +819,37 @@ class Dictation(unittest.TestCase):
         g = self.got
         self.assertEqual(g['nameListening']['active'], 'compose-thread-name')
         self.assertEqual(g['nameListening']['pressed'], 'true', 'a click in another field leaves listening on')
+        r = g['renameEsc']
+        self.assertEqual(r['renamed'], [[False, 'Old']], 'the rename is cancelled')
+        self.assertEqual((r['calls'], r['pressed']), (['start'], 'true'), 'and listening goes on')
         e = g['nameEsc']
-        self.assertEqual((e['calls'], e['pressed']), (['start'], 'true'), 'Esc there leaves listening on')
-        self.assertEqual(g['nameEsc2']['calls'], ['start', 'stop'], 'Esc back in the box stops it')
-        self.assertEqual(g['nameEsc2']['pressed'], 'false')
-        self.assertEqual(g['nameEsc2']['sends'], [])
+        self.assertEqual((e['calls'], e['pressed']), (['start', 'stop'], 'false'), 'a field with no Esc of its own: Esc stops listening')
+        self.assertEqual((e['active'], e['name']), ('compose-thread-name', 'Plans'))
+        self.assertEqual(e['sends'], [])
+
+    def test_18b_esc_in_a_points_text_stops_listening_not_the_agent(self):
+        g = self.got
+        self.assertTrue(g['ptFieldListening']['inPoint'])
+        self.assertEqual(g['ptFieldListening']['pressed'], 'true')
+        e = g['ptFieldEsc']
+        self.assertEqual((e['calls'], e['pressed']), (['start', 'stop'], 'false'))
+        self.assertTrue(e['inPoint'])
+        self.assertNotIn('/api/room/interrupt', e['posts'], 'the agent is not stopped')
+        self.assertEqual(e['sends'], [])
+
+    def test_20_ctrl_enter_sends_grey_list_words_as_a_point(self):
+        c = self.got['ctrlEnter']
+        self.assertEqual(c['calls'], ['start', 'abort'])
+        self.assertEqual(c['sends'], [{'path': '/api/room/resume', 'text': '## Points (1)\n\n**1.** buy milk'}])
+        self.assertEqual(c['value'], '')
+
+    def test_21_a_po_thread_switch_keeps_the_point(self):
+        g = self.got
+        self.assertEqual(g['poSwitched']['calls'], ['start', 'abort'])
+        self.assertEqual((g['poSwitched']['value'], g['poSwitched']['points']), ('', []), "the thread's own draft")
+        self.assertEqual((g['poBack']['value'], g['poBack']['points']), ('', ['buy milk']), 'the chat draft kept its point')
+        self.assertEqual((g['poThread']['value'], g['poThread']['points']), ('', ['eggs']), "and the thread's, after a clear")
+        self.assertEqual(g['poThread']['sends'], [])
 
 
     def test_19_a_key_over_grey_list_words_replaces_them(self):
