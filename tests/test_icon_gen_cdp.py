@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -153,6 +154,9 @@ async function main() {
     const q = await page(1440, 900, false);
     await open(q, P.Motors);
     out.idle = await q.evalIn(GEN);
+    // P362: the colour the page sends is the PO label fill it paints for the project.
+    out.labelFill = await q.evalIn(`(() => { const e = document.createElement('span'); e.className = 'rl po'; e.dataset.poProject = ${JSON.stringify(P.Motors)};
+      document.body.appendChild(e); ProjectColour.paint(document.body, PROJECTS.projects, ''); const c = getComputedStyle(e).backgroundColor; e.remove(); return c; })()`);
     await q.shot('gen-idle');
     mode('slow:3.5');
     await q.click('#modal #ps-gen');
@@ -279,9 +283,9 @@ class GenerateInChrome(unittest.TestCase):
         mode_file.write_text("ok")
         cls.calls = []
 
-        def fake_generate(key, name, about, timeout=60):
+        def fake_generate(key, name, about, timeout=60, colour=""):
             m = mode_file.read_text().strip()
-            cls.calls.append((key, name, about, m))
+            cls.calls.append((key, name, about, m, colour))
             if m.startswith("slow:"):
                 time.sleep(float(m[5:]))
             if m == "timeout":
@@ -382,6 +386,9 @@ class GenerateInChrome(unittest.TestCase):
                          "the about text is cut at 60 characters")
         self.assertEqual(d["choice"], "square", "nothing changes before a pick")
         self.assertEqual(self.calls[0][:3], (self.ids["Motors"], "Motors", "Electric drivetrain for the cargo bike, from motor to battery."))
+        # P362: the PO label colour the page paints goes with the ask, as hex.
+        rgb = [int(x) for x in re.findall(r"\d+", self.g("labelFill"))[:3]]
+        self.assertEqual(self.calls[0][4].upper(), "#" + "".join(f"{v:02X}" for v in rgb), (self.g("labelFill"), self.calls[0]))
 
     def test_picked(self):
         d = self.g("picked")

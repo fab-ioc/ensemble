@@ -19087,10 +19087,19 @@ function psGenHtml(pj, d) {
     + '<button type="button" class="ps-btn" id="ps-gen-again">Try again</button></div></div>';
 }
 // One POST: {svgs, agent, model} or {error, agent, model}; throws only when aborted.
+// P362: the project's PO label colour as hex, in the theme painted now (the PO
+// label's own fill, ProjectColour.shade): the colour a generated icon is drawn in.
+function psLabelHex(pid) {
+  try {
+    const kind = (String(ldpColour(pid)).match(/--c-(\w+)-bold/) || [])[1] || 'progress';
+    const hex = ProjectColour.shade(kind, getComputedStyle(document.documentElement)).hex;
+    return /^#[0-9a-f]{6}$/i.test(hex) ? hex : '';
+  } catch (e) { return ''; }
+}
 async function psGenPost(pid, name, signal) {
   let r;
   try {
-    r = await fetch('/api/projects/icon-gen', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ projectId: pid, name }), signal });
+    r = await fetch('/api/projects/icon-gen', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ projectId: pid, name, colour: psLabelHex(pid) }), signal });
   } catch (e) {
     if (signal && signal.aborted) throw e;
     return { error: 'network' };
@@ -19175,7 +19184,9 @@ function psOnce(pid, d, focus) {
       if (dlg.open) dlg.close();
       resolve(v);
     };
-    const onCancel = (ev) => { ev.preventDefault(); finish(null); };
+    // Esc on the dialog closes it. A cancelled file picker fires its own
+    // 'cancel', which bubbles from #ps-file (Chrome, Safari 16.4+): not this one.
+    const onCancel = (ev) => { if (ev.target !== dlg) return; ev.preventDefault(); finish(null); };
     const paint = (keep) => {
       const pj = projectById(pid);
       if (!pj) { finish(null); return; }
@@ -19291,12 +19302,13 @@ function psOnce(pid, d, focus) {
           paint('');
           const again = dlg.querySelector(`input[name="ps-icon"][value="${r.value}"]`);
           if (again) again.focus();
-          // Image with no picture yet: pick one.
-          if (r.value === 'image' && !psPicSrc(pj, d)) dlg.querySelector('#ps-file').click();
+          // P362: choosing Image only shows its row; the picker opens from Upload image… / Replace….
         };
       });
       const file = dlg.querySelector('#ps-file');
       dlg.querySelector('#ps-up').onclick = (ev) => { ev.preventDefault(); file.click(); };
+      // A cancelled picker changes nothing and leaves the settings open (P362).
+      file.addEventListener('cancel', (ev) => ev.stopPropagation());
       dlg.querySelector('#ps-gen').onclick = (ev) => { ev.preventDefault(); genStart(pj); };
       const gb = (id, fn) => { const b = dlg.querySelector('#' + id); if (b) b.onclick = fn; };
       gb('ps-gen-cancel', () => {
