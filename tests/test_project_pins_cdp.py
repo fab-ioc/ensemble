@@ -64,7 +64,8 @@ async function main() {
     }
     const ev = async (expr) => { const r = await c.send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true }, s); if (r.exceptionDetails) throw new Error(expr.slice(0, 120) + ' :: ' + JSON.stringify(r.exceptionDetails).slice(0, 600)); return r.result.value; };
     const until = async (expr, ms = 20000) => { const t = Date.now(); while (Date.now() - t < ms) { let v = null; try { v = await ev(expr); } catch (e) {} if (v) return v; await sleep(120); } return null; };
-    const at = (expr) => ev(`(() => { const e = (${expr}); if (!e) return null; const r = e.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2, t: r.top, b: r.bottom, w: r.width, h: r.height }; })()`);
+    // #370: rows are 28px, so a row may sit below the list's fold; scroll it in as a person would.
+    const at = (expr) => ev(`(() => { const e = (${expr}); if (!e) return null; e.scrollIntoView({ block: 'nearest' }); const r = e.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2, t: r.top, b: r.bottom, w: r.width, h: r.height }; })()`);
     const mouse = (type, x, y, extra) => c.send('Input.dispatchMouseEvent', Object.assign({ type, x, y }, extra || {}), s);
     const click = async (expr) => {
       const p = await at(expr); if (!p) throw new Error('nothing at ' + expr);
