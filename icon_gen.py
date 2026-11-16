@@ -85,10 +85,10 @@ def _ok_value(v: str) -> bool:
     return all(f.lower() in _FUNCS for f in _FUNC_RE.findall(v))
 
 
-def sanitize(text: str) -> str:
+def sanitize(text: str, max_bytes: int = MAX_SVG_BYTES) -> str:
     """One SVG written out again from its parsed tree, every element and
     attribute on the allow-list; Unsafe when anything is not."""
-    if not isinstance(text, str) or len(text.encode("utf-8")) > MAX_SVG_BYTES:
+    if not isinstance(text, str) or len(text.encode("utf-8")) > max_bytes:
         raise Unsafe("size")
     low = text.lower()
     if "<!doctype" in low or "<!entity" in low or "<?" in low or "<![cdata[" in low:
@@ -246,7 +246,8 @@ NAMED = {"white": (255, 255, 255), "black": (0, 0, 0), "gray": (128, 128, 128), 
          "currentcolor": (0, 0, 0)}   # an <img> has no colour to give: black
 NO_PAINT = {"none", "transparent"}
 HUE_SPAN = 18      # degrees: a colour this near the label's hue is a tint or shade of it
-NEAR = 40          # RGB distance at which a colour counts as the label colour itself
+NEAR = 40          # RGB distance at which another colour counts as the label colour's own
+MIN_CONTRAST = 3   # the symbol's main colour on the ground (WCAG non-text)
 
 
 def norm_hex(s: str) -> str:
@@ -482,19 +483,33 @@ def _foreign(k, label) -> bool:
     return not isinstance(k, tuple) or (not _neutral(k) and _hue_gap(k, label) > HUE_SPAN and _dist(k, label) > NEAR)
 
 
+def _symbol_main(ps: list[dict], colour_of):
+    """The symbol's main colour (by area, the ground left out), as colour_of gives it."""
+    weight: dict = {}
+    for p in ps:
+        c = colour_of(p)
+        if not p["ground"] and c is not None:
+            weight[c] = weight.get(c, 0) + p["area"]
+    return max(weight, key=weight.get) if weight else None
+
+
 def check(svg: str, colour: str) -> dict:
-    """How an icon stands to the label colour: {ok, dominant, foreign}. ok when its
-    main colour (the hued one with the most area: the ground's or the symbol's) is
-    the label colour and every other colour a neutral or a tint or shade of it."""
+    """How an icon stands to the label colour: {ok, dominant, foreign, legible}. ok
+    when its main colour (the hued one with the most area: the ground's or the
+    symbol's) is exactly the label colour, every other colour a neutral or a tint or
+    shade of it, and the symbol's main colour reads on the ground at 3:1."""
     label = parse_colour(norm_hex(colour))
     if label is None:
-        return {"ok": True, "dominant": None, "foreign": []}
+        return {"ok": True, "dominant": None, "foreign": [], "legible": True}
     ps = _paints(ET.fromstring(svg))
     hued = [p for p in ps if p["rgb"] is None or not _neutral(p["rgb"])]
     dom = _dominant(hued)
     foreign = sorted({_hex(k) if isinstance(k, tuple) else k for k in map(_key, hued) if _foreign(k, label)})
-    dom_ok = isinstance(dom, tuple) and _dist(dom, label) <= NEAR
-    return {"ok": dom_ok and not foreign, "dominant": _hex(dom) if isinstance(dom, tuple) else dom, "foreign": foreign}
+    ground = next((p for p in ps if p["ground"]), None)
+    sym = _symbol_main(ps, lambda p: p["rgb"])
+    legible = ground is None or ground["rgb"] is None or sym is None or _contrast(sym, ground["rgb"]) >= MIN_CONTRAST
+    return {"ok": dom == label and not foreign and legible,
+            "dominant": _hex(dom) if isinstance(dom, tuple) else dom, "foreign": foreign, "legible": legible}
 
 
 def _apart(label, c, on=None):
@@ -522,11 +537,12 @@ def _ink(on):
 
 def recolour(svg: str, colour: str) -> str:
     """An icon (sanitised) in the label colour: the very same string when check()
-    passes it; else its main colour becomes the label colour, each other hue a tint
-    or shade of it, and a neutral that would then read too faintly on the ground
-    white or near-black. All neutral (black on white), the symbol's main colour
-    becomes the label colour. Each change is made where the colour is set (a <g>
-    for the shapes in it)."""
+    passes it; else its main colour becomes exactly the label colour, each other
+    hue a tint or shade of it at 3:1 on the ground, and the symbol's main colour,
+    when it then reads too faintly on the ground, white or near-black (or the
+    ground does). All neutral (black on white), the symbol's main colour becomes
+    the label colour. Each change is made where the colour is set (a <g> for the
+    shapes in it)."""
     label = parse_colour(norm_hex(colour))
     if label is None or check(svg, colour)["ok"]:
         return svg
@@ -537,21 +553,27 @@ def recolour(svg: str, colour: str) -> str:
         hued = [p for p in ps if not p["ground"]] or ps
     dom = _dominant(hued)
     new = {id(p): label for p in hued if _key(p) == dom}
-    # What is on the ground must still read on it (3:1).
     ground = next((p for p in ps if p["ground"]), None)
-    on = None
-    if ground is not None and ground["rgb"] is not None:
-        if id(ground) in new:
-            for p in ps:
-                if p is not ground and p["rgb"] is not None and _neutral(p["rgb"]) and _contrast(p["rgb"], label) < 3:
-                    new[id(p)] = _ink(label)
-        elif _contrast(ground["rgb"], label) < 3 and new:
-            new[id(ground)] = _ink(label)
-        on = new.get(id(ground), ground["rgb"])
+    if ground is not None and ground["rgb"] is None:
+        ground = None
+    on = new.get(id(ground), ground["rgb"]) if ground is not None else None
     for p in hued:
         k = _key(p)
         if id(p) not in new and _foreign(k, label):
             new[id(p)] = _apart(label, k, on) if isinstance(k, tuple) else label
+    # The symbol's main colour must read on the ground (3:1): on a ground in the
+    # label colour, it becomes white or near-black; else the ground does.
+    if ground is not None:
+        final = lambda p: new.get(id(p), p["rgb"])
+        sym = _symbol_main(ps, final)
+        g = final(ground)
+        if sym is not None and _contrast(sym, g) < MIN_CONTRAST:
+            if g == label:
+                for p in ps:
+                    if not p["ground"] and final(p) == sym:
+                        new[id(p)] = _ink(label)
+            else:
+                new[id(ground)] = _ink(sym)
     for p in ps:
         c = new.get(id(p))
         if c is None:
@@ -564,9 +586,11 @@ def recolour(svg: str, colour: str) -> str:
         else:
             el.set(prop, v)
     try:
-        return sanitize(_write(root))
+        # Only colours changed, each now a 7-character hex, and a shape whose fill was
+        # unset may have gained one: it may outgrow MAX_SVG_BYTES by that much.
+        return sanitize(_write(root), MAX_SVG_BYTES * 2)
     except Unsafe:
-        return svg
+        return svg   # generate() then leaves it out: check() still fails it
 
 
 def which_cli() -> dict | None:
@@ -670,12 +694,18 @@ def generate(key: str, name: str, about: str, timeout: float = TIMEOUT_S,
             return False, "no_icons", meta
         extra = {}
         if colour:
-            out, n = [], 0
+            out, n, lost = [], 0, 0
             for s in svgs:
                 r = recolour(s, colour)
                 n += r != s
-                if r not in out:
+                if not check(r, colour)["ok"]:
+                    lost += 1   # recolour could not make it right: never show it off-colour
+                elif r not in out:
                     out.append(r)
+            if lost:
+                print(f"[icon-gen] {lost} icon(s) left out: not in {colour} after recolouring", flush=True)
+            if not out:
+                return False, "no_icons", meta
             svgs, extra = out, {"colour": colour, "recoloured": n}
         return True, "ok", {**meta, "svgs": svgs, **extra, "ms": int((time.monotonic() - t0) * 1000)}
     finally:

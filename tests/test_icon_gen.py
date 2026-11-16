@@ -334,10 +334,9 @@ class LabelColour(unittest.TestCase):
 
     def test_an_icon_already_in_the_colour_is_untouched(self):
         for s in (icon(BLUE),                                     # the ground in it, a white symbol
-                  icon("#0055CC", '<path d="M10 10h28v28z" fill="#1D2125"/><circle cx="9" cy="9" r="2" fill="#85b8ff"/>'),
+                  icon("#0055CC", '<path d="M10 10h28v28z" fill="#FFFFFF"/><circle cx="9" cy="9" r="2" fill="#85b8ff"/>'),
                   icon("#FFFFFF", f'<path d="M10 10h28v28z" fill="{BLUE}"/>'),   # the symbol in it
-                  icon("rgb(0, 85, 204)"),
-                  icon("#0a5bd0")):                               # near enough
+                  icon("rgb(0, 85, 204)")):
             self.assertTrue(icon_gen.check(s, BLUE)["ok"], s)
             self.assertIs(icon_gen.recolour(s, BLUE), s)
         orange = icon("#F97316")
@@ -375,6 +374,60 @@ class LabelColour(unittest.TestCase):
         self.assertGreaterEqual(icon_gen._contrast(bolt, (0x21, 0x6E, 0x4E)), 3, "and 3:1 on it")
         self.assertTrue(icon_gen.check(r, "#216E4E")["ok"], r)
 
+    def test_near_is_not_the_colour(self):
+        # Review 1: the main colour must be the label colour itself, not one near it.
+        for near in ("#23885f", "#2a7350"):
+            s = icon(near)
+            self.assertFalse(icon_gen.check(s, "#216E4E")["ok"], near)
+            r = icon_gen.recolour(s, "#216E4E")
+            self.assertIn('rx="10" fill="#216e4e"', r)
+            self.assertTrue(icon_gen.check(r, "#216E4E")["ok"])
+
+    def test_the_symbol_always_reads_on_the_ground(self):
+        # Review 1: a symbol already in the label colour on a ground that becomes it.
+        s = icon("#f97316", '<path d="M10 10h28v28z" fill="#216e4e"/>')
+        r = icon_gen.recolour(s, "#216E4E")
+        self.assertIn('rx="10" fill="#216e4e"', r)
+        self.assertIn('<path d="M10 10h28v28z" fill="#ffffff"/>', r, "not green on green")
+        self.assertTrue(icon_gen.check(r, "#216E4E")["ok"])
+        # White on the yellow label colour is 1.98:1: the check fails it, the symbol turns near-black.
+        y = icon("#E2B203", '<path d="M10 10h28v28z" fill="#FFFFFF"/>')
+        c = icon_gen.check(y, "#E2B203")
+        self.assertEqual((c["ok"], c["legible"], c["dominant"]), (False, False, "#e2b203"))
+        r = icon_gen.recolour(y, "#E2B203")
+        self.assertIn('fill="#1d2125"', r)
+        self.assertTrue(icon_gen.check(r, "#E2B203")["ok"])
+        # The label colour on a near-black ground under 3:1: the ground turns white.
+        d = icon_gen.recolour(icon("#1D2125", f'<path d="M10 10h28v28z" fill="#ff0000"/>'), BLUE)
+        self.assertIn('rx="10" fill="#ffffff"', d)
+        self.assertIn(f'fill="{BLUE}"', d)
+
+    def test_recolouring_may_outgrow_the_size_cap(self):
+        # Review 1: 155 red shapes near MAX_SVG_BYTES; each "red" becomes a 7-character hex.
+        paths = "".join(f'<path d="M{i % 40} {i // 40}h2v2h-2v-2h1v1h1v-1h1z" fill="red"/>'
+                        for i in range(155))
+        s = icon_gen.sanitize(svg('<rect x="0" y="0" width="48" height="48" fill="#FFFFFF"/>' + paths))
+        self.assertTrue(icon_gen.MAX_SVG_BYTES - 620 < len(s.encode()) <= icon_gen.MAX_SVG_BYTES)
+        r = icon_gen.recolour(s, "#216E4E")
+        self.assertGreater(len(r.encode()), icon_gen.MAX_SVG_BYTES, "it outgrew the cap")
+        self.assertTrue(icon_gen.check(r, "#216E4E")["ok"])
+        self.assertNotIn("red", r)
+        raw, ext = project_icon.accept("data:image/svg+xml;base64," + base64.b64encode(r.encode()).decode())
+        self.assertEqual(ext, "svg", "#329 still takes it")
+
+    def test_generate_leaves_out_what_recolour_cannot_fix(self):
+        cli = {"agent": "claude", "model": "haiku", "bin": "claude"}
+        good, bad = icon(BLUE), icon("#F97316")
+        with mock.patch.object(icon_gen, "which_cli", lambda: cli), \
+                mock.patch.object(icon_gen, "_run", lambda c, t, to: good + bad), \
+                mock.patch.object(icon_gen, "recolour", lambda s, c: s):
+            ok, code, res = icon_gen.generate("proj-d", "Motors", "", colour=BLUE)
+            self.assertEqual((ok, res["svgs"]), (True, [good]), "never shown off-colour")
+        with mock.patch.object(icon_gen, "which_cli", lambda: cli), \
+                mock.patch.object(icon_gen, "_run", lambda c, t, to: bad), \
+                mock.patch.object(icon_gen, "recolour", lambda s, c: s):
+            self.assertEqual(icon_gen.generate("proj-d", "Motors", "", colour=BLUE)[:2], (False, "no_icons"))
+
     def test_black_on_white_takes_the_colour_on_its_symbol(self):
         s = icon("white", '<path d="M10 10 l28 0 l-14 28 z"/>')
         self.assertFalse(icon_gen.check(s, BLUE)["ok"])
@@ -394,7 +447,7 @@ class LabelColour(unittest.TestCase):
     def test_style_paint_is_mapped_in_the_style(self):
         root = ET.fromstring(svg('<rect width="48" height="48" style="fill:#F97316"/>'))
         # sanitize() refuses style, so recolour is fed one built by hand.
-        with mock.patch.object(icon_gen, "sanitize", lambda t: t):
+        with mock.patch.object(icon_gen, "sanitize", lambda t, *a: t):
             r = icon_gen.recolour(icon_gen._write(root), BLUE)
         self.assertIn('style="fill:#0055cc"', r)
 
