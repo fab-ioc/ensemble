@@ -1463,6 +1463,31 @@
   .msg .from .send-how { margin-left:var(--s-100); color:var(--fg-subtle); }
   #stop-note { flex:0 0 auto; padding:var(--s-100) var(--s-300); color:var(--fg-muted); font-size:var(--fs-200); text-align:center; }
 
+  /* Issue 51: naming a thread. The pencil after its title (header, Threads
+     list) and the field that takes the title's place; the box's name field. */
+  .thr-pen { flex:0 0 auto; width:28px; height:28px; padding:0; display:inline-flex; align-items:center; justify-content:center;
+    background:transparent; border:1px solid transparent; border-radius:var(--r-200); color:var(--fg-subtle); cursor:pointer; vertical-align:middle; }
+  .thr-pen[hidden] { display:none; }
+  .thr-pen:hover { background:var(--hover); color:var(--fg); }
+  .thr-pen:focus-visible { outline:none; box-shadow:0 0 0 2px var(--focus-ring); }
+  #ts-pen { margin-right:auto; }
+  #ts-title { flex:0 1 auto; }
+  #ts-title, header h1 #title { cursor:text; }
+  .thr-name { min-width:0; height:28px; padding:0 var(--s-200); border:1px solid var(--focus-ring); border-radius:var(--r-200);
+    box-shadow:0 0 0 1px var(--focus-ring); background:var(--surface); color:var(--fg); font:inherit; }
+  .thr-name:focus { outline:none; }
+  .thr-name.head { flex:1 1 auto; font-weight:600; }
+  header h1 .thr-name.head { width:min(420px, 60vw); font-size:14px; }
+  .thr-name.row { width:100%; }
+  .tl-open[hidden] { display:none; }
+  .tl-edit { flex:1 1 auto; min-width:0; display:flex; flex-direction:column; align-items:flex-start; gap:2px; padding:var(--s-200) 0; }
+  .tl-keys { color:var(--fg-muted); font-size:var(--fs-200); }
+  #compose-thread-name { flex:0 1 280px; min-width:0; height:28px; margin-left:var(--s-200); padding:0 var(--s-200);
+    border:1px solid var(--border-strong); border-radius:var(--r-200); background:var(--surface); color:var(--fg); font:inherit; font-size:var(--fs-200); }
+  #compose-thread-name[hidden] { display:none; }
+  #compose-thread-name::placeholder { color:var(--fg-muted); }
+  #compose-thread-name:focus { outline:none; border-color:var(--focus-ring); box-shadow:0 0 0 1px var(--focus-ring); }
+  @media (pointer:coarse) { .thr-pen { min-width:var(--touch-min); min-height:var(--touch-min); } #compose-thread-name { font-size:16px; } }
   /* #367: the thread icon toggle; pressed, this message starts a thread. */
   #new-thread { width:32px; height:32px; padding:0; display:inline-flex; align-items:center; justify-content:center; background:transparent;
     border:1px solid transparent; border-radius:var(--r-200); color:var(--fg-subtle); cursor:pointer; }
@@ -1799,7 +1824,7 @@
 <header>
   <a id="to-app" href="/" hidden aria-label="Open in Ensemble" title="Open this conversation in Ensemble"><img src="/static/icons/favicon.svg" alt="" width="22" height="22"></a>
   <button type="button" id="thr-back" hidden title="Back to the chat">‹ Chat</button>
-  <h1><span id="tno" class="tno" hidden></span><span id="title">session</span></h1>
+  <h1><span id="tno" class="tno" hidden></span><span id="title">session</span><button type="button" id="title-pen" class="thr-pen" title="Rename thread" aria-label="Rename thread" hidden><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10.5 2.5l3 3L5.5 13.5 2 14l.5-3.5z"/><path d="M9 4l3 3"/></svg></button></h1>
   <span id="status" class="cstate" role="status"><span class="cs-dot"></span><span class="cs-txt"></span></span>
   <span id="hop" class="dim"></span>
   <span class="grow"></span>
@@ -1831,7 +1856,7 @@
     <div id="compose">
       <div id="compose-size" role="separator" aria-orientation="horizontal" aria-label="Message box height" title="Drag to resize. Double-click for the automatic height." tabindex="0" hidden></div>
       <div id="slashpop" role="listbox" aria-label="Commands" hidden></div>
-      <div id="compose-destination">To: <a href="#" id="compose-destination-link">Chat</a></div>
+      <div id="compose-destination">To: <a href="#" id="compose-destination-link">Chat</a><input type="text" id="compose-thread-name" maxlength="80" placeholder="Name (optional)" aria-label="Name of the new thread (optional; empty: its first words)" autocomplete="off" hidden></div>
       <div class="dim" id="hint" role="status">Loading conversation. Send will be available shortly.</div>
       <div id="editor">
         <div id="compose-target" hidden><span></span><button type="button" aria-label="Send to main chat" title="Send to main chat">&times;</button></div>
@@ -1867,7 +1892,7 @@
   </div>
   <!-- A thread beside the chat (#234), or over it on a phone: the thread page in a frame. -->
   <aside id="thr-side" hidden aria-label="Thread">
-    <div class="ts-head"><button type="button" id="ts-back" title="Back to the chat">&lsaquo; Back</button><span id="ts-title">Thread</span><a id="ts-to-app" href="/" hidden aria-label="Open in Ensemble" title="Open this thread in Ensemble"><img src="/static/icons/favicon.svg" alt="" width="22" height="22"></a><button type="button" id="ts-close" title="Close the thread" aria-label="Close the thread">&times;</button></div>
+    <div class="ts-head"><button type="button" id="ts-back" title="Back to the chat">&lsaquo; Back</button><span id="ts-title">Thread</span><button type="button" id="ts-pen" class="thr-pen" title="Rename thread" aria-label="Rename thread" hidden><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10.5 2.5l3 3L5.5 13.5 2 14l.5-3.5z"/><path d="M9 4l3 3"/></svg></button><a id="ts-to-app" href="/" hidden aria-label="Open in Ensemble" title="Open this thread in Ensemble"><img src="/static/icons/favicon.svg" alt="" width="22" height="22"></a><button type="button" id="ts-close" title="Close the thread" aria-label="Close the thread">&times;</button></div>
     <iframe id="ts-frame" title="Thread"></iframe>
   </aside>
   <div id="agentcol"></div>
@@ -7031,7 +7056,14 @@ function newThreadPaint() {
   if (off) NEW_THREAD = false;
   b.hidden = off;
   b.setAttribute('aria-pressed', NEW_THREAD ? 'true' : 'false');
+  // Issue 51: its name, optional, on the To line while the icon is on.
+  const nm = $('#compose-thread-name');
+  if (nm) { nm.hidden = !NEW_THREAD; if (!NEW_THREAD) nm.value = ''; }
 }
+$('#compose-thread-name').addEventListener('keydown', e => {
+  if (askKeyAction(e) === 'send') { e.preventDefault(); $('#send').click(); }
+  else if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); $('#input').focus(); }
+});
 $('#new-thread').addEventListener('click', () => {
   NEW_THREAD = !NEW_THREAD;
   composerDestinationPaint();
@@ -7632,6 +7664,7 @@ function threadHead() {
     main?.sharedThreadUpdate(sharedThreadTarget());
   }
   setText($('#title'), title);
+  $('#title-pen').hidden = !threadNameable(THREAD_TID()) || !!$('header h1 .thr-name');
   setText($('#tno'), '');
   $('#tno').hidden = true;
   const tab = 'Thread · ' + title;
@@ -7751,15 +7784,118 @@ function threadRowHtml(t, arch) {
   const pts = t.openPoints || [];
   const meta = [`${n} repl${n === 1 ? 'y' : 'ies'}`, who, pts.length ? 'open ' + pts.join(' ') : ''].filter(Boolean).join(' · ');
   const at = +t.updatedAt || +t.lastAt || 0;
+  // Issue 51: the row being renamed stays as it was drawn, its field in it.
+  if (THR_RENAME && THR_RENAME.tid === t.id && THR_RENAME.html) return THR_RENAME.html;
   return `<div class="tl-row${picked ? ' sel' : ''}${arch ? ' arch' : ''}" data-key="tl:${esc(t.id)}:${at}:${s.on ? 1 : 0}:${picked ? 1 : 0}:${arch ? 1 : 0}">`
     + selBoxHtml('threads', t.id, title)
     + `<button type="button" class="thr-open tl-open" data-thr="${esc(t.id)}" aria-label="${esc(title + '. ' + meta + (unread ? ', ' + unread + ' new' : ''))}">`
     + `<span class="tl-title">${unread ? '<span class="thr-dot" aria-hidden="true"></span>' : ''}${esc(title)}</span>`
     + `<span class="tl-meta">${esc(meta)}</span></button>`
     + selAgeHtml(at, 'tl-age')
+    + (!arch && !s.on && threadNameable(t.id) ? `<button type="button" class="thr-pen tl-pen" data-thr-rename="${esc(t.id)}" title="Rename thread" aria-label="Rename ${esc(title)}">${PEN_SVG}</button>` : '')
     + (arch ? `<button type="button" class="tl-btn" data-sel-kind="threads" data-sel-act="restore-one" data-sel-id="${esc(t.id)}" aria-label="Restore ${esc(title)}">Restore</button>` : '')
     + '</div>';
 }
+// Issue 51: the person names a thread, from its header (the panel beside
+// the chat, the thread's own window) or its row in the Threads list. The hub
+// keeps the name in the chat's thread record; empty, the title is its first
+// words again. Enter saves, Esc cancels, clicking away saves.
+const PEN_SVG = '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10.5 2.5l3 3L5.5 13.5 2 14l.5-3.5z"/><path d="M9 4l3 3"/></svg>';
+let THR_RENAME = null;     // {tid, html}: the Threads-list row being renamed, drawn as it was
+function threadNameable(tid) { return !!tid && tid !== 'team:activity'; }
+function THREAD_TID() { return THREAD_MODE ? (THR_INFO?.id || THREAD || (THREAD_MID ? 'm:' + THREAD_MID : '')) : ''; }
+function threadKnown(tid) {
+  return THR_META[tid] || (THR_TLIST || []).find(x => x.id === tid) || (THR_TARCH || []).find(x => x.id === tid)
+    || (THR_INFO && THR_INFO.id === tid ? THR_INFO : null);
+}
+function threadAuto(tid) { const t = threadKnown(tid); return (t && (t.autoTitle || t.title)) || 'Thread'; }
+function threadRenamed(tid, name) {
+  const fix = t => { if (t && t.id === tid) { t.title = name || t.autoTitle || t.title; t.named = !!name; } };
+  fix(THR_META[tid]);
+  [THR_TLIST, THR_TARCH, THR_UNREAD].forEach(l => (l || []).forEach(fix));
+  fix(THR_INFO);
+  if (SHARED_THREAD && SHARED_THREAD.thread === tid) { SHARED_THREAD.title = name || threadAuto(tid); sharedTargetPaint(); }
+  composerDestinationPaint();
+}
+async function renameThread(tid, name) {
+  const d = await postOk('/api/room/thread/name', { roomId: ROOM, thread: tid, name });
+  threadRenamed(tid, d.name || '');
+  if (!THREAD_MODE && LAST_ITEMS) renderBubbles(LAST_ITEMS);
+  // The thread beside the chat reads it again (its To line, its title).
+  try { $('#ts-frame')?.contentWindow?.refresh?.(); } catch (e) {}
+  setTimeout(refresh, 0);
+  return d.name || threadAuto(tid);
+}
+function nameEdit(inp, done) {
+  let over = false;
+  const end = save => { if (over) return; over = true; done(save, inp.value.trim()); };
+  inp.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); e.stopPropagation(); end(true); }
+    else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); end(false); }
+  });
+  inp.addEventListener('blur', () => end(true));
+  inp.focus();
+  inp.select();
+}
+function nameField(cls, value, auto) {
+  const inp = document.createElement('input');
+  inp.type = 'text';
+  inp.className = 'thr-name ' + cls;
+  inp.value = value;
+  inp.maxLength = 80;
+  inp.placeholder = auto;
+  inp.autocomplete = 'off';
+  inp.setAttribute('aria-label', 'Thread name. Enter saves, Esc cancels; empty: its first words');
+  return inp;
+}
+function renameFailed(e) { setText($('#hint'), 'Not renamed: ' + ((e && (e.reason || e.message)) || 'no answer') + '.'); }
+function headRename(label, pen, tid) {
+  if (!threadNameable(tid) || label.hidden) return;
+  const was = label.textContent, auto = threadAuto(tid);
+  const inp = nameField('head', was, auto);
+  label.hidden = true; pen.hidden = true;
+  label.after(inp);
+  nameEdit(inp, async (save, v) => {
+    inp.remove(); label.hidden = false; pen.hidden = false;
+    if (!save || v === was) return;
+    setText(label, v || auto);
+    try { setText(label, await renameThread(tid, v)); }
+    catch (e) { setText(label, was); renameFailed(e); }
+  });
+}
+function listRename(tid) {
+  const pen = [...document.querySelectorAll('.tl-pen')].find(b => b.dataset.thrRename === tid);
+  const row = pen && pen.closest('.tl-row');
+  if (!row || row.querySelector('.thr-name')) return;
+  const open = row.querySelector('.tl-open'), was = open.querySelector('.tl-title').textContent, auto = threadAuto(tid);
+  THR_RENAME = { tid, html: row._h || '' };
+  const box = document.createElement('div');
+  box.className = 'tl-edit';
+  const inp = nameField('row', was, auto);
+  const keys = document.createElement('span');
+  keys.className = 'tl-keys';
+  keys.textContent = 'Enter saves · Esc cancels · empty: first words';
+  box.append(inp, keys);
+  open.hidden = true; pen.hidden = true;
+  open.after(box);
+  nameEdit(inp, async (save, v) => {
+    THR_RENAME = null;
+    box.remove(); open.hidden = false; pen.hidden = false;
+    if (save && v !== was) try { await renameThread(tid, v); } catch (e) { renameFailed(e); }
+    if (LAST_ITEMS) renderBubbles(LAST_ITEMS);
+  });
+}
+document.addEventListener('click', e => {
+  const b = e.target.closest?.('[data-thr-rename]');
+  if (b) { e.preventDefault(); listRename(b.dataset.thrRename); }
+});
+['#title', '#title-pen'].forEach(q => $(q).addEventListener('click', () => {
+  if (THREAD_MODE && !$('#title-pen').hidden) headRename($('#title'), $('#title-pen'), THREAD_TID());
+}));
+['#ts-title', '#ts-pen'].forEach(q => $(q).addEventListener('click', () => {
+  if (TS && !$('#ts-pen').hidden) headRename($('#ts-title'), $('#ts-pen'), TS.tid);
+}));
+function tsPenPaint() { $('#ts-pen').hidden = !(TS && threadNameable(TS.tid)) || !!$('.ts-head .thr-name'); }
 // What the Threads filter draws in place of the balloons.
 function threadListRows() {
   const s = LSEL.threads, live = THR_TLIST || [], arch = THR_TARCH || [];
@@ -8000,6 +8136,7 @@ function sideOpen(o) {
     return;
   }
   setText($('#ts-title'), title);
+  tsPenPaint();
   // (The same thread shown in a Dock panel until now is loaded here.)
   const shown = !side.hidden;
   side.hidden = false;
@@ -8075,6 +8212,7 @@ window.addEventListener('message', e => {
     setText($('#ts-title'), d.title || 'Thread');
     // A thread started on a balloon has its id once its first reply is in.
     if (TS && d.thread && TS.tid !== d.thread) { if (TS.mid) sharedThreadPromote(TS.mid, d.thread); TS = { tid: d.thread, mid: '' }; try { localStorage.setItem(TS_KEY, JSON.stringify(TS)); } catch (err) {} sideMark(); }
+    tsPenPaint();
   } else if (d.type === 'thread-back') sideClose();
   else if (d.type === 'open-thread' && d.roomId === ROOM) openThread(d.thread || '', d.mid || '', d.part || '');
   else if (d.type === 'open-msg' && d.roomId === ROOM) gotoMsg(d.msg || '', d.part || '');
@@ -9402,7 +9540,11 @@ async function sendResuming(text, to, key, attachments, now, box = false) {
     body.also = !!($('#thr-also') && $('#thr-also').checked);
     const t = THREAD_MODE ? THR_INFO : SHARED_THREAD?.info;
     if (t && !(t.points || []).length && t.root && text) body.text = msgLink(t.root) + '\n\n' + text;
-  } else if (box && THREADED && NEW_THREAD) body.newThread = true;     // #367: the box's thread icon
+  } else if (box && THREADED && NEW_THREAD) {
+    body.newThread = true;     // #367: the box's thread icon
+    const name = ($('#compose-thread-name')?.value || '').trim();
+    if (name) body.threadName = name;     // issue 51: named as it starts
+  }
   if (attachments && attachments.length) body.attachments = attachments;
   return postOk('/api/room/resume', body);
 }

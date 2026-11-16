@@ -8,6 +8,7 @@ import copy
 import json
 from unittest import mock
 
+import chatroom
 import points
 import threads
 from tests import test_points as tp
@@ -94,6 +95,19 @@ class ThreadNames(tp._World):
         self.assertEqual(status, 400, out)
         status, out = self.post("/api/room/thread/name", {"roomId": "room-00000000", "thread": "P1", "name": "A"})
         self.assertEqual(status, 404, out)
+
+    def test_a_rename_shows_before_the_chat_is_read_again(self):
+        threads.ready(self.rid, chatroom.get_room(self.rid, public=False))
+        with mock.patch.object(threads.threading, "Thread") as started:
+            threads.rename(self.rid, "P2", "Login")
+            idx = threads.ready(self.rid, chatroom.get_room(self.rid, public=False))
+        self.assertTrue(started.called, "a build was started")
+        self.assertEqual(idx["threads"]["P2"]["title"], "Login")
+        threads.rename(self.rid, "P2", "")
+        with mock.patch.object(threads.threading, "Thread"):
+            threads._BUILDING.discard(self.rid)
+            idx = threads.ready(self.rid, chatroom.get_room(self.rid, public=False))
+        self.assertEqual(idx["threads"]["P2"]["title"], "Fix the login page")
 
     def test_search_shows_the_name(self):
         threads.rename(self.rid, "P2", "Login")

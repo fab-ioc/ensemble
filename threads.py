@@ -963,8 +963,12 @@ def _title_of(th: dict, names: dict) -> str:
 
 
 def _apply_names(out: dict, names: dict) -> None:
+    """The titles of an index as the person named them. Again on an index
+    already named (:func:`_names_now`): its automatic titles are kept."""
     for tid, th in out["threads"].items():
-        th["autoTitle"] = th.get("title") or ""
+        if "autoTitle" not in th:
+            th["autoTitle"] = th.get("title") or ""
+        th["title"] = th["autoTitle"]
         name = _title_of(th, names) if tid != "team:activity" else ""
         th["named"] = bool(name)
         if name:
@@ -1043,6 +1047,7 @@ def build(room_id: str, room: dict | None = None, *, show_progress: bool = True,
     by_mid = {r["mid"]: r for r in recs}
     hidden = _drop_deleted(out, by_mid, side.get("deleted") or {})
     _apply_names(out, side.get("names") or {})
+    out["namesSig"] = _side_sig(room_id)
     try:
         waiting, _older = points._LAST_DECISIONS.get(room_id) or ([], [])
     except Exception:       # noqa: BLE001
@@ -1139,6 +1144,19 @@ def _in_channel(idx: dict, mid: str) -> bool:
     return all(t == "team:activity" for t in idx["of"].get(mid) or [])
 
 
+def _names_now(room_id: str, idx: dict | None) -> dict | None:
+    """An index served while its next build runs has the names the record
+    holds now: a rename shows at once, not once the chat is read again."""
+    if idx is None:
+        return None
+    sig = _side_sig(room_id)
+    if idx.get("namesSig") != sig:
+        with _LOCK:
+            _apply_names(idx, load_side(room_id).get("names") or {})
+            idx["namesSig"] = sig
+    return idx
+
+
 def ready(room_id: str, room: dict) -> dict | None:
     """The chat's index, with a build started in the background when it is
     not current: until it is done the last one is served (a poll never waits
@@ -1155,7 +1173,7 @@ def ready(room_id: str, room: dict) -> dict | None:
         if hit is not None and hit[0] == sig:
             return hit[1]
         if room_id in _BUILDING:
-            return hit[1] if hit is not None else None
+            return _names_now(room_id, hit[1]) if hit is not None else None
         _BUILDING.add(room_id)
         if hit is None:
             progress.set_progress("thread:" + room_id, "Reading conversations")
@@ -1170,7 +1188,7 @@ def ready(room_id: str, room: dict) -> dict | None:
             with _LOCK:
                 _BUILDING.discard(room_id)
     threading.Thread(target=run, name=f"threads-{room_id}", daemon=True).start()
-    return hit[1] if hit is not None else None
+    return _names_now(room_id, hit[1]) if hit is not None else None
 
 
 # ---------------------------------------------------------------------------
