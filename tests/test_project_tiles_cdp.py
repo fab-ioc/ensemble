@@ -100,7 +100,8 @@ async function main() {
         tile: sq.classList.contains('ptile'), img: !!sq.querySelector('img'), tag: sq.tagName.toLowerCase(),
         w: sq.getBoundingClientRect().width, h: sq.getBoundingClientRect().height,
         letters: before.content, fill: cs.backgroundColor, image: cs.backgroundImage, ink: cs.color,
-        shine: after.content, shadow: cs.boxShadow,
+        shine: after.content, shadow: cs.boxShadow, shineImage: after.backgroundImage,
+        letterZ: before.zIndex, shineZ: after.zIndex,
         want: k ? { fill: resolve(root.getPropertyValue('--pt-' + k + '-f')), ink: resolve(root.getPropertyValue('--pt-' + k + '-i')),
           stops: stops(root.getPropertyValue('--pt-' + k + '-g')) } : null };
     });
@@ -110,6 +111,14 @@ async function main() {
   try {
     await load();
     const out = { views: [], errors };
+    // The bar switcher: a tile row and an uploaded-icon row are the same height, also with the
+    // pinned row's grip standing in for the icon.
+    await ev(`openProjMenu(); 0`); await sleep(300);
+    out.switcher = await ev(`[...document.querySelectorAll('#proj-menu .pm-item[data-proj]')].map(e => {
+      const r = e.closest('.pm-row'), h = e.getBoundingClientRect().height; r.classList.add('pm-lifted');
+      const lifted = e.getBoundingClientRect().height; r.classList.remove('pm-lifted');
+      return [e.querySelector('.pm-name').textContent, h, lifted]; })`);
+    await ev(`closeProjMenu(); 0`);
     out.initials = await ev(`${JSON.stringify(A.cases)}.map(n => ProjectColour.initials(n))`);
     for (const theme of ['light', 'dark']) {
       await ev(`localStorage.setItem('cd-theme', ${JSON.stringify(theme)}); cdTheme.apply(); 0`);
@@ -137,6 +146,18 @@ async function main() {
     await ev(`document.dispatchEvent(new Event('visibilitychange')); 0`);
     await until(`document.documentElement.dataset.ptiles === 'flat'`, 'other device');
     out.otherDevice = await ev(`document.documentElement.dataset.ptiles`);
+    // Two quick clicks whose saves would cross: the first one's PUT is held back. The last click wins
+    // on the page and in the hub.
+    await ev(`openSettings('prefs'); 0`); await sleep(300);
+    await ev(`(() => { const real = api; window.api = async (url, opts) => {
+      if (opts && opts.method === 'PUT' && String(opts.body).includes('glossy')) await new Promise(r => setTimeout(r, 600));
+      return real(url, opts); }; 0; })()`);
+    await ev(`document.querySelector('#pref-ptiles button[data-val="glossy"]').click();
+      document.querySelector('#pref-ptiles button[data-val="flat"]').click(); 0`);
+    await sleep(1500);
+    out.quick = await ev(`fetch('/api/settings').then(r => r.json()).then(j => ({ hub: j.projectIcons,
+      look: document.documentElement.dataset.ptiles, prefs: PREFS.projectIcons,
+      pressed: [...document.querySelectorAll('#pref-ptiles button[aria-pressed="true"]')].map(b => b.dataset.val) }))`);
     console.log(JSON.stringify(out));
   } finally { c.close(); ch.kill(); }
 }
@@ -232,6 +253,30 @@ class ProjectTilesInChrome(unittest.TestCase):
                 self.assertTrue(r['want']['stops'], r)
                 for stop in r['want']['stops']:
                     self.assertGreaterEqual(contrast(r['ink'], stop), 4.5, (view['theme'], stop, r))
+
+    def test_glossy_shine_lies_under_the_letters_and_keeps_4_5_to_1(self):
+        # What the eye sees under the shine: each gradient stop with the shine's white over it.
+        for view in self.got['views']:
+            if view['look'] != 'glossy':
+                continue
+            for r in (r for r in view['rows'] if r['tile']):
+                self.assertGreater(int(r['letterZ']), int(r['shineZ']) if r['shineZ'] != 'auto' else 0, r)
+                alpha = float(re.search(r'rgba\([^)]*,\s*([\d.]+)\)', r['shineImage']).group(1))
+                self.assertLessEqual(alpha, .36, r)
+                for stop in r['want']['stops']:
+                    c = channels(stop)
+                    seen = 'rgb(%f, %f, %f)' % tuple(255 * (v + (1 - v) * alpha) for v in c)
+                    self.assertGreaterEqual(contrast(r['ink'], seen), 4.5, (view['theme'], alpha, stop, r))
+                if r['want']['ink'] != 'rgb(255, 255, 255)':
+                    self.assertEqual(alpha, .36, ('a dark letter takes the full shine', r))
+
+    def test_switcher_rows_are_one_height(self):
+        self.assertEqual(sorted(n for n, _, _ in self.got['switcher']), sorted(NAMES))
+        for name, h, lifted in self.got['switcher']:
+            self.assertEqual((h, lifted), (30, 30), name)
+
+    def test_the_last_of_two_quick_clicks_wins(self):
+        self.assertEqual(self.got['quick'], {'hub': 'flat', 'look': 'flat', 'prefs': 'flat', 'pressed': ['flat']})
 
     def test_an_uploaded_icon_wins_over_both_looks(self):
         for view in self.got['views']:

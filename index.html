@@ -228,7 +228,8 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     --border-strong: #B3B9C4;
     --proj-icon-edge: var(--border-strong);   /* #329: the hairline inside a project's own icon */
     /* #370: the Glossy project tile's finish, the same over every colour and theme: a shine on
-       its top 44%, a light top edge and a dark foot edge inside, a small drop shadow. */
+       its top 44% (at most this strong: each colour's --pt-<kind>-h keeps its letter at 4.5:1),
+       a light top edge and a dark foot edge inside, a small drop shadow. */
     --pt-shine-top: rgba(255, 255, 255, .36);
     --pt-shine-low: rgba(255, 255, 255, .08);
     --pt-shine-edge: inset 0 1px 0 rgba(255, 255, 255, .55), inset 0 -1px 0 rgba(0, 0, 0, .18);
@@ -734,8 +735,9 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .pm-pinb:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--focus-ring); }
   .pm-pinrow > .pm-item { cursor: grab; }
   .pm-grip { display: none; flex: none; width: 22px; height: 12px; color: var(--fg-subtle); }
-  /* #370: a row with a 22px project tile keeps its 30px height. */
-  .pm-item:has(> .ptile) { padding-top: 4px; padding-bottom: 4px; }
+  /* #370: a row with a 22px project tile or icon is 30px high, also while a pinned row's
+     grip stands in for the icon (hover, drag). */
+  .pm-item:has(> .ptile, > .ldp-pic.pm-sw) { padding-top: 4px; padding-bottom: 4px; min-height: 30px; box-sizing: border-box; }
   .pm-pinrow:hover > .pm-item > .pm-sw, .pm-lifted > .pm-item > .pm-sw { display: none; }
   .pm-pinrow:hover .pm-grip, .pm-lifted .pm-grip { display: block; }
   .pm-griph { display: none; }
@@ -4601,14 +4603,17 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     font-weight: 600; font-style: normal; letter-spacing: 0; text-transform: none; user-select: none; }
   /* The initials are drawn, not text: a row's name, search and copy read as before (#370). */
   .ptile::before { content: attr(data-i); }
-  .ptile[data-k="progress"] { --pt-f: var(--pt-progress-f, var(--c-progress-bold)); --pt-i: var(--pt-progress-i, #fff); --pt-g: var(--pt-progress-g); --pt-s: var(--pt-progress-s); }
-  .ptile[data-k="success"] { --pt-f: var(--pt-success-f, var(--c-success-bold)); --pt-i: var(--pt-success-i, #fff); --pt-g: var(--pt-success-g); --pt-s: var(--pt-success-s); }
-  .ptile[data-k="warning"] { --pt-f: var(--pt-warning-f, var(--c-warning-bold)); --pt-i: var(--pt-warning-i, #fff); --pt-g: var(--pt-warning-g); --pt-s: var(--pt-warning-s); }
-  .ptile[data-k="discovery"] { --pt-f: var(--pt-discovery-f, var(--c-discovery-bold)); --pt-i: var(--pt-discovery-i, #fff); --pt-g: var(--pt-discovery-g); --pt-s: var(--pt-discovery-s); }
+  /* Glossy: the shine lies under the letters (it may lighten what is behind them, as much
+     as the letter allows at 4.5:1: --pt-h from ProjectColour.tileVars). */
+  :root[data-ptiles="glossy"] .ptile::before, .ptile.pt-gloss::before { position: relative; z-index: 1; }
+  .ptile[data-k="progress"] { --pt-f: var(--pt-progress-f, var(--c-progress-bold)); --pt-i: var(--pt-progress-i, #fff); --pt-g: var(--pt-progress-g); --pt-s: var(--pt-progress-s); --pt-h: var(--pt-progress-h); }
+  .ptile[data-k="success"] { --pt-f: var(--pt-success-f, var(--c-success-bold)); --pt-i: var(--pt-success-i, #fff); --pt-g: var(--pt-success-g); --pt-s: var(--pt-success-s); --pt-h: var(--pt-success-h); }
+  .ptile[data-k="warning"] { --pt-f: var(--pt-warning-f, var(--c-warning-bold)); --pt-i: var(--pt-warning-i, #fff); --pt-g: var(--pt-warning-g); --pt-s: var(--pt-warning-s); --pt-h: var(--pt-warning-h); }
+  .ptile[data-k="discovery"] { --pt-f: var(--pt-discovery-f, var(--c-discovery-bold)); --pt-i: var(--pt-discovery-i, #fff); --pt-g: var(--pt-discovery-g); --pt-s: var(--pt-discovery-s); --pt-h: var(--pt-discovery-h); }
   :root[data-ptiles="glossy"] .ptile, .ptile.pt-gloss { background: var(--pt-g, var(--pt-f)); text-shadow: var(--pt-s, none);
     box-shadow: var(--pt-shine-edge), 0 1px 2px var(--pt-shine-drop); }
   :root[data-ptiles="glossy"] .ptile::after, .ptile.pt-gloss::after { content: ''; position: absolute; left: 0; right: 0; top: 0; height: 44%;
-    background: linear-gradient(to bottom, var(--pt-shine-top), var(--pt-shine-low)); border-radius: inherit;
+    background: var(--pt-h, linear-gradient(to bottom, var(--pt-shine-top), var(--pt-shine-low))); border-radius: inherit;
     border-bottom-left-radius: 40% 3px; border-bottom-right-radius: 40% 3px; pointer-events: none; }
   :root .ptile.pt-flat { background: var(--pt-f); text-shadow: none; box-shadow: none; }
   :root .ptile.pt-flat::after { content: none; }
@@ -5165,13 +5170,13 @@ window.DOC_LISTENERS_PAUSED = false;
     <p class="cfg-hint">A name cut short in the left panel or a list shows whole while the pointer rests on it. Kept in this browser.</p>
     <!-- #370 (P356): how a project without an icon of its own is drawn, one choice for the hub. -->
     <div class="pref-row" style="margin-top: 14px;">
-      <span class="pref-label" id="pref-ptiles-label">Project icons</span>
+      <span class="pref-label" id="pref-ptiles-label" data-noun="{Project} icons">Project icons</span>
       <div class="seg pref-seg" id="pref-ptiles" role="group" aria-labelledby="pref-ptiles-label">
         <button type="button" data-val="flat" aria-pressed="true"><span class="ptile pt-demo pt-flat" data-k="progress" data-i="E" aria-hidden="true"></span>Flat</button>
         <button type="button" data-val="glossy" aria-pressed="false"><span class="ptile pt-demo pt-gloss" data-k="progress" data-i="E" aria-hidden="true"></span>Glossy</button>
       </div>
     </div>
-    <p class="cfg-hint">A project without an icon of its own shows as a tile in its colour with its initials, flat or glossy, in every list. An icon uploaded in its settings takes the tile's place. One choice for this hub, so every device shows the same.</p>
+    <p class="cfg-hint" data-noun="{A project} without an icon of its own shows as a tile in its colour with its initials, flat or glossy, in every list. An icon uploaded in its settings takes the tile&#39;s place. One choice for this hub, so every device shows the same.">A project without an icon of its own shows as a tile in its colour with its initials, flat or glossy, in every list. An icon uploaded in its settings takes the tile's place. One choice for this hub, so every device shows the same.</p>
     <!-- #343 (P317): how long a message opened from the Inbox stays marked in its chat. -->
     <h5 class="sp-sub">Inbox</h5>
     <div class="pref-row" style="margin-top: 14px;">
@@ -9512,17 +9517,25 @@ async function setProjectNoun(one, many) {
     location.reload();
   } catch (e) { toast('preference save failed: ' + e.message, 4000, 'err'); }
 }
-async function setPref(key, val) {
-  try {
-    const updated = await api('/api/settings', {
-      method: 'PUT',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({[key]: val}),
-    });
-    PREFS = updated;
-    renderPrefs();
-    toast(`preference saved`, 1500, 'ok');
-  } catch (e) { toast('preference save failed: ' + e.message, 4000, 'err'); }
+// One setting's saves go to the hub one after the other, so quick clicks land in order;
+// only the last one's answer is drawn, so an earlier answer never undoes a later click (#370).
+const SETPREF_Q = {}, SETPREF_N = {};
+function setPref(key, val) {
+  const n = SETPREF_N[key] = (SETPREF_N[key] || 0) + 1;
+  const run = async () => {
+    try {
+      const updated = await api('/api/settings', {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({[key]: val}),
+      });
+      if (n !== SETPREF_N[key]) return;
+      PREFS = updated;
+      renderPrefs();
+      toast(`preference saved`, 1500, 'ok');
+    } catch (e) { toast('preference save failed: ' + e.message, 4000, 'err'); }
+  };
+  return SETPREF_Q[key] = (SETPREF_Q[key] || Promise.resolve()).then(run);
 }
 
 let UPDATE_IN_PROGRESS = false;
