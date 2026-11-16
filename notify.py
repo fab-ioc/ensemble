@@ -55,17 +55,34 @@ import hashlib
 import json
 import os
 import re
+import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
 from urllib.parse import quote, urlparse
 
-try:
-    import webpush
-    _IMPORT_ERROR = ""
-except Exception as e:          # noqa: BLE001 — the hub starts without notifications
-    webpush = None
-    _IMPORT_ERROR = f"the Web Push module did not load ({e!r}); is the cryptography package installed?"
+import app_version
+
+# The packages webpush needs that are not part of Python: cryptography and the
+# cffi it loads (_cffi_backend). One of these missing is what the hub can add
+# (a checkout) or what a newer app has (a built app).
+_MISSING_NAMES = ("cryptography", "cffi", "_cffi_backend")
+
+
+def _load_webpush():
+    """(module, "", missing) or (None, the technical reason, missing): missing
+    is whether a package webpush needs is not installed at all."""
+    try:
+        import webpush as m
+        return m, "", False
+    except Exception as e:      # noqa: BLE001 — the hub starts without notifications
+        name = (getattr(e, "name", "") or "").split(".")[0]
+        missing = isinstance(e, ModuleNotFoundError) and name in _MISSING_NAMES
+        return None, f"the Web Push module did not load ({e!r}); is the cryptography package installed?", missing
+
+
+webpush, _IMPORT_ERROR, _MISSING = _load_webpush()
 
 _d = None  # the dashboard module, set by bind()
 
@@ -158,16 +175,145 @@ def _write(name: str, data, private: bool = False) -> None:
 
 
 # ---------------------------------------------------------------------------
+# The package notifications need
+# ---------------------------------------------------------------------------
+# A checkout's hub that starts without cryptography (an update from before it
+# was in requirements.txt pulls the code, not the package) installs
+# requirements.txt for its own Python once, in the background, then loads
+# webpush again: no restart, nothing done by hand. A package installed by hand
+# is found the same way (at most every RELOAD_EVERY_S). A built app carries
+# the package: one without it is an older app, and Settings says to update.
+
+RELOAD_EVERY_S = 30.0
+INSTALL_TIMEOUT_S = 600.0
+_INSTALL = {"state": "", "detail": ""}  # state: "" | running | failed | done
+_RELOAD_AT = 0.0
+
+
+def _in_venv() -> bool:
+    return sys.prefix != getattr(sys, "base_prefix", sys.prefix)
+
+
+def _python() -> str:
+    """The hub's Python as a console program (pythonw.exe prints nothing)."""
+    exe = sys.executable or "python3"
+    p = Path(exe)
+    if p.name.lower() == "pythonw.exe" and p.with_name("python.exe").exists():
+        return str(p.with_name("python.exe"))
+    return exe
+
+
+def _pip_argv(extra=()) -> list[str]:
+    argv = [_python(), "-m", "pip", "install", "--disable-pip-version-check", "--no-input"]
+    if not _in_venv():
+        argv.append("--user")
+    return argv + list(extra) + ["-r", str(Path(__file__).resolve().parent / "requirements.txt")]
+
+
+def _reload() -> bool:
+    """Load webpush again (after an install, the hub's or by hand). True when it loaded."""
+    global webpush, _IMPORT_ERROR, _MISSING
+    import importlib
+    import site
+    try:
+        # A user site folder made by the install after this Python started.
+        usp = site.getusersitepackages()
+        if site.ENABLE_USER_SITE and os.path.isdir(usp) and usp not in sys.path:
+            site.addsitedir(usp)
+    except Exception:           # noqa: BLE001 — the import below says whether it worked
+        pass
+    for name in [m for m in sys.modules if m == "webpush" or m.split(".")[0] == "cryptography"]:
+        sys.modules.pop(name, None)     # a half-made import is not reused
+    importlib.invalidate_caches()
+    m, err, missing = _load_webpush()
+    with _LOCK:
+        webpush, _IMPORT_ERROR, _MISSING = m, err, missing
+    return m is not None
+
+
+def _run_pip(extra=()) -> tuple[int, str]:
+    try:
+        r = subprocess.run(_pip_argv(extra), capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", timeout=INSTALL_TIMEOUT_S, stdin=subprocess.DEVNULL,
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        return r.returncode, (r.stdout or "") + (r.stderr or "")
+    except (OSError, subprocess.SubprocessError) as e:
+        return -1, f"{e.__class__.__name__}: {e}"
+
+
+def _install() -> None:
+    _log(f"the cryptography package is missing: installing requirements.txt for {_python()}")
+    rc, out = _run_pip()
+    if rc != 0 and "externally-managed-environment" in out:
+        # PEP 668 (Homebrew, recent Linux): the same fallback as the ensemble script.
+        rc, out = _run_pip(["--break-system-packages"])
+    ok = rc == 0 and _reload()
+    lines = [x.strip() for x in out.splitlines() if x.strip()]
+    with _LOCK:
+        _INSTALL["state"] = "done" if ok else "failed"
+        _INSTALL["detail"] = "" if ok else (lines[-1] if lines else f"pip exited {rc}")[:300]
+    _log("installed: notifications are on" if ok else f"the install failed: {_INSTALL['detail']}")
+
+
+def auto_install() -> bool:
+    """Start the background install, once per hub, when a checkout misses a
+    package webpush needs. True when it started."""
+    if webpush is not None or not _MISSING or app_version.packaged():
+        return False
+    if os.environ.get("ENSEMBLE_NO_AUTO_INSTALL"):
+        return False
+    with _LOCK:
+        if _INSTALL["state"]:
+            return False
+        _INSTALL["state"] = "running"
+    threading.Thread(target=_install, daemon=True, name="notify-install").start()
+    return True
+
+
+def _quote(arg: str) -> str:
+    if os.name == "nt":
+        return f'"{arg}"' if " " in arg else arg
+    import shlex
+    return shlex.quote(arg)
+
+
+def _help() -> str:
+    """When webpush did not load: the one plain sentence Settings shows, what
+    is missing and the one step to take (the technical reason stays in
+    status()["reason"] and the hub's log)."""
+    if webpush is not None:
+        return ""
+    if app_version.packaged():
+        return ("This copy of Ensemble is missing a part that notifications need: install the latest "
+                "version (What's new in your menu, then Install now).")
+    if not _MISSING:
+        return ("The hub's notification part did not start: restart the hub, and if this stays, "
+                "use Send feedback in your menu.")
+    if _INSTALL["state"] == "running":
+        return ("The hub is installing the package that notifications need; this takes a minute, "
+                "and this section updates when it is done.")
+    where = "PowerShell" if os.name == "nt" else "Terminal" if sys.platform == "darwin" else "a terminal"
+    user = "" if _in_venv() else "--user "
+    return (f"Notifications need the cryptography package on the hub's computer: in {where} there, "
+            f"run {_quote(_python())} -m pip install {user}cryptography, then come back here.")
+
+
+# ---------------------------------------------------------------------------
 # The hub's key
 # ---------------------------------------------------------------------------
 
 def _vapid():
     """The signing key, made on first use and kept in vapid.json. None when
     notifications cannot run; :func:`status` then says why."""
-    global _VAPID, _UNAVAILABLE
+    global _VAPID, _UNAVAILABLE, _RELOAD_AT
     with _LOCK:
         if _VAPID is not None:
             return _VAPID
+        if webpush is None:
+            now = time.time()
+            if _MISSING and _INSTALL["state"] != "running" and now - _RELOAD_AT >= RELOAD_EVERY_S:
+                _RELOAD_AT = now
+                _reload()
         if webpush is None:
             _UNAVAILABLE = _IMPORT_ERROR
             return None
@@ -201,6 +347,8 @@ def status(endpoint=None) -> dict:
         devs = [_public(x) for x in _devices()]
     here = device_id(endpoint) if isinstance(endpoint, str) and endpoint else ""
     return {"available": v is not None, "reason": "" if v else _UNAVAILABLE,
+            "help": "" if v else _help(),
+            "installing": v is None and _INSTALL["state"] == "running",
             "publicKey": v.public_b64 if v else "", "devices": devs,
             "here": here if any(x["id"] == here for x in devs) else "",
             "frontEvery": FRONT_EVERY_S}
@@ -728,6 +876,7 @@ def start() -> None:
     _STARTED = time.time()
     if _vapid() is None:
         _log(f"off: {_UNAVAILABLE}")
+        auto_install()
 
     def loop():
         while True:

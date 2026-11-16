@@ -24276,7 +24276,7 @@ appThemeColor();
 // shown by the service worker at /sw.js. Where this device cannot have them,
 // the tab says why and what to do. The page's heartbeat (hub-resilience.js)
 // holds them back while Ensemble is in front here.
-const NT = { hub: null, reg: null, sub: null, busy: false, status: '' };
+const NT = { hub: null, reg: null, sub: null, busy: false, status: '', again: 0 };
 const ntStandalone = () => (window.matchMedia && matchMedia('(display-mode: standalone)').matches) || navigator.standalone === true;
 const ntPush = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
 const ntSafari = () => /Safari\//.test(navigator.userAgent) && !/Chrome\/|Chromium\/|Edg\//.test(navigator.userAgent);
@@ -24298,7 +24298,8 @@ function ntBlocker() {
       ? 'Safari blocks notifications for this site. Allow them in Safari › Settings › Websites › Notifications, then come back here.'
       : 'This browser blocks notifications for this site. Allow them in its site settings, then come back here.' };
   }
-  if (NT.hub && !NT.hub.available) return { why: 'The hub cannot send notifications: ' + (NT.hub.reason || 'no reason given') + '.' };
+  // A missing package (P359): the hub's plain sentence and its one step, never the Python error.
+  if (NT.hub && !NT.hub.available) return { why: NT.hub.help || ('The hub cannot send notifications: ' + (NT.hub.reason || 'no reason given') + '.') };
   return null;
 }
 // How the device reads in the list: "Mac · Safari app", "iPhone · Home Screen app".
@@ -24343,6 +24344,11 @@ async function ntRefresh() {
   }
   try { NT.hub = (await ntPost('/api/notify/status', {})).data; } catch (e) { NT.hub = null; }
   ntPaint();
+  // While the hub installs what notifications need, look again until it is done.
+  clearTimeout(NT.again);
+  if (NT.hub && NT.hub.installing) {
+    NT.again = setTimeout(() => { const sp = document.getElementById('settings-panel'); if (sp && !sp.hidden) ntRefresh(); }, 5000);
+  }
 }
 function ntWhen(t) {
   const d = new Date(t * 1000), now = new Date();

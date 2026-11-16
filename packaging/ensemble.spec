@@ -24,6 +24,20 @@ datas += [(str(ROOT / "backends" / name), "backends") for name in ("ptyhost.py",
 
 MAC = sys.platform == "darwin"
 
+# Notifications (webpush.py) need cryptography and its compiled parts: the
+# Rust bindings and cffi's _cffi_backend, which those load from compiled code
+# where the import analysis cannot see it. A build without them would ship a
+# hub that cannot notify, so it stops here instead. On the Mac they must be
+# universal2: packaging/mac-universal2-wheels.sh, after requirements.txt.
+try:
+    import _cffi_backend  # noqa: E402,F401
+    import cryptography.hazmat.bindings._rust  # noqa: E402,F401
+    import webpush  # noqa: E402,F401
+except ImportError as e:
+    raise SystemExit(f"ensemble.spec: notifications would not work ({e}); "
+                     "pip install -r requirements.txt first") from e
+hiddenimports = ["webpush", "_cffi_backend", "cryptography.hazmat.bindings._rust"]
+
 binaries = []
 if sys.platform == "win32":
     # pywinpty starts its terminals through OpenConsole.exe (and the older
@@ -37,6 +51,7 @@ a = Analysis(
     pathex=[str(ROOT)],
     binaries=binaries,
     datas=datas,
+    hiddenimports=hiddenimports,
     excludes=["tkinter", "test", "unittest.test"],
     optimize=0,
 )
