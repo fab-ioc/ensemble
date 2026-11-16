@@ -17247,7 +17247,7 @@ document.getElementById('inbox-btn').addEventListener('click', ibxOpen);
 // folded Unassigned group of the old list. Picking a row scopes the Inbox and
 // opens it in the middle. Make PO of a new
 // project is on a loose row's ⋯ and on its right click.
-var LDP = { more: false, moreLoose: false, sig: '', shown: {}, want: {}, hold: {}, holdT: 0 };
+var LDP = { more: false, moreLoose: false, sig: '', shown: {}, want: {}, hold: {}, holdT: 0, inN: new Map() };
 var LDP_N = 9, LDP_LOOSE_N = 5;
 // The task or session in no project open in the middle: its room (or session) id.
 function ldpLooseOpen() {
@@ -17265,16 +17265,17 @@ function ldpModel() {
     rec = swRecent(ALL_ROWS, attentionItems(), registeredProjects(),
       { dayStart: today / 1000, unassigned: (un && un.sessions) || [] });
   } catch (e) {}
-  // #337 (P309): by Inbox count, then latest conversation (ldpConvAt), then
-  // name. Opening one never moves it.
-  const seenP = new Set(), projs = [], fresh = new Map();
-  for (const r of ALL_ROWS || []) if (r) fresh.set(r.roomId || r.sessionId, r);
+  // #337 (P309), #376: by Inbox count, highest first, then by name A to Z. Nothing
+  // else counts: opening one, its chat, a message or an agent at work in it never
+  // moves it. Its own count falling while you are in it (ldpInKey) does not either.
+  const seenP = new Set(), projs = [], inKey = ldpInKey();
   for (const e of rec.recent.filter(x => x.po || x.proj).concat(rec.quiet)) {
     if (!e.pid || e.pid === UNASSIGNED_ID || seenP.has(e.pid)) continue;
     seenP.add(e.pid);
-    projs.push({ pid: e.pid, name: e.project || e.pid, at: ldpConvAt(e.pid, fresh), n: ldpCount(e.pid) });
+    const n = ldpCount(e.pid);
+    projs.push({ pid: e.pid, name: e.project || e.pid, n, k: inKey(e.pid, n) });
   }
-  projs.sort((a, b) => (b.n - a.n) || (b.at - a.at) || a.name.localeCompare(b.name));
+  projs.sort((a, b) => (b.k - a.k) || a.name.localeCompare(b.name));
   const seenL = new Set(), loose = [];
   const add = (e, kind, at) => {
     if (!e || !e.key || seenL.has(e.key)) return;
@@ -17289,26 +17290,26 @@ function ldpModel() {
   // never held), then the rest in the order above.
   const pins = pinList(), by = new Map(projs.map(p => [p.pid, p]));
   const pinned = pins.filter(id => by.has(id) || pinCan(id))
-    .map(id => by.get(id) || { pid: id, name: projectById(id).name, at: 0, n: ldpCount(id) });
+    .map(id => by.get(id) || { pid: id, name: projectById(id).name, n: ldpCount(id) });
   const rest = projs.filter(p => !pins.includes(p.pid));
   return { pinned, projs: ldpHeld('projs', rest, p => p.pid), loose: ldpHeld('loose', loose, e => e.key) };
 }
-// When a project was last spoken in (#337): the newest message in its PO's
-// chat, its tasks' chats (the hub's convAt; newsAt on a card from before it)
-// or its sessions (a session's updatedAt is its transcript's last write). Not
-// swActivity: a state, column or spec change is no conversation.
-// `fresh`: the task list's rows by id, which it polls more often than PROJECTS.
-function ldpConvAt(pid, fresh) {
-  const p = projectById(pid);
-  if (!p) return 0;
-  const rows = (p.sessions || []).map(r => fresh.get(r && (r.roomId || r.sessionId)) || r);
-  if (p.poRoomId && fresh.has(p.poRoomId)) rows.push(fresh.get(p.poRoomId));
-  let at = 0;
-  for (const r of rows) {
-    if (!r || r.draft) continue;
-    at = Math.max(at, r.headless ? (Number(r.convAt) || Number(r.newsAt) || 0) : (Number(r.updatedAt) || 0));
-  }
-  return at;
+// #376: the projects you are in, the one picked in the list (ibxLdPid) and the
+// one whose PO chat or page is open (ldHere), are placed by the count each had
+// when you went in, or a higher one it has reached since: seeing or answering
+// what waits in it lowers its count, and that does not move it. Once you are in
+// another, it is placed by its own count again. Returns (pid, count) -> its key.
+function ldpInKey() {
+  const ins = new Set();
+  try { for (const v of [ibxLdPid(), ldHere()]) if (v && !v.startsWith('room:')) ins.add(v); } catch (e) {}
+  const kept = LDP.inN;
+  for (const pid of [...kept.keys()]) if (!ins.has(pid)) kept.delete(pid);
+  return (pid, n) => {
+    if (!ins.has(pid)) return n;
+    const k = Math.max(kept.has(pid) ? kept.get(pid) : n, n);
+    kept.set(pid, k);
+    return k;
+  };
 }
 // A project's (or 'room:<id>') Inbox count, the one its row shows; '' is All's.
 function ldpCount(pid) {
