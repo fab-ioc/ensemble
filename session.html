@@ -10320,7 +10320,10 @@ function workspaceComposerGuest(on) {
 if (WORKSPACE_COMPOSE) {
   const hostSize = () => { try { document.documentElement.style.setProperty('--host-h', window.parent.innerHeight + 'px'); } catch (e) {} };
   hostSize();
-  try { window.parent.addEventListener('resize', hostSize); addEventListener('pagehide', () => window.parent.removeEventListener('resize', hostSize)); } catch (e) {}
+  // The dashboard resized: its height caps the box and its tray, so both are
+  // fitted again to it (the frame keeps its own height, so no resize here).
+  const hostResize = () => { hostSize(); composeHeightApply(COMPOSE_H_DRAG || composeHeightGet()); composeFrameFit(); };
+  try { window.parent.addEventListener('resize', hostResize); addEventListener('pagehide', () => window.parent.removeEventListener('resize', hostResize)); } catch (e) {}
   const reportSize = () => {
     // A drag sizes the frame itself; a message sent before its last move would be older.
     if (COMPOSE_H_DRAG) return;
@@ -10330,7 +10333,10 @@ if (WORKSPACE_COMPOSE) {
   setTimeout(reportSize, 0);
   // This page now draws its room's comment tray: the chats drop theirs (P360);
   // going, it hands the tray back to them before the next page loads.
-  addEventListener('load', () => { window.cmtBoxRoom = ROOM || ''; renderCmtTray(); cmtGuestTrays(); });
+  // Until then it draws none, so the tray is never in both at once.
+  const own = () => { window.cmtBoxRoom = ROOM || ''; renderCmtTray(); cmtGuestTrays(); };
+  addEventListener('load', own);
+  addEventListener('pageshow', e => { if (e.persisted) own(); });   // back from the browser's cache
   addEventListener('pagehide', () => { window.cmtBoxRoom = ''; cmtGuestTrays(); });
   // This frame is as tall as the box, so a menu opening upward from it was
   // cut at its top (P227). While one is open the host grows the frame up by
@@ -11053,7 +11059,7 @@ function cmtChatFrames() {
 function renderCmtTray() {
   let tray = document.getElementById('cmt-tray');
   if (!COMMENTS.length) CMT_ERROR = '';
-  if (!COMMENTS.length || cmtBoxServes()) { if (tray) { tray.remove(); composeFrameFit(); } return; }
+  if (!COMMENTS.length || cmtBoxServes() || (WORKSPACE_COMPOSE && !window.cmtBoxRoom)) { if (tray) { tray.remove(); composeFrameFit(); } return; }
   const s = cmtSubmitState(), n = COMMENTS.length;
   const html = `<div class="cmt-tray-head"><strong>${n} comment${n > 1 ? 's' : ''}</strong><span class="grow"></span>`
     + `<button class="cmt-submit"${s.can ? '' : ' disabled'}>${esc(s.label)}</button><button class="cmt-clear">Clear</button></div>`
