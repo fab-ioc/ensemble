@@ -7,14 +7,14 @@ that order, Zero and Delta with none (Zero's conversation the newest of all,
 Delta's the oldest and its name too long for the panel). Two tasks in no
 project with long titles. Checked:
 
-* at 1440x900 and 1728x1117 the projects go by Inbox count, then latest
-  conversation: Echo, Gamma, Bravo, Zero, Delta (Zero, the newest, under
-  every project with a count);
+* at 1440x900 and 1728x1117 the projects go by Inbox count, then by name
+  (#376): Bravo, Echo, Gamma, Delta, Zero (Zero, the newest conversation, is
+  no higher for it);
 * a click on the lowest project opens it and no row moves;
 * a count change while the pointer is over the list waits until the pointer
   has left and 2 s have passed since the latest change;
-* ties go by the latest conversation: a state change with nothing said moves
-  nothing, a project's terminal session counts;
+* ties go by name, never by activity (#376): neither a state change nor a
+  newer terminal session in a project moves it;
 * an Inbox card whose text is cut at its lines shows whole, downwards;
 * a cut project, task, session and the Inbox's title show whole after the
   hover delay (nothing at 150 ms), the copy as wide as the name;
@@ -61,7 +61,7 @@ DELTA = "Delta zero older but with a very long name that does not fit the panel"
 # name, answers to check; registered in this order, conversations in SEED_ORDER (oldest first)
 SEED = [("Bravo one older", 1), ("Zero newest", 0), ("Gamma one", 1), (DELTA, 0), ("Echo one more recent", 1)]
 SEED_ORDER = [DELTA, "Bravo one older", "Gamma one", "Echo one more recent", "Zero newest"]
-WANT = ["Echo one more recent", "Gamma one", "Bravo one older", "Zero newest", DELTA]
+WANT = ["Bravo one older", "Echo one more recent", "Gamma one", DELTA, "Zero newest"]   # #376: count, then name
 LONG_FILE = "Delta notes with a long file name that does not fit its tab.md"
 LONG_ASK = ("Should the winter timetable keep the late trains on the coastal line while the bridge works run, "
             "or move them to the inland line for those weeks, and who tells the stations about it, and when? "
@@ -203,7 +203,7 @@ async function main() {
       await p.evalIn(`(() => { IBX.data = window._ibx337; IBX.busy = false; ibxRepaint(); return 0; })()`);
       await sleep(2500);
 
-      // ---- latest conversation: a state change is none; a project's session is one
+      // ---- #376: ties by name; neither a state change nor a project's newer session moves one
       const order = async () => { await p.evalIn('LDP.sig = "", ldpPaint(), 0'); return (await p.evalIn(ROWS)).filter(r => r.proj).map(r => r.name); };
       o.conv = { poUpdatedAt: await p.evalIn(`(() => { const r = ALL_ROWS.find(x => x.roomId === ${JSON.stringify(A.deltaPo)}); return r ? [r.updatedAt, r.convAt] : null; })()`) };
       await p.evalIn(`(() => { const now = Date.now() / 1000; for (const r of ALL_ROWS) if (r.roomId === ${JSON.stringify(A.deltaPo)}) { r.updatedAt = now; r.newsAt = r.newsAt || 0; } return 0; })()`);
@@ -577,7 +577,7 @@ class LeftPanelOrderInChrome(unittest.TestCase):
         self.assertEqual(o["at450"]["ids"], 0, "no ids copied")
         self.assertTrue(o["at450"]["solid"], "nothing shows through the copy")
 
-    def test_projects_by_inbox_count_then_latest_conversation(self):
+    def test_projects_by_inbox_count_then_name(self):
         for w, _ in WIDTHS:
             with self.subTest(w=w):
                 names = [r["name"] for r in self.w(w)["before"] if r["proj"]]
@@ -604,14 +604,14 @@ class LeftPanelOrderInChrome(unittest.TestCase):
         self.assertEqual(t["left400"], WANT, "the first change is 2.4 s old, the second 1.3 s: still held")
         self.assertEqual(t["after"][:2], ["Bravo one older", "Gamma one"], "then the new order")
 
-    def test_ties_go_by_the_latest_conversation_not_a_state_change(self):
+    def test_ties_go_by_name_not_activity(self):
         c = self.w()["conv"]
         updated, conv = c["poUpdatedAt"]
         self.assertGreater(updated, conv + 1, "the hub: Delta's PO changed after its last message")
         self.assertEqual(c["metaOnly"], WANT, "a state change moves nothing")
-        self.assertEqual(c["session"], WANT[:3] + [DELTA, "Zero newest"], "a session in Delta newer than Zero's chat")
+        self.assertEqual(c["session"], WANT, "#376: a session in Delta newer than Zero's chat moves nothing")
         self.assertEqual(c["back"], WANT)
-        self.assertEqual(c["past300"], WANT, "tasks past the task list's 300 rows: the projects' own rows carry convAt")
+        self.assertEqual(c["past300"], WANT, "tasks past the task list's 300 rows: the order stands")
 
     def test_a_cut_inbox_card_shows_whole_downwards(self):
         o = self.w()["card"]
