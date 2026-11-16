@@ -131,21 +131,84 @@ self.addEventListener('push', event => {
   }));
 });
 
-self.addEventListener('notificationclick', event => {
-  event.notification.close();
-  const url = (event.notification.data && event.notification.data.url) || hubUrl('/');
-  event.waitUntil((async () => {
-    const wins = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+// The dashboard's own pages: a notification opens there (P368).
+const DASH = new Set(['/', '/index.html']);
+// How long an open dashboard has to say it opened the chat in place.
+const OPEN_WAIT_MS = 3000;
+
+// An address of a chat's own page (/session?room=…, what every notification
+// sent before P368 holds) as the dashboard's deep link to that chat (#308):
+// the dashboard opens it on that message, with its bar, Inbox and list.
+function deepUrl(href) {
+  let u;
+  try { u = new URL(href); } catch (e) { return href; }
+  if (u.origin !== self.location.origin || u.pathname !== '/session') return u.href;
+  const room = u.searchParams.get('room') || u.searchParams.get('id') || '';
+  if (!room) return u.href;
+  const out = new URL('/', self.location.origin);
+  out.searchParams.set('room', room);
+  for (const k of ['msg', 'part', 'thread', 'tmid']) {
+    if (u.searchParams.has(k)) out.searchParams.set(k, u.searchParams.get(k));
+  }
+  return out.href;
+}
+
+function pathOf(client) {
+  try {
+    const u = new URL(client.url);
+    return u.origin === self.location.origin ? u.pathname : '';
+  } catch (e) { return ''; }
+}
+
+// Asks an open dashboard to open the address in place (index.html's
+// 'notify-open' listener). Its answer: {ok}, {fallback: path} for a chat it
+// does not list, or null (an older page, no answer in time).
+function askDashboard(client, url) {
+  return new Promise(resolve => {
+    const ch = new MessageChannel();
+    const timer = setTimeout(() => resolve(null), OPEN_WAIT_MS);
+    ch.port1.onmessage = ev => { clearTimeout(timer); resolve(ev.data || null); };
+    try { client.postMessage({ ensemble: 'notify-open', url }, [ch.port2]); }
+    catch (e) { clearTimeout(timer); resolve(null); }
+  });
+}
+
+async function openFromNotification(url) {
+  const wins = (await self.clients.matchAll({ type: 'window', includeUncontrolled: true }))
+    .filter(c => pathOf(c));
+  if (DASH.has(new URL(url).pathname)) {
+    // An open dashboard, the one in front first: brought forward, then told.
+    const dash = wins.filter(c => DASH.has(pathOf(c)))
+      .sort((a, b) => (b.focused - a.focused)
+        || ((b.visibilityState === 'visible') - (a.visibilityState === 'visible')));
+    if (dash.length) {
+      let win = dash[0];
+      try { win = (await win.focus()) || win; } catch (e) { /* not allowed: told anyway */ }
+      const said = await askDashboard(win, url);
+      if (said && said.ok) return win;
+      if (said && said.fallback) {
+        if (self.clients.openWindow) return self.clients.openWindow(hubUrl(said.fallback));
+        return win;
+      }
+      // It did not answer: the dashboard loads the address itself.
+      if ('navigate' in win) {
+        try {
+          const went = await win.navigate(url);
+          if (went) return went;
+        } catch (e) { /* not controlled by this worker: open a new window */ }
+      }
+    }
+  } else {
     const same = wins.find(c => c.url === url);
     if (same) return same.focus();
-    // Reuse an open hub window: take it to the place, then bring it forward.
-    const hub = wins.find(c => new URL(c.url).origin === self.location.origin && 'navigate' in c);
-    if (hub) {
-      try {
-        const went = await hub.navigate(url);
-        if (went) return went.focus();
-      } catch (e) { /* not controlled by this worker: open a new window */ }
-    }
-    if (self.clients.openWindow) return self.clients.openWindow(url);
-  })());
+  }
+  // No dashboard open: a new one, on that chat. Another hub window (a chat's
+  // own page, a file view) is never turned into it.
+  if (self.clients.openWindow) return self.clients.openWindow(url);
+}
+
+self.addEventListener('notificationclick', event => {
+  event.notification.close();
+  const url = deepUrl((event.notification.data && event.notification.data.url) || hubUrl('/'));
+  event.waitUntil(openFromNotification(url));
 });
