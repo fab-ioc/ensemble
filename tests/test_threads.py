@@ -819,12 +819,56 @@ class ThreadStaysTest(unittest.TestCase):
     """#379: a PO's answer to a point in a thread stays in that thread, its
     question cards, its later replies and the hub's notices about them too."""
 
-    def run_(self, recs, pts, sd=None, cards=None):
-        return threads.assign(recs, {"points": pts}, sd or side(), None, cards=cards or [])
+    def run_(self, recs, pts, sd=None, cards=None, claimed=None, asks=None):
+        return threads.assign(recs, {"points": pts, "asks": asks or {}}, sd or side(), None,
+                              claimed=claimed, cards=cards or [])
 
     @staticmethod
     def card(cid, ts, text="Which one?", pts=(), q="Which one?"):
-        return {"id": cid, "ts": T0 + ts, "text": text, "points": list(pts), "questions": [q]}
+        return {"id": cid, "ts": T0 + ts, "text": text, "points": list(pts), "questions": [q],
+                "tags": [threads.card_tag(cid, 0)]}
+
+    @staticmethod
+    def notice(mid, ts, verb="closed"):
+        text = ('[asks] The CEO closed your question "Which one?" without an answer.' if verb == "closed"
+                else '[asks] The CEO reopened your question "Which one?".')
+        return {"mid": mid, "sid": "s", "role": "user", "kind": "hub", "ts": T0 + ts,
+                "turn": {"role": "user", "text": text}}
+
+    def two_threads_same_question(self):
+        """P1 and P2 each sent as a new thread, each with a card asking "Which one?"."""
+        recs = [human("s:0", 0, "make the chart wider"), po("s:1", 5, "On it."),
+                human("s:2", 50, "and the colours?"), po("s:3", 55, "Looking.")]
+        pts = [point("P1", "s:0", "make the chart wider"), point("P2", "s:2", "and the colours?", 50)]
+        sd = side(sent=[new_row("s:0"), new_row("s:2", key="k2", at=50)])
+        return recs, pts, sd, [self.card("c1", 6), self.card("c2", 56)]
+
+    def test_a_close_and_a_reopen_go_to_their_own_cards_thread_when_two_cards_ask_the_same(self):
+        recs, pts, sd, cards = self.two_threads_same_question()
+        key = f"ask-close:{threads.card_tag('c1', 0)}:0123456789abcdef"
+        recs = recs + [self.notice("s:4", 100), self.notice("s:5", 110, "reopened")]
+        out = self.run_(recs, pts, sd, cards, claimed={key: "s:4", "reopen:" + key: "s:5"})
+        self.assertEqual(out["cards"], {"c1": "P1", "c2": "P2"})
+        for mid in ("s:4", "s:5"):
+            self.assertIn(mid, out["threads"]["P1"]["members"])
+            self.assertNotIn(mid, out["threads"]["P2"]["members"])
+            self.assertNotIn(mid, self.channel(out, recs))
+        self.assertNotIn("team:activity", out["threads"])
+
+    def test_an_older_close_key_is_found_in_the_ledger(self):
+        recs, pts, sd, cards = self.two_threads_same_question()
+        recs = recs + [self.notice("s:4", 100)]
+        out = self.run_(recs, pts, sd, cards, claimed={"ask-close:feedbeef": "s:4"},
+                        asks={"c1": {"0": {"closed": True, "noticeKey": "ask-close:feedbeef"}}})
+        self.assertIn("s:4", out["threads"]["P1"]["members"])
+
+    def test_a_notice_without_its_key_and_two_cards_asking_it_is_in_no_thread(self):
+        recs, pts, sd, cards = self.two_threads_same_question()
+        recs = recs + [self.notice("s:4", 100)]
+        out = self.run_(recs, pts, sd, cards)
+        self.assertNotIn("s:4", out["threads"]["P1"]["members"])
+        self.assertNotIn("s:4", out["threads"]["P2"]["members"])
+        self.assertIn("s:4", out["threads"]["team:activity"]["members"])
 
     @staticmethod
     def channel(out, recs):
@@ -943,7 +987,11 @@ class ThreadStaysTest(unittest.TestCase):
             {"id": "a0", "ts": T0 + 1, "text": "", "asks": [{"question": "To the PO?"}], "askAudience": "po"},
             {"id": "a2", "ts": T0 + 3, "text": "plain"}]}
         self.assertEqual(threads.room_cards(room), [
-            {"id": "a1", "ts": T0 + 2, "text": "ctx", "points": ["P1"], "questions": ["Which one?"]}])
+            {"id": "a1", "ts": T0 + 2, "text": "ctx", "points": ["P1"], "questions": ["Which one?"],
+             "tags": [threads.card_tag("a1", 0)]}])
+        self.assertEqual(threads._card_question('[asks] The CEO reopened your question "Which  one?".'), "Which one?")
+        self.assertEqual(threads._card_question('I closed your question "x" without an answer.'), "",
+                         "only the hub's own line")
 
 
 class PoRoomsTest(unittest.TestCase):

@@ -24110,8 +24110,9 @@ class Handler(BaseHTTPRequestHandler):
                     self._send_json(409, {"error": "not_open", "message": "That question is no longer open."})
                     return
                 # Resume keys are capped at 200 characters; a card's mid can
-                # already be that long, so the nonce alone identifies this close.
-                key = f"ask-close:{uuid.uuid4().hex}"
+                # already be that long: a short tag of the card's ask (so its
+                # notice is placed in the card's thread, #379) and a nonce.
+                key = f"ask-close:{threads.card_tag(mid, n)}:{uuid.uuid4().hex[:16]}"
                 before = points.close_ask(rid, mid, n, card["question"], notice_key=key)
                 if before is not None:
                     self._send_json(200, {"ok": True, "duplicate": True, "points": _points_view(rid)})

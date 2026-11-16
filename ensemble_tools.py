@@ -1382,7 +1382,10 @@ def _ask_once(ctx, args, handler):
         raise ToolError("context must be at most 8000 characters")
     if not isinstance(args.get("forCeo", False), bool):
         raise ToolError("forCeo must be true or false")
-    about = args.get("points") or []
+    # Omitted or null: none. Anything else supplied must be the list itself
+    # ("" or 0 is a malformed call, not an empty list: #379 review 1).
+    about = args.get("points")
+    about = [] if about is None else about
     if not isinstance(about, list) or len(about) > 10 or not all(
             isinstance(i, str) and re.fullmatch(r"P[0-9]+[a-z]?", i) for i in about):
         raise ToolError('points must be a list of point ids such as ["P12"]')

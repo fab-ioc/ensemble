@@ -194,7 +194,7 @@ class StructuredRoundTrip(_World):
         room = chatroom.get_room(rid, public=False)
         ctx = {"room": room, "identity": "claude", "part": room["participants"][0], "projectId": ""}
         before = len(room["messages"])
-        for bad in ("P12", ["12"], ["P1", 3]):
+        for bad in ("P12", ["12"], ["P1", 3], "", 0, False, {}, ["P1"] * 11):
             with self.subTest(bad=bad), self.assertRaisesRegex(ensemble_tools.ToolError, "point ids"):
                 ensemble_tools._ask(ctx, {"questions": [{"question": "Wider?", "yesno": True}],
                                           "points": bad}, self._handler())

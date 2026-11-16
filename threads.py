@@ -61,6 +61,7 @@ Bound to the dashboard module like ``points``: nothing reads ``_d`` at import.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import os
@@ -426,10 +427,19 @@ def _re_sections(text: str) -> list[tuple[str, list[str]]]:
 
 
 def _card_question(text: str) -> str:
-    """The question a hub "closed without an answer" line names, as the
-    hub cut it (dashboard: its first 200 characters, spaces collapsed)."""
-    m = re.search(r'closed your question "(.+)" without an answer', text or "", re.S)
-    return " ".join(m.group(1).split()) if m else ""
+    """The question a hub "closed … without an answer" or "reopened …" line
+    names, as the hub cut it (dashboard: its first 200 characters, spaces
+    collapsed)."""
+    m = re.search(r'\[asks\] The CEO (?:closed your question "(.+)" without an answer'
+                  r'|reopened your question "(.+)")\.', text or "", re.S)
+    return " ".join((m.group(1) or m.group(2)).split()) if m else ""
+
+
+def card_tag(mid: str, n: int) -> str:
+    """A short name of one ask of a card, carried by the hub's close notice
+    key (``ask-close:<tag>:<nonce>``, its reopen ``reopen:`` + that key), so
+    the notice finds its card (#379 review 1: two cards can ask the same)."""
+    return hashlib.sha1(f"{mid}\0{n}".encode("utf-8")).hexdigest()[:16]
 
 
 def room_cards(room: dict | None) -> list[dict]:
@@ -444,7 +454,8 @@ def room_cards(room: dict | None) -> list[dict]:
         out.append({"id": str(m["id"]), "ts": _num(m.get("ts")), "text": str(m.get("text") or ""),
                     "points": [str(i) for i in m.get("points") or [] if isinstance(i, str)],
                     "questions": [" ".join(str(a.get("question") or "").split())[:200]
-                                  for a in m["asks"] if isinstance(a, dict)]})
+                                  for a in m["asks"] if isinstance(a, dict)],
+                    "tags": [card_tag(str(m["id"]), n) for n in range(len(m["asks"]))]})
     out.sort(key=lambda c: c["ts"])
     return out
 
@@ -633,17 +644,40 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
                 # by the hub's traffic is to the person, in the main chat.
                 card_home[cid] = [last] if last in chosen else []
 
+    # The hub's notices about a card (closed without an answer, reopened):
+    # their send key names the card (card_tag), or the ledger keeps the key
+    # of a close; a reopen's key is "reopen:" + its close's.
+    key_of = {m: k for k, m in (claimed or {}).items() if isinstance(k, str)}
+    tag_card = {t: c["id"] for c in card_list for t in c.get("tags") or ()}
+    key_card = {got["noticeKey"]: cmid for cmid, per in (led.get("asks") or {}).items() if isinstance(per, dict)
+                for got in per.values() if isinstance(got, dict) and isinstance(got.get("noticeKey"), str)}
+    notice_thread: dict[str, str] = {}      # a close notice's key → the thread it went to
+
     def closed_card(r: dict) -> str:
-        """The thread of the card a hub "closed without an answer" line is
-        about, "" when that card is not in one."""
+        """The thread of the card a hub "closed without an answer" or
+        "reopened" line is about, "" when that card is not in one."""
         q = _card_question(r["turn"].get("text") or "")
         if not q:
             return ""
-        for c in reversed(card_list[:next_card[0]]):
-            if q in (c.get("questions") or []):
-                t = (card_home.get(c["id"]) or [""])[-1]
-                return t if t in chosen else ""
-        return ""
+        key = key_of.get(r["mid"], "")
+        if key.startswith("reopen:"):
+            key = key[len("reopen:"):]
+            if key in notice_thread:
+                return notice_thread[key]
+        parts = key.split(":")
+        cid = key_card.get(key) or (tag_card.get(parts[1]) if len(parts) == 3 and parts[0] == "ask-close" else None)
+        if cid:
+            homes = {(card_home.get(cid) or [""])[-1]}
+        else:
+            # A notice whose key is gone: by its question, when the cards
+            # asking it so far are in one place only.
+            homes = {(card_home.get(c["id"]) or [""])[-1] for c in card_list[:next_card[0]]
+                     if q in (c.get("questions") or [])}
+        t = homes.pop() if len(homes) == 1 else ""
+        t = t if t in chosen else ""
+        if key:
+            notice_thread[key] = t
+        return t
 
     for number, r in enumerate(recs, 1):
         if on_message and (number == 1 or number % 50 == 0 or number == len(recs)):
@@ -1643,7 +1677,13 @@ def thread_view(room_id: str, room: dict, tid: str = "", mid: str = "", n: int =
     if th is None:
         return {"error": "no_such_thread"}
     members = [m for m in th["members"] if m in idx["by_mid"]]
-    start, end = _span(idx, members, n, upto, before, frm, after, to) if n else (0, len(members))
+    # A link to one of its question cards (#379), a room message: the window
+    # around it is placed by its time, as the channel's is (#262).
+    upto_ts = 0.0
+    if upto and upto not in idx["by_mid"] and upto in (th.get("cards") or ()):
+        m = next((m for m in reversed(room.get("messages") or []) if m.get("id") == upto), None)
+        upto_ts = (_num(m.get("ts")) or 0.0) if m is not None else 0.0
+    start, end = _span(idx, members, n, upto, before, frm, after, to, upto_ts) if n else (0, len(members))
     out = {"sig": _sig_text(idx), "latestMid": members[-1] if members else "",
            "progress": progress.snapshot().get("thread:" + room_id),
            "thread": _meta(th), "items": [_turn(idx, m, tid) for m in members[start:end]],

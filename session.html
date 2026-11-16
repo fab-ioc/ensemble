@@ -6063,6 +6063,8 @@ function landPending() {
       return;
     }
   }
+  // A thread asked for a card it does not hold (#379): its window around it first.
+  if (typeof THREAD_MODE !== 'undefined' && THREAD_MODE && THR_DRAWN && thrUptoId()) { renderThreaded(true); return; }
   if (!GOTO || !CHAT_DRAWN || _landing || !box || !box.clientHeight || _cmtComposerOpen || selShown()) return;
   // From the Inbox: once the highlight's length is known (the hub's settings read).
   if (ibxPart(GOTO_PART) && !IBX_HL_READ) return;
@@ -7325,8 +7327,17 @@ function thrBase() {
 }
 // The first read is light (&lite=1); a link's balloon asks for as many as
 // reach it (&upto=), which starts the pages again.
+// What a page asks the hub to reach (&upto=): the channel, a link's
+// balloon; a thread, a link's card it has not drawn (#379: a question card
+// older than the thread's newest page), once.
+function thrUptoId() {
+  if (!GOTO) return '';
+  if (!THREAD_MODE) return GOTO;
+  return !String(GOTO).includes(':') && THR_ASKED !== GOTO && !(LAST_ITEMS || []).some(m => m.id === GOTO) ? GOTO : '';
+}
 function thrUrl(sig) {
-  const page = !THREAD_MODE && GOTO ? '&n=' + THR_N + '&upto=' + encodeURIComponent(THR_ASKED = GOTO)
+  const upto = thrUptoId();
+  const page = upto ? '&n=' + THR_N + '&upto=' + encodeURIComponent(THR_ASKED = upto)
     : THR_FROM ? '&from=' + encodeURIComponent(THR_FROM) + (THR_AFTER && thrLast() ? '&to=' + encodeURIComponent(thrLast()) : '')
     : '&n=' + THR_N + (THREAD_MODE ? '' : '&lite=1');
   const watch = !THREAD_MODE && RECENT_SENDS.size ? '&watch=' + encodeURIComponent([...RECENT_SENDS.keys()].join(',')) : '';
@@ -7540,7 +7551,7 @@ async function renderThreaded(force) {
   THR_FETCHING = true;
   const roomTs = roomLatestTs(ROOM_OBJ), gen = THR_GEN;
   try {
-    const asked = !THREAD_MODE && !!GOTO;
+    const asked = !!thrUptoId();
     const url = thrUrl(force ? '' : THR_SIG), pre = THR_PRE;
     THR_PRE = null;
     const r = pre && pre.url === url ? await pre.p.catch(() => pollFetch(url, null, 90000)) : await pollFetch(url, null, 90000);
