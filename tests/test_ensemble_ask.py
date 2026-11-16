@@ -187,6 +187,26 @@ class StructuredRoundTrip(_World):
                 {"label": "A", "recommended": True}, {"label": "B", "recommended": True}]}]}, self._handler())
         self.assertEqual(len(chatroom.get_room(rid)["messages"]), before)
 
+    def test_a_card_keeps_the_points_it_is_about(self):
+        """#379: ``points`` is stored on the card's message, so the chat shows
+        a card about a threaded point in that thread; a bad list posts nothing."""
+        rid = self.solo_room()
+        room = chatroom.get_room(rid, public=False)
+        ctx = {"room": room, "identity": "claude", "part": room["participants"][0], "projectId": ""}
+        before = len(room["messages"])
+        for bad in ("P12", ["12"], ["P1", 3], "", 0, False, {}, ["P1"] * 11):
+            with self.subTest(bad=bad), self.assertRaisesRegex(ensemble_tools.ToolError, "point ids"):
+                ensemble_tools._ask(ctx, {"questions": [{"question": "Wider?", "yesno": True}],
+                                          "points": bad}, self._handler())
+        self.assertEqual(len(chatroom.get_room(rid)["messages"]), before)
+        with mock.patch.object(ensemble_tools, "_project_po", return_value=None):
+            result = ensemble_tools._ask(ctx, {"questions": [{"question": "Wider?", "yesno": True}],
+                                               "points": ["P12", "P12", "P3a"]}, self._handler())
+            plain = ensemble_tools._ask(ctx, {"questions": [{"question": "Taller?", "yesno": True}]}, self._handler())
+        msgs = {m["id"]: m for m in chatroom.get_room(rid, public=False)["messages"]}
+        self.assertEqual(msgs[result["messageId"]]["points"], ["P12", "P3a"])
+        self.assertNotIn("points", msgs[plain["messageId"]])
+
     def test_report_cannot_store_agent_supplied_structured_asks(self):
         rid = self.team_room()
         room = chatroom.get_room(rid, public=False)

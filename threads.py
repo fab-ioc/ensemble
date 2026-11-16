@@ -26,9 +26,15 @@ choice"; one pass over the chat's balloons, oldest first):
   in the main chat, whatever it says (``Re P180`` too).
 * A PO message goes where the person's message it answers is: ``Re Pn`` (or
   the ledger's answer to Pn) where Pn was last written about, in a thread or
-  the main chat; one answering points in a thread and in the main chat is in
-  the thread and shown in the chat too (an "also in" mark). Any other PO
-  message goes where the input before it is.
+  the main chat, whatever woke the PO (#379). One answering points in
+  different places is split by its ``Re Pn:`` paragraphs: each part is shown
+  where its point is, none twice (the main chat gets only its own part). Any
+  other PO message goes where the input before it is.
+* A question card (a room message, ``ensemble_ask``) goes where its point is
+  (the tool's ``points``, else its ``Re Pn``), else where the PO's balloon
+  holding its link is, else where the input before it is (#379): a card asked
+  while working on a thread's point is in that thread, never in the main
+  chat too. The hub's "closed without an answer" line goes with its card.
 * A task's report is in the thread of the person's point the task works on
   (planned on it, or naming it alone), in its Work log, and so is a PO note
   on it that answers nothing (no ``Re``, no ledger answer, no question);
@@ -55,6 +61,7 @@ Bound to the dashboard module like ``points``: nothing reads ``_d`` at import.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import os
@@ -82,6 +89,7 @@ NAME_MAX = 80                   # a name the person gives a thread (issue 51), a
 PREVIEW_MAX = 240               # what a reply line quotes of the last reply
 ALSO_SLACK_S = 600              # a reply sent to the chat too: its balloon within this
 SIDE_KEEP = 400                 # thread box sends kept whole (what they hold, to find their balloon)
+NOTICES_KEEP = 2000             # the hub's card notices kept with their send key (#379 review 2)
 YIELD_BUDGET_S = 1.0            # a build stands aside for the pages this long in all (#266)
 SLOW_BUILD_S = 2.0              # a build taking longer says so in the log
 
@@ -183,7 +191,7 @@ def _path(room_id: str) -> Path:
 
 def _empty_side() -> dict:
     return {"version": 1, "since": 0.0, "seen": {}, "anchors": {}, "also": [], "sent": [],
-            "archived": {}, "deleted": {}, "names": {}}
+            "archived": {}, "deleted": {}, "names": {}, "notices": {}}
 
 
 def load_side(room_id: str) -> dict:
@@ -223,6 +231,12 @@ def load_side(room_id: str) -> dict:
             if isinstance(d.get("names"), dict):
                 side["names"] = {t: v for t, v in d["names"].items()
                                  if isinstance(t, str) and isinstance(v, str)}
+            # #379 review 2: the hub's notices about a card ({balloon: {key,
+            # card}}), kept past the sends' own record (pruned after a day).
+            if isinstance(d.get("notices"), dict):
+                side["notices"] = {m: {"key": v["key"], "card": v["card"]} for m, v in d["notices"].items()
+                                   if isinstance(m, str) and isinstance(v, dict)
+                                   and isinstance(v.get("key"), str) and isinstance(v.get("card"), str)}
             for k in ("also", "sent"):
                 if isinstance(d.get(k), list):
                     side[k] = [x for x in d[k] if isinstance(x, dict)]
@@ -235,6 +249,9 @@ def _save_side(room_id: str, side: dict) -> None:
     p.parent.mkdir(parents=True, exist_ok=True)
     tmp = p.with_name(f"{p.name}.{os.getpid()}.{threading.get_ident()}.tmp")
     side["also"] = side.get("also", [])[-SIDE_KEEP:]
+    notices = side.get("notices") or {}
+    if len(notices) > NOTICES_KEEP:
+        side["notices"] = dict(list(notices.items())[-NOTICES_KEEP:])
     sent = side.get("sent", [])
     if len(sent) > SIDE_KEEP:
         # A reply's place lasts as long as its balloon (#237 reviews 1, 2):
@@ -398,15 +415,73 @@ def _point_mentions(text: str) -> list[str]:
     return list(dict.fromkeys(found))
 
 
+def _re_sections(text: str) -> list[tuple[str, list[str]]]:
+    """A reply cut at its ``Re Pn:`` paragraphs (#379): each part's text and
+    the points its head names, in order. What comes before the first head
+    goes with the first part; a head inside a code fence or a quote is text."""
+    lines = (text or "").split("\n")
+    prose = points._prose(text or "").split("\n")
+    starts = []
+    for k, ln in enumerate(prose):
+        m = points._RE_HEAD.match(ln)
+        if m:
+            starts.append((k, [points._norm_id(i) for i in points._ID_IN.findall(m.group(1))]))
+    if not starts:
+        return [(text or "", [])]
+    out = []
+    for n, (k, pids) in enumerate(starts):
+        a = 0 if n == 0 else k
+        b = starts[n + 1][0] if n + 1 < len(starts) else len(lines)
+        out.append(("\n".join(lines[a:b]).strip("\n"), pids))
+    return out
+
+
+def _card_question(text: str) -> str:
+    """The question a hub "closed … without an answer" or "reopened …" line
+    names, as the hub cut it (dashboard: its first 200 characters, spaces
+    collapsed)."""
+    m = re.search(r'\[asks\] The CEO (?:closed your question "(.+)" without an answer'
+                  r'|reopened your question "(.+)")\.', text or "", re.S)
+    return " ".join((m.group(1) or m.group(2)).split()) if m else ""
+
+
+def card_tag(mid: str, n: int) -> str:
+    """A short name of one ask of a card, carried by the hub's close notice
+    key (``ask-close:<tag>:<nonce>``, its reopen ``reopen:`` + that key), so
+    the notice finds its card (#379 review 1: two cards can ask the same)."""
+    return hashlib.sha1(f"{mid}\0{n}".encode("utf-8")).hexdigest()[:16]
+
+
+def room_cards(room: dict | None) -> list[dict]:
+    """The room's question cards for :func:`assign`, oldest first: id, time,
+    text, the points the PO named (``ensemble_ask points``) and questions."""
+    out = []
+    for m in (room or {}).get("messages") or []:
+        if not isinstance(m, dict) or not isinstance(m.get("asks"), list) or not m.get("id"):
+            continue
+        if m.get("askAudience") == "po":
+            continue        # a question to the PO is not the person's card
+        out.append({"id": str(m["id"]), "ts": _num(m.get("ts")), "text": str(m.get("text") or ""),
+                    "points": [str(i) for i in m.get("points") or [] if isinstance(i, str)],
+                    "questions": [" ".join(str(a.get("question") or "").split())[:200]
+                                  for a in m["asks"] if isinstance(a, dict)],
+                    "tags": [card_tag(str(m["id"]), n) for n in range(len(m["asks"]))]})
+    out.sort(key=lambda c: c["ts"])
+    return out
+
+
 def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=None,
-           claimed: dict | None = None) -> dict:
+           claimed: dict | None = None, cards: list[dict] | None = None) -> dict:
     """The threads of a chat, from its balloons (oldest first), its points
     ledger and its record (:func:`load_side`). Pure: the same input gives the
     same threads. Returns ``{threads: {tid: thread}, of: {mid: [tid, …]},
     parent: {mid: [tid, …]}, also: {mid: tid}, order: [tid, …]}``; a thread is
     ``{id, root, title, points, task, members}`` (``members``: its balloons,
     the parent first). ``task_title(ref)``: a task's title, for a task's own
-    thread whose report gave none."""
+    thread whose report gave none. ``cards``: the room's question cards
+    (:func:`room_cards`); ``cards`` out: those in a thread ({card: tid}).
+    ``split``: a PO balloon answering points in several places, its parts
+    ({mid: {tid or "": text}}, "" the main chat's)."""
     pts = {p["id"]: p for p in led.get("points") or []}
     anchors = side.get("anchors") or {}
     # A record from before #237 (``side["also"]``): a reply sent from a
@@ -446,6 +521,10 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
     home: dict[str, str] = {}               # a point → where it was last written about ("" the main chat)
     card_home: dict[str, list[str]] = {}    # a card's message id → the threads of the PO message holding it
     answered: dict[str, list[str]] = {}     # a point's entry in the main chat → the PO balloons answering it there
+    split: dict[str, dict[str, str]] = {}   # a PO balloon → its parts by place (#379)
+    card_list = sorted((c for c in cards or [] if c.get("id")), key=lambda c: _num(c.get("ts")))
+    card_named: set[str] = set()            # a card placed by its points: a balloon linking it does not move it
+    next_card = [0]
 
     def new(tid: str, root: dict, title: str, task: str = "", pids=()) -> dict:
         th = {"id": tid, "root": root["mid"], "title": title, "points": list(pids), "task": task,
@@ -498,6 +577,10 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
             # human point raised from it starts a thread of its own.
             if anc == "team:activity":
                 anc = ""
+            if anc and anc not in threads and anc in pts and anc != pid:
+                # Sent from a point's own name (a review comment on a point,
+                # #379): the thread that point is in.
+                anc = point_thread(anc) or ""
             if anc in threads:
                 out = anc
                 choose(anc)
@@ -537,6 +620,86 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
         else:
             join(activity, r)
         return activity
+
+    def homes_of(ids, ts: float) -> list[str]:
+        """Where each of these points was last written ("" the main chat),
+        for a message of ``ts``: a point made after it is not its subject."""
+        out = []
+        for i in ids:
+            p = pts.get(i)
+            if p is None or i not in home or (ts and ts < float(p.get("createdAt") or 0) - points.SLACK_S):
+                continue
+            out.append(home[i])
+        return out
+
+    def place_cards(upto: float | None) -> None:
+        """The question cards posted up to ``upto`` (all, None): each where
+        its point is, else where the input before it is (#379). A balloon
+        holding its link, read before it, placed it already."""
+        while next_card[0] < len(card_list):
+            c = card_list[next_card[0]]
+            if upto is not None and _num(c.get("ts")) > upto:
+                return
+            next_card[0] += 1
+            cid, text = c["id"], c.get("text") or ""
+            named = [i for i in c.get("points") or [] if i in pts] or points.re_ids(text) \
+                or _point_mentions(text)
+            where = homes_of(named, _num(c.get("ts")))
+            if where:
+                card_named.add(cid)
+                card_home[cid] = [where[0]] if where[0] in chosen else []
+            elif cid not in card_home:
+                # A question asked while answering a thread's input (or a
+                # report of a task it claimed) is in that thread; one woken
+                # by the hub's traffic is to the person, in the main chat.
+                card_home[cid] = [last] if last in chosen else []
+
+    # The hub's notices about a card (closed without an answer, reopened):
+    # their send key names the card (card_tag), or the ledger keeps the key
+    # of a close; a reopen's key is "reopen:" + its close's.
+    # Which card a notice is about is kept in the room's record (review 2):
+    # the sends' record is pruned after a day, and a reopen drops the
+    # ledger's key. ``notices`` out: the ones learnt now ({balloon: {key, card}}).
+    kept_notices = side.get("notices") or {}
+    key_of = {m: k for k, m in (claimed or {}).items() if isinstance(k, str)}
+    notice_keys: dict[str, dict] = {}
+    tag_card = {t: c["id"] for c in card_list for t in c.get("tags") or ()}
+    key_card = {got["noticeKey"]: cmid for cmid, per in (led.get("asks") or {}).items() if isinstance(per, dict)
+                for got in per.values() if isinstance(got, dict) and isinstance(got.get("noticeKey"), str)}
+    notice_thread: dict[str, str] = {}      # a close notice's key → the thread it went to
+    notice_card: dict[str, str] = {}        # a close notice's key → its card
+
+    def closed_card(r: dict) -> str:
+        """The thread of the card a hub "closed without an answer" or
+        "reopened" line is about, "" when that card is not in one."""
+        q = _card_question(r["turn"].get("text") or "")
+        if not q:
+            return ""
+        kept = kept_notices.get(r["mid"]) or {}
+        key = key_of.get(r["mid"]) or kept.get("key") or ""
+        close = key[len("reopen:"):] if key.startswith("reopen:") else key
+        parts = close.split(":")
+        cid = key_card.get(close) or (tag_card.get(parts[1]) if len(parts) == 3 and parts[0] == "ask-close" else None) \
+            or notice_card.get(close) or kept.get("card") or ""
+        if key and cid and (kept.get("key"), kept.get("card")) != (key, cid):
+            notice_keys[r["mid"]] = {"key": key, "card": cid}
+        if close and cid:
+            notice_card[close] = cid
+        if key != close and close in notice_thread:
+            return notice_thread[close]
+        if cid:
+            homes = {(card_home.get(cid) or [""])[-1]}
+        else:
+            # A notice whose key is gone: by its question, when the cards
+            # asking it so far are in one place only.
+            homes = {(card_home.get(c["id"]) or [""])[-1] for c in card_list[:next_card[0]]
+                     if q in (c.get("questions") or [])}
+        t = homes.pop() if len(homes) == 1 else ""
+        t = t if t in chosen else ""
+        if close:
+            notice_thread[close] = t
+        return t
+
     for number, r in enumerate(recs, 1):
         if on_message and (number == 1 or number % 50 == 0 or number == len(recs)):
             on_message(number, len(recs))
@@ -544,6 +707,8 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
         if mid in done:
             continue
         done[mid] = r
+        if r["ts"]:
+            place_cards(r["ts"])
         if r["role"] == "user":
             kind = r.get("kind")
             if kind == "human":
@@ -575,6 +740,10 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
                     t = sent["thread"]
                     if t.startswith("task:") and task_thread.get(t[5:]) not in (None, activity):
                         t = task_thread[t[5:]]
+                    if t not in threads and t in pts and t not in made:
+                        # A point's name (a review comment sent on a point,
+                        # #379): the thread that point is in by now.
+                        t = point_thread(t) or t
                     if t.startswith("m:") and t not in threads and t[2:] in done:
                         # Its balloon's thread, or one of its own: Team
                         # activity is not a thread (as a point's anchor above).
@@ -624,7 +793,15 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
                 last = tid
             else:
                 last_input_work = True
-                last = team(r)
+                tid = closed_card(r)
+                if tid:
+                    # Its card is in a thread: the line is that thread's
+                    # traffic, its Work log (#379), not the chat's.
+                    join(tid, r)
+                    work.add(mid)
+                    last = tid
+                else:
+                    last = team(r)
             continue
         # The PO's balloon: where the person's message it answers is (#367).
         # Explicit Re lines name the answers. Other point numbers in that
@@ -633,16 +810,31 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
                     + _point_mentions(r["turn"].get("text") or ""))
         places = []
         for i in list(dict.fromkeys(mentions)):
-            p = pts.get(i)
-            if p is None or i not in home or (r["ts"] and r["ts"] < float(p.get("createdAt") or 0) - points.SLACK_S):
+            here = homes_of([i], r["ts"])
+            if not here:
                 continue
             places.append(home[i])
             if not home[i] and i in threads and i not in chosen:
                 # Its entry in the main chat; the person's thread P1 does not
                 # take a main-chat answer to P1 (#367).
                 answered.setdefault(i, []).append(mid)
-        tids = list(dict.fromkeys(t for t in places if t))
         line = r["turn"].get("text") or ""
+        if len(set(places)) > 1:
+            # #379: answers to points in different places (threads, the main
+            # chat) are cut at their ``Re Pn:`` paragraphs, each part where
+            # its point is; never one balloon twice. A part naming points of
+            # several places goes where its first one is; so does a balloon
+            # with no such paragraphs.
+            parts: dict[str, list[str]] = {}
+            at = None
+            for text, ids in (_re_sections(line) if r.get("re") else [(line, [])]):
+                where = homes_of(ids, r["ts"])
+                at = where[0] if where else (at if at is not None else places[0])
+                parts.setdefault(at, []).append(text)
+            if len(parts) > 1:
+                split[mid] = {k: "\n\n".join(v) for k, v in parts.items()}
+            places = list(parts)
+        tids = list(dict.fromkeys(t for t in places if t))
         lead = line.split("\n\n", 1)[0]
         explicit = bool(r.get("re") or _INLINE_RE.search(line) or _CEO_REQUEST.search(line)
                         or re.search(r"(?im)^\s*(?:>\s*)?for you\s*:", line)
@@ -673,23 +865,29 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
             else:
                 join(t, r)
         for h in re.findall(r"[?&]msg=([0-9a-f]{8,40})\b", line):
-            card_home[h] = [t for t in tids if t in chosen]
+            # The card this balloon links is in its thread (#379: a link
+            # never takes a card out of the thread it was asked in).
+            mine = [t for t in tids if t in chosen][-1:]
+            if mine and h not in card_named:
+                card_home[h] = mine
         if noting and any(t in chosen for t in tids):
             work.add(mid)       # in the main chat it is a message as any other
-        if named and "" in places and any(t in chosen for t in tids):
-            # It answers points in a thread and in the main chat: in the
-            # chat too, marked with the newest of its threads.
-            also[mid] = max(tids, key=lambda t: (threads[t]["rootTs"], order.index(t)))
         # Several PO balloons may be one answer with no new input between
         # them. Keep the same place until the next human or hub input.
         last = next((t for t in reversed(tids) if t in chosen or t == activity), "")
+    place_cards(None)
     # Sends paired by what they hold: their balloon, kept (build), so their
     # place outlives their record (#237 review 1).
     paired = {a["key"]: (m, _num(a.get("at"))) for m, a in sent_of.items() if a.get("key") and a.get("mid") != m}
     for t in chosen:
         threads[t]["chosen"] = True     # the person's: its row shows before any reply (#367 review 1)
+    ids = {c["id"] for c in card_list}
+    in_thread = {c: t[-1] for c, t in card_home.items() if t and t[-1] in chosen and c in ids}
+    for c, t in in_thread.items():
+        threads[t].setdefault("cards", []).append(c)
     return {"threads": threads, "of": of, "parent": parent, "also": also,
-            "work": work, "order": order, "paired": paired, "answered": answered}
+            "work": work, "order": order, "paired": paired, "answered": answered,
+            "cards": in_thread, "split": split, "notices": notice_keys}
 
 
 PAIR_SLACK_S = 120              # a transcript's clock behind the hub's, at most (sends.SLACK_S)
@@ -909,20 +1107,30 @@ def _unhome(out: dict, tid: str, mid: str) -> None:
         del out["also"][mid]
 
 
-def _drop_deleted(out: dict, by_mid: dict, deleted: dict) -> set[str]:
+def _drop_deleted(out: dict, by_mid: dict, deleted: dict, card_ts: dict | None = None) -> set[str]:
     """Threads the person deleted (#319), out of an index :func:`assign`
     made: their balloons up to the delete go (those it held then, and any
     older). A thread with nothing newer is gone; one a later message came
     to starts again from that message. Returns the balloons that are in no
     thread any more: the channel does not show them. The transcripts and
     the points ledger are never touched; a build makes the same threads
-    again, and this drops them again."""
+    again, and this drops them again. Its question cards go with it
+    (#379): those posted up to the delete are in the main chat again, so
+    an open card shows somewhere; a thread gone for good keeps none.
+    ``card_ts``: each card's time ({card: ts})."""
     gone: set[str] = set()
+    cards = out.get("cards")
+    if cards is None:
+        cards = out["cards"] = {}
     for tid, rec in deleted.items():
         th = out["threads"].get(tid)
         if th is None or tid == "team:activity":
             continue
         at, mids = _num(rec.get("at")), set(rec.get("mids") or [])
+        for c in [c for c, t in cards.items() if t == tid and _num((card_ts or {}).get(c)) <= at]:
+            del cards[c]
+        if th.get("cards"):
+            th["cards"] = [c for c in th["cards"] if cards.get(c) == tid]
         keep, drop = [], []
         for m in th["members"]:
             r = by_mid.get(m)
@@ -932,6 +1140,8 @@ def _drop_deleted(out: dict, by_mid: dict, deleted: dict) -> set[str]:
             _unhome(out, tid, m)
             gone.add(m)
         if not keep:
+            for c in [c for c, t in cards.items() if t == tid]:
+                del cards[c]
             del out["threads"][tid]
             out["order"].remove(tid)
             continue
@@ -1036,8 +1246,10 @@ def build(room_id: str, room: dict | None = None, *, show_progress: bool = True,
         claimed = _d.sends.confirmed_mids(room_id)
     except Exception:       # noqa: BLE001 — paired by what they hold alone
         claimed = {}
+    cards = room_cards(room)
     out = assign(recs, led, side, lambda ref: (task_of(ref) or {}).get("title") or "",
-                 lambda done, total: announce("Sorting messages into threads", done, total), claimed)
+                 lambda done, total: announce("Sorting messages into threads", done, total), claimed,
+                 cards)
     announce("Finishing threads")
     # Kept only once no later balloon can be the send (review 2): a guess
     # while it may still come is made again on the next build.
@@ -1048,8 +1260,14 @@ def build(room_id: str, room: dict | None = None, *, show_progress: bool = True,
             confirmed(room_id, settled)
         except Exception as e:      # noqa: BLE001 — paired again by what they hold next time
             print(f"[threads] {room_id}: replies not kept with their balloons: {e!r}", flush=True)
+    if out.get("notices") and keep:
+        try:
+            keep_notices(room_id, out["notices"])
+        except Exception as e:      # noqa: BLE001 — kept on the next build while the send is
+            print(f"[threads] {room_id}: card notices not kept: {e!r}", flush=True)
     by_mid = {r["mid"]: r for r in recs}
-    hidden = _drop_deleted(out, by_mid, side.get("deleted") or {})
+    hidden = _drop_deleted(out, by_mid, side.get("deleted") or {},
+                           {c["id"]: c["ts"] for c in cards})
     _apply_names(out, side.get("names") or {})
     out["namesSig"] = names_sig
     try:
@@ -1073,7 +1291,7 @@ def build(room_id: str, room: dict | None = None, *, show_progress: bool = True,
         po_news = [r for r in po_replies if r["ts"] > mark]
         last_po = max(po_replies, key=lambda r: r["ts"]) if po_replies else None
         lastr = replies[-1] if replies else None
-        open_questions = sum(1 for m in th["members"] if m in open_mids)
+        open_questions = sum(1 for m in th["members"] + (th.get("cards") or []) if m in open_mids)
         labels = list({(label["cls"], label["text"], label.get("projectId"), label.get("projectName")): label
                        for label in (_reply_label(r) for r in replies)}.values())
         th.update({
@@ -1142,6 +1360,8 @@ def _in_channel(idx: dict, mid: str) -> bool:
     """Whether the channel (_channel) holds the balloon ``mid``."""
     if mid in idx.get("hidden", ()):
         return False        # a deleted or put-away thread's (#319)
+    if mid in (idx.get("split") or {}):
+        return "" in idx["split"][mid]      # only its main chat part (#379)
     parent, also = idx["parent"], idx["also"]
     if mid in parent and any(t != "team:activity" for t in parent[mid]) or mid in also:
         return True
@@ -1215,6 +1435,12 @@ def _meta(th: dict) -> dict:
 def _turn(idx: dict, mid: str, tid: str = "") -> dict:
     r = idx["by_mid"][mid]
     out = {**r["turn"], "mid": mid}
+    parts = (idx.get("split") or {}).get(mid)
+    if parts:
+        # Answers to points in several places: here only its part (#379).
+        here = tid if tid in parts else ("" if not tid and "" in parts else None)
+        if here is not None:
+            out["text"] = parts[here]
     # A thread's first message is what it is about, never folded into its
     # work log (#265: a thread started on a PO note opened as a closed row).
     root = (idx["threads"].get(tid) or {}).get("root") or (tid[2:] if tid.startswith("m:") else "")
@@ -1227,7 +1453,7 @@ def _turn(idx: dict, mid: str, tid: str = "") -> dict:
         out["inThr"] = idx["also"][mid]
     tids = idx["of"].get(mid) or []
     here = tid or idx["also"].get(mid) or ""
-    if here and len(tids) > 1:
+    if here and len(tids) > 1 and not parts:
         out["alsoIn"] = [t for t in tids if t != here]
     return out
 
@@ -1274,7 +1500,8 @@ def _span(idx: dict, seq: list[str], n: int, upto: str = "", before: str = "",
             end = len(seq) if end is None else max(start, end)
             return start, min(end, start + CHANNEL_LIMIT)
     if upto and (upto in idx["by_mid"] or upto_ts):
-        i = at(upto) if upto in idx["by_mid"] else             next((k for k, m in enumerate(seq) if (idx["by_mid"][m]["ts"] or 0) >= upto_ts), len(seq))
+        i = at(upto) if upto in idx["by_mid"] else \
+            next((k for k, m in enumerate(seq) if (idx["by_mid"][m]["ts"] or 0) >= upto_ts), len(seq))
         if i is not None:
             start = max(0, i - LINK_ABOVE)
             end = max(start + n, i + 1 + LINK_BELOW)
@@ -1340,6 +1567,8 @@ def channel_view(room_id: str, room: dict, n: int = CHANNEL_MAX, upto: str = "",
             m = next((m for m in reversed(room.get("messages") or []) if m.get("id") == upto), None)
             if m is not None:
                 upto_ts, upto_at = _num(m.get("ts")) or 0.0, "room"
+                if upto in (idx.get("cards") or {}):
+                    upto_at = "thread"      # a card in a thread (#379): the page opens it there
     start, end = _span(idx, ch, n, upto, before, frm, after, to, upto_ts)
     shown = ch[start:end]
     tids = {t for m in shown for t in (idx["parent"].get(m) or [])}
@@ -1351,7 +1580,10 @@ def channel_view(room_id: str, room: dict, n: int = CHANNEL_MAX, upto: str = "",
            "items": [_turn(idx, m) for m in shown],
            "threads": {t: _meta(idx["threads"][t]) for t in tids if t in idx["threads"]},
            "before": start, "after": len(ch) - end, "n": len(shown), "balloons": len(idx["recs"]),
-           "channel": len(ch), "sendMids": idx.get("sendMids") or []}
+           "channel": len(ch), "sendMids": idx.get("sendMids") or [],
+           # The question cards in a thread (#379): the page leaves them out
+           # of the chat, and a link to one opens its thread.
+           "cardThreads": dict(idx.get("cards") or {})}
     # Check every send the open page is awaiting, independently of the newest
     # room event. Another thread can advance after the answer and before a poll.
     watched = []
@@ -1369,7 +1601,7 @@ def channel_view(room_id: str, room: dict, n: int = CHANNEL_MAX, upto: str = "",
                 continue
             reply = next((m for m in reversed(tail) if idx["by_mid"][m].get("role") != "user"), "")
             if reply:
-                turn = _turn(idx, reply)
+                turn = _turn(idx, reply, tid)
                 turn["inThr"] = tid
                 watched.append({"send": send_mid, "thread": tid, "mid": reply, "turn": turn})
     out["watchedReplies"] = watched
@@ -1486,11 +1718,23 @@ def thread_view(room_id: str, room: dict, tid: str = "", mid: str = "", n: int =
     if th is None:
         return {"error": "no_such_thread"}
     members = [m for m in th["members"] if m in idx["by_mid"]]
-    start, end = _span(idx, members, n, upto, before, frm, after, to) if n else (0, len(members))
-    return {"sig": _sig_text(idx), "latestMid": members[-1] if members else "",
-            "progress": progress.snapshot().get("thread:" + room_id),
-            "thread": _meta(th), "items": [_turn(idx, m, tid) for m in members[start:end]],
-            "before": start, "after": len(members) - end}
+    # A link to one of its question cards (#379), a room message: the window
+    # around it is placed by its time, as the channel's is (#262).
+    upto_ts = 0.0
+    if upto and upto not in idx["by_mid"] and upto in (th.get("cards") or ()):
+        m = next((m for m in reversed(room.get("messages") or []) if m.get("id") == upto), None)
+        upto_ts = (_num(m.get("ts")) or 0.0) if m is not None else 0.0
+    start, end = _span(idx, members, n, upto, before, frm, after, to, upto_ts) if n else (0, len(members))
+    out = {"sig": _sig_text(idx), "latestMid": members[-1] if members else "",
+           "progress": progress.snapshot().get("thread:" + room_id),
+           "thread": _meta(th), "items": [_turn(idx, m, tid) for m in members[start:end]],
+           "before": start, "after": len(members) - end}
+    # Its question cards (#379): room messages the page draws among its
+    # balloons by their time, as the channel does with its own.
+    mine = set(th.get("cards") or ())
+    if mine:
+        out["hubRows"] = [m for m in room.get("messages") or [] if m.get("id") in mine]
+    return out
 
 
 def unread_threads(room_id: str, room: dict) -> list[dict] | None:
@@ -1794,6 +2038,23 @@ def confirmed(room_id: str, mids: dict) -> None:
                 a["mid"] = mid
                 changed = True
         if changed:
+            _save_side(room_id, side)
+
+
+def keep_notices(room_id: str, keys: dict) -> None:
+    """The hub's notices about a card ``{balloon: {key, card}}`` (#379
+    review 2): which card a "closed / reopened your question" line is about,
+    for good, though the sends' record of it is pruned after a day and a
+    reopen drops the ledger's key."""
+    if not _ROOM_ID.fullmatch(room_id or "") or not keys:
+        return
+    with _LOCK:
+        side = load_side(room_id)
+        got = side.setdefault("notices", {})
+        new = {m: {"key": v["key"], "card": v["card"]} for m, v in keys.items()
+               if isinstance(m, str) and isinstance(v, dict) and got.get(m) != v}
+        if new:
+            got.update(new)
             _save_side(room_id, side)
 
 

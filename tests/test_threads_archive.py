@@ -108,6 +108,34 @@ class OldThreads(tp._World):
         self.assertEqual([i["mid"] for i in th["items"]], ["sid-1:5"])
         self.assertEqual(th["thread"]["root"], "sid-1:5")
 
+    def card(self, cid, ts, pid):
+        room = chatroom.get_room(self.rid, public=False)
+        room["messages"].append({"id": cid, "from": "claude", "ts": ts, "text": f"About {pid}",
+                                 "asks": [{"question": f"Which way for {pid}?"}], "points": [pid]})
+        chatroom.update_room(room)
+
+    def test_a_deleted_threads_cards_go_back_to_the_chat_and_stay_out_of_it_when_it_starts_again(self):
+        # #379 PO read: a card in a thread the person deletes was in no place
+        # (kept out of the chat, its thread gone), and came back with it.
+        self.card("c1", self.t0 + 5, "P1")
+        self.rebuild()
+        self.assertEqual(self.channel()["cardThreads"].get("c1"), "P1")
+        self.assertEqual(threads.build(self.rid)["threads"]["P1"].get("cards"), ["c1"])
+        threads.delete(self.rid, None, ["P1"], now=self.t0 + 700)
+        self.rebuild()
+        self.assertNotIn("c1", self.channel()["cardThreads"], "its card is in the main chat again")
+        self.assertNotIn("c1", threads.build(self.rid)["cards"])
+        # It starts again: a card from after the delete is in it, the old one is not.
+        self.add("sid-1", tp.turn("assistant", "Re P1: one last thing.", self.t0 + 800))
+        self.card("c2", self.t0 + 810, "P1")
+        self.rebuild()
+        idx = threads.build(self.rid)
+        self.assertEqual(idx["threads"]["P1"]["root"], "sid-1:5")
+        self.assertEqual(idx["threads"]["P1"].get("cards"), ["c2"])
+        ch = self.channel()["cardThreads"]
+        self.assertEqual(ch.get("c2"), "P1")
+        self.assertNotIn("c1", ch)
+
     def post(self, path, body):
         raw = json.dumps(body).encode()
         h = dashboard.Handler.__new__(dashboard.Handler)
