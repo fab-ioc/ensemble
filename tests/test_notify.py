@@ -239,7 +239,7 @@ class Cards(_Notify):
         self.assertEqual([e["key"] for e in evs], [f"answer:room-aaaa0001:2|{int(new['since'])}"])
         self.assertEqual(evs[0]["title"], "Motors · Question")
         self.assertEqual(evs[0]["body"], "Which colour?")
-        self.assertTrue(evs[0]["path"].startswith("/session?room=room-aaaa0001"))
+        self.assertTrue(evs[0]["path"].startswith("/?room=room-aaaa0001"))        # the dashboard (P368)
         self.assertEqual(self.look([old, new]), [])              # once
 
     def test_restart_resends_nothing(self):
@@ -351,7 +351,7 @@ class PoReplies(_Notify):
         ev = evs[0]
         self.assertEqual(ev["title"], "Motors PO")
         self.assertEqual(ev["body"], "Yes: on track for Friday, see …")
-        self.assertEqual(ev["path"], f"/session?room={self.rid}&msg=sid-1:3")
+        self.assertEqual(ev["path"], f"/?room={self.rid}&msg=sid-1:3")
         self.now += notify.TICK_S
         self.assertEqual(self.look([]), [])
         notify._PO_SEEN.clear()                                  # a restart
@@ -488,6 +488,43 @@ class Routes(_Notify):
             self.assertEqual((status, r["removed"], r["devices"]), (200, True, []))
 
 
+class Paths(unittest.TestCase):
+    """P368: a notification opens the dashboard on that chat (#308 deep link)."""
+
+    def tearDown(self):
+        notify.threads._INDEX.pop("room-p1", None)
+
+    def test_room_message_part(self):
+        self.assertEqual(notify._msg_path("room-p1"), "/?room=room-p1")
+        self.assertEqual(notify._msg_path("room-p1", "sid-1:3"), "/?room=room-p1&msg=sid-1:3&part=inbox")
+        self.assertEqual(notify._msg_path("room-p1", "sid-1:3", "q:2"),
+                         "/?room=room-p1&msg=sid-1:3&part=inbox,q:2")
+        self.assertEqual(notify._msg_path("room-p1", "sid-1:3", inbox=False), "/?room=room-p1&msg=sid-1:3")
+        self.assertEqual(notify._msg_path("room-p1", "a&b"), "/?room=room-p1&msg=a%26b&part=inbox")
+
+    def test_a_reply_in_a_thread_names_its_thread(self):
+        idx = {"by_mid": {"sid-1:3": {}, "sid-1:5": {}, "sid-1:7": {}},
+               "of": {"sid-1:5": ["m:sid-1:3"], "sid-1:7": ["team:activity"]},
+               "parent": {"sid-1:3": ["m:sid-1:3"]}, "also": {}, "hidden": set()}
+        notify.threads._INDEX["room-p1"] = ((), idx)
+        self.assertEqual(notify._msg_path("room-p1", "sid-1:5"),
+                         "/?room=room-p1&msg=sid-1:5&part=inbox&thread=m:sid-1:3")
+        # The thread's first message and the main chat's are in the channel.
+        self.assertEqual(notify._msg_path("room-p1", "sid-1:3"), "/?room=room-p1&msg=sid-1:3&part=inbox")
+        self.assertEqual(notify._msg_path("room-p1", "sid-1:7"), "/?room=room-p1&msg=sid-1:7&part=inbox")
+        # Shown in the chat too: the chat is where it lands.
+        idx["also"]["sid-1:5"] = "m:sid-1:3"
+        self.assertEqual(notify._msg_path("room-p1", "sid-1:5"), "/?room=room-p1&msg=sid-1:5&part=inbox")
+        # A chat not read yet: no thread; the chat finds it from the message.
+        notify.threads._INDEX.pop("room-p1")
+        self.assertEqual(notify._msg_path("room-p1", "sid-1:5"), "/?room=room-p1&msg=sid-1:5&part=inbox")
+
+    def test_no_notification_path_is_the_chat_page(self):
+        src = Path(notify.__file__).read_text(encoding="utf-8")
+        self.assertNotIn('"/session?', src)
+        self.assertNotIn("f\"/session?", src)
+
+
 @unittest.skipUnless(shutil.which("node"), "needs Node")
 class WorkerLinks(unittest.TestCase):
     """sw.js hubUrl: a tap opens only a page of this hub."""
@@ -506,6 +543,30 @@ class WorkerLinks(unittest.TestCase):
         self.assertEqual(json.loads(out.stdout), ["https://hub.example/session?room=r&msg=m",
                                                   "https://hub.example/?inbox=p",
                                                   home, home, home, home, home, home, home])
+
+    def test_old_chat_paths_open_the_dashboard(self):
+        """deepUrl: a notification sent before P368 (/session?room=…) opens
+        the dashboard's deep link; any other address is left as it is."""
+        src = (Path(dashboard.__file__).parent / "static" / "sw.js").read_text(encoding="utf-8")
+        fn = src[src.index("function deepUrl("):]
+        fn = fn[:fn.index("\n}\n") + 2]
+        js = ("const self = { location: { origin: 'https://hub.example' } };\n" + fn
+              + "\nconsole.log(JSON.stringify(JSON.parse(process.argv[1]).map(deepUrl)));")
+        h = "https://hub.example"
+        urls = [h + "/session?room=room-p1&msg=sid-1%3A3&part=inbox,q:2",
+                h + "/session?room=room-p1&msg=sid-1:5&thread=m%3Asid-1%3A3",
+                h + "/session?id=room-p1&embed=1",
+                h + "/session?room=room-p1",
+                h + "/?room=room-p1&msg=m", h + "/?inbox=p", h + "/fileview?path=x",
+                "https://evil.example/session?room=room-p1", h + "/session"]
+        out = subprocess.run(["node", "-e", js, json.dumps(urls)], capture_output=True, encoding="utf-8", timeout=30)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(json.loads(out.stdout), [
+            h + "/?room=room-p1&msg=sid-1%3A3&part=inbox%2Cq%3A2",
+            h + "/?room=room-p1&msg=sid-1%3A5&thread=m%3Asid-1%3A3",
+            h + "/?room=room-p1", h + "/?room=room-p1",
+            h + "/?room=room-p1&msg=m", h + "/?inbox=p", h + "/fileview?path=x",
+            "https://evil.example/session?room=room-p1", h + "/session"])
 
 
 if __name__ == "__main__":

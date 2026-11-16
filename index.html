@@ -26339,6 +26339,60 @@ window.ensUpdPlace = () => ({
   top: Math.round((document.scrollingElement || document.documentElement).scrollTop || 0),
   po: PO_PEEK ? 1 : 0, pin: PO_PEEK ? PO_PIN : '',   // the PO drawer open over the page, and whose PO it shows
 });
+// /?room=room-…[&msg=…&part=…][&thread=…|&thread=&tmid=…] (#308): the PO's
+// or the task's chat, opened on that message or thread. A room this page does
+// not list (after a fresh read, for a page already up) gives the chat's own
+// page to go to instead ({fallback}): the caller goes there.
+async function deepOpenRoom(qs, live) {
+  const room = qs.get('room') || '';
+  if (!/^room-[\w-]+$/.test(room)) return { ok: false };
+  if (!PROJECTS) await refreshProjects();
+  const msg = qs.get('msg') || '', part = qs.get('part') || '';
+  const thr = qs.get('thread'), tmid = qs.get('tmid') || '';
+  const known = () => registeredProjects().some(p => p.poRoomId === room && poRowOf(p))
+    || ALL_ROWS.some(r => r.roomId === room || r.sessionId === room);
+  if (!known() && live) {
+    try { await refreshProjects(); await refresh({ now: true }); } catch (e) {}
+  }
+  if (!known()) {
+    return { fallback: '/session?room=' + encodeURIComponent(room) + (msg ? '&msg=' + encodeURIComponent(msg) : '')
+      + (part ? '&part=' + encodeURIComponent(part) : '') + '&stay=1' };
+  }
+  if (thr !== null && (thr || tmid)) { ibxOpenRoom(room); pdThreadOpen(room, thr, msg || tmid, null, part, tmid); }
+  else if (msg) openMsgLink(room, msg, part);
+  else ibxOpenRoom(room);
+  return { ok: true };
+}
+// /?inbox=<project id> (#359): the Inbox on that project's cards.
+async function deepOpenInbox(pid) {
+  if (!PROJECTS) await refreshProjects();
+  ldpScope('project');
+  if (projectById(pid)) { ldSelSet(pid); projPick(pid); }
+  ibxRepaint();
+  if (phoneNow() && !document.body.classList.contains('po-dock')) { if (PH_PANE !== 'inbox') phPane('inbox'); }
+  else ibxOpen();
+  return { ok: true };
+}
+// A notification tapped while this dashboard is open (P368): the service
+// worker brings this window forward and asks it to open what the
+// notification names here, in place, as the same address does at load; it
+// navigates the window only when no answer comes (sw.js openFromNotification).
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.addEventListener('message', ev => {
+    const d = ev.data;
+    if (!d || d.ensemble !== 'notify-open' || typeof d.url !== 'string') return;
+    const port = ev.ports && ev.ports[0];
+    const say = r => { try { port && port.postMessage(r); } catch (e) {} };
+    let u = null;
+    try { u = new URL(d.url, location.origin); } catch (e) {}
+    if (!u || u.origin !== location.origin || (u.pathname !== '/' && u.pathname !== '/index.html')) { say({ ok: false }); return; }
+    const qs = u.searchParams, pid = qs.get('inbox') || '';
+    const run = qs.get('room') ? deepOpenRoom(qs, true)
+      : /^[\w-]+$/.test(pid) ? deepOpenInbox(pid) : Promise.resolve({ ok: true });
+    run.then(say, () => say({ ok: false }));
+  });
+  try { navigator.serviceWorker.startMessages(); } catch (e) {}
+}
 (async () => {
   // Platform first — everything downstream (feature-gating, terminal names) reads it.
   await loadPlatform();
@@ -26678,19 +26732,8 @@ window.ensUpdPlace = () => ({
   const deepRoom = !deepTask && /^room-[\w-]+$/.test(deepQs.get('room') || '') ? deepQs.get('room') : '';
   if (deepRoom) {
     history.replaceState(null, '', location.pathname);
-    if (!PROJECTS) await refreshProjects();
-    const msg = deepQs.get('msg') || '', part = deepQs.get('part') || '';
-    const thr = deepQs.get('thread'), tmid = deepQs.get('tmid') || '';
-    const known = registeredProjects().some(p => p.poRoomId === deepRoom && poRowOf(p))
-      || ALL_ROWS.some(r => r.roomId === deepRoom || r.sessionId === deepRoom);
-    if (!known) {
-      location.replace('/session?room=' + encodeURIComponent(deepRoom) + (msg ? '&msg=' + encodeURIComponent(msg) : '')
-        + (part ? '&part=' + encodeURIComponent(part) : '') + '&stay=1');
-      return;
-    }
-    if (thr !== null && (thr || tmid)) { ibxOpenRoom(deepRoom); pdThreadOpen(deepRoom, thr, msg || tmid, null, part, tmid); }
-    else if (msg) openMsgLink(deepRoom, msg, part);
-    else ibxOpenRoom(deepRoom);
+    const r = await deepOpenRoom(deepQs);
+    if (r.fallback) { location.replace(r.fallback); return; }
   }
   // An old topic link (&topic=…, #topic-…; Topics were removed, P345): the
   // PO chat, quietly. With &room= the chat above opened and the address was
@@ -26707,12 +26750,7 @@ window.ensUpdPlace = () => ({
   const deepInbox = !deepTask && !deepRoom && !deepTopic && /^[\w-]+$/.test(deepQs.get('inbox') || '') ? deepQs.get('inbox') : '';
   if (deepInbox) {
     history.replaceState(null, '', location.pathname);
-    if (!PROJECTS) await refreshProjects();
-    ldpScope('project');
-    if (projectById(deepInbox)) { ldSelSet(deepInbox); projPick(deepInbox); }
-    ibxRepaint();
-    if (phoneNow() && !document.body.classList.contains('po-dock')) { if (PH_PANE !== 'inbox') phPane('inbox'); }
-    else ibxOpen();
+    await deepOpenInbox(deepInbox);
   }
   // Back where it was after the page reloaded itself for an update: the same
   // project and tab, the same open task, the same scroll place.

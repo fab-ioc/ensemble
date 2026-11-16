@@ -64,6 +64,7 @@ from urllib.parse import quote, urlparse
 
 import app_version
 import hub_links
+import threads
 
 # The packages webpush needs that are not part of Python: cryptography and the
 # cffi it loads (_cffi_backend). One of these missing is what the hub can add
@@ -630,12 +631,37 @@ def _q(v: str) -> str:
     return quote(str(v), safe="").replace("%3A", ":")
 
 
-def _msg_path(rid: str, mid: str = "", part: str = "") -> str:
-    path = f"/session?room={_q(rid)}"
+def _thread_of(rid: str, mid: str) -> str:
+    """The thread a PO chat's message is a reply in (#367), from the chat's
+    index as it stands (never built here); "" when the message is in the main
+    chat, the chat is not threaded or not read yet (the chat then finds the
+    thread itself from the message)."""
+    try:
+        with threads._LOCK:
+            hit = threads._INDEX.get(rid)
+        idx = hit[1] if hit else None
+        if not idx or mid not in idx.get("by_mid", {}) or threads._in_channel(idx, mid):
+            return ""
+        tids = [t for t in idx["of"].get(mid) or [] if t != "team:activity"]
+        return tids[-1] if tids else ""      # its newest, as thread_view's
+    except Exception:       # noqa: BLE001 — a link without its thread still lands
+        return ""
+
+
+def _msg_path(rid: str, mid: str = "", part: str = "", thread: str = "", inbox: bool = True) -> str:
+    """Where a tapped notification goes (P368): the dashboard, with that chat
+    open on the message (and in its thread), by the dashboard's deep link
+    (#308), never the chat's page alone. ``inbox``: the balloon is marked
+    as an Inbox card's (part ``inbox``), as every Inbox row's."""
+    path = f"/?room={_q(rid)}"
     if mid:
         path += f"&msg={_q(mid)}"
-        p = "inbox" + ("," + part if part else "")
-        path += "&part=" + quote(p, safe="").replace("%3A", ":").replace("%2C", ",")
+        p = ",".join(x for x in ("inbox" if inbox else "", part) if x)
+        if p:
+            path += "&part=" + quote(p, safe="").replace("%3A", ":").replace("%2C", ",")
+        thread = thread or _thread_of(rid, mid)
+        if thread:
+            path += f"&thread={_q(thread)}"
     return path
 
 
@@ -758,7 +784,7 @@ def _po_events(st: dict, mids: dict, now: float, seed: bool) -> list[dict]:
                 out.append({"key": f"{rid}|po|{mid}", "kind": "po", "projectId": proj.get("id") or "",
                             "project": proj.get("name") or "", "roomId": rid, "mid": mid, "since": ts,
                             "title": clip(f"{name} PO", TITLE_MAX), "body": clip(t.get("text") or "", BODY_MAX),
-                            "path": f"/session?room={_q(rid)}&msg={_q(mid)}"})
+                            "path": _msg_path(rid, mid, inbox=False)})
         except Exception as e:      # noqa: BLE001 — one PO chat must not stop the rest
             _log(f"{rid}: PO chat not read: {e.__class__.__name__}: {str(e)[:120]}")
     return out
