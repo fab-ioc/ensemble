@@ -1,18 +1,45 @@
 // The project-list square and every PO label use this one colour pick.
 // `projects` is the /api/projects order, before the person's pin/order display choices.
+// P366: a project whose uploaded icon has a hue has its own colour (/api/projects'
+// colour: {hex, light, dark}, the hub's icon_colour.shades): pick returns it, as
+// this theme's fill; without one, the palette pick by its place.
 const ProjectColour = (() => {
   const COLOURS = ['var(--c-progress-bold)', 'var(--c-success-bold)',
     'var(--c-warning-bold)', 'var(--c-discovery-bold)'];
   const TOKEN = /^var\(--c-(progress|success|warning|discovery)-bold\)$/;
   const DARK = '#1D2125';
 
-  function pick(projects, pid) {
+  function palette(projects, pid) {
     const registered = (projects || []).filter(p => p.registered);
     const i = registered.findIndex(p => p.id === pid);
     if (i >= 0) return COLOURS[i % COLOURS.length];
     let h = 0;
     for (const ch of String(pid || '')) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
     return COLOURS[h % COLOURS.length];
+  }
+  // A dark theme: its page ground is dark (every theme sets --surface).
+  // The page's scheme as cdTheme set it (data-scheme on the root); a page without
+  // it falls back to the surface's luminance.
+  function darkTheme(vars) {
+    const s = document.documentElement.dataset.scheme;
+    if (s === 'dark' || s === 'light') return s === 'dark';
+    const l = luminance((vars || getComputedStyle(document.documentElement)).getPropertyValue('--surface').trim());
+    return l != null && l < .2;
+  }
+  const HEX = /^#[0-9a-f]{6}$/i;
+  function own(projects, pid, vars) {
+    const pj = (projects || []).find(p => p.id === pid), c = pj && pj.colour;
+    if (!c || typeof c !== 'object') return '';
+    const v = darkTheme(vars) ? c.dark : c.light;
+    return HEX.test(v || '') ? v : '';
+  }
+  function pick(projects, pid, vars) {
+    return own(projects, pid, vars) || palette(projects, pid);
+  }
+  // The palette kind of a pick (progress, success, ...); '' for a project's own colour.
+  function kindOf(picked) {
+    const m = String(picked || '').match(TOKEN);
+    return m ? m[1] : '';
   }
   function rgb(s) {
     s = String(s || '').trim();
@@ -33,7 +60,10 @@ const ProjectColour = (() => {
   }
   // A colour's fill and ink in the theme now painted: the bold shade with white or
   // dark ink at 4.5:1, else its -fg shade. The PO label and the project tile both use it.
+  // A pick that is a project's own colour (#rrggbb): it with the ink that reads on it.
   function shade(kind, vars) {
+    if (HEX.test(kind || '')) return { fill: kind, ink: contrast(kind, '#fff') >= 4.5 ? '#fff' : DARK, hex: kind };
+    kind = kindOf(kind) || kind;
     let fill = `var(--c-${kind}-bold)`, hex = vars.getPropertyValue(`--c-${kind}-bold`).trim();
     let ink = contrast(hex, '#fff') >= 4.5 ? '#fff' : DARK;
     if (contrast(hex, ink) < 4.5) {
@@ -93,17 +123,17 @@ const ProjectColour = (() => {
       }
       if (!pid && !el.hasAttribute('data-po-name')) pid = ownId || '';
       const pj = projects.find(p => p.id === pid);
-      if (!pj || (pj.icon && pj.icon.v)) {
+      if (!pj) {
         el.style.removeProperty('background-color');
         el.style.removeProperty('color');
         el.removeAttribute('data-po-fill');
         continue;
       }
-      const { fill, ink } = shade(pick(projects, pid).match(TOKEN)[1], vars);
+      const { fill, ink } = shade(pick(projects, pid, vars), vars);
       el.style.backgroundColor = fill;
       el.style.color = ink;
       el.dataset.poFill = fill;
     }
   }
-  return { COLOURS, KINDS, pick, paint, contrast, shade, tileVars, initials };
+  return { COLOURS, KINDS, pick, palette, own, kindOf, darkTheme, paint, contrast, shade, tileVars, initials };
 })();

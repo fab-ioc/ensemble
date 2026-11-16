@@ -1315,8 +1315,9 @@ third of the panel empty).
 - **Role labels** (`.rl`, #361) identify the sender in balloons, the PO chat header, and thread reply
   rows. The PO label takes its project's colour from the project-list square (`ldpColour`): the same
   `--c-*-bold` fill, with AA-contrast white or dark text; use that token's `-fg` shade if neither
-  text colour passes 4.5:1. A project with its own icon, or an unknown
-  other project's PO, keeps the violet label. Engineer, reviewer, person and outside labels keep
+  text colour passes 4.5:1. A project whose uploaded icon has a hue has that colour as its own
+  (P366, `ProjectColour.pick` returns it; the hub's `icon_colour.shades` moves its lightness per
+  theme so the text keeps 4.5:1). An unknown other project's PO keeps the violet label. Engineer, reviewer, person and outside labels keep
   their existing colours.
 - The hub's rows keep their sunken rows; a send on its way keeps its dashed edge.
 - **Phone:** the same, full width under the bar's two rows (#129).

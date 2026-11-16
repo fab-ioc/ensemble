@@ -17407,6 +17407,7 @@ function ldpHeld(k, list, id) {
 // stable pick from the status tokens' bold shades. #328: by its place among the
 // registered projects, so the first four never share a colour (a hash of the id
 // gave two of three the same); by its id when it is not in that list.
+// P366: a project whose uploaded icon has a hue has that colour instead (#rrggbb).
 const LDP_COLOURS = ProjectColour.COLOURS;
 function ldpColour(pid) {
   return ProjectColour.pick(PROJECTS && PROJECTS.projects, pid);
@@ -17414,7 +17415,7 @@ function ldpColour(pid) {
 function poColourBroadcast(target) {
   if (!PROJECTS || !PROJECTS.projects) return;
   const projects = PROJECTS.projects.map(p => ({ id:p.id, name:p.name, poRoomId:p.poRoomId,
-    registered:!!p.registered, icon:p.icon && {v:p.icon.v} }));
+    registered:!!p.registered, icon:p.icon && {v:p.icon.v}, colour:p.colour || null }));
   const msg = { ensemble:'po-project-colours', projects };
   if (target) { try { target.postMessage(msg, location.origin); } catch (e) {} return; }
   document.querySelectorAll('iframe[src*="/session?"]').forEach(f => {
@@ -17441,9 +17442,11 @@ function ldpSwatch(pid, cls) {
 // A project's tile: its colour (ldpColour's kind; the fill and ink are the PO label's, from
 // ProjectColour.tileVars) and its initials. The look, Flat or Glossy, is the hub's
 // projectIcons setting on <html data-ptiles>, so the markup is the same for both.
+// A tile shows only while the project has no icon, and an icon's colour (P366) goes
+// with it: the tile is always the palette pick (also Project settings' Initials tile).
 function ldpTile(pid, name, cls) {
   ptileVars();
-  const kind = (String(ldpColour(pid)).match(/--c-(\w+)-bold/) || [])[1] || 'progress';
+  const kind = ProjectColour.kindOf(ProjectColour.palette(PROJECTS && PROJECTS.projects, pid)) || 'progress';
   return `<span class="${cls || 'ldp-ico'} ptile" data-k="${kind}" data-i="${esc(ProjectColour.initials(name))}" aria-hidden="true"></span>`;
 }
 // The tiles' colour variables follow the theme painted; worked out again only when it changes.
@@ -19106,10 +19109,11 @@ function psGenHtml(pj, d) {
 // One POST: {svgs, agent, model} or {error, agent, model}; throws only when aborted.
 // P362: the project's PO label colour as hex, in the theme painted now (the PO
 // label's own fill, ProjectColour.shade): the colour a generated icon is drawn in.
+// P366: its own colour when its uploaded icon gave it one.
 function psLabelHex(pid) {
   try {
-    const kind = (String(ldpColour(pid)).match(/--c-(\w+)-bold/) || [])[1] || 'progress';
-    const hex = ProjectColour.shade(kind, getComputedStyle(document.documentElement)).hex;
+    const vars = getComputedStyle(document.documentElement);
+    const hex = ProjectColour.shade(ProjectColour.pick(PROJECTS && PROJECTS.projects, pid, vars), vars).hex;
     return /^#[0-9a-f]{6}$/i.test(hex) ? hex : '';
   } catch (e) { return ''; }
 }
@@ -19169,10 +19173,32 @@ function psDialogHtml(pj, d, phone) {
     + `<p class="ps-hint">${phone ? 'PNG, JPEG, SVG or WebP, up to 1 MB, or Generate. Cropped to a square.'
         : "PNG, JPEG, SVG or WebP, up to 1 MB, or Generate. A picture that is not square is cropped to its middle. It shows in place of the square at the square's size:"}</p>`
     + (phone ? '' : `<div class="ps-sample"><span class="ldp-row ps-srow" aria-current="true">${small}<span class="ldp-name">${esc(psName(d.name) || pj.name)}</span>${n ? `<span class="ldp-n">${n}</span>` : ''}</span></div>`)
+    // P366: the hint under the sample (the hint above ends on it with a colon).
+    + `<p class="ps-hint ps-chint">${esc(nounText("An uploaded picture's main colour becomes the {project}'s colour."))}</p>`
     + '</div>'
     + `<div class="ps-more"><div class="ps-lg">More settings</div>${psSettingsRowsHtml(pj, phone)}</div>`
     + `<div class="ps-foot"><button type="button" class="ps-btn" id="ps-cancel">Cancel</button>`
     + `<button type="button" class="ps-save${save ? '' : ' off'}" id="ps-save"${save ? '' : ' disabled'}>${d.busy ? 'Saving…' : 'Save'}</button></div>`;
+}
+// P366: a raster upload drawn small as a PNG, sent beside it: a hub that
+// cannot read JPEG or WebP itself works the colour out from this ('' if not drawn).
+function psThumbnail(dataUrl) {
+  return new Promise(resolve => {
+    if (!/^data:image\/(png|jpeg|webp)[;,]/i.test(dataUrl || '')) { resolve(''); return; }
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const k = Math.min(1, 64 / Math.max(img.naturalWidth, img.naturalHeight, 1));
+        const c = document.createElement('canvas');
+        c.width = Math.max(1, Math.round(img.naturalWidth * k));
+        c.height = Math.max(1, Math.round(img.naturalHeight * k));
+        c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+        resolve(c.toDataURL('image/png'));
+      } catch (e) { resolve(''); }
+    };
+    img.onerror = () => resolve('');
+    img.src = dataUrl;
+  });
 }
 function psReadFile(f) {
   return new Promise((resolve, reject) => {
@@ -19291,7 +19317,11 @@ function psOnce(pid, d, focus) {
         const name = psName(d.name);
         if (name !== pj.name) await post('/api/projects/rename', { projectId: pid, name });
         step = 'icon';
-        if (d.choice === 'image' && d.file) await post('/api/projects/icon', { projectId: pid, dataUrl: d.file.dataUrl, name: d.file.name });
+        // P366: an upload's colour becomes the project's; a generated one keeps the colour it was drawn in.
+        if (d.choice === 'image' && d.file) {
+          const thumbnail = d.file.gen ? '' : await psThumbnail(d.file.dataUrl);
+          await post('/api/projects/icon', { projectId: pid, dataUrl: d.file.dataUrl, name: d.file.name, generated: !!d.file.gen, thumbnail });
+        }
         else if (d.choice !== 'image' && pj.icon) await post('/api/projects/icon', { projectId: pid, dataUrl: null });
       } catch (e) {
         d.busy = false;
