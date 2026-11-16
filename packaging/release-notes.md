@@ -1,3 +1,7 @@
+## In this release
+
+- Notifications work on every install: the Mac and Windows apps now include the part they need, and a hub run from a clone adds it by itself. If it is still missing, Settings › Notifications says in one sentence what to do.
+
 ## Install
 
 **Windows 10 or 11:** download `Ensemble-@VERSION@-windows-x64-setup.exe` and run it. It installs for you only, without administrator rights.

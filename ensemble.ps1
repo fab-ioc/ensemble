@@ -182,12 +182,13 @@ function Start-Dashboard {
   if (-not (Test-Path $Server)) { Write-Error "$Server not found"; exit 1 }
   $python = Resolve-PythonW
   if (-not $python) { Write-Error 'No real Python found (need python.org install / py launcher).'; exit 1 }
-  # The headless agents need pywinpty (requirements.txt); install it for this
-  # Python on a machine that does not have it yet, as the macOS script does.
+  # The headless agents need pywinpty and notifications need cryptography
+  # (requirements.txt); install them for this Python on a machine that does
+  # not have them yet, as the macOS script does.
   $py = Resolve-Python
-  & $py -c 'import winpty' 2>$null
+  & $py -c 'import winpty, cryptography' 2>$null
   if ($LASTEXITCODE -ne 0) {
-    Write-Host 'Installing dependencies (pywinpty)...'
+    Write-Host 'Installing dependencies (pywinpty, cryptography)...'
     & $py -m pip install --user -r (Join-Path $ScriptDir 'requirements.txt')
   }
 

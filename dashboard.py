@@ -2345,6 +2345,10 @@ _SETTINGS_DEFAULTS = {
     # here: "Initiative"/"Initiatives" where one real project holds several.
     # Only what the person reads changes; routes, keys and agents keep "project".
     "projectNoun": {"one": "Project", "many": "Projects"},
+    # #370 (P356): how a project without its own icon shows in every list:
+    # "flat" (a tile with its initials) or "glossy" (the same, as an app icon).
+    # One choice for the hub, so every device draws the same.
+    "projectIcons": "flat",
 }
 # An accent is an opaque colour a primary button can be painted with: #rgb or
 # #rrggbb, a CSS colour name, rgb(r g b) or hsl(h s% l%) (commas or spaces).
@@ -2426,6 +2430,7 @@ def project_noun(n: str = "one", case: str = "lower") -> str:
 
 _SETTINGS_ALLOWED_VALUES = {
     "openMode": {"window", "tab"},
+    "projectIcons": {"flat", "glossy"},
     "theme": {"", "light", "dark", "dim", "paper", "contrast", "fjord", "intellij-dark", "system"},
     "taskAgentTools": TASK_AGENT_TOOLS_VALUES,
     "editor": {""} | {eid for eid, _label in EDITORS} | {EDITOR_CUSTOM},

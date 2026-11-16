@@ -126,7 +126,9 @@ const GEOM = `(() => {
   const strip = s => [...document.querySelectorAll('#list-dock .dk-strip-' + s + ' .dk-strip-btn[data-dk-auto]')].map(b => b.dataset.dkAuto);
   const sb = id => document.querySelector('#list-dock .dk-strip-btn[data-dk-auto="' + id + '"]');
   const leftHead = document.querySelector('#list-dock .dk-head:has([data-dk-tab="inbox"])');
-  const ico = b => { const s = b.querySelector('svg'); if (!s) return null; const r = s.getBoundingClientRect(); return { k: s.getAttribute('aria-label') || 'swatch', w: Math.round(r.width), h: Math.round(r.height), fill: getComputedStyle(s.querySelector('rect, path')).fill, parts: [...s.querySelectorAll('rect, path, circle')].map(e => e.tagName).join(','), rx: (s.querySelector('rect') || { getAttribute: () => '' }).getAttribute('rx') || '' }; };
+  // #370: a project's square is a tile with its initials (a span), a task's or session's icon an svg.
+  const ico = b => { const t = b.querySelector('.ptile'); if (t) { const r = t.getBoundingClientRect(); return { k: 'swatch', w: Math.round(r.width), h: Math.round(r.height), fill: getComputedStyle(t).backgroundColor, parts: '', rx: '' }; }
+    const s = b.querySelector('svg'); if (!s) return null; const r = s.getBoundingClientRect(); return { k: s.getAttribute('aria-label') || 'swatch', w: Math.round(r.width), h: Math.round(r.height), fill: getComputedStyle(s.querySelector('rect, path')).fill, parts: [...s.querySelectorAll('rect, path, circle')].map(e => e.tagName).join(','), rx: (s.querySelector('rect') || { getAttribute: () => '' }).getAttribute('rx') || '' }; };
   const tb = document.querySelector('#list-dock .dk-tab[data-dk-tab="inbox"] .dk-badge');
   const sp = document.getElementById('ld-split');
   const wideEls = [...document.querySelectorAll('body *')].filter(e => { const r = e.getBoundingClientRect(); return r.width > 0 && r.right > document.documentElement.clientWidth + 1 && getComputedStyle(e).position !== 'fixed' && !e.closest('[hidden], .dk-off') && !(e.closest('#detail-panel') && !document.body.classList.contains('detail-open')); });
@@ -966,7 +968,9 @@ class LeftStripInChrome(unittest.TestCase):
         rows = self.g("fresh")["ldp"]
         for r in rows[1:]:
             with self.subTest(r=r["name"]):
-                self.assertEqual((r["ico"]["w"], r["ico"]["h"]), (12, 12), "every icon the size of the swatch")
+                # #370: a project's tile is 22px; a task's or session's icon stays 12px in its column.
+                size = 22 if r["proj"] else 12
+                self.assertEqual((r["ico"]["w"], r["ico"]["h"]), (size, size))
         self.assertEqual({r["ico"]["k"] for r in rows if r["proj"]}, {"swatch"})
         fills = [r["ico"]["fill"] for r in rows if r["proj"]]
         self.assertEqual(len(set(fills)), len(fills), "three projects, three colours: %s" % fills)
