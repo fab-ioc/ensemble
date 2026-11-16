@@ -1107,20 +1107,30 @@ def _unhome(out: dict, tid: str, mid: str) -> None:
         del out["also"][mid]
 
 
-def _drop_deleted(out: dict, by_mid: dict, deleted: dict) -> set[str]:
+def _drop_deleted(out: dict, by_mid: dict, deleted: dict, card_ts: dict | None = None) -> set[str]:
     """Threads the person deleted (#319), out of an index :func:`assign`
     made: their balloons up to the delete go (those it held then, and any
     older). A thread with nothing newer is gone; one a later message came
     to starts again from that message. Returns the balloons that are in no
     thread any more: the channel does not show them. The transcripts and
     the points ledger are never touched; a build makes the same threads
-    again, and this drops them again."""
+    again, and this drops them again. Its question cards go with it
+    (#379): those posted up to the delete are in the main chat again, so
+    an open card shows somewhere; a thread gone for good keeps none.
+    ``card_ts``: each card's time ({card: ts})."""
     gone: set[str] = set()
+    cards = out.get("cards")
+    if cards is None:
+        cards = out["cards"] = {}
     for tid, rec in deleted.items():
         th = out["threads"].get(tid)
         if th is None or tid == "team:activity":
             continue
         at, mids = _num(rec.get("at")), set(rec.get("mids") or [])
+        for c in [c for c, t in cards.items() if t == tid and _num((card_ts or {}).get(c)) <= at]:
+            del cards[c]
+        if th.get("cards"):
+            th["cards"] = [c for c in th["cards"] if cards.get(c) == tid]
         keep, drop = [], []
         for m in th["members"]:
             r = by_mid.get(m)
@@ -1130,6 +1140,8 @@ def _drop_deleted(out: dict, by_mid: dict, deleted: dict) -> set[str]:
             _unhome(out, tid, m)
             gone.add(m)
         if not keep:
+            for c in [c for c, t in cards.items() if t == tid]:
+                del cards[c]
             del out["threads"][tid]
             out["order"].remove(tid)
             continue
@@ -1234,9 +1246,10 @@ def build(room_id: str, room: dict | None = None, *, show_progress: bool = True,
         claimed = _d.sends.confirmed_mids(room_id)
     except Exception:       # noqa: BLE001 — paired by what they hold alone
         claimed = {}
+    cards = room_cards(room)
     out = assign(recs, led, side, lambda ref: (task_of(ref) or {}).get("title") or "",
                  lambda done, total: announce("Sorting messages into threads", done, total), claimed,
-                 room_cards(room))
+                 cards)
     announce("Finishing threads")
     # Kept only once no later balloon can be the send (review 2): a guess
     # while it may still come is made again on the next build.
@@ -1253,7 +1266,8 @@ def build(room_id: str, room: dict | None = None, *, show_progress: bool = True,
         except Exception as e:      # noqa: BLE001 — kept on the next build while the send is
             print(f"[threads] {room_id}: card notices not kept: {e!r}", flush=True)
     by_mid = {r["mid"]: r for r in recs}
-    hidden = _drop_deleted(out, by_mid, side.get("deleted") or {})
+    hidden = _drop_deleted(out, by_mid, side.get("deleted") or {},
+                           {c["id"]: c["ts"] for c in cards})
     _apply_names(out, side.get("names") or {})
     out["namesSig"] = names_sig
     try:
