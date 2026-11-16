@@ -110,6 +110,10 @@ async function main() {
     const ratio=(a,b)=>{const x=lum(a),y=lum(b);return (Math.max(x,y)+.05)/(Math.min(x,y)+.05)};
     return els.map(e=>e?ratio(getComputedStyle(e).color,getComputedStyle(e).backgroundColor):0);
   })()`;
+  // ENSEMBLE_PO_COLOUR_SHOT: the light page before the upload and after it.
+  const shoot=async name=>{ if (!A.shots) return; await sleep(250);
+    const shot=await send('Page.captureScreenshot',{format:'png',captureBeyondViewport:false},s);
+    fs.writeFileSync(path.join(A.shots, 'po-colour-'+name+'.png'),Buffer.from(shot.data,'base64')); };
   try {
     await send('Page.navigate',{url:A.base+'/'},s);
     await until(`typeof PROJECTS!=='undefined' && !!PROJECTS && PROJECTS.projects.length===3 &&
@@ -124,10 +128,6 @@ async function main() {
       await sleep(150);
       out.light.push(await ev(inspect));
       out.light[i].ratios=await ev(ratios);
-      if (A.shots && i<2) {
-        const shot=await send('Page.captureScreenshot',{format:'png',captureBeyondViewport:false},s);
-        fs.writeFileSync(path.join(A.shots, 'po-colour-'+i+'.png'),Buffer.from(shot.data,'base64'));
-      }
     }
     for (const theme of ['dark','dim','paper','contrast','fjord','intellij-dark']) {
       // The hub's settings.theme wins over the local cache on the next sync: save it there too.
@@ -150,14 +150,14 @@ async function main() {
     const pid0=JSON.stringify(A.ids[0]);
     await ev(`SELECTED_PROJECT=${pid0};PROJECT_TAB='tasks';renderRows();0`);
     await until(`document.querySelector('#po-panel .po-head')?.dataset.proj===${pid0} && ${PO}?.dataset.room===${JSON.stringify(A.rooms[0])}`,'project 0 again');
-    out.before=await ev(inspect);
+    out.before=await ev(inspect); await shoot('before');
     const post=async body=>ev(`(async()=>{ await api('/api/projects/icon',{method:'POST',headers:{'Content-Type':'application/json'},body:${JSON.stringify(JSON.stringify(body))}});
       await refreshProjects(); renderRows(); ldpPaint(); poColourBroadcast(); return 1; })()`);
     const green='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48"><rect width="48" height="48" fill="#ffffff"/><circle cx="24" cy="24" r="20" fill="#1f9d55"/></svg>';
     await post({projectId:A.ids[0], dataUrl:'data:image/svg+xml;base64,'+Buffer.from(green).toString('base64'), name:'green.svg'});
     await until(`!!ProjectColour.own(PROJECTS.projects,${pid0}) && document.querySelector('#po-panel .po-head .rl.po')?.dataset.poFill===ProjectColour.own(PROJECTS.projects,${pid0})
       && ${PO}?.contentDocument?.querySelector('#msgs .msg .from .rl.po')?.dataset.poFill===ProjectColour.own(PROJECTS.projects,${pid0})`,'uploaded colour');
-    out.uploaded=await ev(inspect); out.uploaded.ratios=await ev(ratios);
+    out.uploaded=await ev(inspect); out.uploaded.ratios=await ev(ratios); await shoot('after');
     out.uploaded.pic=await ev(`document.querySelector('#ld-projs [data-ldp-proj="'+${pid0}+'"] .ldp-ico img')?.getAttribute('src')||''`);
     await post({projectId:A.ids[0], dataUrl:null});
     await until(`!ProjectColour.own(PROJECTS.projects,${pid0}) && !!document.querySelector('#ld-projs [data-ldp-proj="'+${pid0}+'"] .ldp-ico.ptile')
@@ -252,14 +252,23 @@ class PoColourCdp(unittest.TestCase):
         assert result.returncode == 0, result.stderr[-5000:]
         cls.got = json.loads(result.stdout.strip().splitlines()[-1])
         if os.environ.get('ENSEMBLE_PO_COLOUR_SHOT'):
-            from PIL import Image
-            left, right = (Image.open(base / f'po-colour-{i}.png').convert('RGB') for i in range(2))
-            # Keep the list, header and balloon without the empty lower chat area.
+            from PIL import Image, ImageDraw, ImageFont
+            left, right = (Image.open(base / f'po-colour-{n}.png').convert('RGB') for n in ('before', 'after'))
+            # Keep the list, header and balloon without the empty lower chat area,
+            # under a caption each: Orion before and after a green icon is uploaded.
             width = min(850, left.width, right.width)
             height = min(450, left.height, right.height)
-            out = Image.new('RGB', (width * 2, height), '#ffffff')
-            out.paste(left.crop((0, 0, width, out.height)), (0, 0))
-            out.paste(right.crop((0, 0, width, out.height)), (width, 0))
+            cap, gap = 34, 16
+            out = Image.new('RGB', (width * 2 + gap, height + cap), '#ffffff')
+            out.paste(left.crop((0, 0, width, height)), (0, cap))
+            out.paste(right.crop((0, 0, width, height)), (width + gap, cap))
+            draw = ImageDraw.Draw(out)
+            try:
+                font = ImageFont.truetype('DejaVuSans.ttf', 15)
+            except OSError:
+                font = ImageFont.load_default()
+            draw.text((10, 10), 'Before: Orion has no icon, its label takes the palette pick', fill='#1d2125', font=font)
+            draw.text((width + gap + 10, 10), 'After: a green icon uploaded, its colour is the label colour', fill='#1d2125', font=font)
             dest = Path(os.environ['ENSEMBLE_PO_COLOUR_SHOT'])
             dest.parent.mkdir(parents=True, exist_ok=True)
             out.save(dest)
