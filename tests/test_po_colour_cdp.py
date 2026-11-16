@@ -88,9 +88,10 @@ async function main() {
     const balloon=d?.querySelector('#msgs .msg .from .rl.po');
     const square=document.querySelector('#ld-projs [data-ldp-proj="'+pid+'"] .ldp-ico');
     const value=e=>e?{fill:getComputedStyle(e).backgroundColor,ink:getComputedStyle(e).color,text:e.textContent.trim(),token:e.dataset.poFill||''}:null;
-    const swatch=square?.querySelector('rect'), listToken=ldpColour(pid), kind=listToken.match(/--c-(\\w+)-bold/)?.[1];
+    const swatch=square&&square.classList.contains('ptile')?square:null, listToken=ldpColour(pid), kind=listToken.match(/--c-(\\w+)-bold/)?.[1];
     const vars=getComputedStyle(document.documentElement);
-    return {pid, head:value(head), balloon:value(balloon), swatch:swatch?getComputedStyle(swatch).fill:null,
+    return {pid, head:value(head), balloon:value(balloon), swatch:swatch?getComputedStyle(swatch).backgroundColor:null,
+      swatchInk:swatch?getComputedStyle(swatch).color:null, swatchText:swatch?swatch.dataset.i||'':'',
       listToken, bold:kind?vars.getPropertyValue('--c-'+kind+'-bold').trim():null,
       fg:kind?vars.getPropertyValue('--c-'+kind+'-fg').trim():null,
       violet:vars.getPropertyValue('--c-discovery-fg').trim(),
@@ -155,7 +156,10 @@ class PoColourCdp(unittest.TestCase):
         self.assertEqual(view['head']['token'], expected_token, view)
         self.assertEqual(rgb(view['head']['fill']), rgb(expected_fill), view)
         self.assertEqual(view['head']['fill'], view['balloon']['fill'], view)
-        self.assertEqual(rgb(view['swatch']), rgb(view['bold']), view)
+        # #370: the list tile wears the PO label's own fill and ink.
+        self.assertEqual(rgb(view['swatch']), rgb(view['head']['fill']), view)
+        self.assertEqual(rgb(view['swatchInk']), rgb(view['head']['ink']), view)
+        self.assertTrue(view['swatchText'], view)
         self.assertTrue(all(r >= 4.5 for r in ratios), (ratios, view))
 
     @classmethod

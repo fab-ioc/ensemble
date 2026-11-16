@@ -227,6 +227,13 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     --border: #DCDFE4;
     --border-strong: #B3B9C4;
     --proj-icon-edge: var(--border-strong);   /* #329: the hairline inside a project's own icon */
+    /* #370: the Glossy project tile's finish, the same over every colour and theme: a shine on
+       its top 44% (at most this strong: each colour's --pt-<kind>-h keeps its letter at 4.5:1),
+       a light top edge and a dark foot edge inside, a small drop shadow. */
+    --pt-shine-top: rgba(255, 255, 255, .36);
+    --pt-shine-low: rgba(255, 255, 255, .08);
+    --pt-shine-edge: inset 0 1px 0 rgba(255, 255, 255, .55), inset 0 -1px 0 rgba(0, 0, 0, .18);
+    --pt-shine-drop: rgba(9, 30, 66, .25);
     --hover: rgba(9, 30, 66, .06);
     --pressed: rgba(9, 30, 66, .12);
 
@@ -692,7 +699,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .me-item:hover, .pm-item:hover { background: var(--hover); }
   .pm-item.on { background: var(--selected-bg); color: var(--selected-fg); font-weight: 500; }
   .pm-item .pm-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .pm-item .pm-sw { flex: none; display: block; width: 12px; height: 12px; }   /* #328: the left panel's icons */
+  .pm-item .pm-sw { flex: none; }   /* #328: the left panel's icons; #370: sized as .ptile */
   .sw-kind-ico { display: inline-block; width: 12px; height: 12px; vertical-align: -1px; }
   .pm-item .pm-needs {
     margin-left: auto; background: var(--c-warning-bg); color: var(--c-warning-fg);
@@ -727,7 +734,10 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .pm-pinb:hover { background: var(--hover); color: var(--fg); }
   .pm-pinb:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--focus-ring); }
   .pm-pinrow > .pm-item { cursor: grab; }
-  .pm-grip { display: none; flex: none; width: 12px; height: 12px; color: var(--fg-subtle); }
+  .pm-grip { display: none; flex: none; width: 22px; height: 12px; color: var(--fg-subtle); }
+  /* #370: a row with a 22px project tile or icon is 30px high, also while a pinned row's
+     grip stands in for the icon (hover, drag). */
+  .pm-item:has(> .ptile, > .ldp-pic.pm-sw) { padding-top: 4px; padding-bottom: 4px; min-height: 30px; box-sizing: border-box; }
   .pm-pinrow:hover > .pm-item > .pm-sw, .pm-lifted > .pm-item > .pm-sw { display: none; }
   .pm-pinrow:hover .pm-grip, .pm-lifted .pm-grip { display: block; }
   .pm-griph { display: none; }
@@ -735,7 +745,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   body.ph-switch #proj-menu .pm-griph { display: grid; place-items: center; flex: none; width: var(--touch-min); height: var(--touch-min);
     color: var(--fg-subtle); touch-action: none; cursor: grab; }
   body.ph-switch #proj-menu .pm-griph svg { width: 14px; height: 14px; }
-  body.ph-switch #proj-menu .pm-pinrow > .pm-item > .pm-sw { display: block; }
+  body.ph-switch #proj-menu .pm-pinrow > .pm-item > .pm-sw { display: grid; }
   body.ph-switch #proj-menu .pm-grip { display: none; }
   .pm-lifted .pm-griph { color: var(--fg); }
   /* Search syntax. A placeholder is not documentation. */
@@ -4017,14 +4027,16 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .ldp-title { margin: 4px 4px 6px; font-size: 11px; line-height: 1.4; font-weight: 600; color: var(--fg-muted); text-transform: uppercase; letter-spacing: .04em; }
   .ldp { display: flex; flex-direction: column; }
   .ldp:empty { display: none; }
-  .ldp-row { display: flex; align-items: center; justify-content: space-between; gap: 6px; width: 100%; padding: 4px 6px;
+  .ldp-row { display: flex; align-items: center; justify-content: space-between; gap: 6px; width: 100%; padding: 3px 6px;
     border: 0; border-radius: var(--r-200); background: transparent; color: var(--fg); font: inherit; font-size: 12px; line-height: 1.4;
     text-align: left; cursor: pointer; }
   .ldp-row:hover { background: var(--hover); }
   .ldp-row:focus-visible, .ldp-more:focus-visible, .ldp-dots:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--focus-ring); }
   .ldp-row[aria-current="true"], .ldp-row[data-cur] { background: var(--selected-bg); color: var(--selected-fg); font-weight: 600; }
   .ldp-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .ldp-row[data-ldp="all"] { padding-left: 24px; }
+  .ldp-row[data-ldp="all"] { padding-left: 34px; }
+  /* #370: a task's or session's 12px icon sits in the project tile's 22px column. */
+  .ldp-row > svg.ldp-ico { margin: 0 5px; }
   .ldp-ico { flex: none; display: block; width: 12px; height: 12px; }
   .ldp-n { flex: none; padding: 0 6px; border-radius: 8px; background: var(--c-neutral-bg); color: var(--c-neutral-fg);
     font-size: 10px; text-align: center; font-weight: 400; }
@@ -4051,11 +4063,17 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .ldp-pinb:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--focus-ring); }
   .pin-ico { display: block; width: 12px; height: 12px; }
   .ldp-pinmark { flex: none; display: grid; color: var(--fg-subtle); }
+  /* #375 (issue 52): a pinned row shows one pin. The mark gives way (its space kept) whenever the pin
+     button shows, instead of relying on ⋯ to cover it (⋯'s hover background is see-through), and ⋯'s
+     keyboard focus brings the pin button with it, so the row never shows no pin either. */
+  .ldp-hand:has(.ldp-dots:focus-visible) .ldp-pinb { opacity: 1; }
+  .ldp-hand:hover .ldp-pinmark,
+  .ldp-hand:has(.ldp-pinb:focus-visible, .ldp-dots:focus-visible, .ldp-dots[aria-expanded="true"]) .ldp-pinmark { visibility: hidden; }
   .ldp-hand .ldp-row { cursor: grab; }
-  .ldp-grip { display: none; flex: none; width: 12px; height: 12px; color: var(--fg-subtle); }
+  .ldp-grip { display: none; flex: none; width: 22px; height: 12px; color: var(--fg-subtle); }
   .ldp-hand:hover .ldp-row > .ldp-ico, .ldp-hand.ldp-lifted .ldp-row > .ldp-ico { display: none; }
   .ldp-hand:hover .ldp-grip, .ldp-hand.ldp-lifted .ldp-grip { display: block; }
-  .ldp-slot, .pm-slot { flex: none; height: var(--slot-h, 25px); border-radius: var(--r-200); background: var(--selected-bg); box-shadow: inset 0 0 0 2px var(--accent); }
+  .ldp-slot, .pm-slot { flex: none; height: var(--slot-h, 28px); border-radius: var(--r-200); background: var(--selected-bg); box-shadow: inset 0 0 0 2px var(--accent); }
   .ldp-lifted, .pm-lifted { position: fixed; z-index: 1000; margin: 0; background: var(--surface-overlay); box-shadow: var(--e-200); border-radius: var(--r-200);
     pointer-events: none; font-family: var(--ldp-font, inherit); }
   .ldp-lifted .ldp-row, .pm-lifted .pm-item { cursor: grabbing; }
@@ -4573,18 +4591,49 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
 
 }
 
-  /* #329 (P297 drawing): a project's own icon, in the square's box (.ldp-ico, .pm-sw: 12px),
+  /* #329 (P297 drawing): a project's own icon, in the square's box (.ldp-ico, .pm-sw: 22px since #370),
      cropped to a square, a hairline inside its edge so a white logo keeps its shape. */
   .ldp-pic { position: relative; border-radius: 3px; overflow: hidden; }
   .ldp-pic img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .ldp-pic::after { content: ''; position: absolute; inset: 0; border-radius: 3px; border: 1px solid var(--proj-icon-edge); }
+  /* #370 (P356, options-v2.png A and C): a project without its own icon is a tile with its
+     initials, in its colour (--pt-<kind>-*, set by ProjectColour.tileVars for the theme now
+     painted: the PO label's fill and ink). Settings › Preferences › Project icons picks the
+     look for the hub: Flat (A) or Glossy (C, :root[data-ptiles="glossy"]). 22px in the lists;
+     --pt sizes it where a line of text holds it. An uploaded icon (.ldp-pic) takes the same box. */
+  .ptile, .ldp-pic.ldp-ico, .ldp-pic.pm-sw { --pt: 22px; width: var(--pt); height: var(--pt); border-radius: calc(var(--pt) * 6 / 22); }
+  .ldp-pic.ldp-ico, .ldp-pic.pm-sw { display: block; flex: none; }
+  .ldp-pic.ldp-ico::after, .ldp-pic.pm-sw::after { border-radius: inherit; }
+  .ptile { flex: none; box-sizing: border-box; position: relative; overflow: hidden; display: grid; place-items: center;
+    background: var(--pt-f); color: var(--pt-i); font-family: var(--font-sans); font-size: calc(var(--pt) / 2); line-height: 1;
+    font-weight: 600; font-style: normal; letter-spacing: 0; text-transform: none; user-select: none; }
+  /* The initials are drawn, not text: a row's name, search and copy read as before (#370). */
+  .ptile::before { content: attr(data-i); }
+  /* Glossy: the shine lies under the letters (it may lighten what is behind them, as much
+     as the letter allows at 4.5:1: --pt-h from ProjectColour.tileVars). */
+  :root[data-ptiles="glossy"] .ptile::before, .ptile.pt-gloss::before { position: relative; z-index: 1; }
+  .ptile[data-k="progress"] { --pt-f: var(--pt-progress-f, var(--c-progress-bold)); --pt-i: var(--pt-progress-i, #fff); --pt-g: var(--pt-progress-g); --pt-s: var(--pt-progress-s); --pt-h: var(--pt-progress-h); }
+  .ptile[data-k="success"] { --pt-f: var(--pt-success-f, var(--c-success-bold)); --pt-i: var(--pt-success-i, #fff); --pt-g: var(--pt-success-g); --pt-s: var(--pt-success-s); --pt-h: var(--pt-success-h); }
+  .ptile[data-k="warning"] { --pt-f: var(--pt-warning-f, var(--c-warning-bold)); --pt-i: var(--pt-warning-i, #fff); --pt-g: var(--pt-warning-g); --pt-s: var(--pt-warning-s); --pt-h: var(--pt-warning-h); }
+  .ptile[data-k="discovery"] { --pt-f: var(--pt-discovery-f, var(--c-discovery-bold)); --pt-i: var(--pt-discovery-i, #fff); --pt-g: var(--pt-discovery-g); --pt-s: var(--pt-discovery-s); --pt-h: var(--pt-discovery-h); }
+  :root[data-ptiles="glossy"] .ptile, .ptile.pt-gloss { background: var(--pt-g, var(--pt-f)); text-shadow: var(--pt-s, none);
+    box-shadow: var(--pt-shine-edge), 0 1px 2px var(--pt-shine-drop); }
+  :root[data-ptiles="glossy"] .ptile::after, .ptile.pt-gloss::after { content: ''; position: absolute; left: 0; right: 0; top: 0; height: 44%;
+    background: var(--pt-h, linear-gradient(to bottom, var(--pt-shine-top), var(--pt-shine-low))); border-radius: inherit;
+    border-bottom-left-radius: 40% 3px; border-bottom-right-radius: 40% 3px; pointer-events: none; }
+  :root .ptile.pt-flat { background: var(--pt-f); text-shadow: none; box-shadow: none; }
+  :root .ptile.pt-flat::after { content: none; }
+  #settings-panel #pref-ptiles button { display: inline-flex; align-items: center; justify-content: center; gap: var(--s-200); }
+  #settings-panel #pref-ptiles .ptile { --pt: 16px; }
   .pm-head { display: flex; align-items: center; gap: 6px; }
-  .pm-head .pm-sw { flex: none; display: block; width: 12px; height: 12px; }
+  .pm-head .pm-sw { flex: none; }
   .dcm-rule { border-top: 1px solid var(--border); margin: 4px 0; }
   #proj-switch-ico { flex: none; display: flex; }
   #proj-switch-ico:empty { display: none; }
   #proj-switch-ico .ldp-ico { margin-right: 6px; }
   .ibx-where .ldp-ico { display: inline-block; vertical-align: -1px; margin-right: 4px; }
+  .ibx-where .ptile, .ibx-where .ldp-pic.ldp-ico { --pt: 16px; display: inline-grid; vertical-align: -4px; }
+  .pm-head .ptile, .pm-head .ldp-pic.pm-sw { --pt: 16px; }
   /* The settings dialog (projSettings). */
   dialog.ps-dlg { width: 560px; max-width: calc(100vw - 16px); box-sizing: border-box; }
   dialog.ps-dlg h3.ps-h { margin: 0; display: flex; align-items: center; gap: 8px; }
@@ -4611,6 +4660,8 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .ps-radio:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--focus-ring); }
   .ps-big { width: 40px; height: 40px; flex: none; border-radius: 8px; overflow: hidden; position: relative; display: block; }
   .ps-big svg { display: block; }
+  .ps-big:has(> .ps-sqt) { overflow: visible; }
+  .ps-big > .ps-sqt { --pt: 40px; }
   .ps-big img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .ps-big-img::after { content: ''; position: absolute; inset: 0; border-radius: 8px; border: 1px solid var(--proj-icon-edge); }
   .ps-big-none { border: 1px dashed var(--border-strong); box-sizing: border-box; }
@@ -5123,6 +5174,15 @@ window.DOC_LISTENERS_PAUSED = false;
     <h5 class="sp-sub">Lists</h5>
     <div class="pref-row"><label><input type="checkbox" id="pref-full-names" checked> Show full names on hover</label></div>
     <p class="cfg-hint">A name cut short in the left panel or a list shows whole while the pointer rests on it. Kept in this browser.</p>
+    <!-- #370 (P356): how a project without an icon of its own is drawn, one choice for the hub. -->
+    <div class="pref-row" style="margin-top: 14px;">
+      <span class="pref-label" id="pref-ptiles-label" data-noun="{Project} icons">Project icons</span>
+      <div class="seg pref-seg" id="pref-ptiles" role="group" aria-labelledby="pref-ptiles-label">
+        <button type="button" data-val="flat" aria-pressed="true"><span class="ptile pt-demo pt-flat" data-k="progress" data-i="E" aria-hidden="true"></span>Flat</button>
+        <button type="button" data-val="glossy" aria-pressed="false"><span class="ptile pt-demo pt-gloss" data-k="progress" data-i="E" aria-hidden="true"></span>Glossy</button>
+      </div>
+    </div>
+    <p class="cfg-hint" data-noun="{A project} without an icon of its own shows as a tile in its colour with its initials, flat or glossy, in every list. An icon uploaded in its settings takes the tile&#39;s place. One choice for this hub, so every device shows the same.">A project without an icon of its own shows as a tile in its colour with its initials, flat or glossy, in every list. An icon uploaded in its settings takes the tile's place. One choice for this hub, so every device shows the same.</p>
     <!-- #343 (P317): how long a message opened from the Inbox stays marked in its chat. -->
     <h5 class="sp-sub">Inbox</h5>
     <div class="pref-row" style="margin-top: 14px;">
@@ -9035,6 +9095,14 @@ function renderPrefs() {
       b.setAttribute('aria-pressed', String(b.dataset.val === value));
     });
   }
+  const ptSeg = document.getElementById('pref-ptiles');
+  if (ptSeg) {
+    const value = ptileLook(PREFS.projectIcons);
+    ptSeg.querySelectorAll('button').forEach(b => {
+      b.classList.toggle('active', b.dataset.val === value);
+      b.setAttribute('aria-pressed', String(b.dataset.val === value));
+    });
+  }
   const paceSeg = document.getElementById('pref-pace-week');
   if (paceSeg) {
     const value = PREFS.paceWeek === false ? 'off' : 'on';
@@ -9455,17 +9523,25 @@ async function setProjectNoun(one, many) {
     location.reload();
   } catch (e) { toast('preference save failed: ' + e.message, 4000, 'err'); }
 }
-async function setPref(key, val) {
-  try {
-    const updated = await api('/api/settings', {
-      method: 'PUT',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({[key]: val}),
-    });
-    PREFS = updated;
-    renderPrefs();
-    toast(`preference saved`, 1500, 'ok');
-  } catch (e) { toast('preference save failed: ' + e.message, 4000, 'err'); }
+// One setting's saves go to the hub one after the other, so quick clicks land in order;
+// only the last one's answer is drawn, so an earlier answer never undoes a later click (#370).
+const SETPREF_Q = {}, SETPREF_N = {};
+function setPref(key, val) {
+  const n = SETPREF_N[key] = (SETPREF_N[key] || 0) + 1;
+  const run = async () => {
+    try {
+      const updated = await api('/api/settings', {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({[key]: val}),
+      });
+      if (n !== SETPREF_N[key]) return;
+      PREFS = updated;
+      renderPrefs();
+      toast(`preference saved`, 1500, 'ok');
+    } catch (e) { toast('preference save failed: ' + e.message, 4000, 'err'); }
+  };
+  return SETPREF_Q[key] = (SETPREF_Q[key] || Promise.resolve()).then(run);
 }
 
 let UPDATE_IN_PROGRESS = false;
@@ -17297,12 +17373,51 @@ new MutationObserver(() => {
 // (CEO's pick, set B): a task a clipboard with a check, a session the terminal it
 // runs in, so neither reads as one more project square. Named by its tooltip.
 // #329: a project with an icon of its own shows it in the square's box instead.
+// #370 (P356): the square is a 22px tile with the project's initials (ldpTile).
 function ldpSwatch(pid, cls) {
   let pj = null;
   try { pj = projectById(pid); } catch (e) {}
   if (pj && pj.icon && pj.icon.v) return `<span class="${cls || 'ldp-ico'} ldp-pic"><img src="${esc(projIconUrl(pid, pj.icon))}" alt="${esc(pj.name || '')}" draggable="false"></span>`;
-  return `<svg class="${cls || 'ldp-ico'}" viewBox="0 0 12 12" aria-hidden="true"><rect width="12" height="12" rx="3" fill="${ldpColour(pid)}"/></svg>`;
+  return ldpTile(pid, pj ? pj.name : '', cls);
 }
+// A project's tile: its colour (ldpColour's kind; the fill and ink are the PO label's, from
+// ProjectColour.tileVars) and its initials. The look, Flat or Glossy, is the hub's
+// projectIcons setting on <html data-ptiles>, so the markup is the same for both.
+function ldpTile(pid, name, cls) {
+  ptileVars();
+  const kind = (String(ldpColour(pid)).match(/--c-(\w+)-bold/) || [])[1] || 'progress';
+  return `<span class="${cls || 'ldp-ico'} ptile" data-k="${kind}" data-i="${esc(ProjectColour.initials(name))}" aria-hidden="true"></span>`;
+}
+// The tiles' colour variables follow the theme painted; worked out again only when it changes.
+let PT_THEME = null;
+function ptileVars(force) {
+  const root = document.documentElement, t = root.dataset.theme || '';
+  if (!force && PT_THEME === t) return;
+  PT_THEME = t;
+  try { ProjectColour.tileVars(root); } catch (e) {}
+}
+window.addEventListener('cd-theme', () => ptileVars(true));
+// Settings › Preferences › Project icons (the hub's projectIcons, #370): Flat or Glossy.
+// localStorage['cd-ptiles'] is only its first-paint cache, as cd-theme is the theme's.
+function ptileLook(v) {
+  const look = v === 'glossy' ? 'glossy' : 'flat';
+  document.documentElement.dataset.ptiles = look;
+  try { localStorage.setItem('cd-ptiles', look); } catch (e) {}
+  return look;
+}
+try { ptileLook(localStorage.getItem('cd-ptiles')); } catch (e) { ptileLook('flat'); }
+ptileVars();
+// Another device may have changed it: the page takes the hub's choice when it comes back to the front.
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) return;
+  fetch('/api/settings', { cache: 'no-store' }).then(r => r.ok ? r.json() : null)
+    .then(st => {
+      if (!st || typeof st.projectIcons !== 'string') return;
+      if (PREFS) PREFS.projectIcons = st.projectIcons;   // a later renderPrefs draws the same
+      ptileLook(st.projectIcons);
+      if (PREFS) renderPrefs();
+    }).catch(() => {});
+});
 function ldpKindIcon(kind, cls) {
   const c = cls || 'ldp-ico';
   if (kind === 'task') return `<svg class="${c}" viewBox="0 0 12 12" role="img" aria-label="task"><title>task</title>`
@@ -18958,9 +19073,9 @@ function psDialogHtml(pj, d, phone) {
   const fileName = d.file ? d.file.name : (pj.icon && pj.icon.name) || '';
   const fileSize = d.file ? d.file.size : (pj.icon && pj.icon.size) || 0;
   const sq = d.choice !== 'image';
-  const bigSq = `<span class="ps-big"><svg viewBox="0 0 40 40" width="40" height="40" aria-hidden="true"><rect width="40" height="40" rx="8" fill="${ldpColour(pj.id)}"/></svg></span>`;
+  const bigSq = `<span class="ps-big">${ldpTile(pj.id, psName(d.name) || pj.name, 'ps-sqt')}</span>`;
   const bigPic = src ? `<span class="ps-big ps-big-img"><img src="${esc(src)}" alt=""></span>` : '<span class="ps-big ps-big-none"></span>';
-  const small = sq ? `<svg class="ldp-ico" viewBox="0 0 12 12" aria-hidden="true"><rect width="12" height="12" rx="3" fill="${ldpColour(pj.id)}"/></svg>`
+  const small = sq ? ldpTile(pj.id, psName(d.name) || pj.name)
     : (src ? `<span class="ldp-ico ldp-pic"><img src="${esc(src)}" alt=""></span>` : '<span class="ldp-ico"></span>');
   let n = 0;
   try { n = IBX.data ? ibxRows(IBX.data, 'project', pj.id).length : 0; } catch (e) {}
@@ -18976,7 +19091,7 @@ function psDialogHtml(pj, d, phone) {
     + `<div class="ps-fld"><div class="ps-lg" id="ps-icon-lg">Icon</div>`
     + `<div class="ps-choices" role="radiogroup" aria-labelledby="ps-icon-lg">`
     + `<label class="ps-choice"><input type="radio" class="ps-radio" name="ps-icon" value="square"${sq ? ' checked' : ''}>${bigSq}`
-    + `<span class="ps-t"><b>Coloured square</b>${phone ? '' : '<small class="ps-plain">its colour comes from its place in the list</small>'}</span></label>`
+    + `<span class="ps-t"><b>Initials tile</b>${phone ? '' : '<small class="ps-plain">its colour comes from its place in the list</small>'}</span></label>`
     + `<label class="ps-choice ps-choice-img"><input type="radio" class="ps-radio" name="ps-icon" value="image"${sq ? '' : ' checked'}>${bigPic}`
     + `<span class="ps-t"><b>Image</b>${psImageSub(d, src, fileName, fileSize)}</span>`
     + `<span class="ps-ibtns"><button type="button" class="ps-btn" id="ps-up">${src && !phone ? 'Replace…' : phone ? 'Upload…' : 'Upload image…'}</button>`
@@ -24284,7 +24399,7 @@ appThemeColor();
 // shown by the service worker at /sw.js. Where this device cannot have them,
 // the tab says why and what to do. The page's heartbeat (hub-resilience.js)
 // holds them back while Ensemble is in front here.
-const NT = { hub: null, reg: null, sub: null, busy: false, status: '' };
+const NT = { hub: null, reg: null, sub: null, busy: false, status: '', again: 0 };
 const ntStandalone = () => (window.matchMedia && matchMedia('(display-mode: standalone)').matches) || navigator.standalone === true;
 const ntPush = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
 const ntSafari = () => /Safari\//.test(navigator.userAgent) && !/Chrome\/|Chromium\/|Edg\//.test(navigator.userAgent);
@@ -24306,7 +24421,8 @@ function ntBlocker() {
       ? 'Safari blocks notifications for this site. Allow them in Safari › Settings › Websites › Notifications, then come back here.'
       : 'This browser blocks notifications for this site. Allow them in its site settings, then come back here.' };
   }
-  if (NT.hub && !NT.hub.available) return { why: 'The hub cannot send notifications: ' + (NT.hub.reason || 'no reason given') + '.' };
+  // A missing package (P359): the hub's plain sentence and its one step, never the Python error.
+  if (NT.hub && !NT.hub.available) return { why: NT.hub.help || 'The hub cannot send notifications right now: restart the hub, and if this stays, use Send feedback in your menu.' };
   return null;
 }
 // How the device reads in the list: "Mac · Safari app", "iPhone · Home Screen app".
@@ -24351,6 +24467,11 @@ async function ntRefresh() {
   }
   try { NT.hub = (await ntPost('/api/notify/status', {})).data; } catch (e) { NT.hub = null; }
   ntPaint();
+  // While the hub installs what notifications need, look again until it is done.
+  clearTimeout(NT.again);
+  if (NT.hub && NT.hub.installing) {
+    NT.again = setTimeout(() => { const sp = document.getElementById('settings-panel'); if (sp && !sp.hidden) ntRefresh(); }, 5000);
+  }
 }
 function ntWhen(t) {
   const d = new Date(t * 1000), now = new Date();
@@ -26171,6 +26292,13 @@ window.ensUpdPlace = () => ({
     if (!b) return;
     await setPref('preferAgent', b.dataset.val);
     refreshUsage();
+  });
+  // #370: Project icons, Flat or Glossy, for the hub. Shown at once; the hub's answer settles it.
+  document.getElementById('pref-ptiles')?.addEventListener('click', async (ev) => {
+    const b = ev.target.closest('button[data-val]');
+    if (!b) return;
+    ptileLook(b.dataset.val);
+    await setPref('projectIcons', b.dataset.val);
   });
   // The week's pace (ED-164): the switch, and the head start in points.
   document.getElementById('pref-pace-week')?.addEventListener('click', async (ev) => {

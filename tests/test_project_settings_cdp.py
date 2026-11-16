@@ -384,9 +384,10 @@ class ProjectSettingsInChrome(unittest.TestCase):
     def g(self, k):
         return self.got[k]
 
-    def assertIcon(self, ico, img):
+    def assertIcon(self, ico, img, size=22):
+        # #370: the lists' project tile is 22px; the Inbox's where line holds a 16px one.
         self.assertIsNotNone(ico)
-        self.assertEqual((ico["w"], ico["h"]), (12, 12), ico)
+        self.assertEqual((ico["w"], ico["h"]), (size, size), ico)
         self.assertEqual(ico["img"], img, ico)
         if img:
             self.assertTrue(ico["loaded"], ico)
@@ -457,7 +458,7 @@ class ProjectSettingsInChrome(unittest.TestCase):
         self.assertEqual([s.split(" ")[0] for s in d["sets"]], ["Kind", "Key", "Task", "PO"])
         self.assertIn("its tasks are", d["sets"][1])
         self.assertTrue(d["sets"][3].startswith("PO claude"), d["sets"])
-        self.assertEqual((d["sample"]["w"], d["sample"]["h"]), (12, 12))
+        self.assertEqual((d["sample"]["w"], d["sample"]["h"]), (22, 22))
         p = self.g("picked")
         self.assertEqual(p["choice"], "image")
         self.assertEqual(p["up"], "Replace…")
@@ -471,13 +472,13 @@ class ProjectSettingsInChrome(unittest.TestCase):
 
     def test_the_icon_replaces_the_square_at_its_size(self):
         b = self.g("before")
-        self.assertEqual(b["row"]["tag"], "svg")
+        self.assertEqual(b["row"]["tag"], "span")  # #370: the initials tile
         w = self.g("withIcon")
         self.assertEqual(w["icon"]["file"], "project-icon.svg")
         self.assertEqual(w["icon"]["name"], "wheels-logo.svg")
         self.assertIcon(w["row"], True)
         self.assertIcon(w["bar"], True)
-        self.assertIcon(w["ibx"], True)
+        self.assertIcon(w["ibx"], True, 16)
         self.assertEqual([w[k]["alt"] for k in ("row", "bar", "ibx")], ["Motors Two"] * 3, "the image says the name")
         wh = self.g("wheels")
         self.assertEqual(wh["icon"]["file"], "project-icon.png")
@@ -488,9 +489,9 @@ class ProjectSettingsInChrome(unittest.TestCase):
         self.assertTrue(self.g("squarePicked")["save"])
         s = self.g("square")
         self.assertIsNone(s["icon"])
-        self.assertEqual(s["row"]["tag"], "svg")
-        self.assertEqual((s["row"]["w"], s["row"]["h"]), (12, 12))
-        self.assertEqual(s["bar"]["tag"], "svg")
+        self.assertEqual(s["row"]["tag"], "span")  # #370: the initials tile
+        self.assertEqual((s["row"]["w"], s["row"]["h"]), (22, 22))
+        self.assertEqual(s["bar"]["tag"], "span")  # #370: the initials tile
 
     def test_the_board_word(self):
         self.assertEqual(self.g("nounMenu"), ["Open", "Rename initiative…", "Initiative settings…"])
