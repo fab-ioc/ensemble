@@ -4051,6 +4051,12 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .ldp-pinb:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--focus-ring); }
   .pin-ico { display: block; width: 12px; height: 12px; }
   .ldp-pinmark { flex: none; display: grid; color: var(--fg-subtle); }
+  /* #375 (issue 52): a pinned row shows one pin. The mark gives way (its space kept) whenever the pin
+     button shows, instead of relying on ⋯ to cover it (⋯'s hover background is see-through), and ⋯'s
+     keyboard focus brings the pin button with it, so the row never shows no pin either. */
+  .ldp-hand:has(.ldp-dots:focus-visible) .ldp-pinb { opacity: 1; }
+  .ldp-hand:hover .ldp-pinmark,
+  .ldp-hand:has(.ldp-pinb:focus-visible, .ldp-dots:focus-visible, .ldp-dots[aria-expanded="true"]) .ldp-pinmark { visibility: hidden; }
   .ldp-hand .ldp-row { cursor: grab; }
   .ldp-grip { display: none; flex: none; width: 12px; height: 12px; color: var(--fg-subtle); }
   .ldp-hand:hover .ldp-row > .ldp-ico, .ldp-hand.ldp-lifted .ldp-row > .ldp-ico { display: none; }
