@@ -35,7 +35,8 @@ NAMES = ["Atlas", "Harbor", "Orchard", "Lumen", "Quarry", "Juniper", "Beacon", "
 LONG = "A pinned project with a name far too long for the left list"
 LONG2 = "An unpinned project with a name far too long for the left list"
 REST_MS = 2000
-# Where the pointer rests: the name, the pin button and ⋯, each also 2 px inside the row's bottom edge.
+# Where the pointer rests: the name, the pin button and ⋯, each also 2 px inside the row's bottom edge
+# (for the buttons, which are 22 px in a 28 px row, that is 1 px under them: the row's flicker band).
 WHERE = ("row", "rowTop", "rowBottom", "pin", "pinBottom", "dots", "dotsBottom")
 
 MAIN = r"""
@@ -202,6 +203,14 @@ class PinnedRowHoverIsSteady(unittest.TestCase):
         for w in WHERE:
             with self.subTest(w):
                 self._steady(f"Atlas/{w}")
+
+    def test_cut_names_raise_their_copy(self):
+        # the long names are cut: resting on them raises the whole-name copy (#337), which stays up
+        for k in ("Long", "Long2"):
+            with self.subTest(k):
+                r = self.got["rest"][f"{k}/row"]
+                self.assertIn("under:copy", r["first"], r)
+                self.assertNotIn("copy#0", r["first"], r)
 
     def test_pinned_cut_name_is_steady(self):
         for w in WHERE:
