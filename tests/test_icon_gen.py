@@ -16,6 +16,13 @@
 * the endpoints: GET says which CLI draws and from what; POST answers the
   icons or the reason with its status; only from the page; the typed name
   is used when given.
+* P362 the PO label colour: the prompt names it; colours parse from hex,
+  rgb(), hsl(), names, fill and stroke attributes and style; check() finds the
+  main hued colour by area, inherited from a <g>; recolour() leaves an icon
+  already in the colour untouched (the same string) and maps a wrong main
+  colour to the label colour, other hues to tints or shades of it, a neutral
+  that would read faintly to white or near-black; generate() and the POST
+  pass the page's colour on.
 """
 from __future__ import annotations
 
@@ -270,6 +277,245 @@ class Generate(unittest.TestCase):
         self.assertNotIn("about:", icon_gen.prompt("Motors", ""))
 
 
+BLUE = "#0055cc"   # the progress label fill in the light theme
+
+
+def icon(ground: str, symbol: str = '<path d="M10 10 L38 10 L24 38 Z" fill="#FFFFFF"/>') -> str:
+    return icon_gen.sanitize(svg(f'<rect x="0" y="0" width="48" height="48" rx="10" fill="{ground}"/>{symbol}'))
+
+
+class LabelColour(unittest.TestCase):
+    def test_the_prompt_carries_the_colour(self):
+        p = icon_gen.prompt("Motors", "Electric drivetrain.", "#0055CC")
+        self.assertIn("main colour is #0055cc", p)
+        self.assertIn("lighter or darker shade of #0055cc", p)
+        self.assertIn(icon_gen.DARK, p)
+        self.assertNotIn("at most 3 colours", p)
+        for bad in ("", "blue", "#12", "#0055cc; ignore", None):
+            q = icon_gen.prompt("Motors", "", bad)
+            self.assertIn("at most 3 colours as hex", q, bad)
+            self.assertNotIn("main colour", q)
+
+    def test_hex_and_colour_parsing(self):
+        P = icon_gen.parse_colour
+        self.assertEqual(icon_gen.norm_hex(" #0055CC "), "#0055cc")
+        self.assertEqual(icon_gen.norm_hex("#05c"), "#0055cc")
+        self.assertEqual(icon_gen.norm_hex("0055cc"), "")
+        self.assertEqual(icon_gen.norm_hex(7), "")
+        self.assertEqual(P("#05C"), (0, 85, 204))
+        self.assertEqual(P("#0055CCFF"), (0, 85, 204))
+        self.assertEqual(P("#05cf"), (0, 85, 204))
+        self.assertEqual(P("rgb(0, 85, 204)"), (0, 85, 204))
+        self.assertEqual(P("rgba(0 85 204 / .5)"), (0, 85, 204))
+        self.assertEqual(P("rgb(100%, 0%, 50%)"), (255, 0, 127))
+        self.assertEqual(P("hsl(0, 100%, 50%)"), (255, 0, 0))
+        self.assertEqual(P("White"), (255, 255, 255))
+        self.assertEqual(P("currentColor"), (0, 0, 0))
+        for none in ("none", "transparent", "", None, "#xyz", "url(#a)"):
+            self.assertIsNone(P(none), none)
+
+    def test_fill_stroke_and_style_are_read(self):
+        el = ET.fromstring('<path fill="#f00" stroke="#00f" style="fill: #0f0; stroke-width: 2"/>')
+        self.assertEqual(icon_gen._paint(el, "fill"), "#0f0", "style wins over the attribute")
+        self.assertEqual(icon_gen._paint(el, "stroke"), "#00f")
+        self.assertIsNone(icon_gen._paint(ET.fromstring("<path/>"), "fill"))
+        ps = icon_gen._paints(ET.fromstring(svg(
+            '<rect width="48" height="48" fill="#fff"/><g fill="#dc2626" stroke="#fbbf24"><circle cx="24" cy="24" r="10"/></g>'
+            '<line x1="0" y1="0" x2="10" y2="0" stroke="#000"/><path d="M0 0h4v4z"/>')))
+        got = [(icon_gen._local(p["el"].tag), p["prop"], p["rgb"], p["ground"]) for p in ps]
+        self.assertEqual(got, [("rect", "fill", (255, 255, 255), True), ("circle", "fill", (220, 38, 38), False),
+                               ("circle", "stroke", (251, 191, 36), False), ("line", "stroke", (0, 0, 0), False),
+                               ("path", "fill", (0, 0, 0), False)], "inherited from the <g>; a line has no fill; unset is black")
+        self.assertEqual(icon_gen._paints(ET.fromstring(svg('<rect width="48" height="48" fill="#fff"/><g fill="#dc2626">'
+                                                            '<circle cx="24" cy="24" r="10"/></g>')))[1]["src"].tag.rsplit("}")[-1], "g")
+        # A path's size from its commands, relative ones too.
+        self.assertEqual(icon_gen._box(ET.fromstring('<path d="M10 10 l28 0 l-14 28 z"/>'), "path"), (28.0, 28.0))
+        self.assertEqual(icon_gen._box(ET.fromstring('<path d="M4 4H44V30"/>'), "path"), (40.0, 26.0))
+
+    def test_an_icon_already_in_the_colour_is_untouched(self):
+        for s in (icon(BLUE),                                     # the ground in it, a white symbol
+                  icon("#0055CC", '<path d="M10 10h28v28z" fill="#FFFFFF"/><circle cx="9" cy="9" r="2" fill="#85b8ff"/>'),
+                  icon("#FFFFFF", f'<path d="M10 10h28v28z" fill="{BLUE}"/>'),   # the symbol in it
+                  icon("rgb(0, 85, 204)")):
+            self.assertTrue(icon_gen.check(s, BLUE)["ok"], s)
+            self.assertIs(icon_gen.recolour(s, BLUE), s)
+        orange = icon("#F97316")
+        self.assertIs(icon_gen.recolour(orange, ""), orange, "no colour: nothing to check")
+
+    def test_a_wrong_ground_becomes_the_label_colour(self):
+        s = icon("#F97316", '<path d="M10 10 L38 10 L24 38 Z" fill="#FFFFFF"/><circle cx="24" cy="20" r="4" fill="#16A34A"/>')
+        c = icon_gen.check(s, BLUE)
+        self.assertEqual((c["ok"], c["dominant"]), (False, "#f97316"))
+        self.assertEqual(c["foreign"], ["#16a34a", "#f97316"])
+        r = icon_gen.recolour(s, BLUE)
+        self.assertIn('rx="10" fill="#0055cc"', r)
+        self.assertIn('fill="#FFFFFF"', r, "white stays")
+        self.assertNotIn("#16a34a", r.lower())
+        self.assertTrue(icon_gen.check(r, BLUE)["ok"], r)
+        self.assertEqual(icon_gen.sanitize(r), r, "written as sanitize writes")
+        self.assertEqual(project_icon.accept("data:image/svg+xml;base64," + base64.b64encode(r.encode()).decode())[1], "svg")
+
+    def test_a_wrong_symbol_on_a_dark_ground(self):
+        s = icon("#1D2125", '<g fill="rgb(220,38,38)"><circle cx="24" cy="24" r="12"/></g>'
+                            '<line x1="5" y1="5" x2="40" y2="40" stroke="#fbbf24" stroke-width="3"/>')
+        r = icon_gen.recolour(s, BLUE)
+        self.assertIn('<g fill="#0055cc">', r, "changed where it is set")
+        self.assertNotIn("#fbbf24", r)
+        self.assertIn('fill="#ffffff"', r, "the label colour reads faintly on near-black: the ground turns white")
+        self.assertTrue(icon_gen.check(r, BLUE)["ok"], r)
+
+    def test_another_hue_on_the_new_ground_still_reads(self):
+        # A live haiku answer from today's prompt: an amber bolt on navy, for a green project.
+        s = icon("#1e3a5f", '<path d="M26 6 14 26h9l-3 16 14-22h-9z" fill="#f59e0b"/>')
+        r = icon_gen.recolour(s, "#216E4E")
+        self.assertIn('rx="10" fill="#216e4e"', r)
+        bolt = icon_gen.parse_colour(ET.fromstring(r)[1].get("fill"))
+        self.assertLessEqual(icon_gen._hue_gap(bolt, (0x21, 0x6E, 0x4E)), icon_gen.HUE_SPAN, "a tint of the green")
+        self.assertGreaterEqual(icon_gen._contrast(bolt, (0x21, 0x6E, 0x4E)), 3, "and 3:1 on it")
+        self.assertTrue(icon_gen.check(r, "#216E4E")["ok"], r)
+
+    def test_near_is_not_the_colour(self):
+        # Review 1: the main colour must be the label colour itself, not one near it.
+        for near in ("#23885f", "#2a7350"):
+            s = icon(near)
+            self.assertFalse(icon_gen.check(s, "#216E4E")["ok"], near)
+            r = icon_gen.recolour(s, "#216E4E")
+            self.assertIn('rx="10" fill="#216e4e"', r)
+            self.assertTrue(icon_gen.check(r, "#216E4E")["ok"])
+
+    def test_the_symbol_always_reads_on_the_ground(self):
+        # Review 1: a symbol already in the label colour on a ground that becomes it.
+        s = icon("#f97316", '<path d="M10 10h28v28z" fill="#216e4e"/>')
+        r = icon_gen.recolour(s, "#216E4E")
+        self.assertIn('rx="10" fill="#216e4e"', r)
+        self.assertIn('<path d="M10 10h28v28z" fill="#ffffff"/>', r, "not green on green")
+        self.assertTrue(icon_gen.check(r, "#216E4E")["ok"])
+        # White on the yellow label colour is 1.98:1: the check fails it, the symbol turns near-black.
+        y = icon("#E2B203", '<path d="M10 10h28v28z" fill="#FFFFFF"/>')
+        c = icon_gen.check(y, "#E2B203")
+        self.assertEqual((c["ok"], c["legible"], c["dominant"]), (False, False, "#e2b203"))
+        r = icon_gen.recolour(y, "#E2B203")
+        self.assertIn('fill="#1d2125"', r)
+        self.assertTrue(icon_gen.check(r, "#E2B203")["ok"])
+        # The label colour on a near-black ground under 3:1: the ground turns white.
+        d = icon_gen.recolour(icon("#1D2125", f'<path d="M10 10h28v28z" fill="#ff0000"/>'), BLUE)
+        self.assertIn('rx="10" fill="#ffffff"', d)
+        self.assertIn(f'fill="{BLUE}"', d)
+
+    def test_recolouring_may_outgrow_the_size_cap(self):
+        # Review 1: 155 red shapes near MAX_SVG_BYTES; each "red" becomes a 7-character hex.
+        paths = "".join(f'<path d="M{i % 40} {i // 40}h2v2h-2v-2h1v1h1v-1h1z" fill="red"/>'
+                        for i in range(155))
+        s = icon_gen.sanitize(svg('<rect x="0" y="0" width="48" height="48" fill="#FFFFFF"/>' + paths))
+        self.assertTrue(icon_gen.MAX_SVG_BYTES - 620 < len(s.encode()) <= icon_gen.MAX_SVG_BYTES)
+        r = icon_gen.recolour(s, "#216E4E")
+        self.assertGreater(len(r.encode()), icon_gen.MAX_SVG_BYTES, "it outgrew the cap")
+        self.assertTrue(icon_gen.check(r, "#216E4E")["ok"])
+        self.assertNotIn("red", r)
+        raw, ext = project_icon.accept("data:image/svg+xml;base64," + base64.b64encode(r.encode()).decode())
+        self.assertEqual(ext, "svg", "#329 still takes it")
+
+    def test_generate_leaves_out_what_recolour_cannot_fix(self):
+        cli = {"agent": "claude", "model": "haiku", "bin": "claude"}
+        good, bad = icon(BLUE), icon("#F97316")
+        with mock.patch.object(icon_gen, "which_cli", lambda: cli), \
+                mock.patch.object(icon_gen, "_run", lambda c, t, to: good + bad), \
+                mock.patch.object(icon_gen, "recolour", lambda s, c: s):
+            ok, code, res = icon_gen.generate("proj-d", "Motors", "", colour=BLUE)
+            self.assertEqual((ok, res["svgs"]), (True, [good]), "never shown off-colour")
+        with mock.patch.object(icon_gen, "which_cli", lambda: cli), \
+                mock.patch.object(icon_gen, "_run", lambda c, t, to: bad), \
+                mock.patch.object(icon_gen, "recolour", lambda s, c: s):
+            self.assertEqual(icon_gen.generate("proj-d", "Motors", "", colour=BLUE)[:2], (False, "no_icons"))
+
+    def test_black_on_white_takes_the_colour_on_its_symbol(self):
+        s = icon("white", '<path d="M10 10 l28 0 l-14 28 z"/>')
+        self.assertFalse(icon_gen.check(s, BLUE)["ok"])
+        r = icon_gen.recolour(s, BLUE)
+        self.assertIn('<path d="M10 10 l28 0 l-14 28 z" fill="#0055cc"/>', r)
+        self.assertIn('fill="white"', r)
+        self.assertTrue(icon_gen.check(r, BLUE)["ok"])
+
+    def test_a_detail_lost_on_the_ground_is_not_ok(self):
+        # Review 2: a disc in the ground's colour, off the white symbol, cannot be seen.
+        s = icon(BLUE, '<rect x="4" y="4" width="28" height="28" fill="#fff"/>'
+                       f'<rect x="36" y="36" width="8" height="8" fill="{BLUE}"/>')
+        self.assertFalse(icon_gen.check(s, BLUE)["legible"])
+        r = icon_gen.recolour(s, BLUE)
+        self.assertIn('<rect x="36" y="36" width="8" height="8" fill="#ffffff"/>', r, "it takes the symbol's colour")
+        self.assertTrue(icon_gen.check(r, BLUE)["ok"])
+
+    def test_a_hole_in_the_symbol_shows(self):
+        hole = f'<circle cx="24" cy="24" r="12" fill="#fff"/><circle cx="24" cy="24" r="4" fill="{BLUE}"/>'
+        self.assertTrue(icon_gen.check(icon(BLUE, hole), BLUE)["ok"])
+        moved = f'<g transform="translate(2 -3)">{hole}</g>'
+        self.assertTrue(icon_gen.check(icon(BLUE, moved), BLUE)["ok"], "a translate keeps the box")
+        turned = (f'<circle cx="24" cy="24" r="12" fill="#fff"/>'
+                  f'<circle cx="24" cy="24" r="4" fill="{BLUE}" transform="rotate(30 24 24)"/>')
+        self.assertTrue(icon_gen.check(icon(BLUE, turned), BLUE)["ok"], "a rotate moves it, and it is still on the disc")
+        arc = ('<path d="M24 12a12 12 0 1 0 0.01 0z" fill="#fff"/>'
+               f'<path d="M24 20a4 4 0 1 1 -0.01 0z" fill="{BLUE}"/>')
+        self.assertTrue(icon_gen.check(icon(BLUE, arc), BLUE)["ok"], "arcs are drawn round")
+        bogus = (f'<circle cx="24" cy="24" r="12" fill="#fff"/>'
+                 f'<circle cx="24" cy="24" r="4" fill="{BLUE}" transform="rotate(30 24)"/>')
+        self.assertFalse(icon_gen.check(icon(BLUE, bogus), BLUE)["ok"], "a place it cannot tell: not offered")
+
+    def test_a_detail_beside_a_round_symbol_is_lost(self):
+        # Review 3: inside the white disc's box, but off the disc itself.
+        s = icon(BLUE, f'<circle cx="24" cy="24" r="12" fill="#fff"/><circle cx="14" cy="14" r="2" fill="{BLUE}"/>')
+        self.assertFalse(icon_gen.check(s, BLUE)["legible"])
+        r = icon_gen.recolour(s, BLUE)
+        self.assertIn('<circle cx="14" cy="14" r="2" fill="#ffffff"/>', r)
+        self.assertTrue(icon_gen.check(r, BLUE)["ok"])
+
+    def test_a_border_in_the_ground_colour_shows(self):
+        # Review 3: the stroke's inner half lies on the white fill: visible, kept.
+        s = icon(BLUE, f'<rect x="8" y="8" width="32" height="32" fill="#fff" stroke="{BLUE}" stroke-width="4"/>')
+        self.assertTrue(icon_gen.check(s, BLUE)["ok"])
+        self.assertEqual(icon_gen.recolour(s, BLUE), s)
+
+    def test_an_accent_alone_does_not_carry_the_colour(self):
+        # Review 2: black symbol on white with a small accent in the label colour.
+        s = icon("#FFFFFF", '<rect x="4" y="4" width="40" height="40" fill="#000"/>'
+                            f'<rect x="22" y="22" width="4" height="4" fill="{BLUE}"/>')
+        self.assertFalse(icon_gen.check(s, BLUE)["ok"])
+        r = icon_gen.recolour(s, BLUE)
+        self.assertIn('<rect x="4" y="4" width="40" height="40" fill="#0055cc"/>', r, "the symbol takes it")
+        self.assertIn('<rect x="22" y="22" width="4" height="4" fill="#ffffff"/>', r, "the accent stays seen")
+        self.assertTrue(icon_gen.check(r, BLUE)["ok"])
+
+    def test_a_neutral_that_would_read_faintly_turns_white_or_dark(self):
+        r = icon_gen.recolour(icon("#FACC15", '<path d="M10 10H38V38H10Z" fill="#000"/>'), "#1f3a8a")
+        self.assertIn('fill="#ffffff"', r, "black on a deep blue ground is under 3:1: white")
+        k = icon_gen.recolour(icon("#FACC15", '<path d="M10 10H38V38H10Z" fill="#000"/>'), BLUE)
+        self.assertIn('fill="#000"', k, "black on #0055cc is 3:1: it stays")
+        y = icon_gen.recolour(icon("#16A34A", '<path d="M10 10H38V38H10Z" fill="#FFFFFF"/>'), "#e2b203")
+        self.assertIn('fill="#1d2125"', y, "white on the yellow ground is too faint: near-black")
+
+    def test_style_paint_is_mapped_in_the_style(self):
+        root = ET.fromstring(svg('<rect width="48" height="48" style="fill:#F97316"/>'))
+        # sanitize() refuses style, so recolour is fed one built by hand.
+        with mock.patch.object(icon_gen, "sanitize", lambda t, *a: t):
+            r = icon_gen.recolour(icon_gen._write(root), BLUE)
+        self.assertIn('style="fill:#0055cc"', r)
+
+    def test_generate_maps_each_icon_and_says_how_many(self):
+        cli = {"agent": "claude", "model": "haiku", "bin": "claude"}
+        seen = {}
+        answer = icon(BLUE) + "\n" + icon("#F97316") + "\n" + icon("#16A34A")
+
+        def fake_run(c, text, timeout):
+            seen["text"] = text
+            return answer
+        with mock.patch.object(icon_gen, "which_cli", lambda: cli), mock.patch.object(icon_gen, "_run", fake_run):
+            ok, code, res = icon_gen.generate("proj-c", "Motors", "", colour="#0055CC")
+        self.assertIn("main colour is #0055cc", seen["text"])
+        self.assertTrue(ok)
+        self.assertEqual((res["colour"], res["recoloured"]), (BLUE, 2))
+        self.assertEqual(len(res["svgs"]), 1, "two that map to the same icon are one")
+        self.assertTrue(all(icon_gen.check(x, BLUE)["ok"] for x in res["svgs"]))
+
+
 class Run(unittest.TestCase):
     """_run() with subprocess.run caught or a stand-in CLI script."""
     NASTY = 'Harbour" & del /q * | calc ^ %PATH% $(id) `id`'
@@ -359,14 +605,18 @@ class Endpoints(Hub):
     def test_post_answers_the_icons_or_why_not(self):
         seen = {}
 
-        def gen(key, name, about, timeout=60):
-            seen.update(key=key, name=name)
+        def gen(key, name, about, timeout=60, colour=""):
+            seen.update(key=key, name=name, colour=colour)
             return seen.get("answer")
         with mock.patch.object(icon_gen, "generate", gen):
             seen["answer"] = (True, "ok", {"agent": "claude", "model": "haiku", "svgs": [icon_gen.sanitize(GOOD)], "ms": 5})
             st, body = self.post({"projectId": self.ed})
             self.assertEqual((st, body["ok"], len(body["svgs"]), body["agent"]), (200, True, 1, "claude"))
-            self.assertEqual((seen["key"], seen["name"]), (self.ed, "Ensemble Dashboard"))
+            self.assertEqual((seen["key"], seen["name"], seen["colour"]), (self.ed, "Ensemble Dashboard", ""))
+            self.post({"projectId": self.ed, "colour": "#0055CC"})
+            self.assertEqual(seen["colour"], "#0055CC", "the page's label colour goes on (icon_gen checks it)")
+            self.post({"projectId": self.ed, "colour": 7})
+            self.assertEqual(seen["colour"], "")
             st, body = self.post({"projectId": self.ed, "name": "  Harbour   Lights "})
             self.assertEqual(seen["name"], "Harbour Lights", "the name typed in the settings, not saved yet")
             st, body = self.post({"projectId": self.ed, "name": "Harbour \ud800 Lights"})

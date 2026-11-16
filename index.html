@@ -4012,7 +4012,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   #ens-upd button::after { content: ''; position: absolute; left: -8px; right: -8px; top: -14px; bottom: -14px; }
   #ens-upd button:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
   /* #322 (P289 drawing): a computer's left strip has two panels, the Inbox (full height) and
-     Projects: PROJECTS, All, each project with its swatch and Inbox count, newest first, a line,
+     Projects: PROJECTS, All, each project with its swatch and Inbox count (pinned first, then by Inbox count and name, #376), a line,
      then each task and session in no project. Values are the drawing's (.panel .ph .proj .cnt .sw). Kept out of the PO screen's section: these panels are the list dock's. */
   .pd-inbox.ld-inbox { display: flex; flex-direction: column; padding: 0; overflow: hidden; }
   .pd-inbox.ld-inbox #ld-ibx-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
@@ -4070,7 +4070,10 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .ldp-hand:hover .ldp-pinmark,
   .ldp-hand:has(.ldp-pinb:focus-visible, .ldp-dots:focus-visible, .ldp-dots[aria-expanded="true"]) .ldp-pinmark { visibility: hidden; }
   .ldp-hand .ldp-row { cursor: grab; }
-  .ldp-grip { display: none; flex: none; width: 22px; height: 12px; color: var(--fg-subtle); }
+  /* #378 (P363): the grip takes the tile's whole 22px box (its dots still 12px, centred), so the
+     row keeps its 28px on hover: 12px tall, it shrank the row out from under a pointer near its
+     bottom edge, which lost the hover, grew back and flickered every frame. */
+  .ldp-grip { display: none; flex: none; box-sizing: border-box; width: 22px; height: 22px; padding: 5px 0; color: var(--fg-subtle); }
   .ldp-hand:hover .ldp-row > .ldp-ico, .ldp-hand.ldp-lifted .ldp-row > .ldp-ico { display: none; }
   .ldp-hand:hover .ldp-grip, .ldp-hand.ldp-lifted .ldp-grip { display: block; }
   .ldp-slot, .pm-slot { flex: none; height: var(--slot-h, 28px); border-radius: var(--r-200); background: var(--selected-bg); box-shadow: inset 0 0 0 2px var(--accent); }
@@ -4131,6 +4134,13 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   #workspace-compose .wc-to button { flex:0 0 auto; border:0; background:transparent; color:inherit; font:inherit; cursor:pointer; min-width:24px; min-height:24px; }
   #workspace-compose .wc-to button[hidden] { display:none; }
   #workspace-compose .wc-to button:focus-visible { outline:none; box-shadow:0 0 0 2px var(--focus-ring); }
+  /* Issue 51: the new thread's name, as on session.html's own To line (#compose-thread-name). */
+  #workspace-compose-thread-name { flex:0 1 280px; min-width:0; height:28px; margin-left:var(--s-200); padding:0 var(--s-200);
+    border:1px solid var(--border-strong); border-radius:var(--r-200); background:var(--surface); color:var(--fg); font:inherit; font-size:var(--fs-200); }
+  #workspace-compose-thread-name[hidden] { display:none; }
+  #workspace-compose-thread-name::placeholder { color:var(--fg-muted); }
+  #workspace-compose-thread-name:focus { outline:none; border-color:var(--focus-ring); box-shadow:0 0 0 1px var(--focus-ring); }
+  @media (pointer:coarse) { #workspace-compose-thread-name { font-size:16px; } }
   #workspace-compose iframe { display:block; width:100%; height:110px; border:0; background:var(--surface); }
   #workspace-compose iframe.menu-room { position:relative; z-index:1; background:transparent; }   /* a menu's room over the chats (wcFrameRoom) */
   @media (min-width:768px) {
@@ -5349,7 +5359,7 @@ window.DOC_LISTENERS_PAUSED = false;
     <section id="po-panel" hidden aria-label="The project's PO" data-noun-aria-label="The {project}'s PO"></section>
 
   </div>
-  <div id="workspace-compose" hidden><div class="wc-to">To: <a href="#" id="workspace-compose-link"></a><button type="button" id="workspace-compose-back" hidden aria-label="Back to the PO" title="Back to the PO">&times;</button></div><iframe id="workspace-compose-frame" title="Workspace message box" allow="clipboard-read; clipboard-write"></iframe></div>
+  <div id="workspace-compose" hidden><div class="wc-to">To: <a href="#" id="workspace-compose-link"></a><input type="text" id="workspace-compose-thread-name" maxlength="80" placeholder="Name (optional)" aria-label="Name of the new thread (optional; empty: its first words)" autocomplete="off" hidden><button type="button" id="workspace-compose-back" hidden aria-label="Back to the PO" title="Back to the PO">&times;</button></div><iframe id="workspace-compose-frame" title="Workspace message box" allow="clipboard-read; clipboard-write"></iframe></div>
 </main>
 <dialog id="modal"></dialog>
 <aside id="detail-panel"></aside>
@@ -7249,6 +7259,7 @@ function findRowHtml(x, i, on, parsed) {
   if (x.kind === 'latest') {
     title = 'Latest on ' + esc(it.query || 'this search');
     meta.push(it.project || 'PO chat');
+    if (it.threadNamed && it.threadTitle) meta.push('Thread: ' + it.threadTitle);   // issue 51: its name
     if (it.task) meta.push(it.task);
     if (it.state) meta.push(it.state);
     meta.push(`${it.threads || 1} thread${it.threads === 1 ? '' : 's'}`);
@@ -7269,6 +7280,7 @@ function findRowHtml(x, i, on, parsed) {
     title = (it.no && !it.po ? `<span class="tno">#${esc(String(it.no))}</span> ` : '') + esc(it.title || '');
     meta.push([it.fromLabel || it.from, it.toLabel || it.to].filter(Boolean).join(' → '));
     if (it.project && !it.po) meta.push(it.project);
+    if (it.po && it.threadNamed && it.threadTitle) meta.push('Thread: ' + it.threadTitle);   // issue 51: its name
   }
   return `<div class="fd-row${on ? ' on' : ''}" role="option" id="fd-${i}" data-i="${i}" aria-selected="${on ? 'true' : 'false'}">`
     + `<span class="fd-t">${title}</span>`
@@ -15501,7 +15513,7 @@ function pdChatUnpanel(roomId) {
 function pdRowTitle(r) { return [taskNoText(r, false), detailTitle(r)].filter(Boolean).join(' ') || 'Chat'; }
 // The workspace owns one editor. Its session frame runs the ordinary send path,
 // while the conversation frames keep their messages and per-target drafts.
-const WC = { target:null, base:'', tailKey:'', restoring:false, pickSeq:0, popped:new Map(), aimAt:0, ownAt:0 };
+const WC = { target:null, base:'', tailKey:'', restoring:false, pickSeq:0, popped:new Map(), aimAt:0, ownAt:0, newThread:false };
 function wcPoRoom() { return PO_PANEL.querySelector('iframe.po-session:not([hidden])')?.dataset.room || ''; }
 function wcMainTarget() {
   const r = SELECTED_SID && rowBySid(SELECTED_SID);
@@ -15583,6 +15595,31 @@ function wcF6(e) {
 }
 document.getElementById('workspace-compose-frame').addEventListener('load', e => {
   try { e.target.contentDocument.addEventListener('keydown', wcF6); } catch (x) {}
+  wcNewThread(false);     // a new page in the box: its thread icon is off
+});
+// Issue 51: the box's thread icon on (session.html's NEW_THREAD, told by the
+// box's page as it paints it): the To line reads "a new thread" and has the
+// optional name field, as the chat's own To line does. Off, the field hides
+// and forgets what was typed; the page reads the name when it sends.
+function wcNewThread(on) {
+  on = !!on;
+  const nm = document.getElementById('workspace-compose-thread-name');
+  const was = WC.newThread;
+  WC.newThread = on;
+  nm.hidden = !on;
+  if (!on) nm.value = '';
+  if (was !== on && WC.target) document.getElementById('workspace-compose-link').textContent = on ? 'a new thread' : wcTitle(WC.target);
+}
+function wcThreadName() {
+  return WC.newThread ? document.getElementById('workspace-compose-thread-name').value.trim() : '';
+}
+document.getElementById('workspace-compose-thread-name').addEventListener('keydown', e => {
+  if (e.key !== 'Enter' || e.isComposing || e.shiftKey || e.altKey) return;
+  e.preventDefault();
+  const doc = document.getElementById('workspace-compose-frame').contentDocument;
+  // Ctrl+Enter sends (the box's own key), Enter goes on to the box.
+  if (e.ctrlKey || e.metaKey) doc?.getElementById('send')?.click();
+  else doc?.getElementById('input')?.focus();
 });
 function wcFallback() {
   const chat = [...PD.rt.values()].find(e => e.kind === 'chat' && !PD.dock.popWindow(pdChatId(e.room)));
@@ -15635,7 +15672,7 @@ function wcSync() {
     } catch (e) {}
   }
   box.hidden = false;
-  document.getElementById('workspace-compose-link').textContent = wcTitle(WC.target);
+  document.getElementById('workspace-compose-link').textContent = WC.newThread ? 'a new thread' : wcTitle(WC.target);
   document.getElementById('workspace-compose-back').hidden = WC.target?.kind !== 'thread';
   const t = WC.target;
   const base = wcBase(t);
@@ -17259,12 +17296,12 @@ function ibxOpen() {
 document.getElementById('inbox-btn').addEventListener('click', ibxOpen);
 // ---- The Projects panel of a computer's left strip (#322, P289): begin -------
 // It takes the Tasks panel's place, beside the Inbox on the strip (one open at
-// a time): All, each project (newest first, its PO or its Board one click
-// away) with its Inbox count, then each task and session in no project, the
+// a time): All, each project (pinned first, then by Inbox count and name, #376;
+// its PO or its Board one click away) with its Inbox count, then each task and session in no project, the
 // folded Unassigned group of the old list. Picking a row scopes the Inbox and
 // opens it in the middle. Make PO of a new
 // project is on a loose row's ⋯ and on its right click.
-var LDP = { more: false, moreLoose: false, sig: '', shown: {}, want: {}, hold: {}, holdT: 0 };
+var LDP = { more: false, moreLoose: false, sig: '', shown: {}, want: {}, hold: {}, holdT: 0, inN: new Map() };
 var LDP_N = 9, LDP_LOOSE_N = 5;
 // The task or session in no project open in the middle: its room (or session) id.
 function ldpLooseOpen() {
@@ -17282,16 +17319,18 @@ function ldpModel() {
     rec = swRecent(ALL_ROWS, attentionItems(), registeredProjects(),
       { dayStart: today / 1000, unassigned: (un && un.sessions) || [] });
   } catch (e) {}
-  // #337 (P309): by Inbox count, then latest conversation (ldpConvAt), then
-  // name. Opening one never moves it.
-  const seenP = new Set(), projs = [], fresh = new Map();
-  for (const r of ALL_ROWS || []) if (r) fresh.set(r.roomId || r.sessionId, r);
+  // #337 (P309), #376: by Inbox count, highest first, then by name A to Z. Nothing
+  // else counts: opening one, its chat, a message or an agent at work in it never
+  // moves it. Its own count falling while you are in it (ldpInKey) does not either.
+  const seenP = new Set(), projs = [], inKey = ldpInKey();
   for (const e of rec.recent.filter(x => x.po || x.proj).concat(rec.quiet)) {
     if (!e.pid || e.pid === UNASSIGNED_ID || seenP.has(e.pid)) continue;
     seenP.add(e.pid);
-    projs.push({ pid: e.pid, name: e.project || e.pid, at: ldpConvAt(e.pid, fresh), n: ldpCount(e.pid) });
+    const n = ldpCount(e.pid);
+    projs.push({ pid: e.pid, name: e.project || e.pid, n, k: inKey(e.pid, n) });
   }
-  projs.sort((a, b) => (b.n - a.n) || (b.at - a.at) || a.name.localeCompare(b.name));
+  // Two projects may share a name (other folders): then by id, never by activity.
+  projs.sort((a, b) => (b.k - a.k) || a.name.localeCompare(b.name) || (a.pid < b.pid ? -1 : a.pid > b.pid ? 1 : 0));
   const seenL = new Set(), loose = [];
   const add = (e, kind, at) => {
     if (!e || !e.key || seenL.has(e.key)) return;
@@ -17306,26 +17345,28 @@ function ldpModel() {
   // never held), then the rest in the order above.
   const pins = pinList(), by = new Map(projs.map(p => [p.pid, p]));
   const pinned = pins.filter(id => by.has(id) || pinCan(id))
-    .map(id => by.get(id) || { pid: id, name: projectById(id).name, at: 0, n: ldpCount(id) });
+    .map(id => by.get(id) || { pid: id, name: projectById(id).name, n: ldpCount(id) });
   const rest = projs.filter(p => !pins.includes(p.pid));
   return { pinned, projs: ldpHeld('projs', rest, p => p.pid), loose: ldpHeld('loose', loose, e => e.key) };
 }
-// When a project was last spoken in (#337): the newest message in its PO's
-// chat, its tasks' chats (the hub's convAt; newsAt on a card from before it)
-// or its sessions (a session's updatedAt is its transcript's last write). Not
-// swActivity: a state, column or spec change is no conversation.
-// `fresh`: the task list's rows by id, which it polls more often than PROJECTS.
-function ldpConvAt(pid, fresh) {
-  const p = projectById(pid);
-  if (!p) return 0;
-  const rows = (p.sessions || []).map(r => fresh.get(r && (r.roomId || r.sessionId)) || r);
-  if (p.poRoomId && fresh.has(p.poRoomId)) rows.push(fresh.get(p.poRoomId));
-  let at = 0;
-  for (const r of rows) {
-    if (!r || r.draft) continue;
-    at = Math.max(at, r.headless ? (Number(r.convAt) || Number(r.newsAt) || 0) : (Number(r.updatedAt) || 0));
-  }
-  return at;
+// #376: the projects you are in, the one picked in the list (ibxLdPid) and the
+// one whose PO chat or page is open (ldHere), are placed by the count each had
+// when you went in, or the highest it has reached since: a rise moves it up, and
+// seeing or answering what waits in it lowers its count, which never moves it
+// (also after a rise: the PO's ruling on #376, its own count falling never moves
+// the one you are in). Once you are in another, it is placed by its own count
+// again. Returns (pid, count) -> its key.
+function ldpInKey() {
+  const ins = new Set();
+  try { for (const v of [ibxLdPid(), ldHere()]) if (v && !v.startsWith('room:')) ins.add(v); } catch (e) {}
+  const kept = LDP.inN;
+  for (const pid of [...kept.keys()]) if (!ins.has(pid)) kept.delete(pid);
+  return (pid, n) => {
+    if (!ins.has(pid)) return n;
+    const k = Math.max(kept.has(pid) ? kept.get(pid) : n, n);
+    kept.set(pid, k);
+    return k;
+  };
 }
 // A project's (or 'room:<id>') Inbox count, the one its row shows; '' is All's.
 function ldpCount(pid) {
@@ -19063,10 +19104,19 @@ function psGenHtml(pj, d) {
     + '<button type="button" class="ps-btn" id="ps-gen-again">Try again</button></div></div>';
 }
 // One POST: {svgs, agent, model} or {error, agent, model}; throws only when aborted.
+// P362: the project's PO label colour as hex, in the theme painted now (the PO
+// label's own fill, ProjectColour.shade): the colour a generated icon is drawn in.
+function psLabelHex(pid) {
+  try {
+    const kind = (String(ldpColour(pid)).match(/--c-(\w+)-bold/) || [])[1] || 'progress';
+    const hex = ProjectColour.shade(kind, getComputedStyle(document.documentElement)).hex;
+    return /^#[0-9a-f]{6}$/i.test(hex) ? hex : '';
+  } catch (e) { return ''; }
+}
 async function psGenPost(pid, name, signal) {
   let r;
   try {
-    r = await fetch('/api/projects/icon-gen', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ projectId: pid, name }), signal });
+    r = await fetch('/api/projects/icon-gen', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ projectId: pid, name, colour: psLabelHex(pid) }), signal });
   } catch (e) {
     if (signal && signal.aborted) throw e;
     return { error: 'network' };
@@ -19151,7 +19201,9 @@ function psOnce(pid, d, focus) {
       if (dlg.open) dlg.close();
       resolve(v);
     };
-    const onCancel = (ev) => { ev.preventDefault(); finish(null); };
+    // Esc on the dialog closes it. A cancelled file picker fires its own
+    // 'cancel', which bubbles from #ps-file (Chrome, Safari 16.4+): not this one.
+    const onCancel = (ev) => { if (ev.target !== dlg) return; ev.preventDefault(); finish(null); };
     const paint = (keep) => {
       const pj = projectById(pid);
       if (!pj) { finish(null); return; }
@@ -19267,12 +19319,13 @@ function psOnce(pid, d, focus) {
           paint('');
           const again = dlg.querySelector(`input[name="ps-icon"][value="${r.value}"]`);
           if (again) again.focus();
-          // Image with no picture yet: pick one.
-          if (r.value === 'image' && !psPicSrc(pj, d)) dlg.querySelector('#ps-file').click();
+          // P362: choosing Image only shows its row; the picker opens from Upload image… / Replace….
         };
       });
       const file = dlg.querySelector('#ps-file');
       dlg.querySelector('#ps-up').onclick = (ev) => { ev.preventDefault(); file.click(); };
+      // A cancelled picker changes nothing and leaves the settings open (P362).
+      file.addEventListener('cancel', (ev) => ev.stopPropagation());
       dlg.querySelector('#ps-gen').onclick = (ev) => { ev.preventDefault(); genStart(pj); };
       const gb = (id, fn) => { const b = dlg.querySelector('#' + id); if (b) b.onclick = fn; };
       gb('ps-gen-cancel', () => {

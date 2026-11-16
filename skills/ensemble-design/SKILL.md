@@ -1417,7 +1417,10 @@ self-contained component, so a later layout can host it elsewhere.
   put away, the strip shows: its button is the way back. A reload keeps either state through
   Dock's layout. Do not add a second count or a control in the Inbox's head for this.
   The Projects panel: a PROJECTS heading (`.ldp-title`, as `.ph`), then `nav#ld-projs.ldp`
-  (`ldpModel` / `ldpHtml` / `ldpPaint`): **All**, then every project newest first (`LDP_N` = 9, then
+  (`ldpModel` / `ldpHtml` / `ldpPaint`): **All**, then every project: the pinned in the person's own order (#362), then the
+  unpinned by Inbox count, highest first, then by name A to Z (by id for equal names), so opening
+  or working in one never moves it; the one you are in keeps its place while its own count falls
+  (#376) (`LDP_N` = 9, then
   "N more projects"), each with an 8px swatch (`.ldp-sw`; projects have no colour of their own, so
   `ldpColour(pid)` picks a status token's bold shade by a hash of the id: never treat it as a
   status) and a neutral count pill; after a separator the **loose rows**: tasks and sessions in no
