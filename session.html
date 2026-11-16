@@ -10170,6 +10170,8 @@ function micWrite(heard, hearing) {
   const pad = words && before && !/\s$/.test(before) ? ' ' : '';
   const tail = words && after && !/^\s/.test(after) ? ' ' : '';
   const text = words ? pad + words + tail : '';
+  if (!words && !m.wrote) return;   // a selection kept for the first words stays until they come
+  m.wrote = true;
   input.setRangeText(text, m.start, m.start + m.text.length, 'end');
   m.text = text;
   // The words still being heard stay selected (grey); the caret after the rest.
@@ -10178,6 +10180,7 @@ function micWrite(heard, hearing) {
   input.setSelectionRange(from, end);
   input.dispatchEvent(new Event('input', { bubbles: true }));
   input.setSelectionRange(from, end);
+  m.sel = [from, end];
 }
 function micTimer(ms) {
   if (!MIC) return;
@@ -10197,11 +10200,11 @@ function micStart() {
   rec.interimResults = true;
   rec.maxAlternatives = 1;
   if (document.activeElement !== input) input.focus({ preventScroll: true });
-  // A selection is replaced by what is said, as typing would.
+  // A selection is replaced by what is said, as typing would, once the first
+  // words come: refused, silent or stopped before them, it is left as it was.
   const start = input.selectionStart ?? input.value.length;
   const end = input.selectionEnd ?? start;
-  if (end > start) { input.setRangeText('', start, end, 'start'); input.dispatchEvent(new Event('input', { bubbles: true })); }
-  const m = MIC = { rec, start, text: '', stopping: false, timer: 0, heardAny: false };
+  const m = MIC = { rec, start, text: input.value.slice(start, end), wrote: false, sel: [start, end], stopping: false, timer: 0, heardAny: false };
   rec.onresult = e => {
     if (MIC !== m) return;
     const w = micWords(e.results);
@@ -10224,26 +10227,30 @@ function micStart() {
   micTimer(MIC_FIRST_MS);
   micButton();
 }
-// Listening ends: the words still being heard stay as written, the caret after them.
-function micDone() {
+// Listening ends: the words still being heard stay as written, the caret after
+// them, unless the person put it somewhere else, or keepSel (a key typed over
+// the grey words: the key replaces them, as it would any selection).
+function micDone(keepSel = false) {
   const m = MIC;
   if (!m) return;
   clearTimeout(m.timer);
   MIC = null;
   const input = $('#input');
-  if (input.value.slice(m.start, m.start + m.text.length) === m.text) {
+  const ours = input.selectionStart === m.sel[0] && input.selectionEnd === m.sel[1];
+  if (m.wrote && ours && !keepSel && input.value.slice(m.start, m.start + m.text.length) === m.text) {
     const at = m.start + m.text.length;
     input.setSelectionRange(at, at);
   }
   micButton();
+  if (m.wrote && !keepSel) edHeadInput();   // a key's own input event converts it otherwise   // "1. " said at the head's start becomes a point now, with all its words
 }
-// now: end at once (a send, a keystroke); otherwise let the engine finish the last words.
-function micStop(now = false) {
+// now: end at once (a send, a keystroke, another draft); otherwise let the engine finish the last words.
+function micStop(now = false, keepSel = false) {
   const m = MIC;
   if (!m) return;
   if (now) {
     try { m.rec.abort(); } catch (e) {}
-    micDone();
+    micDone(keepSel);
     return;
   }
   if (m.stopping) return;
@@ -10264,14 +10271,19 @@ $('#mic').addEventListener('click', () => {
 window.addEventListener('keydown', e => {
   if (!MIC || e.key !== 'Escape') return;
   if (document.querySelector('#send-menu:not([hidden]), #stop-choices:not([hidden]), #slashpop:not([hidden]), .phone-compose-tools[open]')) return;   // a menu closes first
+  const ae = document.activeElement;
+  if (ae && ae !== $('#input') && ae.matches?.('input, textarea, select, [contenteditable], [contenteditable] *')) return;   // so does another field (a thread's name)
   e.preventDefault(); e.stopImmediatePropagation();
   micStop();
 }, true);
-// A key typed in the box while listening: the words so far stay, listening ends, the key lands after them.
+// A key typed in the box while listening ends it: the words heard stay, and
+// the key does what it does to the selection (it replaces the grey words).
 $('#input').addEventListener('keydown', e => {
   if (!MIC || !e.isTrusted || e.key === 'Escape' || ['Shift', 'Control', 'Alt', 'Meta', 'CapsLock'].includes(e.key)) return;
-  micStop(true);
+  micStop(true, true);
 }, true);
+// A press in the box ends it too: the words stay, the caret goes where pressed.
+$('#input').addEventListener('pointerdown', e => { if (MIC && e.isTrusted) micStop(true); }, true);
 $('#input').addEventListener('input', e => { if (e.isTrusted && MIC_NOTE) micNote(''); });
 micButton();
 // ---- Dictation (P367): end ----------------------------------------------------
@@ -10473,7 +10485,7 @@ function edText() {
 // first point (while there is none).
 function edHeadInput() {
   const ta = $('#input');
-  const rest = ED.points.length ? null : edHeadTrigger(ta.value);
+  const rest = ED.points.length || MIC ? null : edHeadTrigger(ta.value);   // dictating: at its end (P367)
   if (rest != null) { ta.value = ''; edAddAt(0, rest); return; }
   edRefsDraw(); edSave();
 }
@@ -10593,6 +10605,7 @@ function edRefsDraw() {
 }
 // Sent, or kept by the hub: the box is empty again.
 function edClear() {
+  micStop(true);
   $('#input').value = '';
   fitSendInput();
   ATT.clear();
@@ -10603,6 +10616,7 @@ function edClear() {
   edDraftWrite(ED_KEY(), null);
 }
 function edStart() {
+  micStop(true);   // P367: dictation belongs to the draft it began in
   ED = edLoad();
   $('#input').value = ED.head;
   fitSendInput();
@@ -10639,6 +10653,7 @@ function workspaceComposeThread(target) {
     if (!WC_PAINTED) { WC_PAINTED = true; sharedTargetPaint(); }
     return;
   }
+  micStop(true);   // P367: the words so far stay with the destination they were said to
   edStoreNow();
   SHARED_THREAD = next ? { thread:next, title:String(target.title || 'Thread'), info:target.info || null } : null;
   sharedComposerYield(false);
@@ -10648,6 +10663,7 @@ function workspaceComposeThread(target) {
   sharedTargetPaint();
 }
 function sharedComposerYield(persist = true) {
+  micStop(true);   // P367: the words so far stay in the draft being put away
   if (!COMPOSER_SHARED_ACTIVE) return;
   if (persist) edStoreNow(); else clearTimeout(_edSave);
   COMPOSER_SHARED_ACTIVE = false;

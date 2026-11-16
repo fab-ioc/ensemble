@@ -137,11 +137,11 @@ async function main() {
       focus: document.activeElement === i, pressed: m.getAttribute('aria-pressed'), live: i.classList.contains('mic-live'),
       calls: r ? r.calls.slice() : [], recs: window.__recs.length, hint: document.getElementById('hint').textContent,
       sends: window.__posts.filter(p => ${JSON.stringify(A.sendPaths)}.includes(p.path)).map(p => ({path: p.path, text: p.body && p.body.text}))}; })()`);
-  const open = async (q = '') => {
-    await send('Page.navigate', {url: A.base + '/session?id=' + A.room + '&embed=1' + q}, s);
+  const open = async (q = '', room = A.room, keep = false) => {
+    await send('Page.navigate', {url: A.base + '/session?id=' + room + '&embed=1' + q}, s);
     await until(`typeof ROOM_OBJ !== 'undefined' && !!ROOM_OBJ && !document.getElementById('send').disabled`, 'room ' + q);
     await sleep(300);
-    if (!q) await ev(`(() => { edClear(); const i = document.getElementById('input'); i.focus(); window.__posts.length = 0; return 0; })()`);
+    if (!q.includes('nomic') && !keep) await ev(`(() => { edClear(); const i = document.getElementById('input'); i.focus(); window.__posts.length = 0; return 0; })()`);
     netPosts.length = 0;
   };
   const shown = `(() => { const m = document.getElementById('mic'); const b = m.getBoundingClientRect();
@@ -254,14 +254,21 @@ async function main() {
     await type('a');
     out.deniedTyped = await st();
 
-    // 8. A key typed while listening: the words stay, listening ends, the key after them.
+    // 8. A key typed while listening ends it and replaces the grey words, as any selection; heard words stay.
     await open();
-    await type('Note:');
+    await type('Hello ');
     await click('#mic');
     await emit([['buy milk', false]]);
     out.keyBefore = await st();
     await key('x');
     out.keyAfter = await st();
+    await open();
+    await type('Hello ');
+    await click('#mic');
+    await emit([['buy', true], [' milk', false]], 1);
+    out.keyFinalBefore = await st();
+    await key('x');
+    out.keyFinalAfter = await st();
 
     // 9. Send while listening: listening ends, the words are sent once.
     await open();
@@ -324,6 +331,108 @@ async function main() {
     await click('#mic');
     out.ownHintCleared = await st();
     await click('#mic'); await ev('window.__end(); 0');
+
+    // 14. A selection is kept until the first words come.
+    const SEL = `(() => { const i = document.getElementById('input'); i.focus(); i.setSelectionRange(6, 9); return 0; })()`;
+    await open();
+    await type('Hello big world');
+    await ev(SEL);
+    await click('#mic');
+    await ev(`window.__error('not-allowed'); window.__end(); 0`);
+    out.selDenied = await st();
+    await sleep(1200);   // the draft is saved by now
+    await open('', A.room, true);
+    out.selDeniedReload = await st();
+    await ev(SEL);
+    await click('#mic');
+    await key('Escape');
+    await ev('window.__end(); 0');
+    out.selEsc = await st();
+    await ev(SEL);
+    await click('#mic');
+    await sleep(8300);
+    out.selSilent = await st();
+    await sleep(1700);
+    out.selSilentGone = await st();
+    await ev(SEL);
+    await click('#mic');
+    await emit([['small', false]]);
+    out.selFirst = await st();
+    await click('#mic'); await ev('window.__end(); 0');
+    out.selFirstDone = await st();
+    await sleep(1200);
+    await open('', A.room, true);
+    out.selFirstReload = await st();
+
+    // 15. A press in the box ends listening; the caret goes where pressed.
+    await open();
+    await type('Hello world');
+    await click('#mic');
+    await emit([['again', true]]);
+    out.pressBefore = await st();
+    const at = await ev(`(() => { const i = document.getElementById('input'), b = i.getBoundingClientRect(), cs = getComputedStyle(i);
+      return {x: b.left + parseFloat(cs.paddingLeft) + parseFloat(cs.borderLeftWidth) + 1, y: b.top + parseFloat(cs.paddingTop) + parseFloat(cs.borderTopWidth) + 6}; })()`);
+    await send('Input.dispatchMouseEvent', {type: 'mouseMoved', x: at.x, y: at.y}, s);
+    await send('Input.dispatchMouseEvent', {type: 'mousePressed', x: at.x, y: at.y, button: 'left', clickCount: 1}, s);
+    await send('Input.dispatchMouseEvent', {type: 'mouseReleased', x: at.x, y: at.y, button: 'left', clickCount: 1}, s);
+    await sleep(100);
+    out.pressed = await st();
+    await key('y');
+    out.pressTyped = await st();
+
+    // 16. No point while dictating: "1. " said at the head's start becomes one point at the end.
+    const PTS = `[...document.querySelectorAll('#ed-points textarea.ed-text')].map(t => t.value)`;
+    await open();
+    await click('#mic');
+    await emit([['1. buy milk', false]]);
+    out.ptInterim = {...await st(), points: await ev(PTS)};
+    await emit([['1. buy milk and eggs', true]]);
+    out.ptFinal = {...await st(), points: await ev(PTS)};
+    await ev('window.__end(); 0');
+    await sleep(200);
+    out.ptEnded = {...await st(), points: await ev(PTS)};
+    // A key typed over grey "1. buy" replaces it, as over any grey words: no point is made of them.
+    await open();
+    await click('#mic');
+    await emit([['1. buy', false]]);
+    await key('x');
+    await sleep(200);
+    out.ptKey = {...await st(), points: await ev(PTS)};
+
+    // 17. The shared workspace box changes draft: the words stay with the old one, a late result writes nothing.
+    await open('&workspace-compose=1', A.po, true);
+    await ev(`(() => { edClear(); document.getElementById('input').focus(); window.__posts.length = 0; return 0; })()`);
+    await type('Draft A ');
+    await click('#mic');
+    await emit([['said here', false]]);
+    out.wsBefore = await st();
+    await ev(`workspaceComposeThread({thread: 'P1', title: 'Some thread'}); 0`);
+    await sleep(200);
+    out.wsSwitched = {...await st(), key: await ev('ED_KEY()')};
+    await emit([['said here later', true]]);
+    out.wsLate = await st();
+    await ev(`workspaceComposeThread(null); 0`);
+    await sleep(200);
+    out.wsBack = {...await st(), key: await ev('ED_KEY()')};
+
+    // 18. Esc in the new thread's name field is that field's; listening goes on. Back in the box, Esc stops it.
+    await open('', A.po);
+    await until(`THREADED && !document.getElementById('new-thread').hidden`, 'the spool');
+    await click('#new-thread');
+    await until(`!document.getElementById('compose-thread-name').hidden`, 'the name field');
+    await ev(`document.getElementById('input').focus(); 0`);
+    await click('#mic');
+    await click('#compose-thread-name');
+    await type('Plans');
+    out.nameListening = {...await st(), active: await ev('document.activeElement.id')};
+    await key('Escape');
+    await sleep(200);
+    out.nameEsc = {...await st(), active: await ev('document.activeElement.id'), name: await ev(`document.getElementById('compose-thread-name').value`)};
+    await ev(`document.getElementById('input').focus(); 0`);
+    await key('Escape');
+    await sleep(200);
+    out.nameEsc2 = await st();
+    await ev('window.__end(); 0');
 
     // 13. A phone: no mic in the row at rest; the + menu's Dictate listens, then the pressed mic shows.
     await send('Emulation.setDeviceMetricsOverride', {width: 390, height: 844, deviceScaleFactor: 1, mobile: true}, s);
@@ -401,12 +510,23 @@ class Dictation(unittest.TestCase):
         chatroom.update_room(data)
         chatroom.patch_participant(r['id'], 'claude', {'ptyId': 'pty-claude'})
         cls.room = r['id']
+        # A PO chat (threaded): the spool, the thread name field, the shared workspace box.
+        ok, proj, _ = dashboard.register_project('Motors')
+        assert ok, proj
+        po = chatroom.create_room('PO talk', [{'identity': 'claude', 'agent': 'claude', 'role': 'Product owner',
+                                               'sessionId': 'dictation-po', 'cwd': str(root)}])
+        po_data = chatroom.get_room(po['id'], public=False)
+        po_data['mode'] = 'solo'
+        chatroom.update_room(po_data)
+        dashboard.assign_session_project(po['id'], proj['id'])
+        dashboard.set_project_po(proj['id'], po['id'])
+        cls.po = po['id']
         cls.server = ThreadingHTTPServer(('127.0.0.1', 0), dashboard.Handler)
         cls.server.daemon_threads = True
         cls.server.handle_error = lambda *a: None
         threading.Thread(target=cls.server.serve_forever, daemon=True).start()
         args = {**chrome_profile.node_args(), 'tmp': cls.tmp.name, 'init': INIT, 'sendPaths': list(SEND_PATHS),
-                'base': f'http://127.0.0.1:{cls.server.server_address[1]}', 'room': cls.room}
+                'base': f'http://127.0.0.1:{cls.server.server_address[1]}', 'room': cls.room, 'po': cls.po}
         script = base / 'dictation_cdp.js'; script.write_text(CDP_JS, encoding='utf-8')
         out = subprocess.run([NODE, str(script), json.dumps(args)], capture_output=True, encoding='utf-8', timeout=300)
         assert out.returncode == 0, out.stderr[-4000:]
@@ -512,13 +632,17 @@ class Dictation(unittest.TestCase):
 
     def test_8_a_typed_key_ends_listening(self):
         g = self.got
-        self.assertEqual(g['keyBefore']['value'], 'Note: buy milk')
+        self.assertEqual(g['keyBefore']['value'], 'Hello buy milk')
         self.assertEqual(g['keyBefore']['sel'], 'buy milk')
         a = g['keyAfter']
-        self.assertEqual(a['value'], 'Note: buy milkx', 'the words stay, the key after them')
+        self.assertEqual(a['value'], 'Hello x', 'the key replaces the grey words')
         self.assertEqual(a['calls'], ['start', 'abort'])
         self.assertEqual(a['pressed'], 'false')
-        self.assertEqual((a['start'], a['end']), (15, 15))
+        self.assertEqual((a['start'], a['end']), (7, 7))
+        self.assertEqual(g['keyFinalBefore']['value'], 'Hello buy milk')
+        self.assertEqual(g['keyFinalBefore']['sel'], 'milk')
+        self.assertEqual(g['keyFinalAfter']['value'], 'Hello buy x', 'words already heard stay')
+        self.assertEqual(g['keyFinalAfter']['calls'], ['start', 'abort'])
 
     def test_9_send_while_listening(self):
         g = self.got
@@ -592,6 +716,73 @@ class Dictation(unittest.TestCase):
         self.assertEqual(e2['sends'], [])
         self.assertEqual(g['phoneEnded']['value'], 'from the phone')
         self.assertEqual(g['phoneEnded']['input'], r['input'], 'the words get their room back')
+
+
+    def test_14_a_selection_waits_for_the_first_words(self):
+        g = self.got
+        for k in ('selDenied', 'selDeniedReload', 'selEsc', 'selSilent', 'selSilentGone'):
+            with self.subTest(k):
+                self.assertEqual(g[k]['value'], 'Hello big world', 'the original text stays')
+                self.assertEqual(g[k]['sends'], [])
+        self.assertEqual(g['selDenied']['hint'], BLOCKED)
+        self.assertEqual((g['selDenied']['start'], g['selDenied']['end']), (6, 9), 'still selected')
+        self.assertEqual(g['selEsc']['calls'], ['start', 'stop'])
+        self.assertEqual((g['selEsc']['start'], g['selEsc']['end']), (6, 9))
+        self.assertEqual(g['selSilent']['calls'], ['start', 'stop'], '8 s with no words')
+        self.assertEqual(g['selSilentGone']['calls'], ['start', 'stop', 'abort'])
+        self.assertEqual(g['selSilentGone']['pressed'], 'false')
+        f = g['selFirst']
+        self.assertEqual(f['value'], 'Hello small world', 'the first words replace the selection')
+        self.assertEqual(f['sel'], 'small')
+        self.assertEqual(g['selFirstDone']['value'], 'Hello small world')
+        self.assertEqual(g['selFirstReload']['value'], 'Hello small world', 'and are saved')
+
+    def test_15_a_press_in_the_box_ends_listening_where_pressed(self):
+        g = self.got
+        self.assertEqual(g['pressBefore']['value'], 'Hello world again')
+        p = g['pressed']
+        self.assertEqual(p['calls'], ['start', 'abort'])
+        self.assertEqual(p['pressed'], 'false')
+        self.assertEqual(p['start'], p['end'])
+        self.assertLess(p['start'], len('Hello world'), 'the caret is where pressed, not after the words')
+        at = p['start']
+        self.assertEqual(g['pressTyped']['value'], 'Hello world again'[:at] + 'y' + 'Hello world again'[at:])
+
+    def test_16_no_point_until_dictation_ends(self):
+        g = self.got
+        self.assertEqual((g['ptInterim']['value'], g['ptInterim']['points']), ('1. buy milk', []))
+        self.assertEqual((g['ptFinal']['value'], g['ptFinal']['points']), ('1. buy milk and eggs', []))
+        self.assertEqual(g['ptEnded']['points'], ['buy milk and eggs'], 'one point with all its words')
+        self.assertEqual(g['ptEnded']['value'], '', 'the head is empty')
+
+    def test_17_a_draft_switch_ends_listening(self):
+        g = self.got
+        self.assertEqual(g['wsBefore']['value'], 'Draft A said here')
+        w = g['wsSwitched']
+        self.assertTrue(w['key'].endswith(':thread:P1'), w['key'])
+        self.assertEqual(w['calls'], ['start', 'abort'])
+        self.assertEqual(w['pressed'], 'false')
+        self.assertEqual(w['value'], '', "the thread's own draft")
+        self.assertEqual(g['wsLate']['value'], '', 'a late result writes nothing')
+        self.assertFalse(g['wsBack']['key'].endswith(':thread:P1'))
+        self.assertEqual(g['wsBack']['value'], 'Draft A said here', 'the words stayed with the old draft')
+        self.assertEqual(g['wsBack']['sends'], [])
+
+    def test_18_esc_in_another_field_is_that_fields(self):
+        g = self.got
+        self.assertEqual(g['nameListening']['active'], 'compose-thread-name')
+        self.assertEqual(g['nameListening']['pressed'], 'true', 'a click in another field leaves listening on')
+        e = g['nameEsc']
+        self.assertEqual((e['calls'], e['pressed']), (['start'], 'true'), 'Esc there leaves listening on')
+        self.assertEqual(g['nameEsc2']['calls'], ['start', 'stop'], 'Esc back in the box stops it')
+        self.assertEqual(g['nameEsc2']['pressed'], 'false')
+        self.assertEqual(g['nameEsc2']['sends'], [])
+
+
+    def test_19_a_key_over_grey_list_words_replaces_them(self):
+        k = self.got['ptKey']
+        self.assertEqual(k['calls'], ['start', 'abort'])
+        self.assertEqual((k['value'], k['points']), ('x', []), 'the key replaces the grey "1. buy"; it is not made a point')
 
 
 if __name__ == '__main__':
