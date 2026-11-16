@@ -211,11 +211,42 @@ class AutoInstall(_State):
         self.assertEqual(self.run_install([(0, "")]), (False, []))
 
     def test_reload_after_an_install_by_hand(self):
-        """webpush loads again in place: a hub that started without it can notify."""
+        """webpush loads again in place: a hub that started without it can notify.
+        In a fresh interpreter: a reload here would swap the cryptography the
+        other tests' webpush already holds."""
+        code = r"""
+import sys
+sys.path.insert(0, sys.argv[1])
+class Block:
+    on = True
+    def find_spec(self, name, path=None, target=None):
+        if self.on and name.split(".")[0] == "cryptography":
+            raise ModuleNotFoundError(f"No module named {name!r}", name=name)
+        return None
+b = Block()
+sys.meta_path.insert(0, b)
+import notify
+assert notify.webpush is None and notify._MISSING, notify._IMPORT_ERROR
+b.on = False                    # "installed by hand"
+assert notify._reload() is True
+assert notify.webpush is not None and notify._IMPORT_ERROR == "" and not notify._MISSING
+k = notify.webpush.new_private_key()
+assert len(notify.webpush.public_bytes(k)) == 65
+print("ok")
+"""
+        r = subprocess.run([sys.executable, "-I", "-c", code, str(ROOT)], capture_output=True, text=True,
+                           timeout=60, env={**os.environ, "ENSEMBLE_NO_AUTO_INSTALL": "1"})
+        self.assertEqual((r.returncode, r.stdout.strip()), (0, "ok"), r.stderr)
+
+    def test_a_reload_that_raises_marks_the_install_failed(self):
         self.missing()
-        self.assertTrue(notify._reload())
-        self.assertIsNotNone(notify.webpush)
-        self.assertEqual((notify._IMPORT_ERROR, notify._MISSING), ("", False))
+        with mock.patch.object(notify.app_version, "packaged", return_value=False), \
+             mock.patch.object(notify.subprocess, "run",
+                               return_value=subprocess.CompletedProcess([], 0, "ok", "")), \
+             mock.patch.object(notify, "_reload", side_effect=RuntimeError("dictionary changed size")):
+            notify._install()
+        self.assertEqual(notify._INSTALL["state"], "failed")
+        self.assertIn("RuntimeError", notify._INSTALL["detail"])
 
 
 class Help(_State):
@@ -258,6 +289,18 @@ class Help(_State):
             for word in ("Error", "module", "ModuleNotFound", "Traceback", "\n"):
                 self.assertNotIn(word, c)
 
+    def test_a_key_failure_has_plain_help_too(self):
+        notify._VAPID = None
+        with mock.patch.object(notify, "_devices", return_value=[]), \
+             mock.patch.object(notify, "_read", return_value={}), \
+             mock.patch.object(notify, "_write", side_effect=PermissionError("denied")):
+            st = notify.status()
+        self.assertFalse(st["available"])
+        self.assertIn("PermissionError", st["reason"])
+        self.assertIn("notification key", st["help"])
+        self.assertIn("Send feedback", st["help"])
+        self.assertNotIn("PermissionError", st["help"])
+
     def test_available_has_no_help(self):
         with mock.patch.object(notify, "_devices", return_value=[]):
             st = notify.status()
@@ -269,6 +312,7 @@ class Help(_State):
         i = page.index("function ntBlocker()")
         block = page[i:page.index("\n}\n", i)]
         self.assertIn("NT.hub.help ||", block)
+        self.assertNotIn("NT.hub.reason", block, "Settings never shows the technical reason")
         j = page.index("async function ntRefresh()")
         refresh = page[j:page.index("\n}\n", j)]
         self.assertIn("NT.hub.installing", refresh)

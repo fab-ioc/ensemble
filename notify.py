@@ -222,7 +222,7 @@ def _reload() -> bool:
             site.addsitedir(usp)
     except Exception:           # noqa: BLE001 — the import below says whether it worked
         pass
-    for name in [m for m in sys.modules if m == "webpush" or m.split(".")[0] == "cryptography"]:
+    for name in [m for m in list(sys.modules) if m == "webpush" or m.split(".")[0] == "cryptography"]:
         sys.modules.pop(name, None)     # a half-made import is not reused
     importlib.invalidate_caches()
     m, err, missing = _load_webpush()
@@ -247,7 +247,10 @@ def _install() -> None:
     if rc != 0 and "externally-managed-environment" in out:
         # PEP 668 (Homebrew, recent Linux): the same fallback as the ensemble script.
         rc, out = _run_pip(["--break-system-packages"])
-    ok = rc == 0 and _reload()
+    try:
+        ok = rc == 0 and _reload()
+    except Exception as e:      # noqa: BLE001 — never left "running"
+        ok, out = False, f"{out}\n{e.__class__.__name__}: {e}"
     lines = [x.strip() for x in out.splitlines() if x.strip()]
     with _LOCK:
         _INSTALL["state"] = "done" if ok else "failed"
@@ -278,11 +281,14 @@ def _quote(arg: str) -> str:
 
 
 def _help() -> str:
-    """When webpush did not load: the one plain sentence Settings shows, what
-    is missing and the one step to take (the technical reason stays in
+    """When notifications cannot run: the one plain sentence Settings shows,
+    what is wrong and the one step to take (the technical reason stays in
     status()["reason"] and the hub's log)."""
     if webpush is not None:
-        return ""
+        if _VAPID is not None:
+            return ""
+        return ("The hub could not make or read its notification key: restart the hub, and if this "
+                "stays, use Send feedback in your menu.")
     if app_version.packaged():
         return ("This copy of Ensemble is missing a part that notifications need: install the latest "
                 "version (What's new in your menu, then Install now).")
