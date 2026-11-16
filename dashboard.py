@@ -20236,7 +20236,8 @@ class Handler(BaseHTTPRequestHandler):
                     # or a thread the person starts (#367, "New thread").
                     try:
                         threads.note_send(rid, thread, key, pids, data.get("also") is True, text,
-                                          new=new_thread)
+                                          new=new_thread, name=str(data.get("threadName") or "")
+                                          if new_thread else "")
                         noted = True
                     except Exception as e:      # noqa: BLE001 — sent; placed by its points instead
                         print(f"[threads] {rid}: reply not anchored: {e!r}", flush=True)
@@ -23894,6 +23895,24 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(400, {"error": "not_saved", "message": str(e)})
                 return
             self._send_json(200, {"ok": True, "action": act, "threads": done})
+            return
+        if p == "/api/room/thread/name":
+            # The person names a thread of a PO chat (issue 51): {roomId,
+            # thread, name}; an empty name is its automatic title again. Kept
+            # in the chat's thread record, no message rewritten; types
+            # nothing and wakes nobody. Agents have no tool for it.
+            if self._files_cross_site():
+                return
+            rid = (data.get("roomId") or "").strip()
+            if chatroom.get_room(rid) is None or not threads.is_threaded(rid):
+                self._send_json(404, {"error": "no_such_room"})
+                return
+            try:
+                name = threads.rename(rid, str(data.get("thread") or ""), data.get("name") or "")
+            except (TypeError, ValueError, OSError) as e:
+                self._send_json(400, {"error": "not_saved", "message": str(e)})
+                return
+            self._send_json(200, {"ok": True, "name": name})
             return
         if p == "/api/room/thread/seen":
             # The person opened a thread of a PO chat: {roomId, thread, ts}

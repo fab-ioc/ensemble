@@ -78,6 +78,7 @@ def bind(dashboard_module) -> None:
 CHANNEL_MAX = 150               # channel entries a page is sent at first
 CHANNEL_LIMIT = 5000            # … and at most, however far it scrolls back
 TITLE_WORDS = 14                # a thread's title: its first words
+NAME_MAX = 80                   # a name the person gives a thread (issue 51), at most
 PREVIEW_MAX = 240               # what a reply line quotes of the last reply
 ALSO_SLACK_S = 600              # a reply sent to the chat too: its balloon within this
 SIDE_KEEP = 400                 # thread box sends kept whole (what they hold, to find their balloon)
@@ -182,7 +183,7 @@ def _path(room_id: str) -> Path:
 
 def _empty_side() -> dict:
     return {"version": 1, "since": 0.0, "seen": {}, "anchors": {}, "also": [], "sent": [],
-            "archived": {}, "deleted": {}}
+            "archived": {}, "deleted": {}, "names": {}}
 
 
 def load_side(room_id: str) -> dict:
@@ -217,6 +218,11 @@ def load_side(room_id: str) -> dict:
                                        "mids": [m for m in v.get("mids") or [] if isinstance(m, str)]}
                                    for t, v in d["deleted"].items()
                                    if isinstance(t, str) and isinstance(v, dict)}
+            # Issue 51: the names the person gave threads ({tid: name}; ""
+            # is the automatic title again, over a name given at creation).
+            if isinstance(d.get("names"), dict):
+                side["names"] = {t: v for t, v in d["names"].items()
+                                 if isinstance(t, str) and isinstance(v, str)}
             for k in ("also", "sent"):
                 if isinstance(d.get(k), list):
                     side[k] = [x for x in d[k] if isinstance(x, dict)]
@@ -233,7 +239,7 @@ def _save_side(room_id: str, side: dict) -> None:
     if len(sent) > SIDE_KEEP:
         # A reply's place lasts as long as its balloon (#237 reviews 1, 2):
         # an older send keeps only that, once its balloon is known.
-        old = [{k: a[k] for k in ("mid", "thread", "also", "new") if k in a}
+        old = [{k: a[k] for k in ("mid", "thread", "also", "new", "name") if k in a}
                for a in sent[:-SIDE_KEEP] if a.get("mid")]
         sent = old + sent[-SIDE_KEEP:]
     side["sent"] = sent
@@ -589,6 +595,8 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
                     tids = [tid]
                 if sent and sent.get("new"):
                     choose(tids[0])     # sent as a new thread (#367)
+                    if sent.get("name") and tids[0] in threads and threads[tids[0]]["root"] == mid:
+                        threads[tids[0]]["given"] = sent["name"]    # named in the box (issue 51)
                 for t in tids:
                     join(t, r)
                 for i in made:
@@ -932,9 +940,35 @@ def _drop_deleted(out: dict, by_mid: dict, deleted: dict) -> set[str]:
             del out["also"][root]
         out["parent"].setdefault(root, []).append(tid)
         r = by_mid[root]
+        th.pop("given", None)       # started again: no longer the message it was named on
         th.update(members=keep, root=root, rootTs=r["ts"],
                   title=_words(r["turn"].get("text") or "") or th.get("title") or "Thread")
     return {m for m in gone if not out["of"].get(m)}
+
+
+def clean_name(name) -> str:
+    """A thread name as kept: one line, spaces collapsed, at most NAME_MAX."""
+    if not isinstance(name, str):
+        return ""
+    return " ".join(name.split())[:NAME_MAX].strip()
+
+
+def _title_of(th: dict, names: dict) -> str:
+    """A thread's title (issue 51): the person's name for it (a rename, else
+    the name given when it was started), else its automatic title."""
+    tid = th.get("id") or ""
+    if tid in names:
+        return names[tid] or ""
+    return th.get("given") or ""
+
+
+def _apply_names(out: dict, names: dict) -> None:
+    for tid, th in out["threads"].items():
+        th["autoTitle"] = th.get("title") or ""
+        name = _title_of(th, names) if tid != "team:activity" else ""
+        th["named"] = bool(name)
+        if name:
+            th["title"] = name
 
 
 def _archived_mids(out: dict) -> set[str]:
@@ -1008,6 +1042,7 @@ def build(room_id: str, room: dict | None = None, *, show_progress: bool = True,
             print(f"[threads] {room_id}: replies not kept with their balloons: {e!r}", flush=True)
     by_mid = {r["mid"]: r for r in recs}
     hidden = _drop_deleted(out, by_mid, side.get("deleted") or {})
+    _apply_names(out, side.get("names") or {})
     try:
         waiting, _older = points._LAST_DECISIONS.get(room_id) or ([], [])
     except Exception:       # noqa: BLE001
@@ -1145,7 +1180,7 @@ def ready(room_id: str, room: dict) -> dict | None:
 def _meta(th: dict) -> dict:
     out = {k: th.get(k) for k in ("id", "root", "title", "points", "task", "replies", "workCount", "workLastMid", "rootWho", "who", "whoLabels",
                                    "lastAt", "lastMid", "lastWho", "unread", "state", "openQuestions",
-                                   "updatedAt", "openPoints", "chosen")}
+                                   "updatedAt", "openPoints", "chosen", "autoTitle", "named")}
     out["archived"] = th.get("archived") or 0
     if th["id"] == "team:activity":
         # Hub notes and reports do not ring the unread bell. A PO reply in
@@ -1418,7 +1453,9 @@ def thread_view(room_id: str, room: dict, tid: str = "", mid: str = "", n: int =
     if th is None and tid.startswith("m:") and tid[2:] in idx["by_mid"]:
         # A thread started on a balloon from its menu: its parent alone so far.
         r = idx["by_mid"][tid[2:]]
-        meta = {"id": tid, "root": r["mid"], "title": _words(r["turn"].get("text") or "") or "Thread",
+        auto = _words(r["turn"].get("text") or "") or "Thread"
+        name = (load_side(room_id).get("names") or {}).get(tid) or ""
+        meta = {"id": tid, "root": r["mid"], "title": name or auto, "autoTitle": auto, "named": bool(name),
                 "points": [], "task": "", "replies": 0, "who": [], "lastAt": r["ts"], "lastWho": "",
                 "unread": 0, "state": "", "new": True}
         return {"sig": _sig_text(idx), "latestMid": r["mid"],
@@ -1472,7 +1509,8 @@ def search_balloons(room_id: str, room: dict, groups: list[list[str]], limit: in
             direct_answers.append((r["ts"], homes[-1], idx["threads"][homes[-1]], r))
         hits.append({"roomId": room_id, "msgId": r["mid"], "ts": r["ts"],
                      "fromLabel": "PO" if _who(r) == "po" else _d.operator_name(),
-                     "snippet": snippet(line, terms), "thread": homes[-1] if homes else ""})
+                     "snippet": snippet(line, terms), "thread": homes[-1] if homes else "",
+                     "threadTitle": idx["threads"][homes[-1]].get("title") or "" if homes else ""})
     hits.sort(key=lambda h: -h["ts"])
     answers = []
     for tid in tids:
@@ -1489,7 +1527,8 @@ def search_balloons(room_id: str, room: dict, groups: list[list[str]], limit: in
     if direct_answers or answers:
         at, tid, th, r = max(direct_answers or answers, key=lambda a: a[0])
         latest = {"roomId": room_id, "msgId": r["mid"], "ts": at,
-                  "thread": tid, "task": th.get("task") or "", "state": th.get("state") or "",
+                  "thread": tid, "threadTitle": th.get("title") or "",
+                  "task": th.get("task") or "", "state": th.get("state") or "",
                   "snippet": snippet(r["turn"].get("text") or "", terms),
                   "threads": len(tids)}
     return {"messages": hits[:limit], "count": len(hits), "latest": latest}
@@ -1583,6 +1622,21 @@ def delete(room_id: str, room: dict | None, tids, now: float | None = None) -> l
     return done
 
 
+def rename(room_id: str, tid: str, name: str) -> str:
+    """The person names a thread (issue 51): kept in the chat's record, the
+    messages untouched. An empty name is its automatic title again. Returns
+    the name kept ("" for the automatic title). Agents have no way to call it."""
+    if not tid or len(tid) > 300 or tid == "team:activity":
+        raise ValueError(f"not a thread that can be named: {tid!r}")
+    name = clean_name(name)
+    with _LOCK:
+        side = load_side(room_id)
+        if side["names"].get(tid) != name:
+            side["names"][tid] = name
+            _save_side(room_id, side)
+    return name
+
+
 def thread_points(room_id: str, room: dict, tid: str) -> list[str]:
     """The points of a thread, oldest first ([] for a thread with none, or
     one not known). Never waits for a chat's first read: a send does not."""
@@ -1612,7 +1666,7 @@ def reply_text(room_id: str, room: dict, tid: str, text: str) -> str:
 
 
 def note_send(room_id: str, tid: str, key: str, pids: list[str], also: bool, text: str,
-              now: float | None = None, new: bool = False) -> None:
+              now: float | None = None, new: bool = False, name: str = "") -> None:
     """A reply sent from a thread's box, before it is delivered: the points
     it made are in that thread (a thread without a point gets one now), and
     the send itself is kept (#237), so its balloon is that thread's reply
@@ -1621,7 +1675,8 @@ def note_send(room_id: str, tid: str, key: str, pids: list[str], also: bool, tex
     (:func:`confirmed`, the points it made), else by what it holds.
 
     ``new`` (#367): a message sent from the main box as a new thread
-    (``tid`` empty): its balloon starts a thread the person chose."""
+    (``tid`` empty): its balloon starts a thread the person chose, named
+    ``name`` when one was given (issue 51; else its first words)."""
     if not tid and not new:
         return
     tid = tid or ""
@@ -1645,6 +1700,7 @@ def note_send(room_id: str, tid: str, key: str, pids: list[str], also: bool, tex
         side["sent"].append({"thread": tid, "key": key, "at": time.time() if now is None else now,
                              "words": mine, "also": bool(also), "pids": list(pids or []),
                              **({"new": True} if new and not tid else {}),
+                             **({"name": clean_name(name)} if new and not tid and clean_name(name) else {}),
                              "ev": _d.sends.evidence(text or "").keep() if _d else {}})
         _save_side(room_id, side)
 
