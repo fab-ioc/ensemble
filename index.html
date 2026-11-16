@@ -4131,6 +4131,13 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   #workspace-compose .wc-to button { flex:0 0 auto; border:0; background:transparent; color:inherit; font:inherit; cursor:pointer; min-width:24px; min-height:24px; }
   #workspace-compose .wc-to button[hidden] { display:none; }
   #workspace-compose .wc-to button:focus-visible { outline:none; box-shadow:0 0 0 2px var(--focus-ring); }
+  /* Issue 51: the new thread's name, as on session.html's own To line (#compose-thread-name). */
+  #workspace-compose-thread-name { flex:0 1 280px; min-width:0; height:28px; margin-left:var(--s-200); padding:0 var(--s-200);
+    border:1px solid var(--border-strong); border-radius:var(--r-200); background:var(--surface); color:var(--fg); font:inherit; font-size:var(--fs-200); }
+  #workspace-compose-thread-name[hidden] { display:none; }
+  #workspace-compose-thread-name::placeholder { color:var(--fg-muted); }
+  #workspace-compose-thread-name:focus { outline:none; border-color:var(--focus-ring); box-shadow:0 0 0 1px var(--focus-ring); }
+  @media (pointer:coarse) { #workspace-compose-thread-name { font-size:16px; } }
   #workspace-compose iframe { display:block; width:100%; height:110px; border:0; background:var(--surface); }
   #workspace-compose iframe.menu-room { position:relative; z-index:1; background:transparent; }   /* a menu's room over the chats (wcFrameRoom) */
   @media (min-width:768px) {
@@ -5349,7 +5356,7 @@ window.DOC_LISTENERS_PAUSED = false;
     <section id="po-panel" hidden aria-label="The project's PO" data-noun-aria-label="The {project}'s PO"></section>
 
   </div>
-  <div id="workspace-compose" hidden><div class="wc-to">To: <a href="#" id="workspace-compose-link"></a><button type="button" id="workspace-compose-back" hidden aria-label="Back to the PO" title="Back to the PO">&times;</button></div><iframe id="workspace-compose-frame" title="Workspace message box" allow="clipboard-read; clipboard-write"></iframe></div>
+  <div id="workspace-compose" hidden><div class="wc-to">To: <a href="#" id="workspace-compose-link"></a><input type="text" id="workspace-compose-thread-name" maxlength="80" placeholder="Name (optional)" aria-label="Name of the new thread (optional; empty: its first words)" autocomplete="off" hidden><button type="button" id="workspace-compose-back" hidden aria-label="Back to the PO" title="Back to the PO">&times;</button></div><iframe id="workspace-compose-frame" title="Workspace message box" allow="clipboard-read; clipboard-write"></iframe></div>
 </main>
 <dialog id="modal"></dialog>
 <aside id="detail-panel"></aside>
@@ -15486,7 +15493,7 @@ function pdChatUnpanel(roomId) {
 function pdRowTitle(r) { return [taskNoText(r, false), detailTitle(r)].filter(Boolean).join(' ') || 'Chat'; }
 // The workspace owns one editor. Its session frame runs the ordinary send path,
 // while the conversation frames keep their messages and per-target drafts.
-const WC = { target:null, base:'', tailKey:'', restoring:false, pickSeq:0, popped:new Map(), aimAt:0, ownAt:0 };
+const WC = { target:null, base:'', tailKey:'', restoring:false, pickSeq:0, popped:new Map(), aimAt:0, ownAt:0, newThread:false };
 function wcPoRoom() { return PO_PANEL.querySelector('iframe.po-session:not([hidden])')?.dataset.room || ''; }
 function wcMainTarget() {
   const r = SELECTED_SID && rowBySid(SELECTED_SID);
@@ -15568,6 +15575,31 @@ function wcF6(e) {
 }
 document.getElementById('workspace-compose-frame').addEventListener('load', e => {
   try { e.target.contentDocument.addEventListener('keydown', wcF6); } catch (x) {}
+  wcNewThread(false);     // a new page in the box: its thread icon is off
+});
+// Issue 51: the box's thread icon on (session.html's NEW_THREAD, told by the
+// box's page as it paints it): the To line reads "a new thread" and has the
+// optional name field, as the chat's own To line does. Off, the field hides
+// and forgets what was typed; the page reads the name when it sends.
+function wcNewThread(on) {
+  on = !!on;
+  const nm = document.getElementById('workspace-compose-thread-name');
+  const was = WC.newThread;
+  WC.newThread = on;
+  nm.hidden = !on;
+  if (!on) nm.value = '';
+  if (was !== on && WC.target) document.getElementById('workspace-compose-link').textContent = on ? 'a new thread' : wcTitle(WC.target);
+}
+function wcThreadName() {
+  return WC.newThread ? document.getElementById('workspace-compose-thread-name').value.trim() : '';
+}
+document.getElementById('workspace-compose-thread-name').addEventListener('keydown', e => {
+  if (e.key !== 'Enter' || e.isComposing || e.shiftKey || e.altKey) return;
+  e.preventDefault();
+  const doc = document.getElementById('workspace-compose-frame').contentDocument;
+  // Ctrl+Enter sends (the box's own key), Enter goes on to the box.
+  if (e.ctrlKey || e.metaKey) doc?.getElementById('send')?.click();
+  else doc?.getElementById('input')?.focus();
 });
 function wcFallback() {
   const chat = [...PD.rt.values()].find(e => e.kind === 'chat' && !PD.dock.popWindow(pdChatId(e.room)));
@@ -15620,7 +15652,7 @@ function wcSync() {
     } catch (e) {}
   }
   box.hidden = false;
-  document.getElementById('workspace-compose-link').textContent = wcTitle(WC.target);
+  document.getElementById('workspace-compose-link').textContent = WC.newThread ? 'a new thread' : wcTitle(WC.target);
   document.getElementById('workspace-compose-back').hidden = WC.target?.kind !== 'thread';
   const t = WC.target;
   const base = wcBase(t);

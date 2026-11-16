@@ -7060,6 +7060,8 @@ function newThreadPaint() {
   // Issue 51: its name, optional, on the To line while the icon is on.
   const nm = $('#compose-thread-name');
   if (nm) { nm.hidden = !NEW_THREAD; if (!NEW_THREAD) nm.value = ''; }
+  // The shared box (docked dashboard): its To line is the dashboard's.
+  if (WORKSPACE_COMPOSE) try { window.parent.wcNewThread?.(NEW_THREAD); } catch (e) {}
 }
 $('#compose-thread-name').addEventListener('keydown', e => {
   if (askKeyAction(e) === 'send') { e.preventDefault(); $('#send').click(); }
@@ -9543,7 +9545,8 @@ async function sendResuming(text, to, key, attachments, now, box = false) {
     if (t && !(t.points || []).length && t.root && text) body.text = msgLink(t.root) + '\n\n' + text;
   } else if (box && THREADED && NEW_THREAD) {
     body.newThread = true;     // #367: the box's thread icon
-    const name = ($('#compose-thread-name')?.value || '').trim();
+    let name = ($('#compose-thread-name')?.value || '').trim();
+    if (WORKSPACE_COMPOSE) try { name = window.parent.wcThreadName?.() ?? name; } catch (e) {}
     if (name) body.threadName = name;     // issue 51: named as it starts
   }
   if (attachments && attachments.length) body.attachments = attachments;
