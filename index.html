@@ -5533,22 +5533,21 @@ const hubPort = () => HUB_PORT || location.port || (location.protocol === 'https
 // was reached at ("host:port") and this machine's own names.
 let HUB_ORIGINS = { seen: [], names: [] };
 // Whether a URL is this hub's (P358), as hub_links.hub_origin reads it: this
-// page's own host; an address the hub was reached at; the hub's port on this
-// machine's loopback or names; this machine's tailnet name over https
-// (tailscale serve) or on the hub's port; a tailnet address on the hub's port.
-// A dev server on localhost:5173, another machine's tailnet name or another
-// website is not.
+// page's own origin; an address the hub is known to answer at; the hub's
+// port on this machine's loopback, names or tailnet name. Another port or
+// service on this machine, another machine or another website is not.
 function hubOrigin(x) {
   if (!x || !/^https?:$/.test(x.protocol)) return false;
-  if (x.host === location.host) return true;
+  if (x.host === location.host && x.protocol === location.protocol) return true;
   const port = x.port || (x.protocol === 'https:' ? '443' : '80');
   const h = x.hostname.replace(/^\[|\]$/g, '').replace(/\.$/, '').toLowerCase();
+  // An address the hub is known to answer at (hub_links.origins: a page opened
+  // there, its bind, tailscale serve), or its own port on this machine.
   if ((HUB_ORIGINS.seen || []).includes((h.includes(':') ? '[' + h + ']' : h) + ':' + port)) return true;
+  if (port !== hubPort()) return false;
   const names = HUB_ORIGINS.names || [];
-  if (LOOPBACK_HOST_RE.test(x.hostname) || names.includes(h)) return port === hubPort();
-  if (/\.ts\.net$/.test(h)) return names.some(n => n.split('.')[0] === h.split('.')[0]) && (port === hubPort() || x.protocol === 'https:');
-  // A tailnet address (100.64.0.0/10) on the hub's port: the hub listening there.
-  return /^100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d{1,3}\.\d{1,3}$/.test(h) && port === hubPort();
+  return LOOPBACK_HOST_RE.test(x.hostname) || names.includes(h)
+    || (/\.ts\.net$/.test(h) && names.some(n => n.split('.')[0] === h.split('.')[0]));
 }
 const onHubMachine = () => LOOPBACK_HOST_RE.test(location.hostname);
 // file:///C:/a%20b.md is C:/a b.md; file://srv/share/x is \\srv\share\x; file:///home/x is /home/x

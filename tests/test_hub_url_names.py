@@ -33,7 +33,9 @@ const esc = s => (s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':
 const fileHref = (p, line) => '/fileview?path=' + encodeURIComponent(p) + (line ? '&line=' + line : '');
 %s
 HUB_PORT = '8765';   // what /api/config says
-HUB_ORIGINS = {seen: [], names: ['hub']};   // this machine is "hub" on its tailnet (P358)
+// This machine is "hub" on its tailnet, served at :9443 by tailscale serve and
+// bound to its tailnet address (P358).
+HUB_ORIGINS = {seen: ['hub.tail1234.ts.net:9443', '100.101.2.3:8765'], names: ['hub']};
 const render = t => {
   if (t.length > 1 && t.startsWith('`') && t.endsWith('`')) return codeSpanHtml(t.slice(1, -1));
   const keep = [];
@@ -266,6 +268,8 @@ class HubUrlNamesInChrome(Hub):
         p = mock.patch.object(dashboard, 'ACCESS_TOKEN', 'token-for-the-test'); p.start(); self.addCleanup(p.stop)
         # The hub's machine is "hub" on its tailnet: its tailnet links are the hub's (P358).
         p = mock.patch.object(dashboard.hub_links, '_own_names', lambda: frozenset({'hub'})); p.start(); self.addCleanup(p.stop)
+        # tailscale serve gives it https on :9443 (what learn_tailscale reads from tailscale).
+        p = mock.patch.object(dashboard.hub_links, '_SEEN', {('hub.tail1234.ts.net', 9443)}); p.start(); self.addCleanup(p.stop)
         rid = self.room('Task chat', self.ed)
         other = self.room('Another task', self.ed, numbered=True)
         first = chatroom.post_message(rid, 'claude', 'Plan is ready for a look.', to='user')['message']['id']

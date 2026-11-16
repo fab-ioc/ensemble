@@ -50,11 +50,15 @@ def _own_names() -> frozenset[str]:
     return frozenset(n.rstrip(".") for n in names if n)
 
 
-# The addresses the hub has been reached at, as (host, port): the Host a
-# browser (or tailscale serve's X-Forwarded-Host) sent with a page the hub
-# served, and the tailnet address it listens on (dashboard.py's seen_origin
-# and _announce_remote).
+# The addresses the hub is known to answer at, as (host, port): one a reader
+# opened a page at (dashboard.py's _note_origin: the Host of a direct request
+# when it matches the socket it came in on, or the X-Forwarded-Host of a proxy
+# on this machine when it names this machine), the address it listens on
+# (_announce_remote), and what tailscale itself says serves the hub
+# (learn_tailscale). Never a host a request merely claims.
 _SEEN: set[tuple[str, int]] = set()
+# This machine's tailnet names (MagicDNS), from `tailscale status`.
+_TS_NAMES: set[str] = set()
 
 
 def _norm(host: str) -> str:
@@ -69,22 +73,6 @@ def hub_port() -> int:
     return int(getattr(_d, "HUB_PORT", 0) or 8765)
 
 
-def hub_host(host: str) -> bool:
-    """A host that can be this hub's: this machine's loopback, its own
-    names, a tailnet name (*.ts.net) or address (100.64.0.0/10). Whether an
-    address is the hub's also takes its port: :func:`hub_origin`."""
-    h = _norm(host)
-    if not h:
-        return False
-    if h == "localhost" or h.endswith(".ts.net") or h in _own_names():
-        return True
-    try:
-        ip = ipaddress.ip_address(h)
-    except ValueError:
-        return False
-    return ip.is_loopback or ip in ipaddress.ip_network("100.64.0.0/10")
-
-
 def _loopback(h: str) -> bool:
     if h == "localhost":
         return True
@@ -94,41 +82,106 @@ def _loopback(h: str) -> bool:
         return False
 
 
-def seen(host: str, scheme: str = "http") -> None:
-    """Note an address the hub was reached at (a Host header, ``name[:port]``)."""
+def _names() -> set[str]:
+    return set(_own_names()) | _TS_NAMES
+
+
+def _own_tailnet_name(h: str) -> bool:
+    """This machine's tailnet name: the one tailscale gave, or its hostname
+    in front of a tailnet domain (``<hostname>.<tailnet>.ts.net``)."""
+    if h in _TS_NAMES:
+        return True
+    return h.endswith(".ts.net") and h.split(".")[0] in {n.split(".")[0] for n in _names()}
+
+
+def own_host(host: str) -> bool:
+    """A name or address of this machine: loopback, its own names, its tailnet
+    name. Not another machine's, not a LAN or tailnet address by itself."""
+    h = _norm(host)
+    return bool(h) and (_loopback(h) or h in _names() or _own_tailnet_name(h))
+
+
+def _split(host: str, scheme: str) -> tuple[str, int] | None:
     raw = (host or "").strip()
     if not raw:
-        return
+        return None
     try:
         u = urlsplit(f"{scheme}://{raw}")
         h, port = _norm(u.hostname or ""), u.port
     except ValueError:
+        return None
+    return (h, _port_of(scheme, port)) if h else None
+
+
+def _add(h: str, p: int) -> None:
+    if h not in ("0.0.0.0", "::") and len(_SEEN) < 64:
+        _SEEN.add((h, p))
+
+
+def seen(host: str, scheme: str = "http", local: tuple[str, int] | None = None) -> None:
+    """Note an address a page of the hub was opened at (a Host header,
+    ``name[:port]``). local: the (address, port) the request's socket came in
+    on, for a direct request: the Host counts when its port is that port and
+    it names this machine or is that very address (a LAN or tailnet bind).
+    Without it (a proxy on this machine) the Host must name this machine."""
+    hp = _split(host, scheme)
+    if not hp:
         return
-    if h and hub_host(h) and len(_SEEN) < 64:
-        _SEEN.add((h, _port_of(scheme, port)))
+    h, p = hp
+    if local is not None:
+        ip, port = _norm(str(local[0])), int(local[1])
+        if ip.startswith("::ffff:"):
+            ip = ip[7:]
+        if p == port and (own_host(h) or h == ip):
+            _add(h, p)
+    elif own_host(h):
+        _add(h, p)
+
+
+def listens(host: str, scheme: str = "http") -> None:
+    """An address the hub itself listens on or is served at (its bind,
+    tailscale serve): known, not claimed."""
+    hp = _split(host, scheme)
+    if hp:
+        _add(*hp)
+
+
+def learn_tailscale(status: dict | None, serve: dict | None) -> None:
+    """What `tailscale status --json` and `tailscale serve status --json` say:
+    this machine's tailnet name, and each https address tailscale serve proxies
+    to the hub's port on this machine."""
+    me = (status or {}).get("Self") or {}
+    name = _norm(me.get("DNSName") or "")
+    if name:
+        _TS_NAMES.add(name)
+    for where, cfg in ((serve or {}).get("Web") or {}).items():
+        for h in ((cfg or {}).get("Handlers") or {}).values():
+            proxy = str((h or {}).get("Proxy") or "")
+            if not proxy:
+                continue
+            try:
+                u = urlsplit(proxy if "://" in proxy else "http://" + proxy)
+                to = (u.port, _loopback(_norm(u.hostname or "")))
+            except ValueError:
+                continue
+            if to == (hub_port(), True):
+                listens(where, "https")
+                break
 
 
 def hub_origin(host: str, port: int | None, scheme: str = "http") -> bool:
-    """Whether scheme://host:port is this hub: its own port on this machine's
-    loopback or names, an address the hub was reached at (:func:`seen`), or
-    this machine's tailnet name (``<hostname>.<tailnet>.ts.net``) over https
-    (tailscale serve) or on the hub's port; a tailnet address on the hub's
-    port. A dev server on localhost:5173 or another machine's tailnet name
-    is another website."""
+    """Whether scheme://host:port is this hub: an address it is known to answer
+    at (seen, listens, learn_tailscale), or the hub's own port on this
+    machine's loopback, names or tailnet name. A dev server on localhost:5173,
+    another service on this machine's tailnet name, another machine: another
+    website."""
     h = _norm(host)
-    if not hub_host(h):
+    if not h:
         return False
-    p, hp = _port_of(scheme, port), hub_port()
+    p = _port_of(scheme, port)
     if (h, p) in _SEEN:
         return True
-    if _loopback(h) or h in _own_names():
-        return p == hp
-    if h.endswith(".ts.net"):
-        # tailscale serve may give the hub any https port (443, 9443, ...)
-        short = {n.split(".")[0] for n in _own_names()}
-        return h.split(".")[0] in short and (p == hp or scheme.lower() == "https")
-    # a tailnet address: the hub listening there (--bind tailscale)
-    return p == hp
+    return p == hub_port() and own_host(h)
 
 
 def origins() -> dict:
@@ -136,7 +189,7 @@ def origins() -> dict:
     does (session.html's hubOrigin): the addresses it was reached at, as
     ``host:port``, and this machine's own names."""
     return {"seen": sorted(f"[{h}]:{p}" if ":" in h else f"{h}:{p}" for h, p in _SEEN),
-            "names": sorted(_own_names())}
+            "names": sorted(_names())}
 
 
 def target(url: str) -> dict | None:

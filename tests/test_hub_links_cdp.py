@@ -110,17 +110,16 @@ async function main() {
       }
       await sleep(600);    // the redraw after the hub named everything
       const o = { ready, view: await evalIn(VIEW) };
-      // The card's chip, clicked (tapped on the phone): the page lands on the card.
-      const sel = '#msgs .msg[data-mid="' + A.mids.card + '"] a.ref-chip.card-jump';
-      const at = await evalIn(`(() => { const a = document.querySelector('${sel}'); if (!a) return null; a.scrollIntoView({ block: 'center' });
-        const b = a.getBoundingClientRect(); return { x: Math.round(b.left + Math.min(b.width / 2, 40)), y: Math.round(b.top + b.height / 2) }; })()`);
-      if (at) {
+      // A link to the card, clicked (tapped on the phone): the page lands on the card.
+      const clickTo = async sel => {
+        const at = await evalIn(`(() => { const a = document.querySelector('${sel}'); if (!a) return null; a.scrollIntoView({ block: 'center' });
+          document.querySelectorAll('.landed').forEach(e => e.classList.remove('landed')); return true; })()`);
+        if (!at) return { hit: false, click: null };
         await sleep(200);
-        // The chip at the foot of the list, the card's own balloon above it scrolled away if it can be.
+        // The link at the foot of the list, the card's own balloon above it scrolled away if it can be.
         const p = await evalIn(`(() => { const a = document.querySelector('${sel}'); a.scrollIntoView({ block: 'end' });
           const b = a.getBoundingClientRect(), x = Math.round(b.left + Math.min(b.width / 2, 40)), y = Math.round(b.top + b.height / 2);
           const hit = document.elementFromPoint(x, y); return { x, y, hit: !!hit && !!hit.closest('${sel}') }; })()`);
-        o.hit = p.hit;
         await sleep(200);
         if (mob) {
           await c.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: p.x, y: p.y }] }, sessionId);
@@ -136,8 +135,12 @@ async function main() {
           if (v && (v.cardLanded || v.note || v.opened)) break;
           await sleep(100);
         }
-        o.click = v;
-      }
+        return { hit: p.hit, click: v };
+      };
+      const chip = await clickTo('#msgs .msg[data-mid="' + A.mids.card + '"] a.ref-chip.card-jump');
+      o.hit = chip.hit; o.click = chip.click;
+      // The card's name in a fenced code block (review 2) is a link to it too.
+      o.fenceClick = await clickTo('#msgs .msg[data-mid="' + A.mids.fence + '"] pre a');
       out[w] = o;
       await c.send('Target.closeTarget', { targetId });
     }
@@ -316,6 +319,27 @@ class HubLinksInBalloons(unittest.TestCase):
                 self.assertIn(f"web {GITHUB}", text)
                 for bare in ("127.0.0.1", "localhost:", "session?room=", "fileview?"):
                     self.assertNotIn(bare, text)
+                # Each name is a link to what it names (review 2); the other site's address is text.
+                links = o["view"]["fence"]["links"]
+                card = [a for a in links if QUESTION in a["text"]]
+                self.assertEqual(len(card), 1, links)
+                q = parse_qs(urlsplit(card[0]["href"]).query)
+                self.assertEqual((urlsplit(card[0]["href"]).path, q["room"], q["msg"], q["part"]),
+                                 ("/session", [self.room], [self.card_mid], ["ask:0"]))
+                f = [a for a in links if a["text"] == "links.png"]
+                self.assertEqual(len(f), 1, links)
+                self.assertEqual(parse_qs(urlsplit(f[0]["href"]).query)["path"], [str(self.picture)])
+                self.assertNotIn(GITHUB, [a["text"] for a in links])
+
+    def test_a_click_on_the_cards_name_in_code_lands_on_the_card(self):
+        for w, o in self._each():
+            with self.subTest(width=w):
+                r = o["fenceClick"]
+                self.assertTrue(r["hit"], "the click falls on the link")
+                v = r["click"]
+                self.assertIsNotNone(v)
+                self.assertEqual(v["opened"], "", "no window of its own")
+                self.assertTrue(v["card"] and v["cardLanded"] and v["cardVisible"], v)
 
     def test_the_hubs_paths_on_another_site_stay_that_sites_links(self):
         for w, o in self._each():

@@ -58,6 +58,9 @@ const MOD_ENTER = 'Ctrl+Enter';
 const askUndoLeft = () => 0;
 const chatStamp = () => '';
 %s
+// This hub is served at https://hub.tail1234.ts.net (tailscale serve) and is
+// "hubbox" on its tailnet (/api/config's origins, P358).
+HUB_ORIGINS = {seen: ['hub.tail1234.ts.net:443'], names: ['hubbox']};
 const T = {
   localhost: 'Which one? http://localhost:8765/session?room=room-1a2b3c4d&msg=msg0aaa0001&part=ask:0',
   loopback: 'Which one? (see http://127.0.0.1:8765/session?room=room-1a2b3c4d&msg=msg0aaa0001)',
