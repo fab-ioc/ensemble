@@ -1287,6 +1287,7 @@
   /* Why Submit is off, or why the last send did not arrive. */
   #cmt-tray .cmt-state { padding:8px 12px; border-bottom:1px solid var(--border); font-size:var(--fs-200); line-height:16px; color:var(--fg-muted); }
   #cmt-tray .cmt-state.err { color:var(--c-danger-fg); }
+  body.workspace-compose #cmt-tray { max-height:calc(var(--host-h, 100vh) * .3); }
   .to { font-weight:400; color:var(--fg-muted); text-transform:none; }
   .mention { color:var(--c-discovery-fg); font-weight:600; background:var(--c-discovery-bg); border-radius:var(--r-100); padding:0 3px; }
   .msg .from .mention { text-transform:none; letter-spacing:0; }
@@ -9491,7 +9492,7 @@ function composeHeightLimits() {
   let hostH = innerHeight;
   try { if (WORKSPACE_COMPOSE) hostH = window.parent.innerHeight; } catch (e) {}
   const min = Math.ceil(parseFloat(getComputedStyle($('#input')).minHeight) || 40);
-  const rest = box.offsetHeight - ed.offsetHeight + (WORKSPACE_COMPOSE ? 28 : 0);
+  const rest = box.offsetHeight - ed.offsetHeight + (WORKSPACE_COMPOSE ? 28 + cmtTrayHeight() : 0);
   return { min, max: Math.max(min, Math.floor(hostH * .7) - rest) };
 }
 function composeHeightApply(h) {
@@ -9521,7 +9522,7 @@ function composeHeightSet(h) {
 // came a paint late, and the Dock with it (P226).
 function composeFrameFit() {
   if (!WORKSPACE_COMPOSE) return;
-  try { window.parent.wcFrameFit(Math.ceil($('#compose').getBoundingClientRect().height), $('#compose').classList.contains('sized')); } catch (e) {}
+  try { window.parent.wcFrameFit(Math.ceil($('#compose').getBoundingClientRect().height), $('#compose').classList.contains('sized'), cmtTrayHeight()); } catch (e) {}
 }
 // The height under a drag, until it is let go and kept (0: no drag).
 let COMPOSE_H_DRAG = 0;
@@ -10323,10 +10324,14 @@ if (WORKSPACE_COMPOSE) {
   const reportSize = () => {
     // A drag sizes the frame itself; a message sent before its last move would be older.
     if (COMPOSE_H_DRAG) return;
-    try { window.parent.postMessage({type:'workspace-compose-size', height:Math.ceil($('#compose').getBoundingClientRect().height), sized:$('#compose').classList.contains('sized')}, location.origin); } catch (e) {}
+    try { window.parent.postMessage({type:'workspace-compose-size', height:Math.ceil($('#compose').getBoundingClientRect().height), sized:$('#compose').classList.contains('sized'), tray:cmtTrayHeight()}, location.origin); } catch (e) {}
   };
   new ResizeObserver(reportSize).observe($('#compose'));
   setTimeout(reportSize, 0);
+  // This page now draws its room's comment tray: the chats drop theirs (P360);
+  // going, it hands the tray back to them before the next page loads.
+  addEventListener('load', () => { window.cmtBoxRoom = ROOM || ''; renderCmtTray(); cmtGuestTrays(); });
+  addEventListener('pagehide', () => { window.cmtBoxRoom = ''; cmtGuestTrays(); });
   // This frame is as tall as the box, so a menu opening upward from it was
   // cut at its top (P227). While one is open the host grows the frame up by
   // the menu's height, over the chats (wcFrameRoom); the page above the box
@@ -11000,16 +11005,35 @@ function cmtImagesHtml(c) {
   return imgs.length ? `<div class="cmt-item-img">${esc((imgs.length > 1 ? imgs.length + ' images: ' : 'Image: ') + imgs.map(i => i.name).join(', '))}</div>` : '';
 }
 // In the dashboard's workspace this chat's own box is hidden and the shared
-// box sends for it: when that box is aimed at this chat's room (its main chat
-// or a thread of it), the box's page draws the tray, under its To: line, and
-// this one draws none, so the comments show once (P360). The box aimed at
-// another chat, this one keeps its tray.
+// box sends for it: while the box's page for this chat's room (its main chat
+// or a thread of it) is loaded and shown, that page draws the tray, under its
+// To: line, and this one draws none, so the comments show once (P360). Until
+// the box's page for this room has loaded, and from the moment it goes, this
+// chat keeps its tray: a switch of the box never leaves the comments unshown.
+window.cmtBoxRoom = '';
 function cmtBoxServes() {
   if (WORKSPACE_COMPOSE || !document.body.classList.contains('workspace-guest')) return false;
   try {
     const host = window.top, box = host.document.getElementById('workspace-compose');
-    return !!box && !box.hidden && host.wcTargetNow?.()?.room === ROOM;
+    const w = host.document.getElementById('workspace-compose-frame')?.contentWindow;
+    return !!box && !box.hidden && !!w && w.cmtBoxRoom === ROOM;
   } catch (e) { return false; }
+}
+// The box's page loaded or going: the chats of the workspace draw or drop their trays.
+function cmtGuestTrays() {
+  try {
+    for (const f of window.top.document.querySelectorAll('iframe'))
+      try { if (f.contentWindow !== window) f.contentWindow.renderCmtTray?.(); } catch (e) {}
+  } catch (e) {}
+}
+// In the box's page the tray is inside the frame, above the box: the frame
+// is sized for both (composeFrameFit), and the tray is capped by the
+// dashboard's height, not the frame's own.
+function cmtTrayHeight() {
+  const tray = WORKSPACE_COMPOSE && document.getElementById('cmt-tray');
+  if (!tray) return 0;
+  const c = $('#compose').getBoundingClientRect();
+  return Math.max(0, Math.ceil(c.top - tray.getBoundingClientRect().top));
 }
 // The chats on screen in the workspace showing this room, for the box's page
 // (it shows no messages): a passage is found and shown in them.
@@ -11029,7 +11053,7 @@ function cmtChatFrames() {
 function renderCmtTray() {
   let tray = document.getElementById('cmt-tray');
   if (!COMMENTS.length) CMT_ERROR = '';
-  if (!COMMENTS.length || cmtBoxServes()) { if (tray) tray.remove(); return; }
+  if (!COMMENTS.length || cmtBoxServes()) { if (tray) { tray.remove(); composeFrameFit(); } return; }
   const s = cmtSubmitState(), n = COMMENTS.length;
   const html = `<div class="cmt-tray-head"><strong>${n} comment${n > 1 ? 's' : ''}</strong><span class="grow"></span>`
     + `<button class="cmt-submit"${s.can ? '' : ' disabled'}>${esc(s.label)}</button><button class="cmt-clear">Clear</button></div>`
@@ -11051,6 +11075,7 @@ function renderCmtTray() {
   tray._html = html;
   tray.innerHTML = html;
   const nl = tray.querySelector('.cmt-list'); if (nl) nl.scrollTop = top;
+  composeFrameFit();
 }
 function cmtTrayClick(e) {
   const t = e.target;
