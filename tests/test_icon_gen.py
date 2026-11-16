@@ -452,7 +452,27 @@ class LabelColour(unittest.TestCase):
         self.assertTrue(icon_gen.check(icon(BLUE, moved), BLUE)["ok"], "a translate keeps the box")
         turned = (f'<circle cx="24" cy="24" r="12" fill="#fff"/>'
                   f'<circle cx="24" cy="24" r="4" fill="{BLUE}" transform="rotate(30 24 24)"/>')
-        self.assertFalse(icon_gen.check(icon(BLUE, turned), BLUE)["ok"], "a box it cannot tell: not offered")
+        self.assertTrue(icon_gen.check(icon(BLUE, turned), BLUE)["ok"], "a rotate moves it, and it is still on the disc")
+        arc = ('<path d="M24 12a12 12 0 1 0 0.01 0z" fill="#fff"/>'
+               f'<path d="M24 20a4 4 0 1 1 -0.01 0z" fill="{BLUE}"/>')
+        self.assertTrue(icon_gen.check(icon(BLUE, arc), BLUE)["ok"], "arcs are drawn round")
+        bogus = (f'<circle cx="24" cy="24" r="12" fill="#fff"/>'
+                 f'<circle cx="24" cy="24" r="4" fill="{BLUE}" transform="rotate(30 24)"/>')
+        self.assertFalse(icon_gen.check(icon(BLUE, bogus), BLUE)["ok"], "a place it cannot tell: not offered")
+
+    def test_a_detail_beside_a_round_symbol_is_lost(self):
+        # Review 3: inside the white disc's box, but off the disc itself.
+        s = icon(BLUE, f'<circle cx="24" cy="24" r="12" fill="#fff"/><circle cx="14" cy="14" r="2" fill="{BLUE}"/>')
+        self.assertFalse(icon_gen.check(s, BLUE)["legible"])
+        r = icon_gen.recolour(s, BLUE)
+        self.assertIn('<circle cx="14" cy="14" r="2" fill="#ffffff"/>', r)
+        self.assertTrue(icon_gen.check(r, BLUE)["ok"])
+
+    def test_a_border_in_the_ground_colour_shows(self):
+        # Review 3: the stroke's inner half lies on the white fill: visible, kept.
+        s = icon(BLUE, f'<rect x="8" y="8" width="32" height="32" fill="#fff" stroke="{BLUE}" stroke-width="4"/>')
+        self.assertTrue(icon_gen.check(s, BLUE)["ok"])
+        self.assertEqual(icon_gen.recolour(s, BLUE), s)
 
     def test_an_accent_alone_does_not_carry_the_colour(self):
         # Review 2: black symbol on white with a small accent in the label colour.

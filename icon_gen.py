@@ -12,6 +12,7 @@ text. The picked one is then saved through #329's own path
 (project_icon.accept), which checks it once more."""
 from __future__ import annotations
 
+import math
 import os
 import re
 import shutil
@@ -433,41 +434,266 @@ def _box(el, tag: str) -> tuple[float, float]:
     return (b[2] - b[0], b[3] - b[1]) if b else (0.0, 0.0)
 
 
-_TRANSLATE = re.compile(r"\s*translate\(\s*([+-]?(?:\d+\.?\d*|\.\d+))(?:[\s,]+([+-]?(?:\d+\.?\d*|\.\d+)))?\s*\)\s*")
+# Where a paint lies, for telling whether a detail shows: every shape as polylines
+# in the viewBox (curves and arcs flattened, the transforms around it applied).
+_TF = re.compile(r"(matrix|translate|scale|rotate|skewx|skewy)\s*\(([^)]*)\)", re.I)
+_ID = (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
 
 
-def _shift(el, at):
-    """The offset at, moved by el's transform; None once a transform is more than a translate."""
+def _mul(a, b):
+    """The SVG matrix a·b (each (a, b, c, d, e, f))."""
+    return (a[0] * b[0] + a[2] * b[1], a[1] * b[0] + a[3] * b[1], a[0] * b[2] + a[2] * b[3],
+            a[1] * b[2] + a[3] * b[3], a[0] * b[4] + a[2] * b[5] + a[4], a[1] * b[4] + a[3] * b[5] + a[5])
+
+
+def _transform(el, m):
+    """m with el's transform applied after it; None when m is or the transform is not understood."""
     tr = _style(el).get("transform") or el.get("transform")
-    if at is None or not tr or not tr.strip():
-        return at
-    m = _TRANSLATE.fullmatch(tr)
-    return (at[0] + float(m.group(1)), at[1] + float(m.group(2) or 0)) if m else None
+    if m is None or not tr or not tr.strip():
+        return m
+    if _TF.sub("", tr).replace(",", " ").strip():
+        return None
+    for name, args in _TF.findall(tr):
+        try:
+            v = [float(x) for x in re.split(r"[\s,]+", args.strip()) if x]
+        except ValueError:
+            return None
+        n = name.lower()
+        if n == "matrix" and len(v) == 6:
+            f = tuple(v)
+        elif n == "translate" and len(v) in (1, 2):
+            f = (1, 0, 0, 1, v[0], v[1] if len(v) > 1 else 0)
+        elif n == "scale" and len(v) in (1, 2):
+            f = (v[0], 0, 0, v[1] if len(v) > 1 else v[0], 0, 0)
+        elif n == "rotate" and len(v) in (1, 3):
+            a = math.radians(v[0])
+            f = (math.cos(a), math.sin(a), -math.sin(a), math.cos(a), 0, 0)
+            if len(v) == 3:
+                f = _mul(_mul((1, 0, 0, 1, v[1], v[2]), f), (1, 0, 0, 1, -v[1], -v[2]))
+        elif n in ("skewx", "skewy") and len(v) == 1:
+            k = math.tan(math.radians(v[0]))
+            f = (1, 0, k, 1, 0, 0) if n == "skewx" else (1, k, 0, 1, 0, 0)
+        else:
+            return None
+        m = _mul(m, f)
+    return m
+
+
+def _arc(x1, y1, rx, ry, phi, large, sweep, x2, y2) -> list:
+    """An elliptical arc as points after (x1, y1), as SVG draws it (its appendix F.6.5)."""
+    rx, ry = abs(rx), abs(ry)
+    if rx == 0 or ry == 0 or (x1, y1) == (x2, y2):
+        return [(x2, y2)]
+    c, s = math.cos(math.radians(phi)), math.sin(math.radians(phi))
+    dx, dy = (x1 - x2) / 2, (y1 - y2) / 2
+    xp, yp = c * dx + s * dy, -s * dx + c * dy
+    lam = (xp / rx) ** 2 + (yp / ry) ** 2
+    if lam > 1:
+        rx, ry = rx * math.sqrt(lam), ry * math.sqrt(lam)
+    den = (rx * yp) ** 2 + (ry * xp) ** 2
+    k = math.sqrt(max(0.0, ((rx * ry) ** 2 - den) / den)) if den else 0.0
+    if bool(large) == bool(sweep):
+        k = -k
+    cxp, cyp = k * rx * yp / ry, -k * ry * xp / rx
+    cx, cy = c * cxp - s * cyp + (x1 + x2) / 2, s * cxp + c * cyp + (y1 + y2) / 2
+    ang = lambda ux, uy, vx, vy: math.atan2(ux * vy - uy * vx, ux * vx + uy * vy)
+    ux, uy, vx, vy = (xp - cxp) / rx, (yp - cyp) / ry, (-xp - cxp) / rx, (-yp - cyp) / ry
+    t1, dt = ang(1, 0, ux, uy), ang(ux, uy, vx, vy)
+    if not sweep and dt > 0:
+        dt -= 2 * math.pi
+    elif sweep and dt < 0:
+        dt += 2 * math.pi
+    n = max(2, int(abs(dt) / (math.pi / 16)) + 1)
+    out = []
+    for j in range(1, n + 1):
+        a = t1 + dt * j / n
+        ex, ey = rx * math.cos(a), ry * math.sin(a)
+        out.append((cx + c * ex - s * ey, cy + s * ex + c * ey))
+    return out
+
+
+def _flatten(d: str) -> list[list]:
+    """A path's subpaths as polylines, curves and arcs flattened."""
+    subs, cur = [], None
+    x = y = sx = sy = 0.0
+    cmd, prev, ctrl = None, None, None   # ctrl: the last control point, for S and T
+    toks = _PATH_TOK.findall(d or "")[:4000]
+    i = 0
+
+    def to(pts):
+        nonlocal cur
+        if cur is None:
+            cur = [(x, y)]
+            subs.append(cur)
+        cur.extend(pts)
+
+    while i < len(toks):
+        if toks[i].isalpha():
+            cmd = toks[i]
+            i += 1
+            if cmd in "Zz":
+                if cur is not None and cur[-1] != (sx, sy):
+                    cur.append((sx, sy))
+                cur, x, y, prev = None, sx, sy, "z"
+            continue
+        if cmd is None or cmd in "Zz":
+            break
+        c = cmd.lower()
+        n = _ARGS[c]
+        try:
+            a = [float(v) for v in toks[i:i + n]]
+        except ValueError:
+            break
+        if len(a) < n:
+            break
+        i += n
+        ox, oy = (x, y) if cmd.islower() else (0.0, 0.0)
+        if c == "m":
+            x, y = a[0] + ox, a[1] + oy
+            sx, sy, cur = x, y, None
+            to([])
+            cmd = "l" if cmd.islower() else "L"
+            ctrl = None
+        elif c in "lhv":
+            nx = a[0] + ox if c == "l" else (a[0] + (x if cmd.islower() else 0) if c == "h" else x)
+            ny = a[1] + oy if c == "l" else (a[0] + (y if cmd.islower() else 0) if c == "v" else y)
+            to([(nx, ny)])
+            x, y, ctrl = nx, ny, None
+        elif c in "cs":
+            if c == "c":
+                p1, p2, e = (a[0] + ox, a[1] + oy), (a[2] + ox, a[3] + oy), (a[4] + ox, a[5] + oy)
+            else:
+                p1 = (2 * x - ctrl[0], 2 * y - ctrl[1]) if ctrl and prev in "cs" else (x, y)
+                p2, e = (a[0] + ox, a[1] + oy), (a[2] + ox, a[3] + oy)
+            to([((1 - u) ** 3 * x + 3 * (1 - u) ** 2 * u * p1[0] + 3 * (1 - u) * u * u * p2[0] + u ** 3 * e[0],
+                 (1 - u) ** 3 * y + 3 * (1 - u) ** 2 * u * p1[1] + 3 * (1 - u) * u * u * p2[1] + u ** 3 * e[1])
+                for u in (k / 8 for k in range(1, 9))])
+            x, y, ctrl = e[0], e[1], p2
+        elif c in "qt":
+            if c == "q":
+                p1, e = (a[0] + ox, a[1] + oy), (a[2] + ox, a[3] + oy)
+            else:
+                p1 = (2 * x - ctrl[0], 2 * y - ctrl[1]) if ctrl and prev in "qt" else (x, y)
+                e = (a[0] + ox, a[1] + oy)
+            to([((1 - u) ** 2 * x + 2 * (1 - u) * u * p1[0] + u * u * e[0],
+                 (1 - u) ** 2 * y + 2 * (1 - u) * u * p1[1] + u * u * e[1]) for u in (k / 8 for k in range(1, 9))])
+            x, y, ctrl = e[0], e[1], p1
+        else:   # a
+            e = (a[5] + ox, a[6] + oy)
+            to(_arc(x, y, a[0], a[1], a[2], a[3], a[4], e[0], e[1]))
+            x, y, ctrl = e[0], e[1], None
+        prev = c
+    return [s for s in subs if len(s) > 1]
+
+
+def _outline(el, tag: str):
+    """An element's shape as (polylines, closed) in its own units; None when not understood."""
+    n = lambda k: _num(el, k)
+    if tag == "rect":
+        x, y, w, h = n("x"), n("y"), n("width"), n("height")
+        return ([[(x, y), (x + w, y), (x + w, y + h), (x, y + h)]] if w > 0 and h > 0 else []), True
+    if tag in ("circle", "ellipse"):
+        rx, ry = (n("r"), n("r")) if tag == "circle" else (n("rx"), n("ry"))
+        if rx <= 0 or ry <= 0:
+            return [], True
+        return [[(n("cx") + rx * math.cos(k * math.pi / 24), n("cy") + ry * math.sin(k * math.pi / 24))
+                 for k in range(48)]], True
+    if tag == "line":
+        return [[(n("x1"), n("y1")), (n("x2"), n("y2"))]], False
+    if tag in ("polygon", "polyline"):
+        ns = [float(v) for v in re.findall(r"[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?", el.get("points") or "")[:4000]]
+        pts = list(zip(ns[0::2], ns[1::2]))
+        return ([pts] if len(pts) > 1 else []), tag == "polygon"
+    if tag == "path":
+        return _flatten(el.get("d") or ""), False
+    return None
+
+
+def _geometry(el, tag: str, m, prop: str, sw: float):
+    """Where one paint lies: {lines, closed, half, box} in the viewBox (half: half
+    the stroke's width, 0 for a fill); None when it cannot be told."""
+    o = _outline(el, tag) if m is not None else None
+    if o is None:
+        return None
+    lines = [[(m[0] * px + m[2] * py + m[4], m[1] * px + m[3] * py + m[5]) for px, py in s] for s in o[0]]
+    half = sw / 2 * math.sqrt(abs(m[0] * m[3] - m[1] * m[2])) if prop == "stroke" else 0.0
+    pts = [q for s in lines for q in s]
+    if not pts:
+        return {"lines": [], "closed": o[1], "half": half, "box": None}
+    box = (min(q[0] for q in pts) - half, min(q[1] for q in pts) - half,
+           max(q[0] for q in pts) + half, max(q[1] for q in pts) + half)
+    return {"lines": lines, "closed": o[1], "half": half, "box": box}
+
+
+def _segments(geo, closed: bool):
+    for s in geo["lines"]:
+        for j in range(len(s) - 1):
+            yield s[j], s[j + 1]
+        if closed and s[0] != s[-1]:
+            yield s[-1], s[0]
+
+
+def _covers(geo, pt) -> bool:
+    """Whether a paint covers the point: a fill by the even-odd rule, a stroke within half its width."""
+    b = geo["box"]
+    if b is None or not (b[0] <= pt[0] <= b[2] and b[1] <= pt[1] <= b[3]):
+        return False
+    px, py = pt
+    if geo["half"]:
+        r2 = geo["half"] ** 2
+        for (ax, ay), (bx, by) in _segments(geo, geo["closed"]):
+            dx, dy = bx - ax, by - ay
+            u = 0.0 if dx == dy == 0 else max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy)))
+            if (ax + u * dx - px) ** 2 + (ay + u * dy - py) ** 2 <= r2:
+                return True
+        return False
+    inside = False
+    for (ax, ay), (bx, by) in _segments(geo, True):
+        if (ay > py) != (by > py) and px < ax + (py - ay) * (bx - ax) / (by - ay):
+            inside = not inside
+    return inside
+
+
+def _samples(geo, most: int = 400) -> list:
+    """Points spread over where a paint lies."""
+    b = geo["box"] if geo else None
+    if b is None:
+        return []
+    w, h = b[2] - b[0], b[3] - b[1]
+    step = max(math.sqrt(max(w * h, 1e-6) / most), 0.1)
+    out = []
+    y = b[1] + step / 2
+    while y < b[3]:
+        x = b[0] + step / 2
+        while x < b[2]:
+            if _covers(geo, (x, y)):
+                out.append((x, y))
+            x += step
+        y += step
+    return out or [q for s in geo["lines"] for q in s][:most]
 
 
 def _paints(root) -> list[dict]:
     """Each painted fill and stroke of an icon's shapes: {el, src, prop, rgb, raw, area,
-    ground, box}; src is the element that sets it. Fill and stroke are inherited from the
+    ground, geo}; src is the element that sets it. Fill and stroke are inherited from the
     <g> and <svg> around a shape; an unset fill is black, as SVG draws it. area is a
     rough weight (a shape's box; a stroke's length times its width). The ground is
-    the first shape when it covers the icon. box is where the paint lies (x0, y0, x1,
-    y1) in the viewBox, None when a transform other than a translate moves it."""
+    the first shape when it covers the icon. geo is where the paint lies
+    (_geometry), None when that cannot be told."""
     out, first = [], [True]
 
-    def walk(el, fill, stroke, sw, at):
+    def walk(el, fill, stroke, sw, m):
         tag = _local(el.tag)
-        at = _shift(el, at)
+        m = _transform(el, m)
         f, s_ = _paint(el, "fill"), _paint(el, "stroke")
         fill = (f, el) if f is not None else fill
         stroke = (s_, el) if s_ is not None else stroke
         sw = _num(el, "stroke-width", sw) if (_style(el).get("stroke-width") or el.get("stroke-width")) else sw
         if tag in ("svg", "g"):
             for c in el:
-                walk(c, fill, stroke, sw, at)
+                walk(c, fill, stroke, sw, m)
             return
         w, h = _box(el, tag)
-        b = _bounds(el, tag)
-        box = (b[0] + at[0], b[1] + at[1], b[2] + at[0], b[3] + at[1]) if b and at is not None else None
         ground = first[0] and tag == "rect" and w >= 40 and h >= 40
         first[0] = False
         if tag != "line":   # a line has no inside; every other shape fills, black when unset
@@ -475,13 +701,13 @@ def _paints(root) -> list[dict]:
             rgb = parse_colour(raw)
             if rgb is not None or raw.strip().lower() not in NO_PAINT:
                 out.append({"el": el, "src": src, "prop": "fill", "rgb": rgb, "raw": raw, "area": w * h, "ground": ground,
-                            "box": box})
+                            "geo": _geometry(el, tag, m, "fill", sw)})
         if stroke is not None and stroke[0].strip().lower() not in NO_PAINT:
             out.append({"el": el, "src": stroke[1], "prop": "stroke", "rgb": parse_colour(stroke[0]), "raw": stroke[0],
                         "area": (w + h) * max(sw, 0.5), "ground": False,
-                        "box": box and (box[0] - sw / 2, box[1] - sw / 2, box[2] + sw / 2, box[3] + sw / 2)})
+                        "geo": _geometry(el, tag, m, "stroke", sw)})
 
-    walk(root, None, None, 1.0, (0.0, 0.0))
+    walk(root, None, None, 1.0, _ID)
     return out
 
 
@@ -520,15 +746,13 @@ def _symbol_main(ps: list[dict], colour_of):
     return max(weight, key=weight.get) if weight else None
 
 
-def _inside(a, b, slack: float = 0.5) -> bool:
-    return a is not None and b is not None and a[0] >= b[0] - slack and a[1] >= b[1] - slack \
-        and a[2] <= b[2] + slack and a[3] <= b[3] + slack
-
-
 def _hidden(ps: list[dict], colour_of) -> list[dict]:
-    """The symbol's paints that would not show: under 3:1 on the ground and not
-    drawn on an earlier shape they read on at 3:1 (a hole in the ground's colour on a
-    white gear shows; the same disc off to the side does not)."""
+    """The symbol's paints that would not show: under 3:1 on the ground, and with
+    less than a quarter of their points on an earlier paint they read on at 3:1 (the
+    topmost one under each point; else the ground). A hole in the ground's colour on a
+    white gear shows, and so does a ground-coloured border along a white shape (its
+    inner half); the same disc beside the gear does not. A paint whose place cannot
+    be told counts as not showing."""
     ground = next((p for p in ps if p["ground"]), None)
     g = colour_of(ground) if ground is not None else None
     if g is None:
@@ -538,8 +762,13 @@ def _hidden(ps: list[dict], colour_of) -> list[dict]:
         c = colour_of(p)
         if p["ground"] or c is None or _contrast(c, g) >= MIN_CONTRAST:
             continue
-        if not any(not q["ground"] and colour_of(q) is not None and _contrast(c, colour_of(q)) >= MIN_CONTRAST
-                   and _inside(p["box"], q["box"]) for q in ps[:i]):
+        under = [q for q in reversed(ps[:i]) if not q["ground"] and q["geo"]]
+        pts, seen = _samples(p["geo"]), 0
+        for pt in pts:
+            back = next((q for q in under if _covers(q["geo"], pt)), None)
+            b = g if back is None else colour_of(back)
+            seen += b is None or _contrast(c, b) >= MIN_CONTRAST
+        if not pts or seen * 4 < len(pts):
             out.append(p)
     return out
 
