@@ -31,6 +31,57 @@ const ProjectColour = (() => {
     const x = luminance(a), y = luminance(b);
     return x == null || y == null ? 0 : (Math.max(x, y) + .05) / (Math.min(x, y) + .05);
   }
+  // A colour's fill and ink in the theme now painted: the bold shade with white or
+  // dark ink at 4.5:1, else its -fg shade. The PO label and the project tile both use it.
+  function shade(kind, vars) {
+    let fill = `var(--c-${kind}-bold)`, hex = vars.getPropertyValue(`--c-${kind}-bold`).trim();
+    let ink = contrast(hex, '#fff') >= 4.5 ? '#fff' : DARK;
+    if (contrast(hex, ink) < 4.5) {
+      fill = `var(--c-${kind}-fg)`;
+      hex = vars.getPropertyValue(`--c-${kind}-fg`).trim();
+      ink = contrast(hex, '#fff') >= 4.5 ? '#fff' : DARK;
+    }
+    return { fill, ink, hex };
+  }
+  // #370 (P356): the project tile, drawn by CSS from root variables per colour:
+  // --pt-<kind>-f fill, -i ink, -g the glossy gradient, -s the glossy letter's shadow,
+  // -h the glossy shine. The gradient runs away from the ink (white ink: deeper at the
+  // foot; dark ink: lighter at the top). The shine lies under the letters but lightens
+  // what is behind them, so it is as strong as the letter allows at 4.5:1 over every
+  // stop of the gradient (at most 36% white; a dark ink only gains from it).
+  const KINDS = ['progress', 'success', 'warning', 'discovery'];
+  const SHINE = .36, SHINE_LOW = .08 / .36;
+  const mix = (c, to, a) => c.map((v, i) => Math.round(v + (to[i] - v) * a));
+  const hexOf = c => '#' + c.map(v => v.toString(16).padStart(2, '0')).join('');
+  function shineFor(ink, stops) {
+    let a = SHINE;
+    while (a > 0 && stops.some(c => contrast(ink, hexOf(mix(c, [255, 255, 255], a))) < 4.55)) a = Math.round((a - .01) * 100) / 100;
+    return Math.max(a, 0);
+  }
+  function tileVars(root) {
+    root = root || document.documentElement;
+    const vars = getComputedStyle(root);
+    for (const kind of KINDS) {
+      const { fill, ink, hex } = shade(kind, vars), white = ink === '#fff', c = rgb(hex);
+      root.style.setProperty(`--pt-${kind}-f`, fill);
+      root.style.setProperty(`--pt-${kind}-i`, ink);
+      root.style.setProperty(`--pt-${kind}-g`, white
+        ? `linear-gradient(170deg, ${fill} 0%, ${fill} 35%, color-mix(in srgb, ${fill} 62%, black) 100%)`
+        : `linear-gradient(170deg, color-mix(in srgb, ${fill} 50%, white) 0%, ${fill} 70%)`);
+      root.style.setProperty(`--pt-${kind}-s`, white ? '0 1px 1px rgba(0,0,0,.35)' : 'none');
+      if (c) {
+        const stops = white ? [c, mix(c, [0, 0, 0], .38)] : [mix(c, [255, 255, 255], .5), c];
+        const a = shineFor(ink, stops), lo = Math.round(a * SHINE_LOW * 1000) / 1000;
+        root.style.setProperty(`--pt-${kind}-h`, `linear-gradient(to bottom, rgba(255,255,255,${a}), rgba(255,255,255,${lo}))`);
+      } else root.style.removeProperty(`--pt-${kind}-h`);
+    }
+  }
+  // A tile's letters: the first letter of the first two words (opTen QA: OQ), or of
+  // the one word (opTen: O).
+  function initials(name) {
+    const w = String(name || '').split(/[\s_\-]+/).map(x => (x.match(/[\p{L}\p{N}]/u) || [''])[0]).filter(Boolean);
+    return w.slice(0, 2).join('').toUpperCase();
+  }
   function paint(root, projects, ownId) {
     if (!root || !projects) return;
     const vars = getComputedStyle(document.documentElement);
@@ -48,19 +99,11 @@ const ProjectColour = (() => {
         el.removeAttribute('data-po-fill');
         continue;
       }
-      const token = pick(projects, pid);
-      const kind = token.match(TOKEN)[1];
-      let fill = token, hex = vars.getPropertyValue(`--c-${kind}-bold`).trim();
-      let ink = contrast(hex, '#fff') >= 4.5 ? '#fff' : DARK;
-      if (contrast(hex, ink) < 4.5) {
-        fill = `var(--c-${kind}-fg)`;
-        hex = vars.getPropertyValue(`--c-${kind}-fg`).trim();
-        ink = contrast(hex, '#fff') >= 4.5 ? '#fff' : DARK;
-      }
+      const { fill, ink } = shade(pick(projects, pid).match(TOKEN)[1], vars);
       el.style.backgroundColor = fill;
       el.style.color = ink;
       el.dataset.poFill = fill;
     }
   }
-  return { COLOURS, pick, paint, contrast };
+  return { COLOURS, KINDS, pick, paint, contrast, shade, tileVars, initials };
 })();
