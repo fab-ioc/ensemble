@@ -212,11 +212,17 @@ class HubLinksInBalloons(unittest.TestCase):
         cls.card_url = f"http://127.0.0.1:{port}/session?room={cls.room}&msg={cls.card_mid}&part=ask:0"
         cls.file_url = f"http://127.0.0.1:{port}/fileview?path={quote(str(cls.picture), safe='')}"
         cls.task_url = f"http://localhost:{port}/session?room={cls.other}"
+        cls.away_card = f"https://example.com/session?room={cls.room}&msg={cls.card_mid}&part=ask:0"
+        cls.away_file = f"http://localhost:{port + 1 if port < 65535 else port - 1}/fileview?path={quote(str(cls.picture), safe='')}"
         cls.mids = {
             "card": post(f"The card is still open: {cls.card_url}"),
             "file": post(f"The two icons side by side: {cls.file_url}"),
             "task": post(f"The billing side is in {cls.task_url}."),
             "web": post(f"Upstream bug: {GITHUB}"),
+            # In a fenced code block too (review 1): the code's text, its hub addresses as names.
+            "fence": post(f"The links:\n\n```\ncard {cls.card_url}\nfile {cls.file_url}\nweb {GITHUB}\n```"),
+            # The hub's paths on another website or a dev server's port are that site's (review 1).
+            "away": post(f"Elsewhere: {cls.away_card} and {cls.away_file}"),
         }
         for _ in range(3):      # below the links, so a landing has to scroll back up
             post("A later note. " + "words " * 80)
@@ -296,8 +302,29 @@ class HubLinksInBalloons(unittest.TestCase):
             with self.subTest(width=w):
                 self.assertTrue(o["view"]["balloons"])
                 for text in o["view"]["balloons"]:
+                    if text.find("Elsewhere:") >= 0:
+                        continue    # other sites' addresses, as written
                     for bare in ("127.0.0.1", "localhost:", "session?room=", "fileview?"):
                         self.assertNotIn(bare, text)
+
+    def test_a_fenced_code_block_shows_names_not_addresses(self):
+        for w, o in self._each():
+            with self.subTest(width=w):
+                text = o["view"]["fence"]["text"]
+                self.assertIn(f"card {QUESTION}", text)
+                self.assertIn("file links.png", text)
+                self.assertIn(f"web {GITHUB}", text)
+                for bare in ("127.0.0.1", "localhost:", "session?room=", "fileview?"):
+                    self.assertNotIn(bare, text)
+
+    def test_the_hubs_paths_on_another_site_stay_that_sites_links(self):
+        for w, o in self._each():
+            with self.subTest(width=w):
+                v = o["view"]["away"]
+                self.assertFalse([a for a in v["links"] if "ref-chip" in a["cls"].split() or a["room"]], v)
+                self.assertIn(self.away_card, v["text"])
+                self.assertIn(self.away_file, v["text"])
+                self.assertNotIn("links.png", [a["text"] for a in v["links"]], "not named as the hub's file")
 
     def test_a_click_on_the_card_chip_lands_on_the_card(self):
         for w, o in self._each():

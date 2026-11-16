@@ -62,6 +62,73 @@ FULL = _Hub(questions={(ROOM, "abc123def456"): QUESTIONS, (ROOM, "long00000000")
             rooms={TASK: {"id": TASK, "no": 18, "title": "Billing export"}, ROOM: {"id": ROOM, "title": "PO"}})
 
 
+# This machine is "box" on its tailnet (box.tail1234.ts.net), and the hub has
+# not been reached at any address yet.
+_OWN = mock.patch.object(hub_links, "_own_names", lambda: frozenset({"box", "box.lan", socket.gethostname().lower()}))
+
+
+def setUpModule():
+    _OWN.start()
+    hub_links._SEEN.clear()
+
+
+def tearDownModule():
+    _OWN.stop()
+    hub_links._SEEN.clear()
+
+
+class Origins(unittest.TestCase):
+    """Only this hub's own addresses are named (review 1): its port on this
+    machine, this machine's tailnet name, an address it was reached at."""
+
+    def tearDown(self):
+        hub_links._SEEN.clear()
+
+    def test_the_hubs_port_on_this_machine(self):
+        for u in ("http://127.0.0.1:8765/", "http://localhost:8765/", "http://[::1]:8765/", "http://box:8765/",
+                  "http://box.lan:8765/", "https://box.tail1234.ts.net/", "http://box.tail1234.ts.net:8765/",
+                  "https://box.tail1234.ts.net:9443/", "http://100.101.102.103:8765/"):
+            with self.subTest(url=u):
+                self.assertIsNotNone(hub_links.target(u))
+
+    def test_a_resource_on_another_port_or_machine_is_another_website(self):
+        paths = (f"/session?room={ROOM}&msg=abc123def456&part=ask:0", f"/session?room={TASK}",
+                 f"/?task={TASK}", "/fileview?path=%2Fx%2Fplan.md", "/")
+        hosts = ("http://localhost:5173", "http://127.0.0.1:3000", "http://[::1]:5173", "http://box:5173",
+                 "http://localhost", "https://other.tail1234.ts.net", "http://other.tail1234.ts.net:8765",
+                 "http://box.tail1234.ts.net:3000", "http://100.101.102.103:3000")
+        for h in hosts:
+            for path in paths:
+                with self.subTest(url=h + path):
+                    self.assertIsNone(hub_links.target(h + path))
+                    with mock.patch.object(hub_links, "_d", FULL):
+                        self.assertEqual(hub_links.names(f"see {h}{path} now"), f"see {h}{path} now")
+
+    def test_an_address_the_hub_was_reached_at(self):
+        u = f"http://127.0.0.1:9443/session?room={TASK}"     # a proxy on this machine
+        self.assertIsNone(hub_links.target(u))
+        hub_links.seen("127.0.0.1:9443")
+        self.assertEqual(hub_links.target(u), {"task": TASK})
+        # tailscale serve under a name the machine's hostname does not give
+        hub_links.seen("ensemble-hub.tail1234.ts.net", "https")
+        self.assertEqual(hub_links.target(f"https://ensemble-hub.tail1234.ts.net/session?room={TASK}"), {"task": TASK})
+        self.assertIsNone(hub_links.target(f"https://ensemble-hub.tail1234.ts.net:3000/session?room={TASK}"))
+        self.assertIn("[::1]:8765", (hub_links.seen("[::1]:8765"), hub_links.origins())[1]["seen"])
+
+    def test_a_host_that_cannot_be_the_hubs_is_never_noted(self):
+        hub_links.seen("example.com:443", "https")
+        hub_links.seen("evil.example:8765")
+        self.assertEqual(hub_links.origins()["seen"], [])
+        self.assertIsNone(hub_links.target(f"https://example.com/session?room={TASK}"))
+
+    def test_bare_ipv6_loopback_addresses_are_named(self):
+        url = f"http://[::1]:8765/session?room={ROOM}&msg=abc123def456&part=ask:1"
+        with mock.patch.object(hub_links, "_d", FULL):
+            self.assertEqual(hub_links.names(f"Open {url}."), "Open Project icons: A or B?.")
+            self.assertEqual(notify.clip(f"Open {url}", 120), "Open Project icons: A or B?")
+            self.assertEqual(hub_links.names("Up at http://[::1]:5173/ now"), "Up at http://[::1]:5173/ now")
+
+
 class HubHost(unittest.TestCase):
     def test_the_hubs_own_addresses(self):
         for h in ("127.0.0.1", "127.3.4.5", "localhost", "LOCALHOST", "[::1]", "::1", "box.tail1234.ts.net",

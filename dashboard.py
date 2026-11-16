@@ -18548,6 +18548,20 @@ class Handler(BaseHTTPRequestHandler):
             return False
         return _host_is_loopback(self.headers.get("Host") or "")
 
+    def _note_origin(self, u) -> None:
+        """The address this page was opened at is one of the hub's (P358):
+        its links read as names (hub_links.hub_origin). Only for a reader the
+        gate let in on its own merits: a program here, or the access token."""
+        tok = self._presented_token(u)
+        if not (self._is_local() or (ACCESS_TOKEN and tok and _same_secret(tok, ACCESS_TOKEN))):
+            return
+        fwd = (self.headers.get("X-Forwarded-Host") or "").split(",")[0].strip()
+        if fwd and _addr_is_loopback(self._client_ip()):
+            proto = (self.headers.get("X-Forwarded-Proto") or "https").split(",")[0].strip().lower()
+            hub_links.seen(fwd, "http" if proto == "http" else "https")
+        else:
+            hub_links.seen(self.headers.get("Host") or "")
+
     def _presented_token(self, u) -> str:
         q = parse_qs(u.query)
         if q.get("token"):
@@ -19012,6 +19026,8 @@ class Handler(BaseHTTPRequestHandler):
             return
         u = urlparse(self.path)
         p = u.path
+        if p in ("/", "/session", "/fileview"):
+            self._note_origin(u)
         if os.environ.get("ENSEMBLE_PTY_PREFLIGHT") and p not in (
                 "/", "/startup", "/api/health", "/api/platform", "/api/version",
                 "/api/sessions", "/api/projects"):
@@ -19944,6 +19960,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(200, {
                 "instance": INSTANCE,
                 "port": actual_port,
+                # The hub's other addresses (P358): their links are names too.
+                "origins": hub_links.origins(),
                 "os": BACKEND.os_name,
                 "stateDir": str(DASHBOARD_DIR),
                 "sessionsDir": str(SESS_DIR),
@@ -24748,6 +24766,7 @@ def main():
     asks.mark_repeats_since()
 
     def _announce_remote(ip: str) -> None:
+        hub_links.seen(f"{ip}:{port}")
         print(f"ensemble [{BACKEND.os_name}]: http://{ip}:{port} (remote)", flush=True)
         if ACCESS_TOKEN:
             print(f"remote access token: {ACCESS_TOKEN}", flush=True)
