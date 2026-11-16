@@ -1696,6 +1696,7 @@
     .phone-compose-tools .phone-tools-menu { position:absolute; bottom:100%; right:0; width:220px; padding:var(--s-100); background:var(--surface-overlay); border:1px solid var(--border); border-radius:var(--r-200); box-shadow:var(--e-200); z-index:10; }
     .phone-tools-menu button { display:block; width:100%; text-align:left; }
     .phone-tools-menu button[hidden] { display:none; }
+    .phone-tools-menu button[data-phone-action="mic"] { display:none; }   /* P367: a wider box has the mic in its row */
     #compose:has(.ed-pt) { grid-template-columns:minmax(0,1fr); }
     #compose:has(.ed-pt) .ed-row { justify-content:flex-end; }
   }
@@ -1725,7 +1726,10 @@
 
   }
   /* A phone's box keeps 8px at its foot (#333; Message editor: 8px at its foot). */
-  @media (pointer: coarse) and (max-width: 767px) { #compose { padding-bottom:var(--s-200); } }
+  @media (pointer: coarse) and (max-width: 767px) { #compose { padding-bottom:var(--s-200); }
+    /* P367: the words keep their room (#232): dictation is in the + menu; the row shows it only while it listens. */
+    #compose .ed-row > #mic[aria-pressed="false"] { display:none; }
+    .phone-tools-menu button[data-phone-action="mic"]:not([hidden]) { display:block; } }
   /* ---- Session actions: begin shared block ---------------------------------
      The action bar (static/actions.js): one primary action and a More menu,
      the same in the dashboard's task panel, its list rows and the popped-out
@@ -1883,6 +1887,7 @@
         <details class="phone-compose-tools"><summary aria-label="Attach, add an ask, or chat filter">+</summary><div class="phone-tools-menu">
           <button type="button" data-phone-action="attach">Attach a file</button>
           <button type="button" data-phone-action="add-point">Add an ask</button>
+          <button type="button" data-phone-action="mic" hidden>Dictate</button>
           <button type="button" data-phone-action="team-all">Team activity</button>
           <button type="button" data-phone-action="threads-view" hidden>Threads</button>
           <button type="button" data-phone-action="earlier-threads" hidden>Earlier messages</button>
@@ -10127,13 +10132,16 @@ const MIC_FIRST_MS = 8000;    // before the first word
 const MIC_ENGINE = () => window.SpeechRecognition || window.webkitSpeechRecognition || null;
 function micAvailable() { return !!MIC_ENGINE() && window.isSecureContext !== false; }
 function micNote(text) {
+  const was = MIC_NOTE;
   MIC_NOTE = text || '';
-  if (!SEND_ERR && !SEND_IN_FLIGHT) setText($('#hint'), MIC_NOTE);
+  if (!SEND_ERR && !SEND_IN_FLIGHT && (MIC_NOTE || $('#hint').textContent === was)) setText($('#hint'), MIC_NOTE);
 }
 function micButton() {
   const b = $('#mic');
   if (!b) return;
   b.hidden = !micAvailable();
+  const item = document.querySelector('[data-phone-action="mic"]');
+  if (item) item.hidden = b.hidden;
   const on = !!MIC && !MIC.stopping;
   b.setAttribute('aria-pressed', on ? 'true' : 'false');
   b.setAttribute('aria-label', on ? 'Stop dictating' : 'Dictate');
@@ -10246,10 +10254,15 @@ function micStop(now = false) {
   m.timer = setTimeout(() => { if (MIC === m) { try { m.rec.abort(); } catch (e) {} micDone(); } }, 1500);
 }
 $('#mic').addEventListener('pointerdown', e => e.preventDefault());   // the caret stays in the box
-$('#mic').addEventListener('click', () => { if (MIC && !MIC.stopping) micStop(); else if (!MIC) micStart(); });
+$('#mic').addEventListener('click', () => {
+  if (MIC && !MIC.stopping) { micStop(); return; }
+  if (MIC) micStop(true);   // still finishing the last words: they stay, and it listens again
+  micStart();
+});
 // Esc stops listening before anything else hears it (it would stop the agent).
 window.addEventListener('keydown', e => {
   if (!MIC || e.key !== 'Escape') return;
+  if (document.querySelector('#send-menu:not([hidden]), #stop-choices:not([hidden]), #slashpop:not([hidden]), .phone-compose-tools[open]')) return;   // a menu closes first
   e.preventDefault(); e.stopImmediatePropagation();
   micStop();
 }, true);
