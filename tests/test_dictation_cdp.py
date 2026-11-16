@@ -480,6 +480,27 @@ async function main() {
     await sleep(200);
     out.poThread = {...await st(), points: await ev(PTS)};
     await ev(`sharedThreadClear(); 0`);
+    // 22. Listening is the same button with its mic pulsing in the accent: no text, the box does not move (P369).
+    const look = `(() => { const m = document.getElementById('mic'), b = m.getBoundingClientRect(), ico = m.querySelector('.mic-ico'),
+      i = document.getElementById('input').getBoundingClientRect(), send = document.getElementById('send').getBoundingClientRect(), probe = document.createElement('span');
+      probe.style.color = 'var(--accent)'; document.body.append(probe); const accent = getComputedStyle(probe).color; probe.remove();
+      return {w: b.width, h: b.height, x: b.left, text: m.textContent.trim(), kids: m.children.length, label: m.getAttribute('aria-label'), title: m.title,
+        color: getComputedStyle(m).color, accent, bg: getComputedStyle(m).backgroundColor, anim: getComputedStyle(ico).animationName,
+        input: [i.left, i.width], send: send.left}; })()`;
+    await open();
+    out.lookIdle = await ev(look);
+    await click('#mic');
+    await send('Input.dispatchMouseEvent', {type: 'mouseMoved', x: 5, y: 5}, s);   // not hovered
+    await sleep(400);
+    out.lookOn = await ev(look);
+    await click('#mic'); await ev('window.__end(); 0');
+    await send('Emulation.setEmulatedMedia', {features: [{name: 'prefers-reduced-motion', value: 'reduce'}]}, s);
+    await click('#mic');
+    await send('Input.dispatchMouseEvent', {type: 'mouseMoved', x: 5, y: 5}, s);
+    await sleep(400);
+    out.lookReduced = await ev(look);
+    await click('#mic'); await ev('window.__end(); 0');
+    await send('Emulation.setEmulatedMedia', {features: []}, s);
 
     // 13. A phone: no mic in the row at rest; the + menu's Dictate listens, then the pressed mic shows.
     await send('Emulation.setDeviceMetricsOverride', {width: 390, height: 844, deviceScaleFactor: 1, mobile: true}, s);
@@ -856,6 +877,20 @@ class Dictation(unittest.TestCase):
         k = self.got['ptKey']
         self.assertEqual(k['calls'], ['start', 'abort'])
         self.assertEqual((k['value'], k['points']), ('x', []), 'the key replaces the grey "1. buy"; it is not made a point')
+
+    def test_22_listening_is_a_pulsing_accent_mic(self):
+        g = self.got
+        idle, on, red = g['lookIdle'], g['lookOn'], g['lookReduced']
+        self.assertEqual((on['w'], on['h'], on['x']), (idle['w'], idle['h'], idle['x']), 'the button keeps its size and place')
+        self.assertEqual((on['input'], on['send']), (idle['input'], idle['send']), 'the box does not move')
+        self.assertEqual((on['text'], on['kids']), ('', 1), 'just the mic: no Listening pill')
+        self.assertEqual((on['label'], on['title']), ('Listening, press to stop', 'Listening, press to stop'))
+        self.assertEqual(idle['label'], 'Dictate')
+        self.assertEqual(on['color'], on['accent'], 'the mic is in the accent')
+        self.assertNotEqual(idle['color'], idle['accent'])
+        self.assertEqual((idle['anim'], on['anim']), ('none', 'mic-pulse'))
+        self.assertEqual(on['bg'], idle['bg'], 'no pill behind it')
+        self.assertEqual((red['anim'], red['color']), ('none', red['accent']), 'reduced motion: a steady accent mic')
 
 
 if __name__ == '__main__':

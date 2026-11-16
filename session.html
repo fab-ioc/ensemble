@@ -1506,10 +1506,13 @@
     border:1px solid transparent; border-radius:var(--r-200); color:var(--fg-subtle); cursor:pointer; font-size:var(--fs-200); font-weight:500; }
   #mic[hidden] { display:none; }
   #mic:hover { background:var(--hover); color:var(--fg); }
-  #mic[aria-pressed="true"] { background:var(--selected-bg); color:var(--selected-fg); border-color:var(--selected-fg); padding:0 var(--s-200); }
+  /* Listening (P369): the same button, its mic in the accent and pulsing; the box does not move. */
+  #mic[aria-pressed="true"] { color:var(--accent); }
+  #mic[aria-pressed="true"]:hover { color:var(--accent-hover); }
+  #mic[aria-pressed="true"] .mic-ico { animation:mic-pulse 1.2s ease-in-out infinite; }
+  @keyframes mic-pulse { 0%,100% { opacity:1; transform:scale(1); } 50% { opacity:.45; transform:scale(.86); } }
+  @media (prefers-reduced-motion: reduce) { #mic[aria-pressed="true"] .mic-ico { animation:none; } }
   #mic:focus-visible { outline:none; box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
-  #mic .mic-stop, #mic .mic-word, #mic[aria-pressed="true"] .mic-ico { display:none; }
-  #mic[aria-pressed="true"] .mic-stop, #mic[aria-pressed="true"] .mic-word { display:inline; }
   /* The words still being heard are selected, so typing replaces them; drawn grey, not highlighted. */
   #input.mic-live::selection { color:var(--fg-muted); background:transparent; }
   #add-point, #attach { height:32px; padding:0 var(--s-200); background:transparent; border:1px solid transparent; color:var(--fg-subtle); font-size:var(--fs-200); }
@@ -1903,7 +1906,7 @@
         <div id="stop-wrap" hidden><button type="button" id="stop-agent" title="Stop the working agent (Esc)">Stop</button><div id="stop-choices" role="group" aria-label="Choose agent to stop" hidden></div></div>
         <!-- P367: dictation. Shown only where the browser has speech recognition
              in a secure context; words land at the caret, it never sends. -->
-        <button type="button" id="mic" aria-pressed="false" aria-label="Dictate" title="Dictate: press and talk (press again or Esc to stop)" hidden><svg class="mic-ico" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="5.5" y="1.5" width="5" height="8" rx="2.5"/><path d="M3 7.5a5 5 0 0 0 10 0M8 12.5v2"/></svg><svg class="mic-stop" viewBox="0 0 10 10" width="10" height="10" aria-hidden="true" focusable="false"><rect x="0" y="0" width="10" height="10" rx="2" fill="currentColor"/></svg><span class="mic-word">Listening</span></button>
+        <button type="button" id="mic" aria-pressed="false" aria-label="Dictate" title="Dictate: press and talk (press again or Esc to stop)" hidden><svg class="mic-ico" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="5.5" y="1.5" width="5" height="8" rx="2.5"/><path d="M3 7.5a5 5 0 0 0 10 0M8 12.5v2"/></svg></button>
         <div id="send-split"><button id="send" disabled>Send</button><button type="button" id="send-more" aria-haspopup="menu" aria-expanded="false" aria-controls="send-menu" aria-label="More ways to send" title="More ways to send" hidden>&#9662;</button><div id="send-menu" role="menu" aria-label="Send" hidden><button type="button" role="menuitem" id="send-now"><span class="sm-name">Send now</span><span class="sm-sub"></span></button></div></div>
       </div>
       <label id="thr-also-l" hidden title="Show this reply in the chat too, not only in its thread"><input type="checkbox" id="thr-also"> Also send to chat</label>
@@ -10145,8 +10148,8 @@ function micButton() {
   if (item) item.hidden = b.hidden;
   const on = !!MIC && !MIC.stopping;
   b.setAttribute('aria-pressed', on ? 'true' : 'false');
-  b.setAttribute('aria-label', on ? 'Stop dictating' : 'Dictate');
-  b.title = on ? 'Listening: press again or Esc to stop' : 'Dictate: press and talk (press again or Esc to stop)';
+  b.setAttribute('aria-label', on ? 'Listening, press to stop' : 'Dictate');
+  b.title = on ? 'Listening, press to stop' : 'Dictate: press and talk (press again or Esc to stop)';
   $('#input').classList.toggle('mic-live', on);
 }
 // What the session heard, as one run of words: the heard part, then the part
