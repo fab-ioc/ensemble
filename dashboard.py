@@ -3384,12 +3384,27 @@ NO_WEB_ARTIFACT_NOTE = (
     "tools) unless the CEO asks for that publication in so many words: every document, "
     "page or visual you make is a file in the project's Documents folder.")
 
+# Visual first (P371): what can be shown is a static HTML page in Documents (a
+# file the file view renders with scripts off, not a claude.ai Artifact), text
+# is Markdown, and a plan always comes with a page. For POs and tasks alike.
+VISUAL_FIRST_NOTE = (
+    "Prefer a visual: anything that can be shown (a plan, a roadmap or timeline, tasks and their "
+    "dependencies, an architecture or data flow, a comparison of options, a measurement) is an "
+    "HTML page, one self-contained static `.html` file in the Documents folder (inline CSS, inline "
+    "SVG for diagrams, no scripts, no external loads, light theme, readable at phone width); text "
+    "that is not better shown (a spec, notes, a log, a long explanation) is Markdown (`.md`). A "
+    "plan, whenever one is asked for, comes with such a page showing the work (the steps or tasks, "
+    "their order and dependencies, what is decided and what is open); Markdown may accompany it, "
+    "never replace it. Link a page by its name like any document. A UI choice for the CEO is "
+    "still ONE side-by-side PNG on the ask card.")
+
 # Where a task's knowledge goes (project_docs): the project's Documents folder.
 DOCUMENTS_NOTE = (
     "Your deliverable reports and design-decision notes go in the project's Documents folder "
-    "(`project.documentsDir` in ensemble_get_task) as `#<task no> <short title>.md`, or a folder "
-    "`#<task no> <title>/` for several files; link them in ensemble_report. TASK-HANDOVER.md and "
-    "other working notes stay in your task folder. " + NO_WEB_ARTIFACT_NOTE)
+    "(`project.documentsDir` in ensemble_get_task) as `#<task no> <short title>.html` (a page, for "
+    "anything that can be shown) or `.md` (text), or a folder `#<task no> <title>/` for several "
+    "files; link them in ensemble_report. TASK-HANDOVER.md and other working notes stay in your "
+    "task folder. " + VISUAL_FIRST_NOTE + " " + NO_WEB_ARTIFACT_NOTE)
 
 # GitHub issue 17 (ED-216): a denial by Claude's own safety check reads "denied
 # by the Claude Code auto mode classifier", and an agent took that for the
@@ -7513,7 +7528,7 @@ def made_po_charter(project: dict) -> str:
         f"{', including the paragraph on a documents project’s PO' if docs else ''}) is your "
         f"operating model: you create and start tasks with the ensemble_* tools, read their "
         f"reports, and keep `PO-HANDOVER.md` and `ROADMAP.md` in {home} current. {TASK_NAME_NOTE} "
-        f"{NO_WEB_ARTIFACT_NOTE}"
+        f"{VISUAL_FIRST_NOTE} {NO_WEB_ARTIFACT_NOTE}"
         + ("" if docs else f" The project's code is in {project.get('path', '')}."))
 
 
