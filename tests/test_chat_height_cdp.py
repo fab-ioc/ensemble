@@ -63,7 +63,7 @@ async function main() {
       ratio:lb&&pb?lb.h/pb.h:null, bodyHeight:d?.body?.getBoundingClientRect().height,
       frameClientHeight:frame?.clientHeight, mode:panel?PD.dock.viewMode('chat:'+rid):'middle',
       frameInnerHeight:frame?.contentWindow?.innerHeight, frameVisualHeight:frame?.contentWindow?.visualViewport?.height,
-      activityFlex:host.querySelector('#detail-panel .dp-pane[data-pane="activity"]') && getComputedStyle(host.querySelector('#detail-panel .dp-pane[data-pane="activity"]')).flexGrow,
+      activityFlex:pdDpEl()?.querySelector('.dp-pane[data-pane="activity"]') && getComputedStyle(pdDpEl().querySelector('.dp-pane[data-pane="activity"]')).flexGrow,
       parentStyle:parent?getComputedStyle(parent).height:null};
   })()`;
   const out={};
@@ -135,20 +135,21 @@ async function main() {
     await size(1728,2000); await sleep(500); out.middleTall=await ev(measure);
     // A stale value from an earlier layout must not determine the live chat's height.
     // This reproduces the 200px chat on a tall panel even if resize timing varies.
-    await ev(`document.querySelector('#detail-panel').style.setProperty('--dp-fill','220px'); 0`);
+    await ev(`pdDpEl().style.setProperty('--dp-fill','220px'); 0`);
     await sleep(100); out.middleStaleTall=await ev(measure);
     await size(1728,1117); await sleep(300);
-    await ev(`PD.dock.setViewMode('po-chat','window'); 0`);
-    await until(`!!PD.dock.popWindow('po-chat')`);
+    // #386: the task is a tab of its own on a computer; that tab in a window of its own takes the task with it.
+    await ev(`PD.dock.setViewMode('chat:'+${JSON.stringify(A.task)},'window'); 0`);
+    await until(`!!PD.dock.popWindow('chat:'+${JSON.stringify(A.task)})`);
     let mainPop;
     for(let i=0;i<30;i++) { const t=await send('Target.getTargets'); mainPop=t.targetInfos.find(x=>x.type==='page'&&x.targetId!==targetId&&x.targetId!==popId&&x.url.startsWith(A.base))?.targetId; if(mainPop)break; await sleep(100); }
     if(!mainPop) throw Error('main popup target absent');
     const {sessionId:ms}=await send('Target.attachToTarget',{targetId:mainPop,flatten:true});
     await send('Emulation.setDeviceMetricsOverride',{width:625,height:2000,deviceScaleFactor:1,mobile:false},ms);
     await sleep(500); out.middlePopTall=await ev(measure);
-    await ev(`PD.els['po-chat'].querySelector('#detail-panel').style.setProperty('--dp-fill','220px'); 0`);
+    await ev(`pdDpEl().style.setProperty('--dp-fill','220px'); 0`);
     await sleep(100); out.middlePopStaleTall=await ev(measure);
-    await ev(`PD.dock.setViewMode('po-chat','pinned'); 0`);
+    await ev(`PD.dock.setViewMode('chat:'+${JSON.stringify(A.task)},'pinned'); 0`);
     await size(1728,2000); await sleep(400); out.middlePopRestore=await ev(measure);
     out.tools={};
     for(const id of ['spec','changes','board','workspace']) {

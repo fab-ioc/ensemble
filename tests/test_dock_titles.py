@@ -161,11 +161,12 @@ async function main() {
       const gone = !b.classList.contains('probe-theme');
       return { was, there, gone, own: b.classList.contains('dk-popwin'), mid: b.classList.contains('mid'), after: b.className };
     })()`);
-    // A task into the middle: its window is named after it.
+    // A task of a project with a PO opens as a tab of its own (#386), named after it; the PO's window keeps the project's name.
     await click(`.sw-row[data-room="${TA}"]`);
-    await until(`pdTask() && SELECTED_SID && rowBySid(SELECTED_SID).roomId === ${JSON.stringify(TA)} && PD.dock.title('po-chat') === ${rowTitle(TA)}`, 15000);
+    await until(`pdTabNow() && SELECTED_SID && rowBySid(SELECTED_SID).roomId === ${JSON.stringify(TA)} && PD.dock.title('chat:' + ${JSON.stringify(TA)}) === ${rowTitle(TA)}`, 15000);
     await sleep(500);
-    out.task = await evalIn(NAMES('po-chat'));
+    out.task = await evalIn(NAMES('chat:' + TA));
+    out.poWithTask = await evalIn(NAMES('po-chat'));
     // Another task's chat as a panel of its own.
     await evalIn(`pdChatOpen(${JSON.stringify(TB)}); 0`);
     await until(`PD.rt.has('chat:' + ${JSON.stringify(TB)})`, 10000);
@@ -176,9 +177,9 @@ async function main() {
       const r = ALL_ROWS.find(x => x.roomId === room);
       await fetch('/api/label/' + encodeURIComponent(r.sessionId), { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ label }) }); }
       await refresh({ now: true }); return 0; })()`);
-    await until(`PD.dock.title('po-chat').includes('Brakes, renamed') && PD.dock.title('chat:' + ${JSON.stringify(TB)}).includes('Wipers, renamed')`, 20000);
+    await until(`PD.dock.title('chat:' + ${JSON.stringify(TA)}).includes('Brakes, renamed') && PD.dock.title('chat:' + ${JSON.stringify(TB)}).includes('Wipers, renamed')`, 20000);
     await sleep(500);
-    out.renamed = { po: await evalIn(NAMES('po-chat')), chat: await evalIn(NAMES('chat:' + TB)), a: await evalIn(rowTitle(TA)), b: await evalIn(rowTitle(TB)) };
+    out.renamed = { po: await evalIn(NAMES('chat:' + TA)), chat: await evalIn(NAMES('chat:' + TB)), a: await evalIn(rowTitle(TA)), b: await evalIn(rowTitle(TB)) };
     // The window closed: the panel keeps its title, hidden (Window mode), and shown again.
     await evalIn('PD.dock.popWindow("po-chat").close(); 0');
     await until('!PD.dock.isOpenOut("po-chat")', 10000);
@@ -188,8 +189,9 @@ async function main() {
     out.back = await evalIn(NAMES('po-chat'));
     // A phone (the narrow dock, the task still in the middle): the conversation's tab keeps reading "Chat", so
     // the fixed tabs all fit the 390px row without scrolling; a computer again: the task's name is back.
-    await evalIn(`pdChatUnpanel(${JSON.stringify(TB)}); 0`);
-    await until(`!PD.rt.has('chat:' + ${JSON.stringify(TB)})`, 10000);
+    // (#386: the task's tab stays when the PO's comes to the front; both chat tabs go, so the phone's row is the fixed tabs.)
+    await evalIn(`pdChatUnpanel(${JSON.stringify(TB)}); pdChatUnpanel(${JSON.stringify(TA)}); 0`);
+    await until(`!PD.rt.has('chat:' + ${JSON.stringify(TB)}) && !PD.rt.has('chat:' + ${JSON.stringify(TA)})`, 10000);
     await c.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 3, mobile: true }, sessionId);
     await until('PD.dock.narrow() && PD.dock.title("po-chat") === "Chat"', 15000);
     await sleep(500);
@@ -200,9 +202,23 @@ async function main() {
                fits: tabs.scrollWidth <= tabs.clientWidth + 1, row: Math.round(tabs.clientWidth), need: Math.round(tabs.scrollWidth),
                rects: wraps.map(w => { const r = w.getBoundingClientRect(); return [(w.querySelector('.dk-tab') || {}).textContent, Math.round(r.left - R.left), Math.round(r.right - R.left)]; }) }; })()`);
     await c.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false }, sessionId);
-    await until(`!PD.dock.narrow() && PD.dock.title('po-chat') === ${rowTitle(TA)}`, 15000);
+    await until(`!PD.dock.narrow() && PD.dock.title('po-chat') === 'Motors'`, 15000);
     await sleep(300);
-    out.wideAgain = await evalIn(NAMES('po-chat'));
+    out.poWideAgain = await evalIn(NAMES('po-chat'));
+    // The task opened again: its tab, named after it; then a phone shows it in the middle, its conversation tab
+    // still "Chat".
+    await click(`.sw-row[data-room="${TA}"]`);
+    await until(`pdTabNow() && rowBySid(SELECTED_SID).roomId === ${JSON.stringify(TA)} && PD.dock.title('chat:' + ${JSON.stringify(TA)}) === ${rowTitle(TA)}`, 10000);
+    await sleep(300);
+    out.wideAgain = await evalIn(NAMES('chat:' + TA));
+    await c.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 3, mobile: true }, sessionId);
+    await until('PD.dock.narrow() && PD.dock.title("po-chat") === "Chat"', 15000);
+    await sleep(800);
+    out.phoneTask = await evalIn(`({ task: !!pdTask(), room: SELECTED_SID ? rowBySid(SELECTED_SID).roomId : '', mid: pdMid(),
+      inMid: !!PD.els['po-chat'].querySelector('#detail-panel'), chat: PD.dock.title('po-chat') })`);
+    await c.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false }, sessionId);
+    await until(`!PD.dock.narrow() && pdTabNow() && !!PD.rt.get('chat:' + ${JSON.stringify(TA)}).el.querySelector('#detail-panel')`, 15000);
+    out.wideTaskBack = true;
     out.errors = c.exceptions;
   } finally {
     try { await c.send('Browser.close'); } catch (e) {}
@@ -310,16 +326,19 @@ class TitlesAndBodyClassesInTheBrowser(unittest.TestCase):
         self.everywhere(g["poChat"], "Motors", window=False)
         self.everywhere(g["poChatOut"], "Motors")
 
-    def test_a_task_in_the_middle_names_the_tab_the_menu_row_and_the_window(self):
+    # #386: a task of a project with a PO is a tab of its own, named after the task; the PO's conversation (here
+    # in its window) keeps the project's name.
+    def test_a_task_in_its_tab_names_the_tab_and_the_po_keeps_the_project(self):
         g = self.got
         self.assertTrue(g["titles"]["a"].endswith("Brakes that squeal"), g["titles"])
-        self.everywhere(g["task"], g["titles"]["a"])
+        self.everywhere(g["task"], g["titles"]["a"], window=False, menu=False)
+        self.everywhere(g["poWithTask"], "Motors")
 
     def test_a_rename_through_the_hub_follows_at_the_next_refresh(self):
         g = self.got
         self.assertTrue(g["renamed"]["a"].endswith("Brakes, renamed"), g["renamed"])
         self.assertTrue(g["renamed"]["b"].endswith("Wipers, renamed"), g["renamed"])
-        self.everywhere(g["renamed"]["po"], g["renamed"]["a"])
+        self.everywhere(g["renamed"]["po"], g["renamed"]["a"], window=False, menu=False)
         self.everywhere(g["renamed"]["chat"], g["renamed"]["b"], window=False, menu=False)
         # The chat panel was named after its task from the start.
         self.everywhere(g["chatPanel"], g["titles"]["b"], window=False, menu=False)
@@ -327,7 +346,7 @@ class TitlesAndBodyClassesInTheBrowser(unittest.TestCase):
     def test_the_title_survives_the_window_closing_and_the_panel_coming_back(self):
         g = self.got
         self.assertIsNone(g["back"]["win"])
-        self.everywhere(g["back"], g["renamed"]["a"], window=False)
+        self.everywhere(g["back"], "Motors", window=False)
 
     def test_a_body_class_reaches_the_window_and_leaves_it_again(self):
         b = self.got["bodyCls"]
@@ -341,7 +360,7 @@ class TitlesAndBodyClassesInTheBrowser(unittest.TestCase):
     def test_a_phone_keeps_chat_on_the_conversation_tab_so_the_row_stays_short(self):
         p = self.got["phone"]
         self.assertTrue(p["narrow"], p)
-        self.assertTrue(p["task"], "the task is still in the middle on the phone")
+        self.assertFalse(p["task"], "the PO's tab in front closed the task (#386)")
         self.everywhere(p, "Chat", window=False)
         for name in ("Chat", "Inbox", "Board", "Spec"):  # since #311 the Inbox is a phone tab; Needs you is gone
             self.assertIn(name, p["tabs"], p["tabs"])
@@ -351,8 +370,13 @@ class TitlesAndBodyClassesInTheBrowser(unittest.TestCase):
         self.assertLessEqual(rect["Chat"][1] - rect["Chat"][0], 60, p["rects"])
         self.assertLessEqual(rect["Board"][1], p["row"] + 1, f"Board off the row: {p['rects']} in {p['row']}px")
         self.assertLess(p["need"], p["row"] + 60, f"the tab row needs {p['need']}px in {p['row']}px, tabs {p['tabs']}")
-        # A computer again: the conversation's name is back.
-        self.everywhere(self.got["wideAgain"], self.got["renamed"]["a"], window=False)
+        # A computer again: the task opened again is in its tab, named after it; the PO's tab is the project's.
+        self.everywhere(self.got["wideAgain"], self.got["renamed"]["a"], window=False, menu=False)
+        self.everywhere(self.got["poWideAgain"], "Motors", window=False)
+        # The task open in its tab, then a phone: the phone shows it in the middle; a computer again, in its tab.
+        t = self.got["phoneTask"]
+        self.assertEqual((t["task"], t["mid"], t["inMid"], t["chat"]), (True, True, True, "Chat"), t)
+        self.assertTrue(self.got.get("wideTaskBack"))
 
     def test_the_page_threw_no_exception_meanwhile(self):
         self.assertEqual(self.got["errors"], [])

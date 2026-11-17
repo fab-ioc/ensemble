@@ -284,10 +284,13 @@ async function main() {
         await sleep(500);
         await p.until('typeof PROJECTS !== "undefined" && !!PROJECTS && ALL_ROWS.some(r => r.roomId === ' + JSON.stringify(A.task) + ')');
         await openPo(p);
-        await p.until(`PD.restored && !!PD_HOLD && PD_HOLD.ctxs.length > 0`);
-        o.held = await p.ev(`({ project: (poDockProject() || {}).id, detail: document.body.classList.contains('detail-open') })`);
+        // #386: on the Motors chat the Plain file is put away in Plain's own workspace (cd-pd-ctx), not a panel
+        // of the dock, so nothing is held for it; it comes back with its task, once the hub has it.
+        await p.until(`PD.restored`);
+        o.held = await p.ev(`({ project: (poDockProject() || {}).id, detail: document.body.classList.contains('detail-open'),
+          away: JSON.stringify(PD_WS).includes('PLAIN-NOTES.md') })`);
         await p.ev(`window.__warm = false; 0`);
-        await p.until(`PD_HOLD === null && [...PD.rt.values()].some(e => e.kind === 'file')`);
+        await p.until(`PD_HOLD === null && HUB_PHASE === 'ready'`);
         await sleep(600);
         await settled(p);
         o.held.tabs = await p.ev(`[...document.querySelectorAll('#po-dock .dk-stack .dk-tab')].filter(e => e.getBoundingClientRect().width > 0).map(e => e.textContent.trim())`);
@@ -417,6 +420,7 @@ class IphoneChat(unittest.TestCase):
         g = self.got['440x956']['held']
         self.assertEqual(g['project'], self.proj, g)
         self.assertFalse(g['detail'], g)
+        self.assertTrue(g['away'], "the Plain file is kept in Plain's workspace while the Motors chat shows")
         self.assertFalse(any('PLAIN-NOTES.md' in t for t in g['tabs']), g)
         self.assertTrue(any('PLAIN-NOTES.md' in t for t in g['back']), g)
 
