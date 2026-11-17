@@ -107,6 +107,14 @@ async function main() {
     await step('poTab', () => clickAt(tab('po-chat')));
     await step('brakesTab', () => clickAt(tab('chat:' + T.Brakes)));
     await step('poTab2', () => clickAt(tab('po-chat')));
+    // A press elsewhere on the page (the project switcher), then the page itself brings Brakes's
+    // tab to the front (PD.opening, as a project switch's fronts put back): not the person's pick (review 1).
+    await step('autoAfterPress', async () => {
+      await clickAt('#proj-switch');
+      await evalIn(`(() => { closeProjMenu(); PD.opening = true; try { PD.dock.activate('chat:' + ${JSON.stringify(T.Brakes)}); } finally { PD.opening = false; } return 0; })()`);
+    });
+    out.autoFront = await evalIn(`PD.dock.frontOf('po-chat')`);
+    await clickAt(tab('po-chat')); await sleep(1200);
     await step('openWipers', () => evalIn(`openDetail(${sid(T.Wipers)}); 0`));
     await step('brakesFromWipers', () => clickAt(tab('chat:' + T.Brakes)));
     await step('wipersTab', () => clickAt(tab('chat:' + T.Wipers)));
@@ -129,8 +137,11 @@ async function main() {
     await step('esc', () => key('Escape', 'Escape', 27));
     // A project switch and back brings the tabs, the task in front open.
     await clickAt(tab('chat:' + T.Brakes)); await sleep(1200);
-    await step('trading', () => evalIn(`openProjectPage(${JSON.stringify(P.Trading)}); 0`), 2000);
-    await step('motors', () => evalIn(`openProjectPage(${JSON.stringify(P.Motors)}); 0`), 2500);
+    // ... with real clicks in the project switcher.
+    const pick = async pid => { await clickAt('#proj-switch'); await until(`!!document.querySelector('#proj-menu .pm-item[data-proj="${pid}"]:not(.pm-set)')`, 5000);
+      await clickAt(`#proj-menu .pm-item[data-proj="${pid}"]:not(.pm-set)`); };
+    await step('trading', () => pick(P.Trading), 2000);
+    await step('motors', () => pick(P.Motors), 2500);
     // Focus left in the PO's chat (a click in it), then the task's tab: the window losing and
     // regaining focus (another app, a browser window) gives focus back inside the PO's frame.
     await clickAt(tab('po-chat')); await sleep(1500);
@@ -167,6 +178,10 @@ async function main() {
     await sleep(1600);
     await step('byItself', () => evalIn(`pdChatOpen(${JSON.stringify(T.Idle)}, { restore: true }); 0`), 1500);
     out.idleShown = await evalIn(`PD.rt.has('chat:${T.Idle}') && PD.dock.isShown('chat:${T.Idle}')`);
+    // A task opened with a real click on its row in the task list (its panel brought on screen first).
+    await clickAt(tab('po-chat')); await sleep(1200);
+    await evalIn(`PD.dock.reveal('board'); 0`); await sleep(1200);
+    await step('rowWipers', () => clickAt(`tr.row.headless[data-room="${T.Wipers}"]`));
     out.errors = c.exceptions;
   } finally {
     try { await c.send('Browser.close'); } catch (e) {}
@@ -268,10 +283,15 @@ class TabAimsBox(unittest.TestCase):
     def at_task(self, name, task):
         self.aimed(name, "task", self.tasks[task], task)
 
+    def test_a_tab_the_page_brings_after_an_unrelated_press_does_not_take_the_box(self):
+        self.assertEqual(self.got["autoFront"], "chat:" + self.tasks["Brakes"], "Brakes's tab came to the front")
+        self.at_po("autoAfterPress")
+
     def test_a_task_opened_has_the_box(self):
         self.at_po("start")
         self.at_task("openBrakes", "Brakes")
         self.at_task("openWipers", "Wipers")
+        self.at_task("rowWipers", "Wipers")
 
     def test_a_click_on_a_tab_aims_the_box_at_its_chat(self):
         self.at_po("poTab")

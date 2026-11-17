@@ -15881,7 +15881,11 @@ function wcFront(id, tab = false) {
   const own = tab || WC.ownAt > WC.aimAt;
   if (!PD.dock || PD.dock.narrow() || PD.thrRestoring || !navigator.userActivation?.isActive || (!own && Date.now() - WC.aimAt < 600)) return;
   const t = wcPanelTarget(id);
-  const press = tab || (PD.restored && !PD.wsQuiet && !PD.tabAdding && Date.now() - WC.ownAt < 1500);
+  // A tab the page itself brings to the front (PD.opening: a task opened, the
+  // fronts of a project switch put back, the task's tab kept in front) is not
+  // the person's pick, whatever was pressed just before (review 1): what opened
+  // it aims the box itself (pdPlaceChat, closeDetail).
+  const press = tab || (PD.restored && !PD.wsQuiet && !PD.tabAdding && !PD.opening && Date.now() - WC.ownAt < 1500);
   if (press && t && wcValid(t)) { if (wcKey(t) !== wcKey(WC.target)) wcChoose(t); }
   else if (id === 'po-chat' && WC.target?.kind === 'thread') wcToMain();
 }
