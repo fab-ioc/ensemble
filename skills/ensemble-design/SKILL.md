@@ -686,7 +686,9 @@ same thing in two (the CEO's P49). A task's Workspace has no such node.
   (`wsRoadmapPaint`, the one `#rm-panel`, parked by `rmPark` before a Workspace is rebuilt so a
   draft survives).
 - **Then newest first**, by the file's time, in the order the hub sends. A row is a tree file row:
-  the title (the file's name without `#12 ` and `.md`), the task's number as a quiet `.wse-tag`
+  the title (the file's name without `#12 ` and `.md`; a page, `.html`, is titled the same way, and
+  two rows of one title, a plan's page and its Markdown, show their extension: `Plan.html`,
+  `Plan.md`), the task's number as a quiet `.wse-tag`
   (`#12`, or `docs` for the code's), the date where a file's size would be; its folder, task, full
   time and size are its tooltip. One click opens it in a tab. No links inside a row.
 - **Empty says what would fill it** (§5.5): where tasks put documents and how they are named. A

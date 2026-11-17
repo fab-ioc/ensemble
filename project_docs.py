@@ -3,7 +3,8 @@
 Task folders hold working notes (TASK-HANDOVER.md, REVIEW-LOG.md) and
 checkouts; the project's knowledge — a task's deliverable report, a design
 decision — goes in one folder per project, in its home, named by the task:
-``#<no> <short title>.md``, or a folder ``#<no> <title>/`` for several files.
+``#<no> <short title>.html`` (a static page, for anything that can be shown)
+or ``.md`` (text), or a folder ``#<no> <title>/`` for several files (P371).
 The Workspace opens on it, newest first.
 
 The folder's name is chosen once and kept in the project's project.json

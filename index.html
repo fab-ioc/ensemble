@@ -11936,8 +11936,13 @@ function wsDocsNodeHtml(v, st, rm) {
   if (!s.data) return head + `<div class="wsk" data-docs="1">${body}<div class="wse none">${s.err ? 'The documents could not be read: ' + esc(s.err) : 'Loading the documents…'}</div></div>`;
   const d = s.data, items = d.items || [];
   const dir = d.dir ? tildeify(d.dir) : nounText('the {project}’s Documents folder');
-  if (!items.length) body += `<div class="wse none">No documents yet. Tasks put their reports and design notes in ${esc(dir)}, named after the task (“#12 Title.md”).</div>`;
-  body += items.map(it => row(it.path, it.title || wsTabName(it.path), it.inCode ? 'docs' : it.no ? '#' + it.no : '', wsDocsTip(it), wsDocsDate(it.mtime), '')).join('');
+  if (!items.length) body += `<div class="wse none">No documents yet. Tasks put their reports and design notes in ${esc(dir)}, named after the task (“#12 Title.html” for a page, “#12 Title.md” for text).</div>`;
+  // A plan's page and its Markdown share a title (P371): those rows say which is which.
+  const named = it => it.title || wsTabName(it.path), seen = new Map();
+  for (const it of items) seen.set(named(it), (seen.get(named(it)) || 0) + 1);
+  const label = it => { const n = named(it), ext = /\.[^./\\]+$/.exec(wsTabName(it.path));
+    return seen.get(n) > 1 && ext ? n + ext[0].toLowerCase() : n; };
+  body += items.map(it => row(it.path, label(it), it.inCode ? 'docs' : it.no ? '#' + it.no : '', wsDocsTip(it), wsDocsDate(it.mtime), '')).join('');
   if (d.truncated) body += `<div class="wse none">The ${items.length.toLocaleString('en-US')} newest only; the rest are in ${esc(dir)}.</div>`;
   return head + `<div class="wsk" data-docs="1">${body}</div>`;
 }
