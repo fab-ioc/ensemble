@@ -25164,7 +25164,9 @@ function openTaskLink(ref, agent, projectId, o) {
   const m = w && row ? (row.members || []).find(x => (x.identity || '').toLowerCase() === w
     || String(x.role || '').split(':')[0].trim().toLowerCase() === w) : null;
   const inMiddle = SELECTED_SID === rid && document.body.classList.contains('detail-open');
-  if (o && o.panel && row && row.roomId && !inMiddle && !phoneNow() && pdChatOpen(row.roomId, { agent: m ? m.identity : '' })) return;
+  // #386: a task with a tab of its own opens there, as from anywhere else
+  // (openDetail; the conversation keeps its place in its own tab).
+  if (o && o.panel && row && row.roomId && !inMiddle && !phoneNow() && !pdTabFor(row) && pdChatOpen(row.roomId, { agent: m ? m.identity : '' })) return;
   if (m) {
     DETAIL_AGENT = { room: row.roomId, agent: m.identity };
     // Already showing that task: its chat is drawn again, at the agent.

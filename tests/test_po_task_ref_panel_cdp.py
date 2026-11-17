@@ -8,7 +8,8 @@ whose chat names the other:
 
 * at 1440x900 and 1728x1117: a click on the plain link in the PO chat opens
   ``chat:<room>``, the PO frame is still the middle's and its scrollTop did not
-  change; a second click focuses that panel (no second one); a double click on
+  change; that tab is the task open (#386: a task of a project with a PO is a tab
+  of its own, the task panel in it); a second click focuses that panel (no second one); a double click on
   the #N chip, and the TaskCard's title, do the same for the other task; an
   agent-addressed chip (@codex@N) opens the panel at that agent; a reference in a task
   chat still opens in the middle;
@@ -120,6 +121,10 @@ async function main() {
       const p = await page(w, h);
       await home(p);
       await p.until('!!PD.dock && pdPanelsOn() && PD.restored', 30000);
+      // The last size's task tabs come back with the project (#386, the same profile): none here.
+      await sleep(400);
+      await p.evalIn(`(() => { [...PD.rt.entries()].filter(([, e]) => e.kind === 'chat').forEach(([id]) => PD.dock.removePanel(id));
+        if (SELECTED_SID) closeDetail(); PD.dock.activate('po-chat'); return 0; })()`); await sleep(600);
       await scrollUp(p); await sleep(400);
       r.before = await p.evalIn(STATE);
       if (w === 1440) await p.shot('p310-before-1440');
@@ -132,15 +137,17 @@ async function main() {
       await p.evalIn(`PD.dock.activate('po-chat'); 0`).catch(() => 0);
       await p.press(await p.at(PO, LINK)); await sleep(800);
       r.again = await p.evalIn(STATE);
-      // The agent-addressed link: that panel, at the agent.
+      // The agent-addressed link: that panel, at the agent (from the PO's tab, #386).
+      await p.evalIn(`PD.dock.activate('po-chat'); 0`).catch(() => 0); await sleep(400);
       await p.press(await p.at(PO, AGENT), 2); await sleep(800);
       r.agent = await p.evalIn(STATE);
       // A double click on B's chip: B's panel.
+      await p.evalIn(`PD.dock.activate('po-chat'); 0`).catch(() => 0); await sleep(400);
       await p.press(await p.at(PO, CHIP), 2);
       await p.until(`PD.rt.has('chat:${A.taskB}')`, 8000); await sleep(800);
       r.chip = await p.evalIn(STATE);
       // The card's open action (its title): close B's panel first, then one click on the chip, then the title.
-      await p.evalIn(`PD.dock.removePanel('chat:${A.taskB}'); 0`); await sleep(500);
+      await p.evalIn(`PD.dock.removePanel('chat:${A.taskB}'); PD.dock.activate('po-chat'); 0`); await sleep(500);
       await p.press(await p.at(PO, CHIP)); await p.until(`!!${PO}.contentDocument.querySelector('.task-card a.tc-title')`, 5000); await sleep(300);
       await p.press(await p.at(PO, '.task-card a.tc-title'));
       await p.until(`PD.rt.has('chat:${A.taskB}')`, 8000); await sleep(800);
@@ -156,6 +163,8 @@ async function main() {
     {
       const r = out.phone = {};
       const p = await page(390, 844, true);
+      await p.until('!!PD.dock && PD.restored', 30000).catch(() => 0); await sleep(400);
+      await p.evalIn(`(() => { if (PD.dock) [...PD.rt.entries()].filter(([, e]) => e.kind === 'chat').forEach(([id]) => PD.dock.removePanel(id)); return 0; })()`);
       await p.evalIn(`(() => { SELECTED_PROJECT = ${JSON.stringify(A.proj)}; openPoOf(registeredProjects().find(x => x.id === ${JSON.stringify(A.proj)})); return 0; })()`);
       await p.until(drawn(PO, LINK), 30000); await sleep(600);
       r.before = await p.evalIn(STATE);
@@ -247,7 +256,9 @@ class PoTaskRefPanel(Hub):
                 self.assertEqual(rooms(g), [a], g)
                 self.assertTrue(g["chats"][0]["front"] and g["chats"][0]["visible"], g)
                 self.assertTrue(g["poMiddle"], "the PO is still the middle's")
-                self.assertIsNone(g["sid"], "no task took the middle")
+                # #386: a task of a project with a PO is its tab: open there, the PO's tab kept as it was.
+                self.assertEqual(g["sid"], a, "the task is open in its tab")
+                self.assertEqual(g["middleRoom"], a, "the tab's chat is the task panel's")
                 self.assertLessEqual(abs(g["poScroll"] - r["before"]["poScroll"]), 1, "the PO chat kept its place")
                 # Again: the one panel, in front.
                 g = r["again"]
@@ -264,11 +275,12 @@ class PoTaskRefPanel(Hub):
                     self.assertEqual(rooms(g), sorted([a, b]), (key, g))
                     self.assertTrue(next(x for x in g["chats"] if x["room"] == b)["front"], key)
                     self.assertTrue(g["poMiddle"], key)
-                    self.assertIsNone(g["sid"], key)
-                # A task chat's reference: the middle.
+                    self.assertEqual(g["sid"], b, key)
+                # A task chat's reference: that task open, in its tab (#386; the middle before).
                 g = r["task"]
                 self.assertEqual(g["middleRoom"], a, g)
-                self.assertEqual(g["chats"], [], "no panel")
+                self.assertEqual(g["sid"], a, g)
+                self.assertEqual(rooms(g), sorted([a, c]), "a tab each, no other panel")
         ph = got["phone"]
         self.assertEqual(ph["after"]["chats"], [], ph)
         self.assertEqual(ph["after"]["middleRoom"], a, ph)
