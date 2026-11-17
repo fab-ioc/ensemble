@@ -67,7 +67,7 @@ class ThePrompts(unittest.TestCase):
                       "never a claude.ai Artifact", "**Markdown** (`.md`)", "**A plan, whenever one is asked for**",
                       "it never replaces it", "by its name", "ONE side-by-side PNG on the ask card"):
             self.assertIn(words, rule, words)
-        self.assertIn("`#<no> <short title>.html` or `.md` (see *Visual first* below)", SKILL)
+        self.assertIn("`#<no> <short title>.html` for a page or `.md` for text (see *Visual\nfirst* below)", SKILL)
         self.assertIn("as `PO <short title>.html` for anything that\ncan be shown", SKILL, "the PO's own documents")
         plan = SKILL[SKILL.index("## Planning work for a project"):SKILL.index("## Writing a good spec")]
         self.assertIn("with a visual page in the Documents folder", plan)
