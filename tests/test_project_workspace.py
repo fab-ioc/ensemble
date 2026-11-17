@@ -80,6 +80,17 @@ const win = o({ ...chat('w1'), out: true }, 'E');
 W.touch(s3, 'chat:w1', 1);                           // the oldest of all
 out.capWinNone = W.overflow(s3, 'E', [...open.slice(0, 7), win], 'chat:new');
 out.capWin = W.overflow(s3, 'E', [...open, win], 'chat:new');
+// Review 2: the PO's tab counts (fixed: never closed); a floating panel is no
+// tab; with nothing being added (after a switch), more than 8 still closes one.
+out.capFixed = W.overflow(s3, 'E', open.slice(0, 7), 'chat:new', null, 1);
+const flo = o({ ...chat('f1'), float: true }, 'E');
+W.touch(s3, 'chat:f1', 2);
+out.capFloatNone = W.overflow(s3, 'E', [...open.slice(0, 7), flo], 'chat:new');
+out.capFloat = W.overflow(s3, 'E', [...open, flo], 'chat:new');
+W.pin(s3, 'chat:t8', true);                          // another project's, pinned: counts, stays
+out.capFitNone = W.overflow(s3, 'E', open.slice(0, 6), null, null, 1);
+out.capFit = W.overflow(s3, 'E', [...open, o(chat('t8'), 'T')], null, null, 1);
+W.pin(s3, 'chat:t8', false);
 for (let i = 1; i <= 8; i++) W.pin(s3, 'chat:c' + i, true);
 out.capAllPinned = W.overflow(s3, 'E', open, 'chat:new');
 
@@ -160,6 +171,18 @@ class ProjectWorkspaceStore(unittest.TestCase):
         # Review 1: a window neither counts nor closes for the 8 tabs.
         self.assertIsNone(self.o["capWinNone"])
         self.assertEqual(self.o["capWin"], "chat:c3")
+
+    def test_the_po_tab_counts_and_a_float_does_not(self):
+        # Review 2: 7 tasks' tabs and the PO's, then one more: one closes (not
+        # the PO's); a floating panel neither counts nor closes; a pinned tab
+        # of another project brought along counts, and the fit after a switch
+        # closes one of this project's.
+        o = self.o
+        self.assertEqual(o["capFixed"], "chat:c3")
+        self.assertIsNone(o["capFloatNone"])
+        self.assertEqual(o["capFloat"], "chat:c3")
+        self.assertIsNone(o["capFitNone"])
+        self.assertEqual(o["capFit"], "chat:c3")
 
     def test_it_stays_bounded(self):
         o = self.o

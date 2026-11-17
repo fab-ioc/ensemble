@@ -226,6 +226,40 @@ async function main() {
     out.other = { win: await win(), st: await state(), b: await p.evalIn(`({ sel: SELECTED_SID, tab: PD.rt.has('chat:' + ${J(A.taskB)}), front: PD.dock.frontOf('po-chat') })`) };
     await toProject(A.projA); await sleep(800);
     await reset();
+    // The task's actions from its window's ⋯ (review 2: was test_task_dock_panel's):
+    // the menu opens in the window, Rename… there runs the page's handler, and
+    // Terminal colours… (when the hub offers it) opens its picker in the window, under the ⋯.
+    await toProject(A.projA);
+    await openWin();
+    const WD = `PD.dock.popWindow(${J(TID)}).document`;
+    await p.evalIn('window.__prompted = null; window.prompt = (m, c) => { window.__prompted = [m, c]; return null; }; 0');
+    out.winMenu = await p.evalIn(`(async () => {
+      const w = PD.dock.popWindow(${J(TID)}), d = w.document;
+      const btn = [...d.querySelectorAll('[data-dk-act="menu"]')].find(e => e.getBoundingClientRect().width > 0);
+      if (!btn) return { btn: false };
+      btn.click(); await new Promise(r => setTimeout(r, 300));
+      const m = d.querySelector('.dk-menu.dk-options');
+      const rows = m ? [...m.querySelectorAll('[data-dk-app]')].map(b => b.textContent.replace('▸', '').trim()) : [];
+      const r = m && m.getBoundingClientRect();
+      return { btn: true, open: !!m, inPageToo: !!document.querySelector('.dk-menu.dk-options'), rows,
+               fits: !!r && r.left >= 0 && r.top >= 0 && r.right <= w.innerWidth + 1 && r.bottom <= w.innerHeight + 1 }; })()`);
+    out.winPick = { found: await p.evalIn(`(() => { const b = [...${WD}.querySelectorAll('.dk-menu.dk-options [data-dk-app]')].find(e => e.textContent.trim().startsWith('Rename')); if (!b) return false; b.click(); return true; })()`) };
+    await sleep(400);
+    Object.assign(out.winPick, await p.evalIn(`({ prompted: window.__prompted, menuOpen: !!${WD}.querySelector('.dk-menu.dk-options') })`));
+    out.winColours = await p.evalIn(`(async () => {
+      const d = ${WD};
+      const mb = [...d.querySelectorAll('[data-dk-act="menu"]')].find(e => e.getBoundingClientRect().width > 0);
+      mb.click(); await new Promise(r => setTimeout(r, 300));
+      const b = [...d.querySelectorAll('.dk-menu.dk-options [data-dk-app]')].find(x => x.textContent.startsWith('Terminal colours'));
+      if (!b) { mb.click(); return { offered: false }; }
+      if (b.getAttribute('aria-disabled') === 'true') { mb.click(); return { offered: true, disabled: true }; }
+      b.click(); await new Promise(r => setTimeout(r, 400));
+      const m = d.querySelector('.theme-dd-menu');
+      const res = { offered: true, disabled: false, inWindow: !!m, inPage: !!document.querySelector('.theme-dd-menu'), focusIn: !!m && m.contains(d.activeElement) };
+      if (m) { const a = m.getBoundingClientRect(), t = mb.getBoundingClientRect(); res.under = a.top >= t.bottom - 1 && a.right <= d.defaultView.innerWidth + 1 && a.left >= 0; }
+      closeThemeMenu();
+      return res; })()`);
+    await reset();
     // The person closing the task in the window (its ×): the task and its window close.
     await toProject(A.projA);
     await openWin();
@@ -423,6 +457,21 @@ class TaskWindowFollowsItsProject(unittest.TestCase):
         self.away_one(o["st"])
         self.assertTrue(o["b"]["tab"], o)
         self.assertEqual(o["b"]["front"], "chat:" + self.taskB, o)
+
+    def test_the_tasks_actions_run_from_its_windows_menu(self):
+        m = self.got["winMenu"]
+        self.assertTrue(m["btn"] and m["open"], f"the window's ⋯ opens its menu in the window: {m}")
+        self.assertFalse(m["inPageToo"], m)
+        self.assertTrue(m["fits"], f"the menu fits the window: {m}")
+        for label in ("Rename…", "Agents and models…", "Delete task…"):
+            self.assertIn(label, m["rows"])
+        k = self.got["winPick"]
+        self.assertTrue(k["found"], k)
+        self.assertTrue(k["prompted"] and k["prompted"][0].startswith("Label for this session"), f"Rename… ran the page's handler: {k}")
+        self.assertFalse(k["menuOpen"], k)
+        c = self.got["winColours"]
+        if c.get("offered") and not c.get("disabled"):
+            self.assertTrue(c["inWindow"] and not c["inPage"] and c["under"] and c["focusIn"], f"the colour picker opens in the window, under its ⋯: {c}")
 
     def test_closing_the_task_in_the_window_keeps_its_tab(self):
         c = self.got["closed"]

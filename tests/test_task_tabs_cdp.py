@@ -153,6 +153,24 @@ async function main() {
     out.menuRows = await evalIn(DK_MENU_ROWS);
     await shot('menu-tail');
     await evalIn(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); 0`);
+    // A phone (review 2: was test_task_dock_panel's): the task opens in the
+    // middle; the tab row's ⋯ holds its actions, nothing of Dock's that moves a
+    // panel, and Rename… there runs the page's handler.
+    await c.send('Emulation.setDeviceMetricsOverride', { width: 430, height: 932, deviceScaleFactor: 1, mobile: true }, sessionId);
+    await sleep(1500);
+    await evalIn(`openProjectPage(${JSON.stringify(P.Motors)}); 0`);
+    await sleep(1500);
+    await evalIn(`openDetail(${sid(T.Brakes)}); 0`);
+    await until('!!SELECTED_SID && pdTask()', 15000); await sleep(800);
+    await evalIn('window.__prompted = null; window.prompt = (m, c) => { window.__prompted = [m, c]; return null; }; 0');
+    out.phoneMenuOpen = await evalIn(DK_MENU_OPEN());
+    await sleep(300);
+    out.phoneMenu = await evalIn(`(() => { const m = document.querySelector('.dk-menu.dk-options'); if (!m) return null;
+      return { subs: [...m.querySelectorAll('[data-dk-sub]')].map(b => b.dataset.dkSub), rows: [...m.querySelectorAll('[data-dk-app]')].map(b => b.textContent.replace('▸', '').trim()),
+               scrollW: document.documentElement.scrollWidth, vw: innerWidth }; })()`);
+    out.phonePick = { found: await evalIn(DK_MENU_PICK('Rename')) };
+    await sleep(400);
+    Object.assign(out.phonePick, await evalIn(`({ prompted: window.__prompted, menuOpen: !!document.querySelector('.dk-menu.dk-options') })`));
     out.errors = c.exceptions;
   } finally {
     try { await c.send('Browser.close'); } catch (e) {}
@@ -345,6 +363,18 @@ class TaskTabs(unittest.TestCase):
         texts = [r["text"] for r in self.got["menuRows"]]
         self.assertEqual(texts[-1], "Reset layout", texts)
         self.assertIn("Inbox", texts)
+
+    def test_a_phones_menu_holds_the_tasks_actions_and_they_run(self):
+        g = self.got
+        self.assertTrue(g["phoneMenuOpen"], g.get("phoneMenu"))
+        m = g["phoneMenu"]
+        self.assertEqual(m["subs"], [], f"nothing of Dock's that moves a panel on a phone: {m}")
+        for label in ("Rename…", "Agents and models…", "Delete task…"):
+            self.assertIn(label, m["rows"])
+        self.assertNotIn("Reset layout", m["rows"], "no common tail on a phone")
+        self.assertLessEqual(m["scrollW"], m["vw"])
+        k = g["phonePick"]
+        self.assertTrue(k["found"] and not k["menuOpen"] and k["prompted"] and k["prompted"][0].startswith("Label for this session"), k)
 
     def test_the_page_threw_no_exception(self):
         self.assertEqual(self.got["errors"], [])

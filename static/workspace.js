@@ -99,11 +99,13 @@
   // least recently shown that is not pinned goes (never `adding` itself, nor
   // `keep`'s). Pinned ones count but stay. Only tabs count: a panel in a
   // window of its own (item.out) is no tab, and is never closed this way
-  // (the person put it out to keep it in sight). Null: none has to go.
-  function overflow(s, here, open, adding, keep) {
+  // (the person put it out to keep it in sight), nor is a floating one
+  // (item.float). `fixed`: the tabs always there that count but never go (the
+  // PO's tab, review 2). Null: none has to go.
+  function overflow(s, here, open, adding, keep, fixed) {
     const ownHere = o => o.owner === here || (s.cur === here && s.here.includes(o.item.id));
-    const mine = open.filter(o => !o.item.out && (ownHere(o) || isPinned(s, o.item.id)));
-    const n = mine.length + (adding && !mine.some(o => o.item.id === adding) ? 1 : 0);
+    const mine = open.filter(o => !o.item.out && !o.item.float && (ownHere(o) || isPinned(s, o.item.id)));
+    const n = (fixed || 0) + mine.length + (adding && !mine.some(o => o.item.id === adding) ? 1 : 0);
     if (n <= CAP) return null;
     const keepSet = new Set([adding, ...(keep || [])]);
     const can = mine.filter(o => ownHere(o) && !isPinned(s, o.item.id) && !keepSet.has(o.item.id));

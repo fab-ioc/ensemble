@@ -16379,8 +16379,32 @@ function pdWsItem(id, e) {
   const out = (() => { try { return !!PD.dock.isOut(id); } catch (err) { return false; } })();
   const it = e.kind === 'chat' ? { id, kind: 'chat', room: e.room } : { id, kind: 'file', path: e.path, ctx: e.v.ctx };
   if (out) it.out = true;
-  else { try { if (PD.dock.frontOf(id) === id) it.front = true; } catch (err) {} }
+  else {
+    try { if (PD.dock.viewMode(id) === 'float') it.float = true; } catch (err) {}
+    try { if (PD.dock.frontOf(id) === id) it.front = true; } catch (err) {}
+  }
   return it;
+}
+// The tabs always there that count toward the cap and never go (review 2):
+// the PO's tab, when it is a tab (not hidden, in a window or floating).
+function pdWsFixed() {
+  try {
+    if (!PD.dock.isVisible('po-chat') || PD.dock.isOut('po-chat')) return 0;
+    return PD.dock.viewMode('po-chat') === 'float' ? 0 : 1;
+  } catch (e) { return 0; }
+}
+// More than the cap open (a switch brought tabs back, a pin came along): the
+// least recently shown of this context's, not pinned, close until it fits.
+function pdWsFit(here) {
+  for (let i = 0; i < 64; i++) {
+    const open = pdWsOpen();
+    // A tab in front stays (the task open in it, the file being read).
+    const fronts = open.filter(o => o.item.front).map(o => o.item.id);
+    const v = PdWorkspace.overflow(PD_WS, here, open, null, fronts, pdWsFixed());
+    if (!v || !PD.rt.has(v)) return;
+    try { PD.dock.removePanel(v); } catch (e) { return; }
+    if (PD.rt.has(v)) return;
+  }
 }
 function pdWsOpen() {
   const open = [];
@@ -16439,7 +16463,7 @@ function pdProjectPanels() {
   // #386: a task's tab in front of the PO's, after a reload or brought back
   // with its project, is that task open.
   if (!PD.tabFront || res.back.length) { PD.tabFront = true; setTimeout(pdTabFront, 0); }
-  if (!res.away.length && !res.back.length) { pdWsSave(); return; }
+  if (!res.away.length && !res.back.length) { pdWsFit(here); pdWsSave(); return; }
   res.away.forEach(pdWsPutAway);
   const keep = [], wins = [];
   // A tab comes back active (the dock's addPanel): one that was behind gives
@@ -16468,6 +16492,7 @@ function pdProjectPanels() {
   }
   // Not listed yet (the hub warming): tried again at the next settle.
   if (keep.length) PD_WS.ctxs[here].items.push(...keep);
+  pdWsFit(here);
   pdChatsRemember();
   wsPanelsRemember();
   pdTabTips();
@@ -16526,7 +16551,7 @@ function pdWsCap(id) {
   PdWorkspace.adopt(PD_WS, id);
   pdWsSave();
   const here = pdWsHere();
-  const victim = here && PdWorkspace.overflow(PD_WS, here, pdWsOpen(), id);
+  const victim = here && PdWorkspace.overflow(PD_WS, here, pdWsOpen(), id, null, pdWsFixed());
   if (victim) { try { PD.dock.removePanel(victim); } catch (e) {} }
 }
 // A panel shown: the least recently shown is the one the cap closes.
