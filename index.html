@@ -4724,6 +4724,11 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .ps-gen-msg { font-size: 13px; color: var(--fg); margin-top: 8px; }
   .ps-gen-msg:first-child { margin-top: 0; }
   .ps-gen-msg small { display: block; color: var(--fg-muted); font-size: 12px; margin-top: 2px; }
+  /* P373: what the icon should show, one line growing to two; Enter draws. */
+  .ps-gen-ask { margin-top: 10px; }
+  textarea.ps-inp.ps-ask { display: block; height: 34px; max-height: 54px; padding: 7px 10px; line-height: 18px; resize: none; overflow: hidden; }
+  .ps-ask::placeholder { color: var(--fg-muted); }
+  .ps-ask[readonly] { color: var(--fg-muted); }
   @media (max-width: 640px), (max-width: 1024px) and (pointer: coarse) {
     /* Generate on a phone (phone.html): Upload… and Generate… on a row under the Image choice, the tiles spread. */
     .ps-choice-img { flex-wrap: wrap; }
@@ -4736,6 +4741,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     .ps-gen-foot { font-size: 13px; }
     .ps-gen-msg { font-size: 15px; }
     .ps-gen-msg small { font-size: 13px; }
+    textarea.ps-inp.ps-ask { height: 44px; max-height: 64px; padding: 11px 10px; line-height: 20px; }
   }
   @media (max-width: 640px), (max-width: 1024px) and (pointer: coarse) {
     /* The phone's menu offers its settings in one item (phone.html). */
@@ -19076,18 +19082,22 @@ function psGenHtml(pj, d) {
   const who = psGenWho(g.agent || info.agent, g.agent ? g.model : info.model);
   const name = psName(d.name) || pj.name;
   const about = info.about ? (Array.from(info.about).length > 60 ? Array.from(info.about).slice(0, 59).join('').trimEnd() + '…' : info.about) : '';
+  // P373: what the person wants it to show, kept in d.ask while the settings are open.
+  const ask = `<div class="ps-gen-ask"><textarea id="ps-gen-ask" class="ps-inp ps-ask" rows="1" maxlength="${PS_ASK_MAX}" autocomplete="off"`
+    + ` aria-label="What should the icon show?" placeholder="What should it show? e.g. a compass, a rocket, flat and simple"`
+    + `${g.st === 'busy' ? ' readonly' : ''}>${esc(d.ask || '')}</textarea></div>`;
   const head = `<div class="ps-gen-h"><b>Generate an icon</b>${who ? `<span class="ps-gen-who">${esc(who)}</span>` : ''}</div>`
     + `<div class="ps-gen-sub">From the name <b>${esc(name)}</b>${about ? ` and its roadmap, “${esc(about)}”` : ''}</div>`;
   if (g.st === 'busy') {
     const n = psGenSecs(g);
-    return `<div class="ps-gen" id="ps-gen-box" aria-busy="true">${head}<div class="ps-tiles">${'<span class="ps-tile wait"></span>'.repeat(4)}</div>`
+    return `<div class="ps-gen" id="ps-gen-box" aria-busy="true">${head}<div class="ps-tiles">${'<span class="ps-tile wait"></span>'.repeat(4)}</div>${ask}`
       + `<div class="ps-gen-foot"><span role="status">Drawing 4 icons…</span> <span id="ps-gen-t">${n} s</span><span class="ps-sp"></span>`
       + '<button type="button" class="ps-btn" id="ps-gen-cancel">Cancel</button></div></div>';
   }
   if (g.st === 'cands') {
     const tiles = g.svgs.map((u, i) => `<button type="button" class="ps-tile${g.pick === i ? ' on' : ''}" id="ps-gt-${i}" role="radio" aria-checked="${g.pick === i}"`
       + ` tabindex="${(g.pick < 0 ? i === 0 : g.pick === i) ? 0 : -1}" data-gt="${i}"><img src="${esc(u.url)}" alt="Icon ${i + 1}"></button>`).join('');
-    return `<div class="ps-gen" id="ps-gen-box">${head}<div class="ps-tiles" role="radiogroup" aria-label="Generated icons">${tiles}</div>`
+    return `<div class="ps-gen" id="ps-gen-box">${head}<div class="ps-tiles" role="radiogroup" aria-label="Generated icons">${tiles}</div>${ask}`
       + `<div class="ps-gen-foot"><span role="status">${g.pick >= 0 ? `Icon ${g.pick + 1} picked: it becomes the image when you save.` : 'Pick one. Nothing changes until you save.'}</span>`
       + '<span class="ps-sp"></span><button type="button" class="ps-btn" id="ps-gen-more">More ideas</button></div></div>';
   }
@@ -19102,7 +19112,7 @@ function psGenHtml(pj, d) {
       : g.code === 'busy' ? 'Nothing was changed. Try again in a minute, or upload an image.'
       : 'Nothing was changed. Try again, or upload an image.';
   }
-  return `<div class="ps-gen" id="ps-gen-box">${head}<div class="ps-gen-msg" role="status">${esc(msg)}<small>${esc(small)}</small></div>`
+  return `<div class="ps-gen" id="ps-gen-box">${head}<div class="ps-gen-msg" role="status">${esc(msg)}<small>${esc(small)}</small></div>${ask}`
     + '<div class="ps-gen-foot"><span class="ps-sp"></span><button type="button" class="ps-btn" id="ps-gen-close">Close</button>'
     + '<button type="button" class="ps-btn" id="ps-gen-again">Try again</button></div></div>';
 }
@@ -19117,10 +19127,15 @@ function psLabelHex(pid) {
     return /^#[0-9a-f]{6}$/i.test(hex) ? hex : '';
   } catch (e) { return ''; }
 }
-async function psGenPost(pid, name, signal) {
+// P373: `ask`, what the person wants it to show, goes only when there is one.
+const PS_ASK_MAX = 200;
+const psAsk = (t) => Array.from(String(t || '').replace(/\s+/g, ' ').trim()).slice(0, PS_ASK_MAX).join('').trim();
+async function psGenPost(pid, name, signal, ask) {
   let r;
+  const body = { projectId: pid, name, colour: psLabelHex(pid) };
+  if (psAsk(ask)) body.ask = psAsk(ask);
   try {
-    r = await fetch('/api/projects/icon-gen', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ projectId: pid, name, colour: psLabelHex(pid) }), signal });
+    r = await fetch('/api/projects/icon-gen', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal });
   } catch (e) {
     if (signal && signal.aborted) throw e;
     return { error: 'network' };
@@ -19234,12 +19249,22 @@ function psOnce(pid, d, focus) {
       const pj = projectById(pid);
       if (!pj) { finish(null); return; }
       const a = keep || (dlg.contains(document.activeElement) ? document.activeElement.id || '' : '');
-      const sel = dlg.querySelector('#ps-name');
-      const caret = sel && document.activeElement === sel ? [sel.selectionStart, sel.selectionEnd] : null;
+      const sel = document.activeElement;
+      const caret = sel && dlg.contains(sel) && (sel.id === 'ps-name' || sel.id === 'ps-gen-ask') ? [sel.selectionStart, sel.selectionEnd] : null;
       dlg.innerHTML = psDialogHtml(pj, d, phone);
       wire(pj);
       const f = a && dlg.querySelector('#' + CSS.escape(a));
-      if (f) { f.focus(); if (caret && f.id === 'ps-name') f.setSelectionRange(caret[0], caret[1]); }
+      if (f) { f.focus(); if (caret && f.id === sel.id) f.setSelectionRange(caret[0], caret[1]); }
+      askFit();
+    };
+    const askFit = () => {
+      const t = dlg.querySelector('#ps-gen-ask');
+      if (!t) return;
+      t.style.height = '';
+      const max = parseFloat(getComputedStyle(t).maxHeight) || 0;
+      const want = t.scrollHeight + t.offsetHeight - t.clientHeight;
+      if (want > t.offsetHeight) t.style.height = Math.min(want, max || want) + 'px';
+      t.style.overflowY = max && want > max ? 'auto' : '';
     };
     // The name's note and Save follow each key without redrawing the field.
     const nameState = (pj) => {
@@ -19280,10 +19305,10 @@ function psOnce(pid, d, focus) {
       const was = dlg.contains(document.activeElement) ? document.activeElement.id : '';
       const g = { st: 'busy', t0: Date.now(), ctl: new AbortController(), prev: d.gen && d.gen.st === 'cands' ? d.gen : null, timedOut: false };
       d.gen = g;
-      paint(was === 'ps-gen' ? 'ps-gen' : 'ps-gen-cancel');
+      paint(was === 'ps-gen' || was === 'ps-gen-ask' ? was : 'ps-gen-cancel');
       const tm = setTimeout(() => { g.timedOut = true; g.ctl.abort(); }, PS_GEN_WAIT);
       let res = null;
-      try { res = await psGenPost(pid, psName(d.name) || pj.name, g.ctl.signal); }
+      try { res = await psGenPost(pid, psName(d.name) || pj.name, g.ctl.signal, d.ask); }
       catch (e) { res = g.timedOut ? { error: 'timeout', agent: (d.genInfo && d.genInfo.agent) || '' } : null; }
       finally { clearTimeout(tm); }
       if (done || d.gen !== g || !res) return;   // cancelled, or the dialog closed
@@ -19296,6 +19321,7 @@ function psOnce(pid, d, focus) {
       // Focus moves to the answer from where the drawing was asked (or Cancel,
       // which is gone); elsewhere, as in the name, it stays.
       const now = dlg.contains(document.activeElement) ? document.activeElement.id : '';
+      // From the description (P373) it stays there, to change it and draw again.
       const asked = !now || now === 'ps-gen' || now === 'ps-gen-cancel';
       paint(!asked ? '' : d.gen.st === 'cands' ? 'ps-gt-0' : d.gen.st === 'failed' ? 'ps-gen-again' : 'ps-gen');
     };
@@ -19368,6 +19394,26 @@ function psOnce(pid, d, focus) {
       gb('ps-gen-more', () => genStart(pj));
       gb('ps-gen-again', () => genStart(pj));
       gb('ps-gen-close', () => { d.gen = null; paint('ps-gen'); });
+      // P373: one line that grows to two; a line break (typed or pasted) is a space, Enter draws.
+      const askEl = dlg.querySelector('#ps-gen-ask');
+      if (askEl) {
+        askEl.oninput = () => {
+          if (/[\r\n]/.test(askEl.value)) {
+            const at = askEl.selectionStart;
+            askEl.value = askEl.value.replace(/\r\n|[\r\n]/g, ' ');
+            askEl.setSelectionRange(at, at);
+          }
+          d.ask = askEl.value; askFit();
+        };
+        askEl.onkeydown = (ev) => {
+          if (ev.key !== 'Enter' || ev.isComposing || ev.shiftKey || ev.altKey || ev.ctrlKey || ev.metaKey) {
+            if (ev.key === 'Enter' && !ev.isComposing) ev.preventDefault();
+            return;
+          }
+          ev.preventDefault();
+          genStart(pj);
+        };
+      }
       dlg.querySelectorAll('[data-gt]').forEach(t => {
         const i = +t.getAttribute('data-gt');
         t.onclick = () => genPick(i);
@@ -19431,7 +19477,7 @@ function psOnce(pid, d, focus) {
 async function projSettings(pid, opts) {
   const pj = projectById(pid);
   if (!pj || !pj.registered || pj.id === UNASSIGNED_ID) return;
-  const d = { name: pj.name, choice: pj.icon ? 'image' : 'square', file: null, touched: false, busy: false, nameErr: '', iconErr: '', gen: null, genInfo: undefined };
+  const d = { name: pj.name, choice: pj.icon ? 'image' : 'square', file: null, touched: false, busy: false, nameErr: '', iconErr: '', gen: null, genInfo: undefined, ask: '' };
   let focus = opts && opts.rename ? 'rename' : '';
   for (;;) {
     const got = await psOnce(pid, d, focus);

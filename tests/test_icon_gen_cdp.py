@@ -103,7 +103,8 @@ async function main() {
       const [x, y] = await evalIn(`(() => { const e = document.querySelector(${JSON.stringify(sel)}); if (!e) throw new Error('nothing to click: ${sel}'); e.scrollIntoView({ block: 'nearest' }); const r = e.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; })()`);
       await clickAt(x, y);
     };
-    const key = async (k) => { for (const type of ['keyDown', 'keyUp']) await c.send('Input.dispatchKeyEvent', { type, key: k, code: k, windowsVirtualKeyCode: { Escape: 27, ArrowRight: 39, ArrowLeft: 37 }[k] || 0 }, sessionId); };
+    const key = async (k) => { for (const type of ['keyDown', 'keyUp']) await c.send('Input.dispatchKeyEvent', { type, key: k, code: k, windowsVirtualKeyCode: { Escape: 27, ArrowRight: 39, ArrowLeft: 37, Enter: 13 }[k] || 0 }, sessionId); };
+    const type = (text) => c.send('Input.insertText', { text }, sessionId);
     const shot = async (name) => {
       if (!A.shots) return;
       for (const th of ['light', 'dark']) {
@@ -119,7 +120,7 @@ async function main() {
     await c.send('Page.navigate', { url: A.base + '/' }, sessionId);
     await until('typeof PROJECTS !== "undefined" && !!PROJECTS && PROJECTS.projects.length > 1', 30000);
     await until('window.ensBooted === true', 30000);
-    return { evalIn, until, click, clickAt, key, shot, close: () => c.send('Target.closeTarget', { targetId }) };
+    return { evalIn, until, click, clickAt, key, type, shot, close: () => c.send('Target.closeTarget', { targetId }) };
   };
   const P = A.ids;
   const R = `(e => { if (!e) return null; const r = e.getBoundingClientRect(); return { x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width * 10) / 10, h: Math.round(r.height * 10) / 10, r: Math.round(r.right), b: Math.round(r.bottom) }; })`;
@@ -231,6 +232,63 @@ async function main() {
     out.getOffClicked = await q.evalIn(GEN);
     await q.evalIn(`(() => { window.fetch = window.__f; return 0; })()`);
     await q.key('Escape');
+    await sleep(200);
+    // ---- P373: what the icon should show
+    await q.evalIn(`(() => { window.__asks = []; const f = window.fetch; window.fetch = (u, o) => {
+      if (String(u) === '/api/projects/icon-gen' && o && o.body) window.__asks.push(JSON.parse(o.body)); return f(u, o); }; return 0; })()`);
+    const ASK = `(() => { const t = document.querySelector('#modal #ps-gen-ask'); const a = document.activeElement;
+      return t && { value: t.value, ph: t.placeholder, label: t.getAttribute('aria-label'), ro: t.readOnly, max: t.maxLength, h: Math.round(t.getBoundingClientRect().height),
+        w: Math.round(t.getBoundingClientRect().width), boxW: Math.round(document.querySelector('#modal #ps-gen-box').getBoundingClientRect().width),
+        above: t.getBoundingClientRect().bottom <= document.querySelector('#modal .ps-gen-foot').getBoundingClientRect().top,
+        below: t.getBoundingClientRect().top >= (document.querySelector('#modal .ps-tiles, #modal .ps-gen-msg') || t).getBoundingClientRect().bottom,
+        focus: a && a.id, bodies: window.__asks.slice() }; })()`;
+    await open(q, P.Wheels);
+    mode('ok');
+    await q.click('#modal #ps-gen');
+    await q.until(`document.querySelectorAll('#modal button.ps-tile').length === 4`, 8000);
+    await sleep(150);
+    out.askEmpty = await q.evalIn(ASK);
+    await q.shot('ask-empty');
+    await q.click('#modal #ps-gen-ask');
+    await q.type('a "compass",\nflat  and simple');
+    await sleep(100);
+    out.askTyped = await q.evalIn(ASK);
+    mode('slow:1.5');
+    await q.key('Enter');
+    await sleep(500);
+    out.askBusy = await q.evalIn(ASK);
+    await q.key('Enter');   // while drawing: nothing more
+    await q.until(`document.querySelectorAll('#modal button.ps-tile').length === 4`, 8000);
+    await sleep(150);
+    out.askDrawn = await q.evalIn(ASK);
+    await q.shot('ask-filled');
+    await q.type(' with a needle pointing north-east, drawn in thick strokes, nothing else');
+    await sleep(100);
+    out.askTwo = await q.evalIn(ASK);
+    await q.type(' and again and again, longer than two lines of this box can hold at all.');
+    await sleep(100);
+    out.askMore = await q.evalIn(ASK);
+    // Kept while the settings are open: a failure, Close, then Generate… sends it again.
+    mode('timeout');
+    await q.click('#modal #ps-gen-more');
+    await q.until(`!!document.querySelector('#modal #ps-gen-again')`, 5000);
+    out.askFailed = await q.evalIn(ASK);
+    await q.click('#modal #ps-gen-close');
+    await sleep(150);
+    out.askClosed = await q.evalIn(ASK);
+    mode('ok');
+    await q.click('#modal #ps-gen');
+    await q.until(`document.querySelectorAll('#modal button.ps-tile').length === 4`, 8000);
+    out.askAgain = await q.evalIn(ASK);
+    // Emptied: none is sent.
+    await q.evalIn(`(() => { const t = document.querySelector('#modal #ps-gen-ask'); t.focus(); t.select(); return 0; })()`);
+    await q.key('Delete');
+    await q.evalIn(`(() => { const t = document.querySelector('#modal #ps-gen-ask'); t.value = '   '; t.dispatchEvent(new Event('input')); return 0; })()`);
+    await q.key('Enter');
+    await sleep(300);
+    await q.until(`document.querySelectorAll('#modal button.ps-tile').length === 4`, 8000);
+    out.askEmptied = await q.evalIn(ASK);
+    await q.key('Escape');
     await q.close();
     // ---- a phone
     const ph = await page(390, 844, true);
@@ -283,9 +341,9 @@ class GenerateInChrome(unittest.TestCase):
         mode_file.write_text("ok")
         cls.calls = []
 
-        def fake_generate(key, name, about, timeout=60, colour=""):
+        def fake_generate(key, name, about, timeout=60, colour="", ask=""):
             m = mode_file.read_text().strip()
-            cls.calls.append((key, name, about, m, colour))
+            cls.calls.append((key, name, about, m, colour, ask))
             if m.startswith("slow:"):
                 time.sleep(float(m[5:]))
             if m == "timeout":
@@ -468,6 +526,37 @@ class GenerateInChrome(unittest.TestCase):
         self.assertEqual((tiles[0]["x"], tiles[-1]["r"]), (row["x"], row["r"]), "the tiles spread across the box")
         self.assertEqual(self.g("phPicked")["img"], "drawn by claude haiku, not saved yet")
         self.assertEqual(self.g("phFailed")["btns"], ["Close", "Try again"])
+
+    def test_a_description_goes_with_generate(self):
+        """P373: the box under the icons; Enter draws from it; empty sends none."""
+        e = self.g("askEmpty")
+        self.assertEqual((e["value"], e["ro"], e["max"], e["label"]), ("", False, 200, "What should the icon show?"))
+        self.assertEqual(e["ph"], "What should it show? e.g. a compass, a rocket, flat and simple")
+        self.assertTrue(e["above"] and e["below"], e)
+        self.assertEqual(e["h"], 34)
+        self.assertNotIn("ask", e["bodies"][0], "Generate… with the box empty sends no ask")
+        t = self.g("askTyped")
+        self.assertEqual(t["value"], 'a "compass", flat  and simple', "a line break is a space")
+        self.assertEqual(t["focus"], "ps-gen-ask")
+        b = self.g("askBusy")
+        self.assertTrue(b["ro"], "read-only while drawing")
+        self.assertEqual(b["focus"], "ps-gen-ask", "Enter keeps you in the box")
+        self.assertEqual(b["bodies"][1]["ask"], 'a "compass", flat and simple', "Enter sends it, spaces collapsed")
+        d = self.g("askDrawn")
+        self.assertEqual((d["ro"], d["focus"], len(d["bodies"])), (False, "ps-gen-ask", 2), "a second Enter while drawing sent nothing")
+        self.assertEqual(self.g("askTwo")["h"], 52, "two lines")
+        self.assertEqual(self.g("askMore")["h"], 54, "never more than two")
+        self.assertEqual(self.g("askFailed")["value"], self.g("askMore")["value"], "shown under the failure too")
+        self.assertIsNone(self.g("askClosed"))
+        again = self.g("askAgain")
+        self.assertEqual(again["value"], self.g("askMore")["value"])
+        self.assertEqual(again["bodies"][-1]["ask"], " ".join(self.g("askMore")["value"].split())[:200])
+        self.assertNotIn("ask", self.g("askEmptied")["bodies"][-1], "emptied: none sent")
+        # The hub got them, made safe.
+        asks = [c[5] for c in self.calls if c[0] == self.ids["Wheels"]][:5]   # the phone draws Wheels after
+        self.assertEqual(asks[0], "")
+        self.assertEqual(asks[1], "a 'compass', flat and simple")
+        self.assertEqual(asks[-1], "")
 
     def test_no_errors(self):
         self.assertEqual(self.g("errors"), [])
