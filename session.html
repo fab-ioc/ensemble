@@ -11749,12 +11749,18 @@ $('#thr-back').addEventListener('click', () => { const h = embedHost(); if (h) h
 // poll that would); the end stays where it is. That draw waits until the
 // scroll has settled (#387): drawn while a smooth scroll was still on its
 // way, it stopped the scroll with a jump and the chat danced.
-let END_DUE = false, SETTLE_TIMER = 0;
+let END_DUE = false, SETTLE_TIMER = 0, LAST_TOP = 0;
 function msgsScrolled() {
   const box = $('#msgs');
   if (!box.clientHeight) return;
+  // The reader's scroll, still moving and heading down at the end, keeps the
+  // end when the chat grew below it meanwhile (a picture loading, a new
+  // message): the end it heads for is the new one, so the settle follows it
+  // (#387).
+  const going = scrollMoving() && box.scrollTop >= LAST_TOP - 0.5;
+  LAST_TOP = box.scrollTop;
   if (Date.now() - USER_SCROLL_T < 1000) SCROLL_T = Date.now();
-  const at = nearEnd(box);
+  const at = nearEnd(box) || (STICK && going);
   if (at && !STICK) END_DUE = true;
   STICK = at;
   if (!at) END_DUE = false;

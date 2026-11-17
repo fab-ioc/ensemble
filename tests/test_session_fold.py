@@ -154,7 +154,7 @@ out.heldNone = [...foldHeld(common, [{ mid: 'm1', from: 'claude', quote: 'absent
     THREADED: false, THR_BEFORE: 0, THR_AFTER: 0, ROOM_WIN: null, SOLO_MODE: false, SOLO_WIN: null, SOLO_MORE: false, DRAW_HELD: false,
     Date, setTimeout: f => { due = f; return 1; }, clearTimeout: () => { due = null; } };
   vm.createContext(sctx);
-  vm.runInContext(`var STICK = false, LAST_ITEMS = [1], SEEN = null, NEW_N = 3, USER_SCROLL_T = -Infinity, SCROLL_T = -Infinity, END_DUE = false, SETTLE_TIMER = 0;
+  vm.runInContext(`var STICK = false, LAST_ITEMS = [1], SEEN = null, NEW_N = 3, USER_SCROLL_T = -Infinity, SCROLL_T = -Infinity, END_DUE = false, SETTLE_TIMER = 0, LAST_TOP = 0;
     const scrollMoving = () => Date.now() - SCROLL_T < 150;
     const nearEnd = box => box.scrollTop + box.clientHeight >= box.scrollHeight - 50;\n` + scrolled, sctx);
   const step = (top, settle = true) => {
@@ -173,6 +173,25 @@ out.heldNone = [...foldHeld(common, [{ mid: 'm1', from: 'claude', quote: 'absent
   vm.runInContext('SCROLL_T = -Infinity', sctx);
   const f = due; due = null; f();
   out.scrolledMoving = { during: [stepMoving[2] - w0, stepMoving2[2] - w0], after: renders - w0, top: sbox.scrollTop };
+  // The chat grows below while that scroll still heads down at the end (a
+  // picture loading, a new message): the end is still the one it heads for,
+  // and the settle draws once and follows it (#387, review 2).
+  vm.runInContext('USER_SCROLL_T = Date.now()', sctx);
+  sbox.scrollHeight = 5000; step(1000);
+  const g0 = renders;
+  const grew1 = step(4460, false);
+  sbox.scrollHeight = 5500;
+  const grew2 = step(4480, false);
+  vm.runInContext('SCROLL_T = -Infinity', sctx);
+  { const f = due; due = null; f(); }
+  out.scrolledGrew = { stick: [grew1[1], grew2[1]], during: grew2[2] - g0, after: renders - g0, top: sbox.scrollTop, stick2: vm.runInContext('STICK', sctx) };
+  // Scrolling up from there leaves the end as before.
+  vm.runInContext('USER_SCROLL_T = Date.now()', sctx);
+  out.scrolledGrewUp = step(5000, false)[1];
+  sbox.scrollHeight = 6000;
+  out.scrolledGrewUp = [out.scrolledGrewUp, step(4000, false)[1]];
+  vm.runInContext('SCROLL_T = -Infinity', sctx);
+  if (due) { const f = due; due = null; f(); }
 }
 
 // Sending draws the hub's receipt through the one redraw, which keeps the
@@ -292,6 +311,19 @@ class FoldALongConversation(unittest.TestCase):
         self.assertEqual(m["during"], [0, 0])
         self.assertEqual(m["after"], 1)
         self.assertEqual(m["top"], 5000)
+
+    def test_a_moving_scroll_at_the_end_follows_what_grew_below(self):
+        # #387 review 2: the chat grows 500 px between two wheel events after the
+        # first reached the end; the scroll still heads down, so it stays at the
+        # end, and the settle draws once and lands at the new end
+        g = self.r["scrolledGrew"]
+        self.assertEqual(g["stick"], [True, True])
+        self.assertEqual(g["during"], 0)
+        self.assertEqual(g["after"], 1)
+        self.assertEqual(g["top"], 5500)
+        self.assertTrue(g["stick2"])
+        # scrolling up from the end still leaves it
+        self.assertEqual(self.r["scrolledGrewUp"], [True, False])
 
     def test_a_send_shows_through_the_one_redraw(self):
         kept = '[["send:a",{"s":{"key":"send:a","text":"hello","state":"delivered","at":1},"gen":4}]]'
