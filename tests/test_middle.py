@@ -93,13 +93,14 @@ class TheCrumbs(unittest.TestCase):
     def test_home_has_none(self):
         self.assertEqual(self.got["home"], [])
 
-    def test_a_po_screen_is_project_then_po(self):
-        self.assertEqual(self.levels("po"), [("project", "Motors", False), ("po", "PO", True)])
-        self.assertEqual(self.levels("poTool"), [("project", "Motors", False), ("po", "PO", False), ("tool", "Board", True)])
-        self.assertEqual(self.levels("poFile"), [("project", "Motors", False), ("po", "PO", False),
+    def test_a_po_screen_is_the_project_no_po_crumb(self):
+        # #386 (P372): the project is its PO's conversation; no "› PO".
+        self.assertEqual(self.levels("po"), [("project", "Motors", True)])
+        self.assertEqual(self.levels("poTool"), [("project", "Motors", False), ("tool", "Board", True)])
+        self.assertEqual(self.levels("poFile"), [("project", "Motors", False),
                                                  ("tool", "Changes", False), ("file", "main.py", True)])
         self.assertEqual(self.got["poFile"][-1]["title"], "src\\app\\main.py", "the whole path in the tooltip")
-        self.assertIn("Back to the list", self.got["poFile"][2]["title"])
+        self.assertIn("Back to the list", self.got["poFile"][1]["title"])
 
     def test_a_project_without_a_po_is_where_you_are(self):
         self.assertEqual(self.levels("plain"), [("project", "Motors", True)])
@@ -233,12 +234,12 @@ async function main() {
       await projUp(p);
       await poReady(p); await sleep(400);
       out.projectUp = await p.evalIn(MID);
-      // A PO screen's tool, and the PO crumb that goes back to the chat.
+      // A PO screen's tool, and the PO's tab that goes back to the chat (#386: no PO crumb).
       await p.evalIn("pdReveal('board'); 0");
       await sleep(400);
       out.poTool = await p.evalIn(MID);
       await p.shot('middle-1440-po-board');
-      await click(p, '#bar-crumbs button[data-crumb="po"]');
+      await click(p, '#po-dock .dk-tab[data-dk-tab="po-chat"]');
       await sleep(400);
       out.poUp = await p.evalIn(MID);
       // The PO's row in the list over an open task: the PO's conversation takes the middle.
@@ -256,8 +257,10 @@ async function main() {
       out.plainUp = await p.evalIn(MID);
       // Every theme: the crumbs keep their contrast (colours read from the page).
       out.themes = {};
+      // (A task's tool: task › tool, a button and the text; #386: a PO screen has no PO crumb.)
       await go(p, A.proj); await poReady(p);
-      await p.evalIn("pdReveal('board'); 0"); await sleep(300);
+      await openTask(p);
+      await click(p, '#po-dock .dk-strip-btn[data-dk-auto="changes"]'); await sleep(300);
       for (const t of ['light', 'dark', 'dim', 'paper', 'contrast', 'fjord', 'intellij-dark']) {
         await p.evalIn(`document.documentElement.dataset.theme = ${JSON.stringify(t)}; 0`);
         await sleep(120);
@@ -572,7 +575,7 @@ class TheMiddle(unittest.TestCase):
     def test_the_breadcrumb_names_where_you_are(self):
         po, task = self.got["po1440"], self.got["task1440"]
         self.assertEqual(po["project"], "Motors")
-        self.assertEqual(po["trail"], [["po", "PO", False]])
+        self.assertEqual(po["trail"], [], "#386 (P372): no PO crumb")
         self.assertEqual(task["project"], "Motors")
         self.assertEqual(len(task["trail"]), 1)
         level, text, button = task["trail"][0]
@@ -592,14 +595,14 @@ class TheMiddle(unittest.TestCase):
         g = self.got["projectUp"]
         self.assertFalse(g["open"], "the task gave the middle back")
         self.assertEqual(g["front"], "po-chat")
-        self.assertEqual(g["trail"], [["po", "PO", False]])
+        self.assertEqual(g["trail"], [])
 
     def test_a_po_tool_goes_back_to_the_po_chat(self):
         self.assertEqual(self.got["poTool"]["fly"], "board")
-        self.assertEqual(self.got["poTool"]["trail"], [["po", "PO", True], ["tool", "Board", False]])
+        self.assertEqual(self.got["poTool"]["trail"], [["tool", "Board", False]])
         self.assertIsNone(self.got["poUp"]["fly"])
         self.assertEqual(self.got["poUp"]["front"], "po-chat")
-        self.assertEqual(self.got["poUp"]["trail"], [["po", "PO", False]])
+        self.assertEqual(self.got["poUp"]["trail"], [])
 
     def test_the_po_row_over_a_task_gives_the_middle_to_the_po(self):
         g = self.got["poRow"]

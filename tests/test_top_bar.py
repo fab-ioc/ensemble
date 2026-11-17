@@ -310,7 +310,7 @@ class TheTopBar(unittest.TestCase):
         self.assertEqual(self.order(self.got["po"]),
                          ["bar-home", "proj-switch", "bar-here", "search", "me-btn", "new-btn"])
         self.assertEqual(self.got["po"]["name"], "Motors", "the breadcrumb starts at the project: its name is the switcher (#303)")
-        self.assertEqual(self.got["po"]["trail"], ["PO"], "then its PO's conversation")
+        self.assertEqual(self.got["po"]["trail"], [], "no PO crumb: the project is its PO's conversation (#386, P372)")
         self.assertLessEqual(self.got["po"]["header"], 50, "one row on a laptop")
         self.assertEqual(self.order(self.got["po768"]), self.order(self.got["po"]), "the same at 768")
         self.assertLessEqual(self.got["po768"]["header"], 50)

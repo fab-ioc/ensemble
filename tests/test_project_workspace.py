@@ -44,10 +44,22 @@ out.unpinnedE = W.putAway(s, 'E').map(x => x.id).sort();
 out.unknown = W.settle(s, 'T', [o(chat('x'), null)], 7);
 out.none = W.settle(s, '', [o(e1, 'E')], 8);
 
-// A window's item keeps out: true; a reload's state comes back whole.
+// Opened on Trading's screen though Ensemble's (adopt): it stays there, settled
+// again, and goes with Ensemble's at the next switch.
+const s5 = W.load(null);
+W.settle(s5, 'T', [], 1);
+const ex = file('/e/NOTES.md', 'E');
+W.adopt(s5, ex.id);
+out.adoptStays = W.settle(s5, 'T', [o(ex, 'E')], 2);
+out.adoptCounts = W.overflow(s5, 'T', [o(ex, 'E')], 'chat:new');
+out.adoptSwitch = W.settle(s5, 'U', [o(ex, 'E')], 3);
+out.adoptAfter = { here: s5.here, E: W.putAway(s5, 'E').map(x => x.id) };
+out.adoptBack = W.settle(s5, 'T', [o(ex, 'E')], 4);
+
+// A window's item keeps out: true, a stack's front tab front: true; a reload's state comes back whole.
 const s2 = W.load(null);
 W.settle(s2, 'E', [], 1);
-W.settle(s2, 'T', [o({ ...e1, out: true }, 'E')], 2);
+W.settle(s2, 'T', [o({ ...e1, out: true }, 'E'), o({ ...chat('r2'), front: true }, 'E')], 2);
 const back = W.load(JSON.stringify(s2));
 out.reload = { cur: back.cur, E: W.putAway(back, 'E') };
 
@@ -116,8 +128,18 @@ class ProjectWorkspaceStore(unittest.TestCase):
         self.assertEqual(self.o["unknown"], {"away": [], "back": []})
         self.assertEqual(self.o["none"], {"away": [], "back": []})
 
+    def test_a_panel_opened_here_stays_until_the_switch(self):
+        o = self.o
+        self.assertEqual(o["adoptStays"], {"away": [], "back": []})
+        self.assertIsNone(o["adoptCounts"])
+        self.assertEqual(o["adoptSwitch"]["away"], ["file:/e/NOTES.md"])
+        self.assertEqual(o["adoptAfter"], {"here": [], "E": ["file:/e/NOTES.md"]})
+        # Back on Trading, nothing of Ensemble's comes along; open again, it goes.
+        self.assertEqual(o["adoptBack"]["away"], ["file:/e/NOTES.md"])
+
     def test_a_window_and_a_reload(self):
-        self.assertEqual(self.o["reload"], {"cur": "T", "E": [{"id": "chat:r1", "kind": "chat", "room": "r1", "out": True}]})
+        self.assertEqual(self.o["reload"], {"cur": "T", "E": [{"id": "chat:r1", "kind": "chat", "room": "r1", "out": True},
+                                                              {"id": "chat:r2", "kind": "chat", "room": "r2", "front": True}]})
 
     def test_the_ninth_tab_closes_the_least_recently_shown_unpinned(self):
         o = self.o
@@ -137,7 +159,7 @@ class ProjectWorkspaceStore(unittest.TestCase):
 
     def test_what_it_cannot_use_is_left_out(self):
         a, b, c = self.o["bad"]
-        self.assertEqual(a, {"v": 1, "cur": "", "pins": [], "seen": {}, "ctxs": {}})
+        self.assertEqual(a, {"v": 1, "cur": "", "pins": [], "here": [], "seen": {}, "ctxs": {}})
         self.assertEqual(b, a)
         self.assertEqual(c["cur"], "")
         self.assertEqual(c["pins"], ["a"])
