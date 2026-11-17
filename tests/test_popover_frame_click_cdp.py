@@ -12,6 +12,10 @@ never .click() from script, for every click that matters: the point is the
 real focus move into the PO chat's frame. Clicks inside a popover, and the
 tray's slider and its "Back to normal", leave it open.
 
+Review 1: a press on the avatar, Create or the switcher (whose handlers stop
+their clicks) closes the tray too; with the search results and the tray both
+open, Esc in the box closes the results first and the tray on the next one.
+
 Skipped without Node or Chrome.
 """
 from __future__ import annotations
@@ -75,9 +79,9 @@ async function main() {
       await mouse('mousePressed', p); await mouse('mouseReleased', p); await sleep(200);
     };
     const click = async sel => { const p = await at(sel); if (!p || !p.hit) throw new Error('cannot press ' + sel + ' ' + JSON.stringify(p)); await press(p); return p; };
-    const key = async (k, code, vk) => {
-      await send('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: k, code, windowsVirtualKeyCode: vk }, sessionId);
-      await send('Input.dispatchKeyEvent', { type: 'keyUp', key: k, code, windowsVirtualKeyCode: vk }, sessionId);
+    const key = async (k, code, vk, modifiers = 0) => {
+      await send('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: k, code, windowsVirtualKeyCode: vk, modifiers }, sessionId);
+      await send('Input.dispatchKeyEvent', { type: 'keyUp', key: k, code, windowsVirtualKeyCode: vk, modifiers }, sessionId);
       await sleep(150);
     };
     // A real press in the PO chat's frame (its message list, not a control).
@@ -218,6 +222,48 @@ async function main() {
       if (h && h.closest('header') && !h.closest('button, a, input')) return { x, y, hit: true, what: h.tagName + '.' + h.className }; } return null; })()`);
     if (bar.point) await press(bar.point);
     bar.after = await shown('#me-menu');
+
+    // Review 1: the avatar, Create and the switcher stop their clicks; a real
+    // press on one still closes the tray, and opens its own menu.
+    const swap = got.swap = {};
+    for (const [name, btn, menu] of [['me', '#me-btn', '#me-menu'], ['create', '#new-btn', '#create-menu'], ['proj', '#proj-switch', '#proj-menu']]) {
+      const o = swap[name] = {};
+      await closeAll();
+      await click('#usage-chip');
+      o.tray = await shown('#usage-tray');
+      await click(btn);
+      o.trayAfter = await shown('#usage-tray');
+      o.menu = await shown(menu);
+      await closeAll();
+    }
+
+    // Review 1: with the search results and the tray both open and focus in
+    // the box, the first Esc closes only the results, the second the tray.
+    // Real input cannot click the box without closing the tray (the box is
+    // outside it), and the chip's press closes the results (a press outside
+    // the search). So: type the query (real), press the chip (real), then
+    // Shift+Tab back to the box (real keys); its focus brings the results back.
+    // Only if Tab cannot reach the box is it focused from script (escVia says).
+    const esc = got.esc = {};
+    await closeAll();
+    await click('#search');
+    await send('Input.insertText', { text: 'Brakepad' }, sessionId);
+    esc.results = await until(`!document.getElementById('find-pop').hidden && !!document.querySelector('#find-pop [id^="fd-"]')`);
+    await click('#usage-chip');
+    esc.trayOpened = await shown('#usage-tray');
+    esc.via = 'shift-tab';
+    for (let i = 0; i < 8 && (await evalIn(`document.activeElement && document.activeElement.id`)) !== 'search'; i++)
+      await key('Tab', 'Tab', 9, 8);
+    if ((await evalIn(`document.activeElement && document.activeElement.id`)) !== 'search') {
+      esc.via = 'script';
+      await evalIn(`document.getElementById('search').focus()`);
+    }
+    await until(`!document.getElementById('find-pop').hidden`, 3000);
+    esc.before = await evalIn(`({ find: !document.getElementById('find-pop').hidden, tray: !document.getElementById('usage-tray').hidden, focus: document.activeElement && document.activeElement.id })`);
+    await key('Escape', 'Escape', 27);
+    esc.first = await evalIn(`({ find: !document.getElementById('find-pop').hidden, tray: !document.getElementById('usage-tray').hidden, focus: document.activeElement && document.activeElement.id })`);
+    await key('Escape', 'Escape', 27);
+    esc.second = await evalIn(`({ find: !document.getElementById('find-pop').hidden, tray: !document.getElementById('usage-tray').hidden, focus: document.activeElement && document.activeElement.id })`);
     console.log(JSON.stringify(got));
   } finally { ch.kill(); }
 }
@@ -375,6 +421,22 @@ class PopoversCloseOnAFrameClick(unittest.TestCase):
         self.assertTrue(b["open"], b)
         self.assertIsNotNone(b["point"], b)
         self.assertFalse(b["after"], b)
+
+    def test_the_avatar_create_and_switcher_close_the_tray(self):
+        for name, o in self.got["swap"].items():
+            with self.subTest(button=name):
+                self.assertTrue(o["tray"], o)
+                self.assertFalse(o["trayAfter"], o)
+                self.assertTrue(o["menu"], o)
+
+    def test_esc_in_search_closes_the_results_first_then_the_tray(self):
+        e = self.got["esc"]
+        self.assertTrue(e["results"], e)
+        self.assertTrue(e["trayOpened"], e)
+        self.assertEqual(e["via"], "shift-tab", e)
+        self.assertEqual(e["before"], {"find": True, "tray": True, "focus": "search"}, e)
+        self.assertEqual(e["first"], {"find": False, "tray": True, "focus": "search"}, e)
+        self.assertEqual(e["second"], {"find": False, "tray": False, "focus": "usage-chip"}, e)
 
 
 if __name__ == "__main__":

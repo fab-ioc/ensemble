@@ -23317,10 +23317,11 @@ document.getElementById('usage-pace-reset')?.addEventListener('click', () => {
   renderUsage();
   usagePaceSave(natural);
 });
+// Captured: the avatar, Create and the project switcher stop their clicks.
 document.addEventListener('click', (ev) => {
   if (ev.target.closest('#usage-chip') || ev.target.closest('#usage-tray')) return;
   $('#usage-tray').hidden = true;
-});
+}, true);
 // The top bar's popovers close when you leave them, wherever you click (P370).
 // Most of the board is chat frames, and a click in one never reaches this page:
 // this window loses focus instead (as the PO's ⋯ menu does). Focus moving inside
@@ -24900,8 +24901,9 @@ document.addEventListener('keydown', (ev) => {
     ev.stopImmediatePropagation(); ev.preventDefault();
     return;
   }
-  // And the plan allowance's tray, focus back on its chip (P370).
-  if (ev.key === 'Escape' && !$('#usage-tray').hidden) {
+  // And the plan allowance's tray, focus back on its chip (P370), unless
+  // the Esc was already used (the search box's results close first).
+  if (ev.key === 'Escape' && !ev.defaultPrevented && !$('#usage-tray').hidden) {
     $('#usage-tray').hidden = true;
     const chip = $('#usage-chip');
     if (chip.offsetParent !== null) chip.focus(); else $('#me-btn').focus();
