@@ -6270,7 +6270,14 @@ function openDetail(sid, o) {
   {
     const r0 = rowBySid(sid);
     const cid = r0 && r0.roomId ? pdChatId(r0.roomId) : '';
-    if (cid && PD.dock && PD.rt.has(cid)) { try { PD.dock.reveal(cid); } catch (e) {} return; }
+    if (cid && PD.dock && PD.rt.has(cid)) {
+      PD.opening = true;
+      try { PD.dock.reveal(cid); } catch (e) {} finally { PD.opening = false; }
+      // #386: a task's own tab is where it opens: it is selected there (the
+      // tab's chat is lent to it, renderDetail). Another chat panel only
+      // comes on screen.
+      if (!pdTabFor(r0) || (sid === SELECTED_SID && document.body.classList.contains('detail-open'))) return;
+    }
     // A task of another project: the one open in the conversation's window
     // keeps that window (#346); the middle comes back here for this one.
     // A tool returning its own window to this panel already chose its owner:
@@ -6364,7 +6371,8 @@ function renderCostSection(r) {
   </div>`;
 }
 
-function closeDetail() {
+function closeDetail(o) {
+  const tab = pdTabNow() ? pdTaskTabId() : '';
   SELECTED_SID = null;
   TRANSCRIPT_SID = null;
   TRANSCRIPT_DATA = null;
@@ -6372,12 +6380,23 @@ function closeDetail() {
   CONV_DATA = null;
   const p = $('#detail-panel'); if (p) p.dataset.sig = '';
   document.body.classList.remove('detail-open');
+  // #386: no task open is the PO's tab in front, where the task's tab was in
+  // front of it; not when the page goes to another project (o.keepFront: its
+  // tabs are put away as they are, and come back so).
+  if (tab && !o?.keepFront) {
+    PD.opening = true;
+    try { if (PD.dock.frontOf('po-chat') === tab) PD.dock.activate('po-chat'); } catch (e) {} finally { PD.opening = false; }
+  }
   renderRows();
 }
 // The task closes by itself (Esc, archived, deleted): a phone goes home, to
 // its project's PO (#307); a desktop stays on the project (#129).
 function closeTask() {
-  if (phoneNow()) goHome(); else closeDetail();
+  if (phoneNow()) { goHome(); return; }
+  // #386: a task in its own tab closes with it (pdChatRemoved closes the task).
+  const tab = pdTabNow() ? pdTaskTabId() : '';
+  if (tab) { try { PD.dock.removePanel(tab); } catch (e) {} }
+  if (SELECTED_SID) closeDetail();
 }
 
 // --- Unified session detail --------------------------------------------------
@@ -6729,6 +6748,7 @@ function renderDetail() {
   if (!sid) { closeDetail(); return; }
   const r = rowBySid(sid);
   const panel = $('#detail-panel');
+  if (!panel) return;   // in a tab being closed (#386): it comes home first
   if (!r) {
     panel.dataset.sig = '';
     panel.dataset.shell = '';
@@ -6749,6 +6769,7 @@ function renderDetail() {
   const now = Date.now() / 1000;
 
   if (panel.dataset.shell !== sid) {
+    pdFrameReturn(panel);   // the last task's chat goes back to its tab (#386)
     panel.dataset.shell = sid;
     delete panel.dataset.topPending;
     // The last task's panes, wherever they are (a tool of the dock).
@@ -6817,7 +6838,11 @@ function renderDetail() {
       // Opened from @codex@18: at that agent.
       const ag = DETAIL_AGENT && DETAIL_AGENT.room === r.roomId ? '&agent=' + encodeURIComponent(DETAIL_AGENT.agent) : '';
       DETAIL_AGENT = null;
-      act.innerHTML = `<iframe class="dp-session" data-room="${esc(r.roomId)}" src="/session?id=${encodeURIComponent(r.roomId)}&embed=1${ag}" title="session" allow="clipboard-read; clipboard-write; microphone"></iframe>`;
+      // #386: a task with a tab of its own shows the tab's chat (its page kept).
+      if (pdTabFor(r) && pdTask() && pdFrameLend(act, r.roomId)) {
+        const f = act.querySelector('iframe.dp-session');
+        if (ag && f) f.src = '/session?id=' + encodeURIComponent(r.roomId) + '&embed=1' + ag;
+      } else act.innerHTML = `<iframe class="dp-session" data-room="${esc(r.roomId)}" src="/session?id=${encodeURIComponent(r.roomId)}&embed=1${ag}" title="session" allow="clipboard-read; clipboard-write; microphone"></iframe>`;
     }
   } else {
     const themeTok = (CHAT_THEME && CHAT_THEME.background) || '-';
@@ -6879,7 +6904,9 @@ function renderDetail() {
 function dpPlacePanes(panel) {
   const panes = panel && panel._panes;
   if (!panes) return false;
-  const docked = !!(PD.dock && panel.parentNode === PD.els['po-chat']);
+  // In the middle, or in the task's own tab (#386).
+  const at = panel.parentNode;
+  const docked = !!(PD.dock && at && (at === PD.els['po-chat'] || (at.classList && at.classList.contains('pd-chat-x'))));
   const tool = { changes: 'changes', workspace: 'workspace', spec: 'spec', details: 'spec' };
   ISSUE_TABS.forEach(t => {
     const x = panes[t.k];
@@ -14809,7 +14836,7 @@ function pdPopInKeepWindow(d, id, w) {
 }
 function pdTaskKeepOut() {
   const d = PD.dock;
-  if (!d || !pdTask()) return false;
+  if (!d || !pdMid()) return false;
   let w = null;
   try { w = d.popWindow('po-chat'); } catch (e) { w = null; }
   const r = rowBySid(SELECTED_SID);
@@ -15292,6 +15319,77 @@ function pdTaskWanted() {
   return !PD.failed && !!SELECTED_SID && document.body.classList.contains('detail-open');
 }
 function pdTask() { return pdTaskWanted() && !!PD.dock; }
+// #386: on a computer, a task of a project with a PO is a tab of its own,
+// after the PO's (the PO's tab stays first), not the middle. The task open
+// (SELECTED_SID) is the one whose tab holds the task panel. A phone, a task
+// of a project without a PO (Unassigned) and the PO's own task keep the middle.
+function pdTabFor(r) {
+  const d = PD.dock;
+  if (!d || d.narrow() || !r || !r.roomId || !r.headless || r.orphan) return false;
+  const pj = projectOfRoom(r.roomId) || wsProjectForRow(r);
+  const po = pj && poRowOf(pj);
+  return !!po && po.roomId !== r.roomId;
+}
+function pdTaskTabId() {
+  const r = SELECTED_SID ? rowBySid(SELECTED_SID) : null;
+  return r && r.roomId ? pdChatId(r.roomId) : '';
+}
+// The open task is in its tab now; else (pdMid) it is the middle's.
+function pdTabNow() { return pdTask() && pdTabFor(rowBySid(SELECTED_SID)) && PD.rt.has(pdTaskTabId()); }
+function pdMid() { return pdTask() && !pdTabNow(); }
+// Where the open task panel goes in the dock: its tab, else the middle.
+function pdHostEl() {
+  const e = pdTabNow() ? PD.rt.get(pdTaskTabId()) : null;
+  return e ? e.el : PD.els['po-chat'];
+}
+// The open task's tab, added after the last tab of the PO's stack when it
+// has none yet.
+function pdTaskTabEnsure() {
+  const r = SELECTED_SID ? rowBySid(SELECTED_SID) : null;
+  if (!r || !pdTabFor(r) || PD.rt.has(pdChatId(r.roomId)) || PD.tabAdding) return false;
+  return pdChatOpen(r.roomId);
+}
+// A tab's chat frame is lent to the task panel while the task is open in it
+// (one frame per room, never reloaded by a click on its tab), and given back
+// before the panel shows another task or leaves the tab. keep: a room whose
+// frame stays (the panel moves into that room's tab).
+function pdFrameLend(act, room) {
+  const e = PD.rt.get(pdChatId(room));
+  const f = e && e.kind === 'chat' ? [...e.el.children].find(x => x.matches('iframe.dp-session')) : null;
+  if (!f) return false;
+  act.textContent = '';
+  pdMove(act, f);
+  f.classList.add('pd-adopted');
+  return true;
+}
+function pdFrameReturn(panel, keep) {
+  if (!panel) return;
+  for (const f of [...panel.querySelectorAll('iframe.dp-session.pd-adopted')]) {
+    const room = f.dataset.room || '';
+    if (keep && room === keep) continue;
+    const e = PD.rt.get(pdChatId(room));
+    const act = f.closest('.dp-pane');
+    if (e && e.kind === 'chat') { pdMove(e.el, f, e.el.firstChild); f.classList.remove('pd-adopted'); }
+    else f.remove();
+    if (act) { act.removeAttribute('data-room'); act._sig = ''; }
+  }
+}
+// The task panel, also while the tab it is in is being taken out of the dock
+// (detached: the dock tells the page before dock-removed, pdChatRemoved).
+function pdDpEl() {
+  const el = pdById('detail-panel');
+  if (el) return el;
+  for (const e of PD.rt.values()) { const x = e.el && e.el.querySelector('#detail-panel'); if (x) return x; }
+  return null;
+}
+// The last tab of the PO's stack (where a task's tab goes after).
+function pdPoStackLast() {
+  const d = PD.dock;
+  const find = n => !n ? null : n.t === 'stack' ? (n.panels.includes('po-chat') ? n : null) : (n.kids || []).map(find).find(Boolean) || null;
+  let st = null;
+  try { st = find(d.layout().root); } catch (e) { st = null; }
+  return st && st.panels.length ? st.panels[st.panels.length - 1] : 'po-chat';
+}
 // The dock, made once. A phone's is narrow (one column of tabs, nothing that
 // moves a panel), with a layout of its own; a resize across that line
 // switches it (the listener after pdPopChat).
@@ -15495,7 +15593,7 @@ function pdChatUnpanel(roomId) {
   let w = null;
   try { w = d.popWindow(cid); } catch (e) {}
   // If another task owns the conversation's window, it keeps that one too.
-  if (w && d.popWindow('po-chat') && pdTask()) pdTaskKeepOut();
+  if (w && d.popWindow('po-chat') && pdMid()) pdTaskKeepOut();
   else if (w && d.popWindow('po-chat')) {
     // A PO conversation in its own window can stay there as a standalone
     // conversation, freeing po-chat for this task and its tools.
@@ -15848,9 +15946,15 @@ function pdChatOpen(roomId, o) {
   }
   const r = ALL_ROWS.find(x => x.roomId === roomId);
   if (!r) return false;
+  // #386: a task with a tab of its own (pdTabFor) is open in that tab: the
+  // task panel moves into it (pdPlaceTask), and the chat it already shows
+  // is the tab's (no second page of the room).
+  const tab = pdTabFor(r);
   // One chat per task on the page: the task in the middle moves out to its panel.
   const mid = SELECTED_SID ? rowBySid(SELECTED_SID) : null;
-  if (mid && mid.roomId === roomId) {
+  const dpAct = tab && mid && mid.roomId === roomId ? pdById('detail-panel')._panes?.activity : null;
+  const adopt = dpAct ? dpAct.querySelector(`iframe.dp-session[data-room="${CSS.escape(roomId)}"]`) : null;
+  if (mid && mid.roomId === roomId && !tab) {
     closeDetail();
     // Its chat in the middle goes with it: the panel's is the one (a middle
     // closed otherwise keeps its page, off screen, for a quick reopen). The
@@ -15864,15 +15968,28 @@ function pdChatOpen(roomId, o) {
   el.dataset.room = roomId;
   // data-chat-slow: not the person's conversation, so it polls less while
   // it is not being typed in (session.html).
-  el.innerHTML = `<iframe class="dp-session" data-room="${esc(roomId)}" data-chat-slow src="/session?id=${encodeURIComponent(roomId)}&embed=1${at}" title="${esc(pdRowTitle(r))}" allow="clipboard-read; clipboard-write; microphone"></iframe>`;
+  if (adopt) adopt.classList.add('pd-adopted');
+  else el.innerHTML = `<iframe class="dp-session" data-room="${esc(roomId)}" data-chat-slow src="/session?id=${encodeURIComponent(roomId)}&embed=1${at}" title="${esc(pdRowTitle(r))}" allow="clipboard-read; clipboard-write; microphone"></iframe>`;
   PD.rt.set(id, { kind: 'chat', room: roomId, el });
   // Beside the chat panel last shown (else the conversation) while the row has
-  // room for one more (pdFits); else a tab of its stack.
+  // room for one more (pdFits); else a tab of its stack. A task with a tab of
+  // its own (#386): after the last tab of the PO's stack, unless asked to
+  // open beside (a middle or Ctrl/⌘ click, o.beside). Dock puts a new tab
+  // right of the front one, so the last one comes to the front first.
   const last = PD.rtLast.chat && PD.rt.has(PD.rtLast.chat) ? PD.rtLast.chat : 'po-chat';
-  const where = o && o.restore ? undefined : pdFits(pdMinOf(id).w) ? { beside: last, side: 'right' } : { kind: 'stack', stack: last };
+  let where = o && o.restore ? undefined : pdFits(pdMinOf(id).w) ? { beside: last, side: 'right' } : { kind: 'stack', stack: last };
+  PD.tabAdding = true;
   let res = null;
-  try { res = d.addPanel({ id, title: pdRowTitle(r), el, closable: true, menuItems: (pid, ctx) => pdChatMenuItems(roomId, ctx) }, where); } catch (e) { res = null; }
-  if (res !== 'added') { PD.rt.delete(id); return res === 'exists'; }
+  try {
+    if (where && tab && !o?.beside) {
+      const end = pdPoStackLast();
+      if (d.frontOf('po-chat') !== end) { try { d.activate(end); } catch (e) {} }
+      where = { kind: 'stack', stack: end };
+    }
+    res = d.addPanel({ id, title: pdRowTitle(r), el, closable: true, menuItems: (pid, ctx) => pdChatMenuItems(roomId, ctx) }, where);
+  } catch (e) { res = null; }
+  finally { PD.tabAdding = false; }
+  if (res !== 'added') { if (adopt) adopt.classList.remove('pd-adopted'); PD.rt.delete(id); return res === 'exists'; }
   pdChatsRemember();
   pdToolsFit();
   if (!o?.restore) { pdWsSeen(id); pdWsCap(id); wcChoose({kind:'task',room:roomId}); }
@@ -15888,7 +16005,18 @@ function pdChatMenuItems(roomId, ctx) {
 function pdChatRemoved(id) {
   const e = PD.rt.get(id);
   if (!e || e.kind !== 'chat') return;
+  // #386: the open task's tab closed: the task panel goes home first (its
+  // frame, the tab's, goes), and the task closes with its tab.
+  const DP_EL = pdDpEl();
   PD.rt.delete(id);
+  if (DP_EL && e.el.contains(DP_EL)) {
+    const DP_RESIZE = document.getElementById('detail-panel-resize');
+    pdMove(DP_RESIZE.parentNode, DP_EL, DP_RESIZE);
+    const act = DP_EL._panes?.activity;
+    if (act) { act.querySelectorAll('iframe.dp-session').forEach(f => f.remove()); act.removeAttribute('data-room'); act._sig = ''; }
+    const r = SELECTED_SID ? rowBySid(SELECTED_SID) : null;
+    if (r && r.roomId === e.room) closeDetail();
+  }
   e.el.innerHTML = '';   // its chat page goes with the frame
   if (PD.rtLast.chat === id) PD.rtLast.chat = '';
   pdChatsRemember();
@@ -16096,8 +16224,9 @@ function pdRestorePanels(ctxs, rooms, hold) {
   }
   const mid = SELECTED_SID ? rowBySid(SELECTED_SID) : null;
   for (const room of rooms) {
-    if (ALL_ROWS.some(r => r.roomId === room) && !(mid && mid.roomId === room)) pdChatOpen(room, { restore: true });
-    else if (hold && !(mid && mid.roomId === room)) held.rooms.push(room);
+    const midHere = mid && mid.roomId === room && !pdTabFor(mid);
+    if (ALL_ROWS.some(r => r.roomId === room) && !midHere) pdChatOpen(room, { restore: true });
+    else if (hold && !midHere) held.rooms.push(room);
     else { try { PD.dock.forget(pdChatId(room)); } catch (e) {} }
   }
   return held;
@@ -16245,6 +16374,9 @@ function pdProjectPanels() {
   const here = pdWsHere();
   if (!here) return;
   const res = PdWorkspace.settle(PD_WS, here, pdWsOpen(), Date.now());
+  // #386: a task's tab in front of the PO's, after a reload or brought back
+  // with its project, is that task open.
+  if (!PD.tabFront || res.back.length) { PD.tabFront = true; setTimeout(pdTabFront, 0); }
   if (!res.away.length && !res.back.length) { pdWsSave(); return; }
   res.away.forEach(pdWsPutAway);
   const keep = [], wins = [];
@@ -16261,6 +16393,20 @@ function pdProjectPanels() {
   pdTabTips();
   pdWsWindowBack(wins);
   pdWsSave(true);
+}
+function pdTabFront() {
+  if (!PD.dock) return;
+  // A task open in its tab: that tab stays in front of those brought back.
+  if (SELECTED_SID) {
+    if (!pdTabNow()) return;
+    PD.opening = true;
+    try { const tid = pdTaskTabId(); if (!PD.dock.isShown(tid)) PD.dock.reveal(tid); } catch (e) {} finally { PD.opening = false; }
+    return;
+  }
+  let f = null;
+  try { f = PD.dock.frontOf('po-chat'); } catch (e) { f = null; }
+  const e = f && PD.rt.get(f);
+  if (e && e.kind === 'chat') pdTabShown(e.room);
 }
 // First load with this store (#386): what the old screens set aside
 // (cd-pd-aside, hidden) is shown again, so the settle that follows puts what
@@ -16315,7 +16461,7 @@ window.addEventListener('message', e => {
   fitLiveChat();
 });
 function pdMenuItems(ctx) {
-  if (!pdTask()) return [];
+  if (!pdMid()) return [];
   const r = rowBySid(SELECTED_SID);
   if (!r) return [];
   const items = pdActionItems(r, ctx, { el: PD.els['po-chat'] });
@@ -16563,6 +16709,8 @@ function pdShown(id) {
     else {
       PD.rtLast.chat = id;
       pdWakeChat(rt.el.querySelector('iframe.dp-session'));
+      // #386: a task's tab shown is that task open (its tools beside it).
+      if (rt.kind === 'chat') pdTabShown(rt.room);
       barCrumbs();
     }
     pdTabTips();
@@ -16570,9 +16718,32 @@ function pdShown(id) {
   }
   if (id === 'board' || id === 'workspace' || id === 'changes') renderRows();
   if (id === 'po-chat') wcPoFront();
+  // #386: the PO's tab in front of the open task's: the task closes (its tab stays).
+  // (After the dock's own work: a tab being closed is still in its hands.)
+  if (id === 'po-chat' && pdTabNow() && !PD.tabAdding && !PD.opening && !PD.wsQuiet) {
+    setTimeout(() => {
+      let shown = true;
+      try { shown = !pdTabNow() || PD.dock.isShown(pdTaskTabId()) || !PD.dock.isShown('po-chat'); } catch (e) {}
+      if (!shown) closeDetail();
+    }, 0);
+  }
   if (pdTask() && id !== 'po-chat') renderDetail();
   pdPlaceChat();
   barCrumbs();
+}
+// A task's tab came on screen (a click on it, a tab closed beside it): that
+// task opens in it, unless it is the open one, or the tab is being added or
+// brought back by the page (a project switch, a reload).
+function pdTabShown(room) {
+  if (PD.tabAdding || PD.opening || PD.wsQuiet || !PD.restored) return;
+  // After the dock's own work (a tab closed beside it is still in its hands).
+  setTimeout(() => {
+    const id = pdChatId(room), r = ALL_ROWS.find(x => x.roomId === room);
+    if (!r || !pdTabFor(r) || !PD.rt.has(id)) return;
+    try { if (!PD.dock.isShown(id)) return; } catch (e) { return; }
+    if (r.sessionId === SELECTED_SID && document.body.classList.contains('detail-open')) return;
+    openDetail(r.sessionId);
+  }, 0);
 }
 // A chat page off screen (behind a tab, or the PO's while a task is in the
 // middle) polls every 30 s: told it is shown, it opens at its latest message,
@@ -16615,7 +16786,13 @@ function pdPlaceChat() {
   const ph = PD.els['po-chat'];
   const dock = document.body.classList.contains('po-dock') && !!PD.dock;
   const task = dock && pdTask();
-  const inPanel = dock && !task && !PO_PEEK && ph.ownerDocument === document && ph.isConnected && !ph.closest('.dk-parking');
+  // #386: the open task's own tab, added now if it has none.
+  if (task && !PD.placing && pdTabFor(rowBySid(SELECTED_SID)) && !PD.rt.has(pdTaskTabId())) {
+    PD.placing = true;
+    try { pdTaskTabEnsure(); } finally { PD.placing = false; }
+  }
+  const mid = task && pdMid();
+  const inPanel = dock && !mid && !PO_PEEK && ph.ownerDocument === document && ph.isConnected && !ph.closest('.dk-parking');
   const home = inPanel ? ph : PD_HOST;
   if (PO_PANEL.parentNode !== home) pdMove(home, PO_PANEL);
   const off = dock && !PO_PEEK && !inPanel, wasOff = PO_PANEL.classList.contains('pd-off');
@@ -16631,7 +16808,7 @@ function pdPlaceChat() {
 // the PO's chat, by its project's name (#261: the header under it then says
 // only "PO"); popTitle adds the project to its window's name, once.
 function pdChatTitle() {
-  const r = pdTaskWanted() ? rowBySid(SELECTED_SID) : null;
+  const r = pdTaskWanted() && !pdTabNow() ? rowBySid(SELECTED_SID) : null;
   return r ? [taskNoText(r, false), detailTitle(r)].filter(Boolean).join(' ') : pdProjectName() || 'PO chat';
 }
 function pdProjectName() { return (projectById(PD.pid) || {}).name || ''; }
@@ -16663,13 +16840,29 @@ function pdSyncTitles() {
 // contract says of a popped-out panel), and comes back the same way.
 function pdPlaceTask(on) {
   const ph = PD.els['po-chat'];
-  const DP_EL = pdById('detail-panel'), DP_RESIZE = document.getElementById('detail-panel-resize');
+  const DP_EL = pdDpEl(), DP_RESIZE = document.getElementById('detail-panel-resize');
+  if (!DP_EL) return;
   on = !!on;
-  const home = on ? ph : DP_RESIZE.parentNode;
+  // #386: in its own tab when it has one (pdHostEl), else the middle.
+  const host = on ? pdHostEl() : null;
+  const home = on ? host : DP_RESIZE.parentNode;
   const moved = DP_EL.parentNode !== home;
+  // The frame lent by a tab goes back to that tab when the task panel
+  // leaves it (or is at home, no task in a tab).
+  if (moved || !on) {
+    const inTab = on && host !== ph ? PD.rt.get(pdTaskTabId()) : null;
+    pdFrameReturn(DP_EL, inTab ? inTab.room : '');
+  }
   if (moved) pdMove(home, DP_EL, on ? null : DP_RESIZE);
+  // The task's tab comes to the front with it (one brought back behind
+  // another, with its project, #386).
+  if (on && moved && host !== ph && PD.dock) {
+    const tid = pdTaskTabId();
+    PD.opening = true;
+    try { if (!PD.dock.isShown(tid)) PD.dock.reveal(tid); } catch (e) {} finally { PD.opening = false; }
+  }
   // A Chat hidden earlier (a phone's Panels menu) comes back: the task is in it.
-  if (on && moved && PD.dock && !PD.dock.isVisible('po-chat')) PD.dock.setVisible('po-chat', true);
+  if (on && moved && host === ph && PD.dock && !PD.dock.isVisible('po-chat')) PD.dock.setVisible('po-chat', true);
   document.body.classList.toggle('dp-docked', on);
   ['changes', 'workspace', 'spec'].forEach(id => PD.els[id].classList.toggle('pd-for-task', on));
   dpPlacePanes(DP_EL);
@@ -16717,7 +16910,7 @@ function pdPopChat(out) {
   const ph = PD.els['po-chat'];
   const main = pdChatFrame();
   let own = ph.querySelector('iframe.pd-own');
-  if (!out || pdTask()) { if (own) own.remove(); return; }
+  if (!out || pdMid()) { if (own) own.remove(); return; }
   if (!main) return;
   if (own && own.dataset.room === main.dataset.room) return;
   if (own) own.remove();
@@ -18427,7 +18620,7 @@ async function makePoOpen(resp) {
   } while (!shown() && Date.now() < end);
   updateRoomsBadge();
   midLeave();
-  if (SELECTED_SID) closeDetail();
+  if (SELECTED_SID) closeDetail({ keepFront: pid !== SELECTED_PROJECT });
   SELECTED_PROJECT = pid; PROJECT_TAB = 'tasks'; WS_SCOPE = '';
   PO_PIN = pid; PO_PEEK = true;       // renderPo drops the peek where the PO leads the page
   renderRows();
@@ -18895,7 +19088,7 @@ async function projectSetupFlow(opts) {
 }
 function openProjectPage(pid) {
   midLeave();
-  if (SELECTED_SID) closeDetail();
+  if (SELECTED_SID) closeDetail({ keepFront: pid !== SELECTED_PROJECT });
   SELECTED_PROJECT = pid; PROJECT_TAB = 'tasks'; WS_SCOPE = '';
   renderRows();
 }
@@ -22632,7 +22825,7 @@ function swCardsOn(doc) {
 // session with no room has no chat to panel: it opens as a click does.
 function pdRowPanel(sid) {
   const r = sid ? rowBySid(sid) : null;
-  return !!(r && r.roomId && r.headless && !r.orphan && pdChatOpen(r.roomId));
+  return !!(r && r.roomId && r.headless && !r.orphan && pdChatOpen(r.roomId, { beside: true }));
 }
 $('#sw-list').addEventListener('mousedown', (ev) => { if (ev.button === 1 && ev.target.closest('.sw-row[data-sid], .sw-tk[data-room]')) ev.preventDefault(); });
 $('#sw-list').addEventListener('auxclick', (ev) => {
@@ -25075,6 +25268,8 @@ document.addEventListener('keydown', (ev) => {
   if (PO_PEEK) { poClosePeek(); return; }   // the topmost thing closes first
   // A phone's Esc is its ←: a pane closes, a task goes back to the pane it came from (#307).
   if (phoneNow() && phBackTo() === 'pane') { phPane(''); return; }
+  // #386: a task in its own tab: Esc goes back to the PO's tab, the task's tab stays.
+  if (SELECTED_SID && !phoneNow() && pdTabNow()) { closeDetail(); return; }
   if (SELECTED_SID) { if (phoneNow()) barBack(); else closeTask(); }
 });
 
