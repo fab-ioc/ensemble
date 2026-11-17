@@ -169,12 +169,37 @@ measurement, a design decision and its why) is the project's knowledge, not
 the task's. It goes in the project's **Documents folder**, whose path the hub
 gives you as `project.documentsDir` in `ensemble_get_task` (never guess it; a
 documents project's may not be called `Documents`). Name it by your task's
-number: `#<no> <short title>.md`, e.g. `#26 Where our tokens go.md`, or a
-folder `#<no> <title>/` when there are several files or images. The project's
-Workspace opens on this folder, newest first, so the product owner finds it
+number: `#<no> <short title>.html` for a page or `.md` for text (see *Visual
+first* below), e.g. `#26 Where our tokens go.html` (a measurement, shown) or
+`#31 Retry policy.md` (notes), or a folder `#<no> <title>/` when there are
+several files or images. The project's Workspace opens on this folder, newest first, so the product owner finds it
 there. Link it in your `ensemble_report` text. Working notes stay in your task
 folder: `TASK-HANDOVER.md`, `REVIEW-LOG.md`, scratch files, evidence nobody
 will read again.
+
+**Visual first: an HTML page for what can be shown, Markdown for text** (P371,
+for tasks and POs alike). Prefer a visual.
+
+- Anything that can be shown (a plan, a roadmap or timeline, a sequence of
+  tasks and their dependencies, an architecture or data flow, a comparison of
+  options, a measurement) is an **HTML page**: one self-contained static
+  `.html` file in the Documents folder, `#<no> <short title>.html`. Inline CSS,
+  inline SVG for diagrams, no scripts, no external loads (no CDN, no web
+  fonts), light theme, readable at phone width. It is a file the hub's file
+  view shows rendered (scripts off), never a claude.ai Artifact (see below).
+- Plain text that is not better shown (a spec, notes, a log, a long
+  explanation) is **Markdown** (`.md`), as before.
+- **A plan, whenever one is asked for** (by the CEO or a PO), comes with a
+  visual page: at least the work as a picture (the steps or tasks, their order
+  and dependencies, what is decided and what is still open). A Markdown file
+  may accompany it; it never replaces it.
+- Link the page in reports and chat by its name, like any document (see *How
+  to link Ensemble things*).
+
+A UI choice put to the CEO is unchanged: ONE side-by-side PNG on the ask card,
+made from a static drawing page (an HTML file with no script, like any page
+here). That PNG is the picture of a question; this rule is
+about the documents the work leaves behind.
 
 **Never publish to claude.ai** (the CEO's rule, P171, for tasks and POs alike):
 no claude.ai artifact, page or doc (the `Artifact` or Claude Docs tools), even
@@ -195,7 +220,7 @@ point at the wrong machine and show a long URL instead of a name).
 | Thing | Write | Not |
 |---|---|---|
 | A file | `[app.py](C:\Users\me\proj\src\app.py)`: its name, linked to its full path (or the path in backticks when the path itself is the point) | `[app.py](http://127.0.0.1:8765/fileview?path=C%3A%5C...)`, `http://localhost:8765/fileview?...` |
-| A document | `[#26 Where our tokens go](C:\Users\me\proj\Documents\#26 Where our tokens go.md)` | `http://localhost:8765/fileview?path=<URL-encoded path>` |
+| A document | `[#26 Where our tokens go](C:\Users\me\proj\Documents\#26 Where our tokens go.html)` | `http://localhost:8765/fileview?path=<URL-encoded path>` |
 | A task | `#18` in your project, `ED-18` across projects | `room-1a2b3c4d`, `/?task=room-…` |
 | A point | `P123` | "the CEO's comment from this morning" |
 | A message or ask card | `[Project icons: A vs B](<the reference a tool returned>)`: its words, short, linked to the reference | the reference bare, or in backticks, or `[here](…)` |
@@ -990,8 +1015,10 @@ does not move to Done by itself: once you have accepted the work, set it with
 **Your documents go where the tasks' do.** A document you write for the
 product owner (an analysis, a proposal, a decision record) goes in the
 project's Documents folder (`project.documentsDir` from `ensemble_get_task` or
-`ensemble_whoami`'s project), as `PO <short title>.md`, or `#<no> …` when it
-belongs to a task; `PO-HANDOVER.md` and `ROADMAP.md` stay where they are. Say
+`ensemble_whoami`'s project), as `PO <short title>.html` for anything that
+can be shown and `PO <short title>.md` for text (*Visual first*: a plan, a
+roadmap view or a comparison is a page), or `#<no> …` when it belongs to a
+task; `PO-HANDOVER.md` and `ROADMAP.md` stay where they are. Say
 in each spec that the task's report goes there (the launch prompt tells the
 owner too). Never publish one as a claude.ai artifact, page or doc unless the
 CEO asks for that in so many words (P171; see "Never publish to claude.ai"). A project that kept its reports in task folders is brought over
@@ -1244,7 +1271,10 @@ When asked to plan (or when your role is `planner`):
      changes in a git project (own branch), `inplace` only when the product
      owner wants edits directly in the project folder.
 5. Present the plan (titles, one-line purpose, order, suggested agents) to the
-   product owner and wait for feedback. Amend with `ensemble_update_task`,
+   product owner, with a visual page in the Documents folder that shows it:
+   the tasks, their order and dependencies, what is decided and what is open
+   (*Visual first*; the Markdown or the chat text accompanies it, never
+   replaces it). Wait for feedback. Amend with `ensemble_update_task`,
    remove drafts with `ensemble_delete_task`, start with `ensemble_start_task`
    when told to.
 
