@@ -4,7 +4,7 @@ The PO's tab counts and never closes; a floating panel is no tab (it neither cou
 another project that comes along with a switch counts, and the switch closes this project's least recently shown
 unpinned tab to make room. Counted in the dock itself: the tabs drawn in #po-dock.
 
-In headless Chrome over CDP, against a hub in a thread: Big (a PO and 10 tasks) and Other (a PO and one task).
+In headless Chrome over CDP, against a hub in a thread: Big (a PO and 10 tasks) and Other (a PO and two tasks).
 Skipped without Node or Chrome.
 """
 from __future__ import annotations
@@ -74,6 +74,38 @@ async function main() {
     await sleep(400);
     out.pinned = await evalIn(`PdWorkspace.isPinned(PD_WS, 'chat:${T.o1}')`);
     await step('big', `openProjectPage(${JSON.stringify(P.Big)})`, 2000);
+    // Review 3, finding 1: a window the browser closed (hidden in Window mode)
+    // is no tab: the oldest of Big's goes out to a window, the window closes;
+    // two more tabs open: it is neither counted nor closed.
+    out.winId = await evalIn(`(() => { const ids = [...PD.rt.keys()].filter(id => id.startsWith('chat:') && pdWsOwner(PD.rt.get(id)) === ${JSON.stringify(P.Big)}
+        && PD.dock.isVisible(id) && !PD.dock.isOut(id) && PD.dock.viewMode(id) !== 'float' && !PdWorkspace.isPinned(PD_WS, id));
+      ids.sort((a, b) => (PD_WS.seen[a] || 0) - (PD_WS.seen[b] || 0)); return ids[0]; })()`);
+    await evalIn(`PD.dock.popOut(${JSON.stringify(out.winId)}) && 0`);
+    await until(`!!PD.dock.popWindow(${JSON.stringify(out.winId)})`, 10000);
+    await sleep(600);
+    await evalIn(`PD.dock.popWindow(${JSON.stringify(out.winId)}).close(); 0`);
+    await until(`!PD.dock.isOut(${JSON.stringify(out.winId)})`, 10000).catch(() => null);
+    await sleep(600);
+    out.closedWin = await evalIn(`({ mode: PD.dock.viewMode(${JSON.stringify(out.winId)}), out: PD.dock.isOut(${JSON.stringify(out.winId)}), has: PD.rt.has(${JSON.stringify(out.winId)}) })`);
+    await step('t10', `openDetail(${sid(T.t10)})`, 900);
+    await step('t3', `openDetail(${sid(T.t3)})`, 900);
+    await step('t4', `openDetail(${sid(T.t4)})`, 900);
+    out.closedWinAfter = await evalIn(`({ mode: PD.dock.viewMode(${JSON.stringify(out.winId)}), has: PD.rt.has(${JSON.stringify(out.winId)}) })`);
+    // Finding 2: a switch that brings back more than 8 closes one even in
+    // front. Other: o2 open (in front, not pinned); on Big, tabs pinned until 7
+    // are; back on Other: the PO's, 7 pinned and o2 are 9, so o2 goes.
+    await step('other2', `openProjectPage(${JSON.stringify(P.Other)})`, 1500);
+    await step('o2', `openDetail(${sid(T.o2)})`, 900);
+    await evalIn(`PD.dock.activate(${JSON.stringify('chat:' + T.o2)}); 0`);
+    await sleep(300);
+    out.o2Front = await evalIn(`PD.dock.frontOf('po-chat')`);
+    await step('big2', `openProjectPage(${JSON.stringify(P.Big)})`, 2000);
+    out.pins = await evalIn(`(() => { const ids = [...PD.rt.keys()].filter(id => id.startsWith('chat:') && pdWsOwner(PD.rt.get(id)) === ${JSON.stringify(P.Big)}
+        && PD.dock.isVisible(id) && !PD.dock.isOut(id) && PD.dock.viewMode(id) !== 'float' && !PdWorkspace.isPinned(PD_WS, id));
+      for (const id of ids) { if (PD_WS.pins.length >= 7) break; pdWsPin(id, true); }
+      pdTabExtrasSync(); return PD_WS.pins.length; })()`);
+    await sleep(300);
+    await step('other3', `openProjectPage(${JSON.stringify(P.Other)})`, 2000);
     out.errors = c.exceptions;
   } finally {
     try { await c.send('Browser.close'); } catch (e) {}
@@ -123,7 +155,7 @@ class TabCap(unittest.TestCase):
                                              {"identity": "codex", "agent": "codex", "cwd": str(home)}])
             chatroom.post_message(t["id"], "user", "About " + title)
             return t["id"]
-        for name, tasks in (("Big", [f"t{i}" for i in range(1, 11)]), ("Other", ["o1"])):
+        for name, tasks in (("Big", [f"t{i}" for i in range(1, 11)]), ("Other", ["o1", "o2"])):
             ok, proj, _ = dashboard.register_project(name)
             assert ok, proj
             home = Path(proj.get("home") or proj["path"])
@@ -191,6 +223,28 @@ class TabCap(unittest.TestCase):
         self.assertIn("po-chat", s["tabs"])
         self.assertIn(self.c("o1"), s["tabs"], "the pinned tab stays")
         self.assertNotIn(self.c("t4"), s["open"], "Big's least recently shown made room")
+
+    def test_a_closed_window_is_never_closed_by_the_cap(self):
+        g = self.got
+        self.assertTrue(g["winId"], g)
+        w = g["closedWin"]
+        self.assertTrue(w["has"] and not w["out"] and w["mode"] == "window", f"the window closed, kept hidden in Window mode: {w}")
+        for k in ("t10", "t3", "t4"):
+            self.assertLessEqual(len(g[k]["tabs"]), 8, g[k])
+            self.assertIn(g["winId"], g[k]["open"], f"{k}: the closed window stays")
+            self.assertNotIn(g["winId"], g[k]["tabs"], k)
+        self.assertEqual(len(g["t4"]["tabs"]), 8, g["t4"])
+        self.assertEqual(g["closedWinAfter"], {"mode": "window", "has": True})
+
+    def test_a_switch_never_leaves_more_than_eight_tabs_even_with_one_in_front(self):
+        g = self.got
+        self.assertEqual(g["o2Front"], self.c("o2"))
+        self.assertEqual(g["pins"], 7, g)
+        s = g["other3"]
+        self.assertEqual(s["pid"], self.ids["Other"])
+        self.assertLessEqual(len(s["tabs"]), 8, s)
+        self.assertIn("po-chat", s["tabs"])
+        self.assertNotIn(self.c("o2"), s["open"], "this project's one unpinned tab goes, though in front")
 
     def test_the_page_threw_no_exception(self):
         self.assertEqual(self.got["errors"], [])

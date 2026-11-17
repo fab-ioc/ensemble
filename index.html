@@ -16380,7 +16380,13 @@ function pdWsItem(id, e) {
   const it = e.kind === 'chat' ? { id, kind: 'chat', room: e.room } : { id, kind: 'file', path: e.path, ctx: e.v.ctx };
   if (out) it.out = true;
   else {
-    try { if (PD.dock.viewMode(id) === 'float') it.float = true; } catch (err) {}
+    // Not a tab of the dock (review 3): floating, or a window the browser
+    // closed (Dock keeps it hidden in Window mode), or hidden: none counts
+    // toward the cap nor closes for it.
+    let mode = null, shown = true;
+    try { mode = PD.dock.viewMode(id); shown = PD.dock.isVisible(id); } catch (err) {}
+    if (mode === 'float') it.float = true;
+    else if (mode === 'window' || mode === 'hidden' || !shown) it.hidden = true;
     try { if (PD.dock.frontOf(id) === id) it.front = true; } catch (err) {}
   }
   return it;
@@ -16397,10 +16403,9 @@ function pdWsFixed() {
 // least recently shown of this context's, not pinned, close until it fits.
 function pdWsFit(here) {
   for (let i = 0; i < 64; i++) {
-    const open = pdWsOpen();
-    // A tab in front stays (the task open in it, the file being read).
-    const fronts = open.filter(o => o.item.front).map(o => o.item.id);
-    const v = PdWorkspace.overflow(PD_WS, here, open, null, fronts, pdWsFixed());
+    // Even a stack's front can go (review 3): the one shown last is the last
+    // to go, and the rule is 8 tabs.
+    const v = PdWorkspace.overflow(PD_WS, here, pdWsOpen(), null, null, pdWsFixed());
     if (!v || !PD.rt.has(v)) return;
     try { PD.dock.removePanel(v); } catch (e) { return; }
     if (PD.rt.has(v)) return;

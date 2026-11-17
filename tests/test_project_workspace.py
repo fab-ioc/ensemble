@@ -90,6 +90,16 @@ out.capFloat = W.overflow(s3, 'E', [...open, flo], 'chat:new');
 W.pin(s3, 'chat:t8', true);                          // another project's, pinned: counts, stays
 out.capFitNone = W.overflow(s3, 'E', open.slice(0, 6), null, null, 1);
 out.capFit = W.overflow(s3, 'E', [...open, o(chat('t8'), 'T')], null, null, 1);
+// Review 3: a closed window (hidden) neither counts nor closes; seven pinned
+// tabs of other projects, the PO's and one of this project's: that one goes.
+const hid = o({ ...chat('h1'), hidden: true }, 'E');
+W.touch(s3, 'chat:h1', 1);
+out.capHiddenNone = W.overflow(s3, 'E', [...open.slice(0, 7), hid], 'chat:new');
+out.capHidden = W.overflow(s3, 'E', [...open, hid], 'chat:new');
+const others = [];
+for (let i = 1; i <= 7; i++) { const c = chat('p' + i); others.push(o(c, 'T')); W.pin(s3, c.id, true); W.touch(s3, c.id, 1); }
+out.capFitPinned = W.overflow(s3, 'E', [...others, o(chat('c4'), 'E')], null, null, 1);
+for (let i = 1; i <= 7; i++) W.pin(s3, 'chat:p' + i, false);
 W.pin(s3, 'chat:t8', false);
 for (let i = 1; i <= 8; i++) W.pin(s3, 'chat:c' + i, true);
 out.capAllPinned = W.overflow(s3, 'E', open, 'chat:new');
@@ -183,6 +193,15 @@ class ProjectWorkspaceStore(unittest.TestCase):
         self.assertEqual(o["capFloat"], "chat:c3")
         self.assertIsNone(o["capFitNone"])
         self.assertEqual(o["capFit"], "chat:c3")
+
+    def test_a_closed_window_is_no_tab_and_a_full_switch_still_fits(self):
+        # Review 3: a window the browser closed (hidden) neither counts nor
+        # closes; 7 pinned tabs brought along, the PO's and one of this
+        # project's: that one goes, even in front.
+        o = self.o
+        self.assertIsNone(o["capHiddenNone"])
+        self.assertEqual(o["capHidden"], "chat:c3")
+        self.assertEqual(o["capFitPinned"], "chat:c4")
 
     def test_it_stays_bounded(self):
         o = self.o
