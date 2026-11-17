@@ -4776,6 +4776,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
 <script src="/static/pagekey.js"></script>
 <script src="/static/filelinks.js"></script>
 <script src="/static/po-colour.js"></script>
+<script src="/static/workspace.js"></script>
 <script>FileDrag.attach(document); FileLinks.watch();</script>
 <link rel="stylesheet" href="/static/feedback.css">
 <script src="/static/feedback.js" defer></script>
@@ -11617,6 +11618,8 @@ function wsPanelAdd(v, t, where) {
   wsPanelPaint(v, t);
   wsPanelsRemember();
   pdTabTips();
+  // Opened now, not brought back to its place: P376's cap (#386).
+  if (where !== undefined) { pdWsSeen(id); pdWsCap(id); }
   return true;
 }
 // A tab's panel, drawn: its viewer (loaded once, kept while the panel is;
@@ -15310,6 +15313,8 @@ function pdEnsure() {
     narrowKey: PD_KEYS.phone,
     narrowLayout: ctx => pdDefaultLayout(L, { ...ctx, phone: true }),
     fill: 'po-chat',
+    // Each project's put-away panels keep their places (#386).
+    keepSlots: 300,
     minSize: pdMinOf,
     sizes: { head: 32, strip: 44, unpinSize: 720 },
     // A click opens a tool beside the conversation; a click or focus
@@ -15870,7 +15875,7 @@ function pdChatOpen(roomId, o) {
   if (res !== 'added') { PD.rt.delete(id); return res === 'exists'; }
   pdChatsRemember();
   pdToolsFit();
-  if (!o?.restore) wcChoose({kind:'task',room:roomId});
+  if (!o?.restore) { pdWsSeen(id); pdWsCap(id); wcChoose({kind:'task',room:roomId}); }
   return true;
 }
 // The chat panel's ⋯: the task's actions, as the middle's (without Open in
@@ -16037,6 +16042,8 @@ function pdRuntimeRemoved(id) {
     if (!PD.thrQuiet) pdThreadTell(e.room, 'thread-closed');
   }
   else if (e.kind === 'file') wsPanelRemoved(id); else pdChatRemoved(id);
+  // Closed, not put away (#386): its pin goes with it.
+  if (!PD.wsQuiet && PdWorkspace.isPinned(PD_WS, id)) { PdWorkspace.pin(PD_WS, id, false); pdWsSave(true); }
   pdToolsFit();
 }
 PD_ROOT.addEventListener('dock-removed', e => { try { pdRuntimeRemoved(e.detail && e.detail.id); } catch (err) {} });
@@ -16107,8 +16114,7 @@ async function pdRestoreHeld() {
   pdChatsRemember();
   wsPanelsRemember();
   pdTabTips();
-  pdAsidePrune();
-  pdProjectPanels();   // what came back late is set aside on another project's screen too
+  pdProjectPanels();   // what came back late is put away on another project's screen too
 }
 function pdRuntimeRestore() {
   if (PD.restored || !PD.dock) return;
@@ -16130,49 +16136,167 @@ function pdRuntimeRestore() {
     const f = PD.dock.frontOf('po-chat');
     if (f !== 'po-chat' && PD.rt.has(f)) PD.dock.activate(front0 && front0 !== f && PD.els[front0] && !PD.rt.has(front0) ? front0 : 'po-chat');
   } catch (e) {}
-  pdAsidePrune();
   pdProjectPanels();
 }
-// What was set aside and did not come back is gone (once none is held back).
-function pdAsidePrune() {
-  if (PD_HOLD || ![...PD_ASIDE].some(id => !PD.rt.has(id))) return;
-  for (const id of [...PD_ASIDE]) if (!PD.rt.has(id)) PD_ASIDE.delete(id);
-  pdAsideSave();
+// Each project keeps its own workspace (#386, the CEO's P374, P376). One dock
+// serves every project's screen (#242: a Motors chat had another project's
+// files as tabs), so the file and chat panels are each a context's: a
+// project's, or an Unassigned task's (its own). Opening another context puts
+// the open ones away (out of the dock, their places kept: Dock's keepSlots)
+// and brings back what that context had, each in its kept place, a window as
+// a window when it can. A pinned one stays open in every context. The state
+// is static/workspace.js's (PdWorkspace), kept in cd-pd-ctx. A panel, or a
+// screen, whose context the list does not say yet (a task just made shows in
+// the project list a poll later) is left alone. A thread panel (thread:po)
+// follows its PO chat, not this.
+const PD_WS = PdWorkspace.load((() => { try { return localStorage.getItem(PdWorkspace.KEY); } catch (e) { return null; } })());
+let pdWsSaveT = 0;
+function pdWsSave(now) {
+  clearTimeout(pdWsSaveT);
+  const put = () => { try { localStorage.setItem(PdWorkspace.KEY, JSON.stringify(PD_WS)); } catch (e) {} };
+  if (now) put(); else pdWsSaveT = setTimeout(put, 400);
 }
-// One dock serves every project's screen, so the file and chat panels opened
-// in one project are set aside on another's (#242: a Motors chat had another
-// project's files as tabs) and come back, in their places, with their project.
-// Only what this hid comes back (kept across a reload): a panel the person
-// hid stays hidden. A panel in a window of its own is left alone, and so is
-// one, or a screen, whose project the list does not say (yet: a task just
-// made shows in the project list a poll later).
-const PD_ASIDE_KEY = 'cd-pd-aside';
-const PD_ASIDE = (() => { try { return new Set(JSON.parse(localStorage.getItem(PD_ASIDE_KEY) || '[]')); } catch (e) { return new Set(); } })();
-const pdAsideSave = () => { try { localStorage.setItem(PD_ASIDE_KEY, JSON.stringify([...PD_ASIDE])); } catch (e) {} };
-function pdPanelProject(e) {
-  if (e.kind === 'chat') { const p = projectOfRoom(e.room); return p ? p.id : null; }
+// The context a task is in: its project's id, or its own for an Unassigned
+// one; '' while the project list does not say.
+function pdWsCtxOfTask(id) {
+  if (!id) return '';
+  const p = wsProjectForRow({ roomId: id });
+  if (!p) return '';
+  return p.id === UNASSIGNED_ID ? 'task:' + id : p.id;
+}
+// The context on screen: the open task's, else the PO screen's project.
+function pdWsHere() {
+  if (pdTask()) { const r = rowBySid(SELECTED_SID); return r ? pdWsCtxOfTask(r.roomId || r.sessionId) : ''; }
+  const pj = poDockProject();
+  return pj ? pj.id : '';
+}
+// Whose a panel is (pdWsCtxOfTask's terms); '' while not known, null for one
+// that is no context's (a thread).
+function pdWsOwner(e) {
+  if (e.kind === 'chat') return pdWsCtxOfTask(e.room);
   const ctx = e.kind === 'file' && e.v && e.v.ctx;
   if (!ctx) return null;
-  if (ctx.kind === 'task') { const p = wsProjectForRow({ roomId: ctx.sid }); return p ? p.id : null; }
+  if (ctx.kind === 'task') return pdWsCtxOfTask(ctx.sid);
   return ctx.projectId || '';
 }
-function pdProjectPanels() {
-  if (!PD.dock) return;
-  const r = pdTask() ? rowBySid(SELECTED_SID) : null, task = r ? wsProjectForRow(r) : null;
-  const here = r ? (task || {}).id : (poDockProject() || {}).id;
-  if (here === undefined) return;
-  const was = [...PD_ASIDE].join();
+// The project a panel is of (its icon on another project's tab, P375): null for
+// an Unassigned one, or one not known yet.
+function pdPanelProject(e) {
+  const o = pdWsOwner(e);
+  return o && !o.startsWith('task:') ? o : null;
+}
+function pdWsItem(id, e) {
+  const out = (() => { try { return !!PD.dock.isOut(id); } catch (err) { return false; } })();
+  const it = e.kind === 'chat' ? { id, kind: 'chat', room: e.room } : { id, kind: 'file', path: e.path, ctx: e.v.ctx };
+  if (out) it.out = true;
+  return it;
+}
+function pdWsOpen() {
+  const open = [];
   for (const [id, e] of PD.rt) {
-    const pj = pdPanelProject(e);
-    if (pj === null) continue;
-    try {
-      if (pj !== here) {
-        // Set aside before a reload and shown again by its restore: aside again.
-        if (PD.dock.isVisible(id) && !PD.dock.isOut(id)) { PD.dock.setVisible(id, false); PD_ASIDE.add(id); }
-      } else if (PD_ASIDE.has(id)) { PD_ASIDE.delete(id); PD.dock.setVisible(id, true); }
-    } catch (err) {}
+    if (e.kind !== 'chat' && e.kind !== 'file') continue;
+    open.push({ item: pdWsItem(id, e), owner: pdWsOwner(e) || null });
   }
-  if (was !== [...PD_ASIDE].join()) pdAsideSave();
+  return open;
+}
+// Taken out as put away, not closed: its pin and its place stay.
+function pdWsPutAway(id) {
+  PD.wsQuiet = true;
+  try { PD.dock.removePanel(id); } catch (e) {} finally { PD.wsQuiet = false; }
+}
+// Back in its kept place: true when it is, false when it cannot come back now
+// (its task not listed yet: while the hub warms), null when it never will.
+function pdWsBringBack(it) {
+  if (PD.rt.has(it.id)) return true;
+  if (it.kind === 'chat') {
+    if (!ALL_ROWS.some(r => r.roomId === it.room)) return HUB_PHASE === 'ready' ? null : false;
+    return pdChatOpen(it.room, { restore: true }) ? true : null;
+  }
+  const ctx = it.ctx;
+  const ok = ctx.kind === 'task' ? !!(ctx.sid && (rowBySid(ctx.sid) || ALL_ROWS.some(r => r.roomId === ctx.sid)))
+    : !!(ctx.projectId && projectById(ctx.projectId));
+  if (!ok) return HUB_PHASE === 'ready' ? null : false;
+  const v = wsView(ctx);
+  // Another Workspace shows that file now (one panel per file).
+  if (PD.rt.has(wsPanelId(it.path))) return true;
+  const t = wsTabOpen(v, it.path);
+  return wsPanelAdd(v, t, undefined) ? true : null;
+}
+// A panel that was in a window of its own goes back into one: from the click
+// that opened this context (a browser opens windows only from one). Blocked,
+// it stays a tab, and one quiet line says so.
+function pdWsWindowBack(ids) {
+  if (!ids.length || isPhone()) return;
+  let lost = 0;
+  for (const id of ids) {
+    try { if (PD.dock.isOpenOut(id)) continue; } catch (e) {}
+    let ok = false;
+    try { if (PD.dock.isOut(id)) PD.dock.popIn(id); ok = PD.dock.popOut(id); } catch (e) { ok = false; }
+    if (!ok) lost++;
+  }
+  if (lost) toast(lost > 1 ? `${lost} windows could not open again: they are tabs here.` : 'A window could not open again: it is a tab here.', 4000);
+}
+// The screen's context, settled: what is another's goes, what is this one's
+// comes back. Run as a screen is drawn (renderRows), after the restore of the
+// last visit's panels, and when the project list comes (whose a panel is).
+function pdProjectPanels() {
+  if (!PD.dock || !PD.restored) return;
+  pdWsMigrate();
+  const here = pdWsHere();
+  if (!here) return;
+  const res = PdWorkspace.settle(PD_WS, here, pdWsOpen(), Date.now());
+  if (!res.away.length && !res.back.length) { pdWsSave(); return; }
+  res.away.forEach(pdWsPutAway);
+  const keep = [], wins = [];
+  for (const it of res.back) {
+    const ok = pdWsBringBack(it);
+    if (ok === false) keep.push(it);
+    else if (ok === null) { PdWorkspace.drop(PD_WS, it.id); try { PD.dock.forget(it.id); } catch (e) {} }
+    else if (it.out) wins.push(it.id);
+  }
+  // Not listed yet (the hub warming): tried again at the next settle.
+  if (keep.length) PD_WS.ctxs[here].items.push(...keep);
+  pdChatsRemember();
+  wsPanelsRemember();
+  pdTabTips();
+  pdWsWindowBack(wins);
+  pdWsSave(true);
+}
+// First load with this store (#386): what the old screens set aside
+// (cd-pd-aside, hidden) is shown again, so the settle that follows puts what
+// is another project's away, into that project's workspace, and nothing open
+// now is lost.
+function pdWsMigrate() {
+  let raw = null;
+  try { raw = localStorage.getItem('cd-pd-aside'); } catch (e) {}
+  if (raw === null) return;
+  let ids = [];
+  try { ids = JSON.parse(raw) || []; } catch (e) {}
+  for (const id of Array.isArray(ids) ? ids : []) {
+    try { if (PD.rt.has(id) && !PD.dock.isVisible(id)) PD.dock.setVisible(id, true); } catch (e) {}
+  }
+  try { localStorage.removeItem('cd-pd-aside'); } catch (e) {}
+}
+// P376: a context keeps at most PdWorkspace.CAP tabs open; the one just added
+// (`id`) closes the one of this context least recently shown, not pinned.
+function pdWsCap(id) {
+  if (!PD.dock) return;
+  const here = pdWsHere();
+  const victim = here && PdWorkspace.overflow(PD_WS, here, pdWsOpen(), id);
+  if (victim) { try { PD.dock.removePanel(victim); } catch (e) {} }
+}
+// A panel shown: the least recently shown is the one the cap closes.
+function pdWsSeen(id) {
+  if (!PD.rt.has(id)) return;
+  PdWorkspace.touch(PD_WS, id, Date.now());
+  pdWsSave();
+}
+// A pin (📌) keeps a panel open in every context; closing it unpins it.
+function pdWsPin(id, on) {
+  PdWorkspace.pin(PD_WS, id, on);
+  pdWsSave(true);
+  try { PD.dock.refreshTabExtras(); } catch (e) {}
+  if (!on) pdProjectPanels();   // another project's, unpinned here: put away now
 }
 // The open task's actions in the conversation panel's ⋯ menu (need 14, the
 // CEO's P109): the same model as a list row's (static/actions.js), asked each
@@ -16432,6 +16556,7 @@ for (const t of ['pointerup', 'pointercancel', 'pointerleave']) PD_ROOT.addEvent
 function pdShown(id) {
   const rt = PD.rt.get(id);
   if (rt) {
+    pdWsSeen(id);
     // A file panel: its tab is the one showing in its Workspace. A chat panel:
     // its chat opens at the latest message (as the middle's, openDetail).
     if (rt.kind === 'file') wsFilePanelShown(rt.v, rt.path);
