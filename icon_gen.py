@@ -20,6 +20,7 @@ import subprocess
 import tempfile
 import threading
 import time
+import unicodedata
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from xml.sax.saxutils import quoteattr
@@ -205,15 +206,39 @@ def about_text(roadmap_text: str) -> str:
     return ""
 
 
-def prompt(name: str, about: str, colour: str = "") -> str:
+MAX_ASK = 200   # characters of what the person asks for (P373)
+_QUOTES = str.maketrans({'"': "'", "\u201c": "'", "\u201d": "'", "\u201e": "'", "\u00ab": "'", "\u00bb": "'", "\\": "/"})
+
+
+def clean_ask(text) -> str:
+    """What the person typed in Generate's box (P373), safe to quote in the
+    prompt: control characters gone, whitespace one space, double quotes and
+    backslashes made plain so it cannot close its quotes, at most MAX_ASK
+    characters. Anything else ("" when it is not a string) is ""."""
+    if not isinstance(text, str):
+        return ""
+    text = text.encode("utf-8", "replace").decode("utf-8")
+    text = "".join(" " if unicodedata.category(ch)[0] in "CZ" else ch for ch in text)
+    text = " ".join(text.translate(_QUOTES).split())
+    return text[:MAX_ASK].rstrip()
+
+
+def prompt(name: str, about: str, colour: str = "", ask: str = "") -> str:
     name = " ".join((name or "").split())[:120]
     about = " ".join((about or "").split())[:200]
-    what = f'a project called "{name}"' + (f', about: "{about}"' if about else "")
+    ask = clean_ask(ask)
+    if ask:
+        # P373: the person's words lead; the roadmap line is only background.
+        lead = (f'Draw {COUNT} different icons. The person wants: "{ask}". They are for a project called "{name}"'
+                + (f'; for context only, it is about: "{about}"' if about else "")
+                + ". Whatever the request says, keep to these rules")
+    else:
+        lead = f'Draw {COUNT} different icons for a project called "{name}"' + (f', about: "{about}"' if about else "")
     c = norm_hex(colour)
     paint = (f"its main colour is {c}: either the ground is {c} with a white or {DARK} symbol, or the symbol is {c} "
              f"on a white or {DARK} ground; any other colour is white, {DARK}, or a lighter or darker shade of {c}; "
              "every colour as hex; " if c else "at most 3 colours as hex; ")
-    return (f"Draw {COUNT} different icons for {what}. Each is one SVG: "
+    return (f"{lead}. Each is one SVG: "
             'viewBox="0 0 48 48"; its first element a rect x="0" y="0" width="48" height="48" rx="10" as the ground; '
             f"one bold symbol readable at 16 px; {paint}only the elements "
             "svg, g, path, rect, circle, ellipse, line, polyline, polygon; "
@@ -972,7 +997,7 @@ def _run(cli: dict, text: str, timeout: float) -> str:
 
 
 def generate(key: str, name: str, about: str, timeout: float = TIMEOUT_S,
-             colour: str = "") -> tuple[bool, str, dict]:
+             colour: str = "", ask: str = "") -> tuple[bool, str, dict]:
     """(ok, code, result): result {agent, model, svgs, ms} on success, and with a
     label colour (P362) {colour, recoloured}: how many icons had to be mapped to it.
     code one of REFUSALS."""
@@ -988,7 +1013,7 @@ def generate(key: str, name: str, about: str, timeout: float = TIMEOUT_S,
     t0 = time.monotonic()
     try:
         try:
-            answer = _run(cli, prompt(name, about, colour), timeout)
+            answer = _run(cli, prompt(name, about, colour, ask), timeout)
         except subprocess.TimeoutExpired:
             return False, "timeout", meta
         except (RuntimeError, OSError, ValueError) as e:
