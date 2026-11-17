@@ -3,7 +3,8 @@
 A solo PO chat of 100 turns with pictures; the last message holds one the hub
 is slow to serve, so it loads after the draw has put the chat at its end. Then
 scrolled up and back down, by the wheel and by Latest, each recorded for 40 s:
-from 1 s after the end nothing writes scrollTop and nothing shifts. A new message arriving
+from 1 s after the end nothing writes scrollTop and nothing shifts, and on the way back
+nothing draws or writes scrollTop while the scroll still moves. A new message arriving
 at the end is followed; a picture arriving while scrolled up moves nothing.
 """
 from __future__ import annotations
@@ -54,11 +55,16 @@ async function main() {
   const ev=async expression => { const r=await send('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true},s); if(r.exceptionDetails) throw Error(expression.slice(0,100)+' '+JSON.stringify(r.exceptionDetails)); return r.result.value; };
   const until=async (expression, n=150) => { for(let i=0;i<n;i++){ try {if(await ev(expression)) return;}catch(e){} await sleep(100); } throw Error('timeout '+expression); };
   // Every scrollTop write (with its caller), those that moved the chat, and every layout shift in it.
-  const REC = `(() => { const box=$('#msgs'), L=window.__rec={writes:[],moves:[],shifts:[],t0:performance.now()};
+  // Each write also says whether the reader's scroll was still moving then (#387: it must not be),
+  // and every draw of the chat says who asked for it.
+  const REC = `(() => { const box=$('#msgs'), L=window.__rec={writes:[],moves:[],shifts:[],renders:[],t0:performance.now()};
+    const rb=window.renderBubbles; window.renderBubbles=function(...a){ L.renders.push({t:Math.round(performance.now()-L.t0),
+      by:(new Error().stack||'').split('\\n').slice(2,4).map(x=>x.trim()).join(' < ')}); return rb.apply(this,a); };
     const d=Object.getOwnPropertyDescriptor(Element.prototype,'scrollTop');
     Object.defineProperty(box,'scrollTop',{configurable:true,get(){return d.get.call(this);},set(v){
       const b=d.get.call(this); d.set.call(this,v); const a=d.get.call(this);
       L.writes.push({t:Math.round(performance.now()-L.t0),v:Math.round(+v),from:Math.round(b),to:Math.round(a),
+        moving:typeof scrollMoving==='function'?scrollMoving():null,
         by:(new Error().stack||'').split('\\n').slice(2,4).map(x=>x.trim()).join(' < ')});
       if(Math.abs(a-b)>=1) L.moves.push({t:Math.round(performance.now()-L.t0),from:Math.round(b),to:Math.round(a)}); }});
     new PerformanceObserver(l=>{ for(const e of l.getEntries()) { const inBox=(e.sources||[]).some(x=>x.node&&box.contains(x.node));
@@ -84,14 +90,17 @@ async function main() {
     for (const how of ['wheel','latest']) {
       await ev(REC);
       await up();
-      const away = await ev(state);
+      const away = await ev(state), awayT = await ev(`Math.round(performance.now()-__rec.t0)`);
       if (how === 'wheel') { for(let i=0;i<80;i++){ await wheel(500); await sleep(60); if(await ev(`(() => { const b=$('#msgs'); return b.scrollHeight-b.clientHeight-b.scrollTop<2; })()`)) break; } }
       else { await until(`!$('#to-latest').hidden`, 30); await ev(`$('#to-latest').click(), 0`); }
       const bottom = await ev(`Math.round(performance.now()-__rec.t0)`);
       await sleep(RECORD_MS);
       const L = await ev(`__rec`);
       const after = x => (x||[]).filter(e => e.t > bottom + 1000);
-      out[how] = {away, bottom, end:await ev(state), writesAfter:after(L.writes), movesAfter:after(L.moves), shiftsAfter:after(L.shifts), topsAfter:after(L.tops)};
+      const back = x => (x||[]).filter(e => e.t > awayT);
+      out[how] = {away, bottom, end:await ev(state), writesAfter:after(L.writes), movesAfter:after(L.moves), shiftsAfter:after(L.shifts), topsAfter:after(L.tops),
+        movingWrites:back(L.writes).filter(w => w.moving !== false), scrollRenders:back(L.renders).filter(r => /msgsScrolled/.test(r.by)),
+        settleRenders:back(L.renders).filter(r => /msgsSettle/.test(r.by))};
     }
     // A new message at the end: followed.
     await fetch(A.base + '/__test/append?n=1');
@@ -227,6 +236,17 @@ class ChatSettle(unittest.TestCase):
                 self.assertEqual(g['movesAfter'], [], g)
                 self.assertEqual(g['topsAfter'], [], g)
                 self.assertEqual(g['shiftsAfter'], [], g)
+
+    def test_the_way_back_is_not_cut_short(self):
+        # #387: reaching the end while the reader's scroll still moves draws nothing
+        # and writes no scrollTop (a write stops Chrome's smooth scroll with a jump);
+        # the end's one draw comes once the scroll has settled.
+        for how in ('wheel', 'latest'):
+            with self.subTest(how=how):
+                g = self.got[how]
+                self.assertEqual(g['scrollRenders'], [], g)
+                self.assertEqual(g['movingWrites'], [], g)
+        self.assertEqual(len(self.got['wheel']['settleRenders']), 1, self.got['wheel'])
 
     def test_a_new_message_at_the_end_is_followed(self):
         g = self.got['newAtEnd']

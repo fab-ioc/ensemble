@@ -148,12 +148,31 @@ out.heldNone = [...foldHeld(common, [{ mid: 'm1', from: 'claude', quote: 'absent
 {
   const sbox = { clientHeight: 500, scrollTop: 0, scrollHeight: 5000, children: [] };
   let renders = 0;
-  const sctx = { $: () => sbox, renderBubbles: () => { renders++; }, showLatest: () => {}, readTick: () => {} };
+  // The draw waits for the scroll to settle (#387): the settle timer runs by hand.
+  let due = null;
+  const sctx = { $: () => sbox, renderBubbles: () => { renders++; }, showLatest: () => {}, readTick: () => {}, roomHasOlder: () => false,
+    THREADED: false, THR_BEFORE: 0, THR_AFTER: 0, ROOM_WIN: null, SOLO_MODE: false, SOLO_WIN: null, SOLO_MORE: false, DRAW_HELD: false,
+    Date, setTimeout: f => { due = f; return 1; }, clearTimeout: () => { due = null; } };
   vm.createContext(sctx);
-  vm.runInContext(`var STICK = false, LAST_ITEMS = [1], SEEN = null, NEW_N = 3;
+  vm.runInContext(`var STICK = false, LAST_ITEMS = [1], SEEN = null, NEW_N = 3, USER_SCROLL_T = -Infinity, SCROLL_T = -Infinity, END_DUE = false, SETTLE_TIMER = 0;
+    const scrollMoving = () => Date.now() - SCROLL_T < 150;
     const nearEnd = box => box.scrollTop + box.clientHeight >= box.scrollHeight - 50;\n` + scrolled, sctx);
-  const step = top => { sbox.scrollTop = top; vm.runInContext('msgsScrolled()', sctx); return [renders, vm.runInContext('STICK', sctx)]; };
+  const step = (top, settle = true) => {
+    sbox.scrollTop = top; vm.runInContext('msgsScrolled()', sctx);
+    const moving = renders;
+    if (settle && due) { const f = due; due = null; f(); }
+    return [renders, vm.runInContext('STICK', sctx), moving];
+  };
   out.scrolled = [step(1000), step(4500), step(4500), step(1000), step(4490)];
+  // A reader's wheel scroll still moving at the end: nothing drawn or
+  // written until it settles, then one draw at the end.
+  vm.runInContext('USER_SCROLL_T = Date.now()', sctx);
+  step(1000);
+  const w0 = renders;
+  const stepMoving = step(4460, false), stepMoving2 = step(4480, false);
+  vm.runInContext('SCROLL_T = -Infinity', sctx);
+  const f = due; due = null; f();
+  out.scrolledMoving = { during: [stepMoving[2] - w0, stepMoving2[2] - w0], after: renders - w0, top: sbox.scrollTop };
 }
 
 // Sending draws the hub's receipt through the one redraw, which keeps the
@@ -162,7 +181,7 @@ out.heldNone = [...foldHeld(common, [{ mid: 'm1', from: 'claude', quote: 'absent
 const sent = {};
 for (const drawn of [true, false]) {
   let renders = 0;
-  const sctx = { renderBubbles: () => { renders++; } };
+  const sctx = { renderBubbles: () => { renders++; }, rememberSend: () => {} };
   vm.createContext(sctx);
   vm.runInContext(`var LAST_ITEMS = ${drawn ? '[]' : 'null'}; var SENDS_GEN = 4;
 ` + showPending
@@ -205,7 +224,7 @@ class FoldALongConversation(unittest.TestCase):
     def setUpClass(cls):
         code = NOUN + ATTACH + fold_block(SRC) + js_function(SRC, "soloItems") + js_function(SRC, "patchChildren")
         payload = {"code": code, "showPending": js_line(SRC, "const SENT_LOCAL = new Map();") + js_function(SRC, "noteSent"),
-                   "scrolled": js_function(SRC, "msgsScrolled")}
+                   "scrolled": js_function(SRC, "toEnd") + js_function(SRC, "msgsScrolled") + js_function(SRC, "msgsSettle")}
         out = subprocess.run([NODE, "-e", JS], input=json.dumps(payload), capture_output=True,
                              text=True, encoding="utf-8", timeout=60)
         if out.returncode != 0:
@@ -262,7 +281,17 @@ class FoldALongConversation(unittest.TestCase):
 
     def test_scrolling_back_to_the_end_folds_again(self):
         # up, to the end (draws), still at the end, up, back to the end (draws)
-        self.assertEqual(self.r["scrolled"], [[0, False], [1, True], [1, True], [1, False], [2, True]])
+        self.assertEqual([s[:2] for s in self.r["scrolled"]], [[0, False], [1, True], [1, True], [1, False], [2, True]])
+        # each draw comes from the settle, not from the scroll event itself
+        self.assertEqual([s[2] for s in self.r["scrolled"]], [0, 0, 1, 1, 1])
+
+    def test_a_moving_scroll_reaching_the_end_waits_for_the_settle(self):
+        # #387: the reader's own scroll still moving at the end draws nothing and
+        # writes no scrollTop; once settled, one draw, and the end is written once
+        m = self.r["scrolledMoving"]
+        self.assertEqual(m["during"], [0, 0])
+        self.assertEqual(m["after"], 1)
+        self.assertEqual(m["top"], 5000)
 
     def test_a_send_shows_through_the_one_redraw(self):
         kept = '[["send:a",{"s":{"key":"send:a","text":"hello","state":"delivered","at":1},"gen":4}]]'
