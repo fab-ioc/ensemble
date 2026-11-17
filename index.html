@@ -23322,9 +23322,22 @@ document.getElementById('usage-pace-reset')?.addEventListener('click', () => {
   renderUsage();
   usagePaceSave(natural);
 });
+// Captured: the avatar, Create and the project switcher stop their clicks.
 document.addEventListener('click', (ev) => {
   if (ev.target.closest('#usage-chip') || ev.target.closest('#usage-tray')) return;
   $('#usage-tray').hidden = true;
+}, true);
+// The top bar's popovers close when you leave them, wherever you click (P370).
+// Most of the board is chat frames, and a click in one never reaches this page:
+// this window loses focus instead (as the PO's ⋯ menu does). Focus moving inside
+// the page (the tray's slider, the switcher's filter) is no blur. Switching to
+// another app is one, and closes them too.
+window.addEventListener('blur', () => {
+  $('#usage-tray').hidden = true;
+  closeMeMenu(); closeCreateMenu();
+  if (!$('#proj-menu').hidden) closeProjMenu();
+  $('#search-help-pop').hidden = true;
+  if (findShown()) findOpen(false);
 });
 setInterval(() => { if (!document.hidden) refreshUsage(); }, USAGE_POLL_MS);
 document.addEventListener('visibilitychange', () => {
@@ -24890,6 +24903,15 @@ document.addEventListener('keydown', (ev) => {
   // So does the project switcher's (#303).
   if (ev.key === 'Escape' && !$('#proj-menu').hidden) {
     closeProjMenu(true);
+    ev.stopImmediatePropagation(); ev.preventDefault();
+    return;
+  }
+  // And the plan allowance's tray, focus back on its chip (P370), unless
+  // the Esc was already used (the search box's results close first).
+  if (ev.key === 'Escape' && !ev.defaultPrevented && !$('#usage-tray').hidden) {
+    $('#usage-tray').hidden = true;
+    const chip = $('#usage-chip');
+    if (chip.offsetParent !== null) chip.focus(); else $('#me-btn').focus();
     ev.stopImmediatePropagation(); ev.preventDefault();
     return;
   }
