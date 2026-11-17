@@ -6302,7 +6302,14 @@ function openDetail(sid, o) {
       // #386: a task's own tab is where it opens: it is selected there (the
       // tab's chat is lent to it, renderDetail). Another chat panel only
       // comes on screen.
-      if (!pdTabFor(r0) || (sid === SELECTED_SID && document.body.classList.contains('detail-open'))) return;
+      if (!pdTabFor(r0) || (sid === SELECTED_SID && document.body.classList.contains('detail-open'))) {
+        // Opened by the person (a row, an Inbox card, a link) though already
+        // open: the box is its chat's too (#391 review 2). Nothing moves, so
+        // pdPlaceChat does not aim it.
+        const t = {kind:'task', room:r0.roomId};
+        if (navigator.userActivation?.isActive && PD.restored && !PD.wsQuiet && !PD.dock.narrow() && wcValid(t) && wcKey(t) !== wcKey(WC.target)) wcChoose(t);
+        return;
+      }
     }
     // A task of another project: the one open in the conversation's window
     // keeps that window (#346); the middle comes back here for this one.
@@ -15520,6 +15527,9 @@ function pdEnsure() {
   // stored layout (Dock v0.10.0 parks unknown panels instead of dropping them).
   try { PD.dock.forget('documents'); PD.dock.forget('points'); if (!narrow) PD.dock.forget('inbox'); } catch (e) {}
   PD.dock.onChange(() => { pdKeepMiddle(); pdToolsFit(); pdPlaceChat(); barCrumbs(); pdTabTips(); pdOutMarks(); wcSync(); });
+  // A tab the person closes (its ×, a middle click, the tab menu, Ctrl+F4; the
+  // page only ever removes): the tab shown next is theirs (wcFront).
+  PD.dock.onClose(() => { WC.dockAt = Date.now(); return true; });
   pdOnAdopt('pd', PD_ROOT);
   pdToolsFit();
   PD.dock.onShown(id => pdShown(id));
@@ -15666,7 +15676,7 @@ function pdChatUnpanel(roomId) {
 function pdRowTitle(r) { return [taskNoText(r, false), detailTitle(r)].filter(Boolean).join(' ') || 'Chat'; }
 // The workspace owns one editor. Its session frame runs the ordinary send path,
 // while the conversation frames keep their messages and per-target drafts.
-const WC = { target:null, base:'', tailKey:'', restoring:false, pickSeq:0, popped:new Map(), aimAt:0, ownAt:0, newThread:false };
+const WC = { target:null, base:'', tailKey:'', restoring:false, pickSeq:0, popped:new Map(), aimAt:0, ownAt:0, dockAt:0, keep:false, newThread:false };
 function wcPoRoom() { return PO_PANEL.querySelector('iframe.po-session:not([hidden])')?.dataset.room || ''; }
 function wcMainTarget() {
   const r = SELECTED_SID && rowBySid(SELECTED_SID);
@@ -15871,8 +15881,8 @@ function wcPanelTarget(id) {
 // A chat brought to the front by the person, or its tab clicked (tab): the box
 // is that chat's at once, its To: line too (P340, GitHub issue 57). In a stack
 // of its own beside another, the stack last clicked has it. The person's own:
-// a click on its tab, or a press or key on this page just before (a tab in
-// front closed, the arrow keys on the tabs, the Panels menu: WC.ownAt). Not a
+// a click on its tab, or a press or key on the tabs just before, or a tab
+// closed by the person (its ×, the tab menu, a key: WC.dockAt). Not a
 // chat that came by itself (#271): a restore at load, a project switch's tabs
 // coming back, a tab the page adds; nor what the press that has just opened a
 // thread brings with it (#363): shown within 600 ms of it, it may be that
@@ -15885,7 +15895,10 @@ function wcFront(id, tab = false) {
   // fronts of a project switch put back, the task's tab kept in front) is not
   // the person's pick, whatever was pressed just before (review 1): what opened
   // it aims the box itself (pdPlaceChat, closeDetail).
-  const press = tab || (PD.restored && !PD.wsQuiet && !PD.tabAdding && !PD.opening && Date.now() - WC.ownAt < 1500);
+  // A press elsewhere on the page (the project switcher, a tool's button) does
+  // not make what the page or the hub then shows or removes the person's
+  // (review 2): only a press on the tabs, or a tab the person closed.
+  const press = tab || (PD.restored && !PD.wsQuiet && !PD.tabAdding && !PD.opening && Date.now() - WC.dockAt < 1500);
   if (press && t && wcValid(t)) { if (wcKey(t) !== wcKey(WC.target)) wcChoose(t); }
   else if (id === 'po-chat' && WC.target?.kind === 'thread') wcToMain();
 }
@@ -16261,7 +16274,13 @@ PD_ROOT.addEventListener('click', e => { const t = e.target.closest?.('.dk-tab[d
 // opened from): its time, so that what it brings forward counts as the
 // person's own (wcFront). It comes before whatever it opens, so the press
 // that opens a thread is older than that thread's WC.aimAt.
-for (const ev of ['pointerdown', 'keydown']) window.addEventListener(ev, e => { if (e.isTrusted) WC.ownAt = Date.now(); }, true);
+for (const ev of ['pointerdown', 'keydown']) window.addEventListener(ev, e => {
+  if (!e.isTrusted) return;
+  WC.ownAt = Date.now();
+  // On the dock's tabs (a tab, its ×, the arrow keys on them): what comes to
+  // the front next is the person's pick (wcFront).
+  if (e.target?.closest?.('.dk-bar, [data-dk-tab]') && PD_ROOT.contains(e.target)) WC.dockAt = WC.ownAt;
+}, true);
 // Once after the dock is made: the file and chat panels of the last visit,
 // each in its kept place (no `where`: Dock parks a panel a stored layout
 // names until it is added). A Workspace whose task or project is gone, or a
@@ -16575,7 +16594,9 @@ function pdTabFront() {
   let f = null;
   try { f = PD.dock.frontOf('po-chat'); } catch (e) { f = null; }
   const e = f && PD.rt.get(f);
-  if (e && e.kind === 'chat') pdTabShown(e.room);
+  // The task in front brought back with its project (or after a reload) has
+  // the box, as before (GitHub issue 57).
+  if (e && e.kind === 'chat') pdTabShown(e.room, true);
 }
 // First load with this store (#386): what the old screens set aside
 // (cd-pd-aside, hidden) is shown again, so the settle that follows puts what
@@ -17008,15 +17029,22 @@ function pdPoFrontCloses() {
 // A task's tab came on screen (a click on it, a tab closed beside it): that
 // task opens in it, unless it is the open one, or the tab is being added or
 // brought back by the page (a project switch, a reload).
-function pdTabShown(room) {
+function pdTabShown(room, front = false) {
   if (PD.tabAdding || PD.opening || PD.wsQuiet || !PD.restored) return;
+  // Shown by the person (a press on the tabs, a tab they closed: wcFront's
+  // WC.dockAt), the box goes with the task; shown because the hub or the page
+  // removed the tab in front (a press elsewhere just before, a cap), the task
+  // opens and the box stays where it was (#391 review 2). The fronts a
+  // project switch puts back are the person's (front: pdTabFront).
+  const mine = front || Date.now() - WC.dockAt < 1500;
   // After the dock's own work (a tab closed beside it is still in its hands).
   setTimeout(() => {
     const id = pdChatId(room), r = ALL_ROWS.find(x => x.roomId === room);
     if (!r || !pdTabFor(r) || !PD.rt.has(id)) return;
     try { if (!PD.dock.isShown(id)) return; } catch (e) { return; }
     if (r.sessionId === SELECTED_SID && document.body.classList.contains('detail-open')) return;
-    openDetail(r.sessionId);
+    WC.keep = !mine;
+    try { openDetail(r.sessionId); } finally { WC.keep = false; }
   }, 0);
 }
 // A chat page off screen (behind a tab, or the PO's while a task is in the
@@ -17159,7 +17187,7 @@ function pdPlaceTask(on) {
   if (moved && SELECTED_SID) { DP_EL.dataset.sig = ''; renderDetail(); }
   if (on && moved && SELECTED_SID) {
     const r = rowBySid(SELECTED_SID);
-    if (r?.roomId) wcChoose({kind:'task',room:r.roomId});
+    if (r?.roomId && !WC.keep) wcChoose({kind:'task',room:r.roomId});
   }
 }
 // The Changes button's count: the open task's branch ("+1656", its lines

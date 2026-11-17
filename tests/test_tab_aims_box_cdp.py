@@ -182,6 +182,38 @@ async function main() {
     await clickAt(tab('po-chat')); await sleep(1200);
     await evalIn(`PD.dock.reveal('board'); 0`); await sleep(1200);
     await step('rowWipers', () => clickAt(`tr.row.headless[data-room="${T.Wipers}"]`));
+    // The row of the task already open clicked again, its tab in a stack beside the PO's and the box
+    // on the PO meanwhile (a click in the PO's chat): the box goes back to the task (review 2).
+    out.rowAgainSel = await evalIn(`SELECTED_SID ? rowBySid(SELECTED_SID).roomId : null`);
+    await evalIn(`(() => { const find = n => !n ? null : n.t === 'stack' ? (n.panels.includes('po-chat') ? n : null) : (n.kids || []).map(find).find(Boolean) || null;
+      PD.dock.moveTo('chat:${T.Wipers}', { kind: 'stack', stack: find(PD.dock.layout().root) }, 'right'); return 0; })()`);
+    await sleep(1500);
+    await step('rowAgainPo', async () => clickXY(await evalIn(chatAt(`PO_PANEL.querySelector('iframe.po-session:not([hidden])')`))));
+    out.rowAgainShown = await evalIn(`PD.dock.isShown('chat:${T.Wipers}') && document.body.classList.contains('detail-open')`);
+    await evalIn(`PD.dock.reveal('board'); 0`); await sleep(1200);
+    await step('rowAgain', () => clickAt(`tr.row.headless[data-room="${T.Wipers}"]`));
+    // A tab the hub removes after a press elsewhere on the page (the project switcher): the tab shown
+    // next in its stack (the one on its left, a chat) does not take the box (review 2). The
+    // removed tab is brought to the front by the page first.
+    // Every chat has a stack of its own by now: two moved into the PO's stack, one after the other.
+    for (let n = 0; n < 2; n++) {
+      await evalIn(`(() => { const st = [], walk = n => { if (!n) return; if (n.t === 'stack') st.push(n); else (n.kids || []).forEach(walk); }; walk(PD.dock.layout().root);
+        const po = st.find(x => x.panels.includes('po-chat')), lone = st.find(x => x !== po && x.panels.length === 1 && x.panels[0] !== 'chat:${T.Brakes}');
+        if (lone && po.panels.length < 3) PD.dock.moveTo(lone.panels[0], { kind: 'stack', stack: po }, 'center'); return 0; })()`); await sleep(1000);
+    }
+    await clickAt(tab('po-chat')); await sleep(1200);
+    out.removed = await evalIn(`(() => { const all = [], walk = n => { if (!n) return; if (n.t === 'stack') all.push(n.panels); else (n.kids || []).forEach(walk); }; walk(PD.dock.layout().root);
+      for (const ps of all) { const k = ps.findIndex((id, n) => n > 0 && id.startsWith('chat:') && ps[n - 1].startsWith('chat:')); if (k > 0) return { id: ps[k], left: ps[k - 1] }; }
+      return JSON.stringify(all); })()`);
+    if (typeof out.removed !== 'object') throw new Error('no chat tab with a chat on its left: ' + out.removed);
+    await evalIn(`(() => { PD.opening = true; try { PD.dock.activate(${JSON.stringify(out.removed.id)}); } finally { PD.opening = false; } return 0; })()`); await sleep(600);
+    out.removedBefore = await evalIn(ST);
+    out.removedShown = await evalIn(`PD.dock.isShown(${JSON.stringify(out.removed.id)})`);
+    await step('hubRemoved', async () => {
+      await clickAt('#proj-switch');
+      await evalIn(`(() => { closeProjMenu(); PD.dock.removePanel(${JSON.stringify(out.removed.id)}); return 0; })()`);
+    });
+    out.leftShown = await evalIn(`PD.dock.isShown(${JSON.stringify(out.removed.left)})`);
     out.errors = c.exceptions;
   } finally {
     try { await c.send('Browser.close'); } catch (e) {}
@@ -221,6 +253,11 @@ class TabAimsBox(unittest.TestCase):
             mock.patch.object(dashboard.Handler, "log_message", lambda *a, **k: None),
             mock.patch.object(dashboard, "push_label_to_iterm", lambda *a, **k: None),
             mock.patch.dict(os.environ, {"CODEX_HOME": str(base / "codex")}),
+            # The hub's list of sessions is kept in the module and answered stale first: these
+            # rooms' rows must not be what the next suite's page reads.
+            mock.patch.object(dashboard, "_SESS_CACHE", {}),
+            mock.patch.object(dashboard, "_SLIM_MEMO", {}),
+            mock.patch.object(dashboard, "SESSIONS_FEEDS", {}),
         ]
         for p in cls.patches:
             p.start()
@@ -287,11 +324,21 @@ class TabAimsBox(unittest.TestCase):
         self.assertEqual(self.got["autoFront"], "chat:" + self.tasks["Brakes"], "Brakes's tab came to the front")
         self.at_po("autoAfterPress")
 
+    def test_a_tab_the_hub_removes_after_an_unrelated_press_does_not_move_the_box(self):
+        removed = self.got["removed"]
+        self.assertTrue(self.got["removedShown"], removed)
+        self.assertEqual(self.got["removedBefore"]["target"], "po:" + self.pos["Motors"], self.got["removedBefore"])
+        self.assertTrue(self.got["leftShown"], "the chat on its left came to the front")
+        self.at_po("hubRemoved")
+
     def test_a_task_opened_has_the_box(self):
         self.at_po("start")
         self.at_task("openBrakes", "Brakes")
         self.at_task("openWipers", "Wipers")
         self.at_task("rowWipers", "Wipers")
+        self.assertTrue(self.got["rowAgainShown"], "Wipers open and on screen beside the PO")
+        self.at_po("rowAgainPo")
+        self.at_task("rowAgain", "Wipers")
 
     def test_a_click_on_a_tab_aims_the_box_at_its_chat(self):
         self.at_po("poTab")
