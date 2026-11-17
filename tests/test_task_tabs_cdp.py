@@ -124,13 +124,15 @@ async function main() {
     out.besideOk = await evalIn(`pdRowPanel(${sid(T.Wipers)})`);
     await sleep(1500);
     out.beside = await evalIn(ST);
+    out.besideOrphans = await evalIn(`PD.dock.panels().filter(p => p.id.startsWith('chat:') && !PD.rt.has(p.id)).map(p => p.id)`);
     // The drawing (P374): icons, a pin that keeps a tab across a switch and a reload, the ⋯ tail, no Panels ▾.
     const EXTRAS = `(() => { const w = id => { const t = document.querySelector('#po-dock .dk-tab[data-dk-tab="' + id + '"]'), wr = t && t.closest('.dk-tab-wrap');
         if (!wr) return null; const ico = wr.querySelector('.pd-tab-ico'), pin = wr.querySelector('.pd-pin');
         return { ico: !!ico, cur: !!ico && ico.classList.contains('pd-ico-cur'), shown: !!ico && getComputedStyle(ico).display !== 'none' && ico.getBoundingClientRect().width > 0,
                  pin: !!pin, on: !!pin && pin.classList.contains('on') }; };
       return { pid: PD.pid, po: w('po-chat'), brakes: w('chat:${T.Brakes}'), brakesOpen: PD.rt.has('chat:${T.Brakes}') && PD.dock.isVisible('chat:${T.Brakes}'),
-               panels: !!document.querySelector('.pd-panels') }; })()`;
+               panels: !!document.querySelector('.pd-panels'), wipers: PD.dock.panels().some(p => p.id === 'chat:${T.Wipers}'),
+               orphans: PD.dock.panels().filter(p => p.id.startsWith('chat:') && !PD.rt.has(p.id)).map(p => p.id) }; })()`;
     out.extras = await evalIn(EXTRAS);
     await evalIn(`(() => { const t = document.querySelector('#po-dock .dk-tab[data-dk-tab="chat:${T.Brakes}"]'); t && t.closest('.dk-tab-wrap').dispatchEvent(new MouseEvent('mouseover', { bubbles: true })); return 0; })()`);
     await shot('tabs-motors');
@@ -317,6 +319,7 @@ class TaskTabs(unittest.TestCase):
         self.assertTrue(g["besideOk"], g["beside"])
         self.assertEqual(g["beside"]["pid"], self.ids["Motors"], g["beside"])
         self.assertIn("chat:" + T["Wipers"], g["beside"]["stack"], g["beside"])
+        self.assertEqual(g["besideOrphans"], [], "its tab, brought back by the switch, is the page's (not added twice)")
 
     def test_the_tabs_carry_icons_and_pins_as_drawn(self):
         g = self.got
@@ -334,6 +337,8 @@ class TaskTabs(unittest.TestCase):
             self.assertTrue(x["brakesOpen"], f"{k}: the pinned Brakes is still open on Trading: {x}")
             self.assertTrue(x["brakes"] and x["brakes"]["on"], f"{k}: its pin is on: {x}")
             self.assertTrue(x["brakes"]["ico"] and not x["brakes"]["cur"] and x["brakes"]["shown"], f"{k}: Motors' icon shows: {x}")
+            self.assertFalse(x["wipers"], f"{k}: the unpinned Wipers stayed with Motors: {x}")
+            self.assertEqual(x["orphans"], [], k)
 
     def test_every_menu_ends_with_reset_layout(self):
         self.assertTrue(self.got["menuOpen"], self.got["menuRows"])

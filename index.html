@@ -15983,22 +15983,25 @@ function pdChatOpen(roomId, o) {
   const id = pdChatId(roomId);
   // o.agent: the chat opens at that agent (a link to @codex@18), as the middle's does.
   const at = o && o.agent ? '&agent=' + encodeURIComponent(o.agent) : '';
-  if (PD.rt.has(id)) {
+  const shown = () => {
     if (at) { const f = pdChatFrameOf(roomId); if (f) f.src = '/session?id=' + encodeURIComponent(roomId) + '&embed=1' + at; }
     try { d.reveal(id); } catch (e) {}
     if (!o?.restore) wcChoose({kind:'task',room:roomId});
     return true;
-  }
+  };
+  if (PD.rt.has(id)) return shown();
   const r = ALL_ROWS.find(x => x.roomId === roomId);
   if (!r) return false;
   // #386 rule 3 (review 1): a task of another project (a Ctrl/⌘ or middle
   // click, Open in new panel) is added on that project's screen: the switch
-  // first, as a plain click's.
+  // first, as a plain click's. The switch may bring its tab back with that
+  // project's workspace: then it is shown, not added a second time.
   if (!o?.restore) {
     const own = pdWsCtxOfTask(roomId), here = pdWsHere();
     if (own && here && own !== here && !own.startsWith('task:') && projectById(own)) {
       openProjectPage(own);
       if (!pdPanelsOn()) return false;
+      if (PD.rt.has(id)) return shown();
     }
   }
   // #386: a task with a tab of its own (pdTabFor) is open in that tab: the
