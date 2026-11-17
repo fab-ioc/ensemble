@@ -119,4 +119,15 @@ function chromeProfile(A) {
     throw new Error('chrome_profile: ' + dir + ' has no password_manager.os_password_last_changed; refusing to launch Chrome with it (Windows would log a failed sign-in)');
   return dir;
 }
+// #386: a computer has no Panels ▾; every dock panel's ⋯ ends with the common tail (Pin, closed windows, Show <a
+// hidden panel>, Inbox, Reset layout). Page-side expressions: DK_MENU_OPEN(scope) opens the first ⋯ on screen under
+// scope (#po-dock, the PO's dock; #list-dock, the left one) and says whether it has items; DK_MENU_ROWS lists them;
+// DK_MENU_PICK(label) clicks the item whose label starts with label (an item with a submenu opens it).
+const DK_MENU_OPEN = (scope = '#po-dock') => `(() => { const b = [...document.querySelectorAll(${JSON.stringify(scope)} + ' [data-dk-act="menu"]')]
+  .find(e => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0; }); if (!b) return false; b.click();
+  return !!document.querySelector('.dk-menu [data-dk-app]'); })()`;
+const DK_MENU_ROWS = `[...document.querySelectorAll('.dk-menu [data-dk-app]')].map(b => ({ text: b.textContent.replace('▸', '').trim(),
+  checked: b.getAttribute('aria-checked') === 'true', disabled: b.disabled || b.getAttribute('aria-disabled') === 'true' }))`;
+const DK_MENU_PICK = label => `(() => { const b = [...document.querySelectorAll('.dk-menu [data-dk-app]')].reverse()
+  .find(e => e.textContent.trim().startsWith(${JSON.stringify(label)})); if (!b) return false; b.click(); return true; })()`;
 """

@@ -96,6 +96,11 @@ async function main() {
     await step('poTab', `PD.dock.activate('po-chat')`);
     await step('brakesTab', `PD.dock.activate('chat:${T.Brakes}')`);
     out.sameFrame = await evalIn(`(() => { const f = document.querySelector('iframe.dp-session[data-room="${T.Brakes}"]'); return f === window.__brakes && f.contentWindow.__mark === 7; })()`);
+    // The task's actions are in its tab's ⋯, above the common tail (was test_task_dock_panel's, #150).
+    out.taskMenuOpen = await evalIn(DK_MENU_OPEN()); await sleep(200);
+    out.taskMenu = (await evalIn(DK_MENU_ROWS)).map(r => r.text);
+    await evalIn(DK_MENU_OPEN()); await sleep(300);
+    out.taskMenuClosed = await evalIn(`!document.querySelector('.dk-menu [data-dk-app]')`);
     await step('esc', `document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`, 700);
     await step('wipersAgain', `openDetail(${sid(T.Wipers)})`);
     await step('trading', `openProjectPage(${JSON.stringify(P.Trading)})`, 1500);
@@ -119,6 +124,33 @@ async function main() {
     out.besideOk = await evalIn(`pdRowPanel(${sid(T.Wipers)})`);
     await sleep(1500);
     out.beside = await evalIn(ST);
+    // The drawing (P374): icons, a pin that keeps a tab across a switch and a reload, the ⋯ tail, no Panels ▾.
+    const EXTRAS = `(() => { const w = id => { const t = document.querySelector('#po-dock .dk-tab[data-dk-tab="' + id + '"]'), wr = t && t.closest('.dk-tab-wrap');
+        if (!wr) return null; const ico = wr.querySelector('.pd-tab-ico'), pin = wr.querySelector('.pd-pin');
+        return { ico: !!ico, cur: !!ico && ico.classList.contains('pd-ico-cur'), shown: !!ico && getComputedStyle(ico).display !== 'none' && ico.getBoundingClientRect().width > 0,
+                 pin: !!pin, on: !!pin && pin.classList.contains('on') }; };
+      return { pid: PD.pid, po: w('po-chat'), brakes: w('chat:${T.Brakes}'), brakesOpen: PD.rt.has('chat:${T.Brakes}') && PD.dock.isVisible('chat:${T.Brakes}'),
+               panels: !!document.querySelector('.pd-panels') }; })()`;
+    out.extras = await evalIn(EXTRAS);
+    await evalIn(`(() => { const t = document.querySelector('#po-dock .dk-tab[data-dk-tab="chat:${T.Brakes}"]'); t && t.closest('.dk-tab-wrap').dispatchEvent(new MouseEvent('mouseover', { bubbles: true })); return 0; })()`);
+    await shot('tabs-motors');
+    await evalIn(`document.querySelector('#po-dock [data-pd-pin="chat:${T.Brakes}"]').click(); 0`);
+    await sleep(400);
+    await evalIn(`openProjectPage(${JSON.stringify(P.Trading)}); 0`);
+    await sleep(1500);
+    out.pinnedAway = await evalIn(EXTRAS);
+    await shot('pinned-away');
+    await evalIn('location.reload(); 0');
+    await sleep(1000);
+    await until('typeof PROJECTS !== "undefined" && !!PROJECTS && PROJECTS.projects.length > 1 && ALL_ROWS.length >= 6 && window.ensBooted === true', 30000);
+    await evalIn(`(() => { if (SELECTED_PROJECT !== ${JSON.stringify(P.Trading)}) { SELECTED_PROJECT = ${JSON.stringify(P.Trading)}; PROJECT_TAB = 'tasks'; renderRows(); } return 0; })()`);
+    await until(`!!PD.dock && PD.restored && PD.pid === ${JSON.stringify(P.Trading)}`, 30000);
+    await sleep(1500);
+    out.pinnedReload = await evalIn(EXTRAS);
+    out.menuOpen = await evalIn(DK_MENU_OPEN());
+    out.menuRows = await evalIn(DK_MENU_ROWS);
+    await shot('menu-tail');
+    await evalIn(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); 0`);
     out.errors = c.exceptions;
   } finally {
     try { await c.send('Browser.close'); } catch (e) {}
@@ -232,6 +264,15 @@ class TaskTabs(unittest.TestCase):
         self.in_tab(g["brakesTab"], T["Brakes"], "Brakes tab")
         self.assertTrue(g["sameFrame"], "the chat page was kept, not reloaded")
 
+    def test_the_task_tabs_menu_holds_its_actions_then_the_common_tail(self):
+        m = self.got["taskMenu"]
+        self.assertTrue(self.got["taskMenuOpen"], m)
+        for item in ("Rename…", "Agents and models…", "Delete task…"):
+            self.assertIn(item, m)
+        self.assertLess(m.index("Delete task…"), m.index("Reset layout"), "the task's actions first")
+        self.assertEqual(m[-1], "Reset layout")
+        self.assertTrue(self.got["taskMenuClosed"], "the ⋯ closes again")
+
     def test_esc_goes_back_to_the_po_tab(self):
         self.no_task(self.got["esc"], "Esc")
         self.assertEqual(len(self.got["esc"]["stack"]), 3)
@@ -276,6 +317,29 @@ class TaskTabs(unittest.TestCase):
         self.assertTrue(g["besideOk"], g["beside"])
         self.assertEqual(g["beside"]["pid"], self.ids["Motors"], g["beside"])
         self.assertIn("chat:" + T["Wipers"], g["beside"]["stack"], g["beside"])
+
+    def test_the_tabs_carry_icons_and_pins_as_drawn(self):
+        g = self.got
+        x = g["extras"]
+        self.assertEqual(x["pid"], self.ids["Motors"], x)
+        self.assertTrue(x["po"]["ico"] and x["po"]["shown"] and not x["po"]["pin"], f"the PO's tab: its project's icon, no pin: {x}")
+        self.assertTrue(x["brakes"]["ico"] and x["brakes"]["cur"] and not x["brakes"]["shown"], f"this project's task tab: no icon in the page: {x}")
+        self.assertTrue(x["brakes"]["pin"] and not x["brakes"]["on"], x)
+        self.assertFalse(x["panels"], "no Panels ▾ on a computer")
+
+    def test_a_pinned_tab_stays_across_a_switch_and_a_reload(self):
+        for k in ("pinnedAway", "pinnedReload"):
+            x = self.got[k]
+            self.assertEqual(x["pid"], self.ids["Trading"], f"{k}: {x}")
+            self.assertTrue(x["brakesOpen"], f"{k}: the pinned Brakes is still open on Trading: {x}")
+            self.assertTrue(x["brakes"] and x["brakes"]["on"], f"{k}: its pin is on: {x}")
+            self.assertTrue(x["brakes"]["ico"] and not x["brakes"]["cur"] and x["brakes"]["shown"], f"{k}: Motors' icon shows: {x}")
+
+    def test_every_menu_ends_with_reset_layout(self):
+        self.assertTrue(self.got["menuOpen"], self.got["menuRows"])
+        texts = [r["text"] for r in self.got["menuRows"]]
+        self.assertEqual(texts[-1], "Reset layout", texts)
+        self.assertIn("Inbox", texts)
 
     def test_the_page_threw_no_exception(self):
         self.assertEqual(self.got["errors"], [])

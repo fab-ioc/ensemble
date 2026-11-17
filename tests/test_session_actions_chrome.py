@@ -1,6 +1,6 @@
 """The session action bar in a real browser: the task panel (index.html, while
 the panels could not load: with them, its actions are the Dock panel's own ⋯,
-test_task_dock_panel) and the popped-out window (session.html), served by a hub
+test_task_tabs_cdp) and the popped-out window (session.html), served by a hub
 in a thread, driven by headless Chrome over CDP at 1280x800 and 360x640.
 
 * the More menu opens by keyboard and by click, is moved to <body> while it is
@@ -177,7 +177,7 @@ async function main() {
       };
       {
         // The task panel's actions are the Dock panel's own ⋯ items (#150,
-        // test_task_dock_panel). The bar under the task's name keeps a More
+        // test_task_tabs_cdp). The bar under the task's name keeps a More
         // menu of its own only while the panels could not load: the library's
         // entry module fails here every time, on a short retry schedule.
         const p = await page(A.base + '/', 'true');

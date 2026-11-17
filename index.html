@@ -16628,7 +16628,9 @@ function pdPinItem(id) {
   return [{ sep: true }, { id: 'pin', label: 'Pin: keep it in every project', checked: PdWorkspace.isPinned(PD_WS, id),
             run: () => pdWsPin(id, !PdWorkspace.isPinned(PD_WS, id)) }];
 }
-const pdWithCommon = hook => (id, ctx) => [...(hook ? hook(id, ctx) || [] : []), ...pdPinItem(id), ...pdCommonItems(ctx)];
+// A phone keeps Panels ▾ in the bar, so its ⋯ has no common tail.
+const pdWithCommon = hook => (id, ctx) => [...(hook ? hook(id, ctx) || [] : []), ...pdPinItem(id),
+  ...(PD.dock && PD.dock.narrow() ? [] : pdCommonItems(ctx))];
 // The open task's actions in the conversation panel's ⋯ menu (need 14, the
 // CEO's P109): the same model as a list row's (static/actions.js), asked each
 // time the menu opens, drawn by Dock above its own items (View Mode, Take

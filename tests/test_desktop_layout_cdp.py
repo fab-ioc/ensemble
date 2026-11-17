@@ -174,9 +174,11 @@ async function main() {
     await p.evalIn('midLeave(); SELECTED_PROJECT = null; renderRows(); location.hash = "#needs"; 0');
     await p.until('document.body.classList.contains("po-dock") && !!PD.dock && ldOnScreen("inbox")', 15000).catch(() => null);
     out.needsHash = await p.evalIn('({ po: document.body.classList.contains("po-dock"), inbox: ldOnScreen("inbox"), hash: location.hash })');
-    // Panels ▾ › Tasks: the list, docked at the left.
-    await p.click('document.querySelector("#bar-here .pd-panels")'); await sleep(250);
-    out.panelsItem = await p.evalIn(`!!document.querySelector('[data-pd-list]')`);
+    // #386: no Panels ▾ on a computer; the ⋯ tail has the Inbox and no Tasks (P287).
+    out.panelsBtn = await p.evalIn(`!!document.querySelector('.pd-panels')`);
+    out.menuOpen = await p.evalIn(DK_MENU_OPEN());
+    out.menuRows = await p.evalIn(DK_MENU_ROWS);
+    await p.evalIn(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); 0`);
     await p.close();
     // ---- a phone: no list dock, no list on screen (#307)
     const ph = await page(390, 844, true);
@@ -338,8 +340,12 @@ class DesktopLayoutInChrome(unittest.TestCase):
         self.assertTrue(self.got["needsHash"]["po"] and self.got["needsHash"]["inbox"], self.got["needsHash"])
         self.assertFalse(self.got["home"]["listOn"])
 
-    def test_panels_has_no_tasks_item(self):
-        self.assertFalse(self.got["panelsItem"])
+    def test_no_panels_menu_and_the_menu_tail_has_no_tasks_item(self):
+        self.assertFalse(self.got["panelsBtn"])
+        self.assertTrue(self.got["menuOpen"])
+        texts = [r["text"] for r in self.got["menuRows"]]
+        self.assertIn("Inbox", texts)
+        self.assertNotIn("Tasks", texts)
 
     def test_a_phone_has_no_list_by_default(self):
         g = self.got["phone"]

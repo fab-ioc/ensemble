@@ -262,15 +262,15 @@ async function main() {
       await new Promise(r => setTimeout(r, 600));
       return { box: true, was, now, folded: SW_UN.open, row: !!r, opened: !!SELECTED_SID && (rowBySid(SELECTED_SID) || {}).roomId === ${JSON.stringify(A.loose)} };
     })()`);
-    // Closing hides it; Panels reopens Window mode, also after a reload.
+    // Closing hides it; the ⋯ tail's Tasks (#386: no Panels ▾ on a computer) reopens Window mode, also after a reload.
     await p.evalIn('LD.dock.popWindow("list").close(); 0');
     await p.until('!LD.dock.isOut("list") && SW_EL.ownerDocument === document', 10000); await sleep(500);
     out.windowBack = await p.evalIn(GEOM);
     await p.evalIn('location.reload(); 0'); await sleep(1500); await p.ready();
     await go(p, A.proj, true); await ldReady(p); await sleep(600);
-    await p.until('!!LD.dock && !!document.querySelector(".pd-panels")');
+    await p.until('!!LD.dock && !document.querySelector(".pd-panels")');
     out.hiddenReload = await p.evalIn(GEOM);
-    await p.click('.pd-panels'); await p.click('[data-pd-list]');
+    await p.evalIn(DK_MENU_OPEN('body')); await sleep(200); await p.evalIn(DK_MENU_PICK('Tasks'));
     await p.until('!!LD.dock.popWindow("list") && SW_EL.ownerDocument !== document');
     out.windowReopened = await p.evalIn(GEOM);
     await p.evalIn(`(() => {
@@ -410,7 +410,7 @@ async function main() {
     await h.evalIn('LD.dock.popWindow("list").close(); 0');
     await h.until('!LD.dock.isVisible("list")');
     out.pinnedHidden = await h.evalIn(GEOM);
-    await h.click('.pd-panels'); await h.click('[data-pd-list]');
+    await h.evalIn(DK_MENU_OPEN('body')); await sleep(200); await h.evalIn(DK_MENU_PICK('Tasks'));
     await h.until('!!LD.dock.popWindow("list") && SW_EL.ownerDocument !== document');
     out.pinnedReopened = await h.evalIn(GEOM);
     await h.close();

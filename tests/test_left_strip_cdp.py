@@ -22,7 +22,7 @@ Wheels (a PO) and Alpha (none), a task and a session in no project. Checked:
   the row's dots and from a right click;
 * the Inbox pinned, on its strip, floating and in its window, back pinned in
   Projects' column; on the other side;
-* Panels ▾ › Inbox; a reload keeps the layout; Reset layout puts the default
+* the ⋯ tail's Inbox (no Panels ▾ on a computer, #386); a reload keeps the layout; Reset layout puts the default
   back;
 * a layout saved before (the Inbox in the PO dock, or with the Tasks panel)
   opens with Inbox and Projects on the left strip, the Inbox as the person
@@ -428,22 +428,22 @@ async function main() {
     await p.until('window.ensBooted === true && !!LD.dock', 30000);
     await toPo(p, P.Motors);
     out.reloaded = await G(p);
-    // ---- Panels ▾ › Tasks and › Inbox
-    const menu = async () => { await p.click('document.querySelector("#bar-here .pd-panels")'); await sleep(250); };
-    const rows = () => p.evalIn(`[...document.querySelectorAll('.pd-menu [data-pd-ld]')].map(b => ({ id: b.dataset.pdLd, checked: b.getAttribute('aria-checked') === 'true', disabled: b.disabled, text: b.textContent.trim() }))`);
+    // ---- the ⋯ tail's Tasks and Inbox (#386: no Panels ▾ on a computer)
+    const menu = async () => { await p.evalIn(DK_MENU_OPEN()); await sleep(250); };
+    const rows = async () => (await p.evalIn(DK_MENU_ROWS)).filter(r => r.text === 'Inbox' || r.text === 'Tasks').map(r => ({ id: r.text.toLowerCase(), ...r }));
     await menu(); out.menu1 = await rows();
-    await p.click('document.querySelector(".pd-menu [data-pd-ld=inbox]")'); await sleep(500);
+    await p.evalIn(DK_MENU_PICK('Inbox')); await sleep(500);
     out.menuInbox = await G(p);
     await p.key('Escape'); await sleep(300);
     // the Inbox pinned: its row is checked and kept
     await p.evalIn(`${L}.pin('inbox'); 0`); await sleep(300);
     await menu(); out.menu2 = await rows();
-    await p.evalIn('pdMenuClose(false); 0');
+    await p.key('Escape'); await sleep(200);
     // ---- Reset layout
     await p.evalIn(`${L}.setViewMode('inbox', 'float'); 0`); await sleep(300);
     out.beforeReset = await G(p);
     await menu();
-    await p.click('document.querySelector(".pd-menu [data-pd-reset]")'); await sleep(700);
+    await p.evalIn(DK_MENU_PICK('Reset layout')); await sleep(700);
     out.reset = await G(p);
     // the old layouts, built from this one's own parts
     const L0 = JSON.parse(out.reset.stored || '{}');
@@ -1326,7 +1326,7 @@ class LeftStripInChrome(unittest.TestCase):
         self.assertIsNone(r["ldInbox"])
         self.assertEqual(r["chat"]["x"], 52)
 
-    def test_the_panels_menu(self):
+    def test_the_menu_tail(self):
         self.assertEqual([(m["id"], m["text"], m["checked"]) for m in self.g("menu1")],
                          [("inbox", "Inbox", False)], "no Panels › Tasks on a computer")
         self.assertEqual(self.g("menuInbox")["fly"], "inbox")

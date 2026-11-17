@@ -241,8 +241,11 @@ class ThePanels(unittest.TestCase):
             self.assertIn(used, dock, used)
         css = INDEX[INDEX.index("/* ---- The PO screen as panels"):INDEX.index("</style>", INDEX.index("/* ---- The PO screen as panels"))]
         self.assertIn("body.po-dock #po-dock { position: absolute; inset: 0; background: var(--bg); }", css, "the dock is its own stacking context again")
-        for gone in ("dk-popped", "body.pd-phone", "text-transform", "letter-spacing"):
+        for gone in ("dk-popped", "body.pd-phone"):
             self.assertNotIn(gone, css, gone)
+        # Sentence case, no tracking: only resets (#370's project tile resets both).
+        self.assertEqual(re.findall(r"text-transform:\s*(?!none)[\w-]+", css), [])
+        self.assertEqual(re.findall(r"letter-spacing:\s*(?!0[;\s}])[\w.-]+", css), [])
         for tok in ("--dk-font-chrome: var(--font-sans)", "--dk-fs-tab: var(--fs-200)", "--dk-tab-case: none",
                     "--dk-badge-border: 0", "--dk-radius: var(--r-300)", "--dk-float-shadow: var(--e-200)"):
             self.assertIn(tok, css, tok)
@@ -968,7 +971,7 @@ class InChrome(unittest.TestCase):
         self.assertTrue(f["inPanel"], "the chat is in its panel, not laid over it")
         self.assertFalse(f["poOff"])
         self.assertFalse(f["tabs"], "no tab row: the panels are the tabs")
-        self.assertTrue(f["panels"], "Panels recovers hidden windows on a desktop")
+        self.assertFalse(f["panels"], "#386: no Panels ▾ on a computer; each ⋯ ends with hidden panels and closed windows")
 
     def test_a_docked_chat_owns_its_progress_notice(self):
         for width in (1800, 390):
