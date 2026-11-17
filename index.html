@@ -17463,10 +17463,10 @@ function ibxPaint() {
     IBX.ldPid = lp;
     const ln = IBX.data ? ibxRows(IBX.data, IBX.scope, lp).length : 0;
     LD.dock.setBadge('inbox', ln ? String(ln) : null, ln ? `${ln} waiting on you` : null);
-    const box = document.getElementById('ld-inbox');
+    const box = ldPart('ld-inbox');
     box.classList.remove('ibx-phone');
     box.classList.toggle('ld-docked-list', !!window.ensListDocked);
-    ibxPaintIn(document.getElementById('ld-ibx-body'), lp, 'ldSig', false, { listed: !window.ensListDocked });
+    ibxPaintIn(ldPart('ld-ibx-body'), lp, 'ldSig', false, { listed: !window.ensListDocked });
     ldpPaint();
     ldSplitApply();
   }
@@ -17518,6 +17518,16 @@ function ibxPaintIn(el, pid, key, phone, opts) {
   if (fk) { const g = el.querySelector(fk); if (g) g.focus({ preventScroll: true }); }
 }
 function ibxRepaint() { IBX.sig = IBX.phSig = IBX.ldSig = ''; ibxPaint(); }
+// #390: a computer's Inbox panel and its parts, by reference: out of the page's
+// document while a switch lays the docks out again, or popped out (in its
+// window's document), getElementById finds none of them (ibxPaint threw), and
+// the Inbox there must still follow.
+var LD_BOX = null;
+function ldPart(id) {
+  if (!LD_BOX) LD_BOX = document.getElementById('ld-inbox');
+  if (!LD_BOX || id === 'ld-inbox') return LD_BOX;
+  return LD_BOX.querySelector('#' + id);
+}
 // The project the list dock's Inbox is for (#322): the PO screen's, else the bar's.
 // A task or session in no project open in the middle is its own (#322, P287):
 // 'room:<its room>', so the Inbox shows its rows.
@@ -17565,11 +17575,9 @@ function ibxLdPid() {
     // '' -> a project while the projects load, or in the page's first seconds,
     // is the page arriving where it was, not a new pick.
     const arriving = !was && (!wasReady || Date.now() - LD_SEL.at < LD_SEL_SETTLE_MS);
-    if (here && (!arriving || !LD_SEL.sel)) {
-      ldSelSet(here);
-      // Opening a project or task picks it: All gives way (#328 review 1).
-      if (IBX.scope === 'all') ldpScope('project');
-    }
+    // Opening a project or task picks it. #390 (GitHub issue 56): All stays
+    // All; the pick still moves, so a later "This project" is the new one.
+    if (here && (!arriving || !LD_SEL.sel)) ldSelSet(here);
   }
   // A pick whose project or task is gone: back to All, and forgotten.
   if (LD_SEL.sel && LD_SEL.sel !== here && ldSelGone(LD_SEL.sel)) ldSelSet('');
@@ -17962,7 +17970,7 @@ function ldpCount(pid) {
 // a newcomer last, a gone one out. Away from the list a change shows at once.
 const LDP_HOLD_MS = 2000;
 function ldpPointerIn() {
-  const box = document.getElementById('ld-projs');
+  const box = ldPart('ld-projs');
   return !!box && (box.matches(':hover') || !!(ROW_EXPAND && box.contains(ROW_EXPAND.row)));
 }
 function ldpHeld(k, list, id) {
@@ -18142,7 +18150,7 @@ function ldpHtml(m) {
 }
 function ldpPaint() {
   if (typeof LDP === 'undefined') return;
-  const el = document.getElementById('ld-projs');
+  const el = ldPart('ld-projs');
   if (!el) return;
   if (PIN.drag) { PIN.drag.repaint = true; return; }   // #362: after the drop
   const html = (window.LD && LD.dock && !window.ensListDocked) ? ldpHtml(ldpModel()) : '';
@@ -18613,16 +18621,16 @@ function ldSplitStored() {
   return Number.isFinite(v) && v > 0 ? v : 0;
 }
 function ldSplitClamp(px) {
-  const box = document.getElementById('ld-inbox');
+  const box = ldPart('ld-inbox');
   const h = box ? box.clientHeight : 0;
   const max = Math.max(LD_SPLIT_MIN, h - LD_SPLIT_INBOX_MIN);
   return Math.round(Math.min(max, Math.max(LD_SPLIT_MIN, px)));
 }
 function ldSplitApply(px) {
-  const list = document.getElementById('ld-list'), sp = document.getElementById('ld-split');
+  const list = ldPart('ld-list'), sp = ldPart('ld-split');
   if (!list || !sp) return;
   const v = px || ldSplitStored();
-  const box = document.getElementById('ld-inbox');
+  const box = ldPart('ld-inbox');
   // Not laid out yet (a panel on its strip): keep the stored height as it is.
   const h = v ? (box && box.clientHeight ? ldSplitClamp(v) : v) : 0;
   list.classList.toggle('ld-sized', !!h);

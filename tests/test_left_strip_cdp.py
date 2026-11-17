@@ -184,7 +184,7 @@ async function main() {
     };
     const key = async (k) => { for (const type of ['keyDown', 'keyUp']) await c.send('Input.dispatchKeyEvent', { type, key: k, code: k, windowsVirtualKeyCode: k === 'Escape' ? 27 : 0 }, sessionId); };
     const shot = async (name) => { if (!A.shots) return; const r = await c.send('Page.captureScreenshot', { format: 'png' }, sessionId); fs.writeFileSync(path.join(A.shots, name + '.png'), Buffer.from(r.data, 'base64')); };
-    const s = Object.assign({ 'cd-list-dock': null, 'cd-list-dock-a4': null, 'cd-list-dock-a5': null, 'cd-list-dock-a6': null, 'cd-list-dock-a7': null, 'cd-ld-sel': null, 'cd-ld-split': null, 'cd-noun': null, 'cd-tool-strip': null, 'cd-tool-open': null, 'cd-phone-tabs': null, 'cd-last-conv': null }, seed || {});
+    const s = Object.assign({ 'cd-list-dock': null, 'cd-list-dock-a4': null, 'cd-list-dock-a5': null, 'cd-list-dock-a6': null, 'cd-list-dock-a7': null, 'cd-ld-sel': null, 'cd-inbox-scope': null, 'cd-ld-split': null, 'cd-noun': null, 'cd-tool-strip': null, 'cd-tool-open': null, 'cd-phone-tabs': null, 'cd-last-conv': null }, seed || {});
     await c.send('Page.addScriptToEvaluateOnNewDocument', { source: 'window.ensBootOpen = false; try { if (!sessionStorage.getItem("seeded")) { sessionStorage.setItem("seeded", "1"); const s = ' + JSON.stringify(s) + '; for (const k in s) s[k] === null ? localStorage.removeItem(k) : localStorage.setItem(k, s[k]); } } catch (e) {}' }, sessionId);
     await c.send('Page.navigate', { url: A.base + '/' }, sessionId);
     await until('typeof PROJECTS !== "undefined" && !!PROJECTS && PROJECTS.projects.length > 2 && typeof ALL_ROWS !== "undefined" && ALL_ROWS.some(r => r.roomId === ' + JSON.stringify(A.po) + ')', 30000);
@@ -502,7 +502,7 @@ async function main() {
       })()`);
       await m.close();
     }
-    // ---- #328 review 1: All, then a project opened from the bar: the list and the Inbox follow it
+    // ---- #328 review 1, #390: All, then a project opened from the bar: All stays All
     {
       const m = await page(1440, 900, false, {});
       await toPo(m, P.Motors);
@@ -1049,14 +1049,16 @@ class LeftStripInChrome(unittest.TestCase):
         self.assertFalse(s["gone"])
         self.assertEqual(s["sel"], "room:room-past000")
 
-    def test_all_gives_way_to_a_project_opened_from_the_bar(self):
+    def test_all_stays_all_when_a_project_is_opened_from_the_bar(self):
+        # #390 (GitHub issue 56) replaces #328 review 1's "All gives way": All
+        # stays All; the pick moves on underneath, for a later This project.
         a, b = self.g("allPicked"), self.g("allThenBar")
         self.assertEqual(a["scope"], "all")
         self.assertTrue(a["ldp"][0]["cur"])
-        self.assertEqual(b["scope"], "project")
+        self.assertEqual(b["scope"], "all")
         self.assertEqual(b["ldSel"], self.ids["Wheels"])
-        self.assertTrue(next(r for r in b["ldp"] if r["proj"] == self.ids["Wheels"])["cur"])
-        self.assertFalse(b["ldp"][0]["cur"], "All gave way")
+        self.assertTrue(b["ldp"][0]["cur"], "All stays")
+        self.assertFalse(next(r for r in b["ldp"] if r["proj"] == self.ids["Wheels"])["cur"])
         self.assertRowsMatch(b)
 
     def test_the_inbox_follows_the_pick(self):
