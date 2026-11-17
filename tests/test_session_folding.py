@@ -475,6 +475,8 @@ class WhileThePageRedraws(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         code = NOUN + fold_block(SRC) + sends_block(SRC) + js_function(SRC, "renderBubbles") + js_function(SRC, "patchChildren")
+        # The end is written through toEnd (#387); no reader's scroll is moving here.
+        code += "\nconst scrollMoving = () => false;\n" + js_function(SRC, "toEnd")
         # A balloon is drawn in its own project (#152): the bindings renderBubbles sets.
         code += "\n" + "\n".join(re.search(rf"^{k} = .*$", SRC, re.M).group(0) for k in ("const taskRefProject", "let TASK_REF_PID"))
         # Checkpoint rows (#197) have their own tests; none are drawn here.
