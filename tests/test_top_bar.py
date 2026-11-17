@@ -129,7 +129,7 @@ async function main() {
   };
   const go = (p, proj, tab) => p.evalIn(`(() => { try { localStorage.removeItem('cd-po-dock'); localStorage.removeItem('cd-phone-tabs'); } catch (e) {}
     SELECTED_PROJECT = ${JSON.stringify(proj)}; PROJECT_TAB = ${JSON.stringify(tab || 'tasks')}; renderRows(); return 0; })()`);
-  const poReady = p => p.until('document.body.classList.contains("po-dock") && !!PD.dock && (document.body.classList.contains("mid") || !!document.querySelector("#bar-here .pd-panels")) && [...document.querySelectorAll(".dk-head")].some(e => e.getBoundingClientRect().height)', 30000);
+  const poReady = p => p.until('document.body.classList.contains("po-dock") && !!PD.dock && [...document.querySelectorAll(".dk-head")].some(e => e.getBoundingClientRect().height)', 30000);
   const openDoc = async (p) => {
     await p.evalIn("pdReveal('workspace'); 0");
     await p.until('[...PD.els.workspace.querySelectorAll(".wse.doc[data-path]")].some(x => x.dataset.path.endsWith("#1 Notes.md"))', 20000);
@@ -151,8 +151,8 @@ async function main() {
   try {
     // ---- a laptop
     const p = await page(1440, 900);
-    // Home's Panels (the task list's dock, loaded as a module) is in the bar once the dock is: wait for it, not a while.
-    await p.until('!!document.querySelector("header") && !!document.querySelector("#bar-here .pd-panels")');
+    // Home's task-list dock is loaded as a module: wait for it, not a while.
+    await p.until('!!document.querySelector("header") && !!window.LD && !!LD.dock');
     out.home = await p.evalIn(BAR);
     await wm(p, '1440-home');
     await go(p, A.proj); await poReady(p); await sleep(400);
@@ -307,18 +307,21 @@ class TheTopBar(unittest.TestCase):
         return [i["id"] for i in sorted(bar["items"], key=lambda i: (i["y"] // 20, i["x"]))]
 
     def test_left_to_right_where_you_are_what_you_can_do_then_the_rest(self):
+        # #386: no Panels ▾ on a computer, so nothing between the project and search.
         self.assertEqual(self.order(self.got["po"]),
-                         ["bar-home", "proj-switch", "bar-here", "search", "me-btn", "new-btn"])
+                         ["bar-home", "proj-switch", "search", "me-btn", "new-btn"])
         self.assertEqual(self.got["po"]["name"], "Motors", "the breadcrumb starts at the project: its name is the switcher (#303)")
-        self.assertEqual(self.got["po"]["trail"], ["PO"], "then its PO's conversation")
+        self.assertEqual(self.got["po"]["trail"], [], "no PO crumb: the project is its PO's conversation (#386, P372)")
         self.assertLessEqual(self.got["po"]["header"], 50, "one row on a laptop")
         self.assertEqual(self.order(self.got["po768"]), self.order(self.got["po"]), "the same at 768")
         self.assertLessEqual(self.got["po768"]["header"], 50)
         self.assertLessEqual(self.got["po768"]["scrollW"], self.got["po768"]["vw"])
 
-    def test_home_has_panels_to_recover_the_task_list(self):
+    def test_a_computer_has_no_panels_menu(self):
+        # #386: each panel is reached from its strip and the tail of every ⋯ (shown, closed windows, Inbox,
+        # Reset layout); Panels ▾ stays on a phone, where the dock hides panels.
         home = self.got["home"]
-        self.assertTrue(home["here"] and home["panels"])
+        self.assertFalse(home["here"] or home["panels"])
         self.assertNotIn("bar-back", [i["id"] for i in home["items"]])
 
     def test_a_project_page_has_no_status_row_and_no_crumbs(self):
@@ -326,10 +329,8 @@ class TheTopBar(unittest.TestCase):
             self.assertFalse(self.got[k]["crumbs"], k)
             self.assertFalse(self.got[k]["statusbar"], k)
 
-    def test_a_po_screen_has_panels_in_the_bar_and_no_tab_row(self):
-        # Desktop Panels also recovers closed tool and task-list windows.
-        self.assertTrue(self.got["po"]["panels"])
-        self.assertTrue(self.got["po"]["here"])
+    def test_a_po_screen_has_panels_on_a_phone_only_and_no_tab_row(self):
+        self.assertFalse(self.got["po"]["panels"])
         self.assertTrue(self.got["phonePo"]["panels"])
         self.assertFalse(self.got["po"]["ptabs"])
 
@@ -341,7 +342,7 @@ class TheTopBar(unittest.TestCase):
         for tab in ("workspace", "changes"):
             g = self.got["plain_" + tab]
             self.assertTrue(g["ptabs"], tab)
-            self.assertTrue(g["here"] and g["panels"], "Panels recovers the task list")
+            self.assertFalse(g["panels"], "#386: no Panels ▾ on a computer")
             self.assertLessEqual(g["bottom"], g["vh"], tab)
             self.assertLessEqual(g["docH"], g["vh"], f"{tab}: no page scroll")
 

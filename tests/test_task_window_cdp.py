@@ -1,35 +1,32 @@
-"""A task's own window survives a project switch (#346, GitHub issue 42).
+"""A task's window goes away with its project and comes back with it (#386 rule 6).
 
-A task can be shown outside the main panel in three ways:
-
-* the conversation's own window: the middle (Dock's po-chat panel) popped
-  out while a task is open in it (#148, pdPlaceTask);
-* a task's chat panel (Open in new panel, #150) popped out into its window;
-* a tab of its own (/session?room=..., window.open with noopener: search,
-  Inbox and list rows the page does not list).
+This replaces #346's rule (a task's window survived a project switch): each
+project keeps its own workspace, and its panels' windows go away with it and
+come back with it unless pinned (P374, P376).
 
 In headless Chrome over CDP at 1440x900, against a hub in a thread on a spare
-port, with two projects with a PO each (Motors, Wheels) and a task in each:
-for each way, a Motors task is put in its window, then the main window goes
-to Wheels and back to... Wheels again via another route (twice in all: the
-left panel's Projects row, the project switcher, and the Inbox). Checked: the
-window is still open and shows the same task (its title and latest message);
-a docked chat panel still keeps its per-project behaviour (set aside on the
-other project's screen, back with its own); the page threw nothing.
+port, with two projects with a PO each (Motors, Wheels) and a task in each.
+A task of a project with a PO is a tab of its own (chat:<room>); popped out,
+it is the task's window. Checked:
 
-The middle's window is followed by its CDP target: after a switch it is the
-same window, now the task's own chat panel's (#346, pdTaskKeepOut), and the
-conversation's panel is back in the page. Also: a task of the other project
-opened meanwhile leaves the window to this one; the person closing the task
-in the window (its x) keeps the window the conversation's, as before; and a
-reload of the main window after a switch takes the window back. Changes and
-Workspace tool actions take that same window back to the middle's conversation,
-and a reload after either action leaves the task visible in it.
+* by each route (the left panel's Projects row, the project switcher, the
+  Inbox): on Wheels' screen the window is closed and kept in Motors' store as
+  a window; back on Motors it opens again (a new window) with the task open;
+* a pinned window stays open, the same window, on both screens;
+* a tab of its own (/session?room=..., noopener) is the browser's: it stays;
+* a docked task tab: put away on Wheels' screen, back (task open) on Motors';
+* a task of the other project opened meanwhile: the page goes to Wheels, the
+  Motors window goes away with Motors and Wheels' task opens in its own tab;
+* the window's x closes the task; the window stays with the task's chat
+  (like the PO tab or Esc: the task closes, its tab stays);
+* a reload on Wheels' screen remembers the put-away window; back on Motors it
+  opens again;
+* Changes and Workspace asked for from the window: the window stays the
+  task's, the tool opens beside it in the page;
+* the page threw nothing.
 
 ENSEMBLE_TW_MEASURE=1 prints what happens instead of checking. Screenshots go
-to $ENSEMBLE_SHOTS when it is set (the main window, and the middle's window);
-ENSEMBLE_TW_NOFIX=1 with them takes the before pictures (the page without
-pdTaskKeepOut). Skipped without Node or Chrome.
+to $ENSEMBLE_SHOTS when it is set. Skipped without Node or Chrome.
 """
 from __future__ import annotations
 
@@ -146,208 +143,154 @@ async function main() {
     for (const t of ts) { const s = await attach(t.targetId); const n = await s.evalIn('window.name').catch(() => ''); if (n === name) return { target: t, all: ts.length }; }
     return { target: null, all: ts.length };
   };
-  const MID = { target: null };
-  const ROUTES = {
-    // The middle's conversation in its own window, a task open in it.
-    middle: {
-      open: async () => {
-        await p.evalIn(`openDetail(${J(A.sidA)}); 0`);
-        await p.until(`pdTask() && rowBySid(SELECTED_SID).roomId === ${J(A.taskA)}`, 15000);
-        await p.evalIn(`PD.dock.popOut('po-chat') && 0`);
-        await p.until(`!!PD.dock.popWindow('po-chat') && PD.dock.popWindow('po-chat').document.contains(pdById('detail-panel'))`, 20000);
-        await p.until(`(() => { const f = PD.dock.popWindow('po-chat').document.querySelector('iframe.dp-session'); try { return !!f && f.contentDocument.readyState === 'complete' && f.contentDocument.body.innerText.includes(${J(A.lastA)}); } catch (e) { return false; } })()`, 20000);
-        // The window it is in: the one followed from here on, by its target (#346: the task keeps this one).
-        MID.target = (await popTarget('ensemble-panel-po-chat')).target;
-      },
-      read: async () => { const ts = await targets(); const t = MID.target && ts.find(x => x.targetId === MID.target.targetId);
-        const w = await readWin(t);
-        if (t) w.name = await (await attach(t.targetId)).evalIn('window.name').catch(() => '');
-        return { ...w, windows: ts.filter(x => /popout/.test(x.url)).length,
-        dock: await p.evalIn(`PD.dock ? ({ out: PD.dock.isOut('po-chat'), openOut: PD.dock.isOpenOut('po-chat'), sel: SELECTED_SID, task: pdTask(), chatOut: PD.dock.isOpenOut('chat:' + ${J(A.taskA)}) }) : ({ none: true, sel: SELECTED_SID, pid: PD.pid || '', proj: SELECTED_PROJECT, body: document.body.className, failed: !!PD.failed })`) }; },
-      close: async () => { await p.evalIn(`if (PD.rt.has('chat:' + ${J(A.taskA)})) pdChatUnpanel(${J(A.taskA)}); if (PD.dock && PD.dock.isOut('po-chat')) PD.dock.popIn('po-chat'); if (SELECTED_SID) closeDetail(); 0`); await sleep(500); MID.target = null; },
-    },
-    // The task's chat panel (Open in new panel), popped out.
-    chat: {
-      open: async () => {
-        await p.evalIn(`pdChatOpen(${J(A.taskA)}) && 0`);
-        await p.until(`PD.rt.has('chat:' + ${J(A.taskA)})`, 10000);
-        await p.evalIn(`PD.dock.popOut('chat:' + ${J(A.taskA)}) && 0`);
-        await p.until(`(() => { const w = PD.dock.popWindow('chat:' + ${J(A.taskA)}); const f = w && w.document.querySelector('iframe.dp-session'); try { return !!f && f.contentDocument.body.innerText.includes(${J(A.lastA)}); } catch (e) { return false; } })()`, 20000);
-      },
-      read: async () => { const { target, all } = await popTarget('ensemble-panel-chat:' + A.taskA); return { ...(await readWin(target)), windows: all,
-        dock: await p.evalIn(`({ has: PD.rt.has('chat:' + ${J(A.taskA)}), out: PD.dock.isOut('chat:' + ${J(A.taskA)}), openOut: PD.dock.isOpenOut('chat:' + ${J(A.taskA)}) })`) }; },
-      close: async () => { await p.evalIn(`pdChatUnpanel(${J(A.taskA)}); if (PD.dock.isOut('po-chat')) PD.dock.popIn('po-chat'); if (SELECTED_SID) closeDetail(); 0`); await sleep(500); },
-    },
-    // A tab of its own (window.open, noopener), as a task the page does not list opens.
-    tab: {
-      open: async () => {
-        await p.evalIn(`swOpenRoomTab(${J(A.taskA)}); 0`);
-        const t0 = Date.now(); let t = null;
-        while (!t && Date.now() - t0 < 15000) { t = (await targets()).find(x => /\/session\?room=/.test(x.url)); if (!t) await sleep(200); }
-        const s = await attach(t.targetId);
-        await s.until(`document.readyState === 'complete' && document.body.innerText.includes(${J(A.lastA)})`, 20000);
-      },
-      read: async () => readWin((await targets()).find(x => /\/session\?room=/.test(x.url))),
-      close: async () => { const t = (await targets()).find(x => /\/session\?room=/.test(x.url)); if (t) await c.send('Target.closeTarget', { targetId: t.targetId }); await sleep(300); },
-    },
+  const TID = 'chat:' + A.taskA;
+  // The task's own window: its tab (#386: a task of a project with a PO is a
+  // tab of its own) popped out, the task open in it.
+  const openWin = async () => {
+    await p.evalIn(`openDetail(${J(A.sidA)}); 0`);
+    await p.until(`pdTask() && rowBySid(SELECTED_SID).roomId === ${J(A.taskA)} && PD.rt.has(${J(TID)})`, 15000);
+    await p.evalIn(`PD.dock.popOut(${J(TID)}) && 0`);
+    await p.until(`(() => { const w = PD.dock.popWindow(${J(TID)}); const f = w && w.document.querySelector('iframe.dp-session'); try { return !!f && f.contentDocument.readyState === 'complete' && f.contentDocument.body.innerText.includes(${J(A.lastA)}); } catch (e) { return false; } })()`, 20000);
+    return (await popTarget('ensemble-panel-' + TID)).target;
   };
-  // The middle's window as the person sees it (for the report's pictures).
-  const winShot = async (route, file) => { if (!A.shots || route === 'tab') return;
-    const t = route === 'middle' ? MID.target : (await popTarget('ensemble-panel-chat:' + A.taskA)).target; if (!t) return;
-    const s = await attach(t.targetId).catch(() => null); if (s) await s.shot(file).catch(() => null); };
-  const brief = w => ({ open: w.open, title: w.title, name: w.name, url: w.url, rooms: (w.chats || []).map(x => x.room), hasTitle: JSON.stringify(w).includes(A.titleA),
-    hasLast: JSON.stringify(w).includes(A.lastA), hasOther: JSON.stringify(w).includes(A.lastB), windows: w.windows, dock: w.dock, error: w.error });
+  const state = () => p.evalIn(`({ pid: PD.pid || '', sel: SELECTED_SID, has: PD.rt.has(${J(TID)}), out: PD.dock.isOut(${J(TID)}), openOut: PD.dock.isOpenOut(${J(TID)}),
+    away: JSON.stringify(PdWorkspace.putAway(PD_WS, ${J(A.projA)})), pinned: PdWorkspace.isPinned(PD_WS, ${J(TID)}) })`);
+  const win = async () => { const { target, all } = await popTarget('ensemble-panel-' + TID); return { ...brief(await readWin(target)), windows: all, targetId: target ? target.targetId : null }; };
+  const reset = async () => { await p.evalIn(`pdWsPin(${J(TID)}, false); if (SELECTED_SID) closeDetail(); for (const id of [${J(TID)}, 'chat:' + ${J(A.taskB)}]) { if (PD.rt.has(id)) PD.dock.removePanel(id); PdWorkspace.drop(PD_WS, id); } pdWsSave(true); 0`); await sleep(500); };
+  const brief = w => ({ open: w.open, title: w.title, rooms: (w.chats || []).map(x => x.room), hasTitle: JSON.stringify(w).includes(A.titleA),
+    hasLast: JSON.stringify(w).includes(A.lastA), hasOther: JSON.stringify(w).includes(A.lastB), error: w.error });
   try {
     await c.send('Page.navigate', { url: A.base + '/' }, p.sessionId);
     await load();
-    // ENSEMBLE_TW_NOFIX=1: the page as it was before #346, for the report's before pictures.
-    if (A.noFix) await p.evalIn('pdTaskKeepOut = () => false; 0');
     await toProject(A.projA);
+    // Rule 6: the window goes away with its project and comes back with it,
+    // by each of the three routes (all clicks: the click opens it again).
     out.routes = {};
-    for (const [name, R] of Object.entries(ROUTES)) {
-      for (const how of Object.keys(SWITCH)) {
-        const key = name + ':' + how;
-        await toProject(A.projA);
-        await R.open();
-        const r = { before: brief(await R.read()) };
-        await p.shot(`${key.replace(':', '-')}-0-open`); await winShot(name, `${key.replace(':', '-')}-0-open-window`);
-        // Two switches: to Wheels, then back to Motors, both the same way.
-        await SWITCH[how](A.projB); await sleep(1500);
-        r.here1 = await here();
-        r.after1 = brief(await R.read());
-        await p.shot(`${key.replace(':', '-')}-1-wheels`); await winShot(name, `${key.replace(':', '-')}-1-wheels-window`);
-        await SWITCH[how](A.projA); await sleep(1500);
-        r.here2 = await here();
-        r.after2 = brief(await R.read());
-        await SWITCH[how](A.projB); await sleep(1500);
-        r.here3 = await here();
-        r.after3 = brief(await R.read());
-        await p.shot(`${key.replace(':', '-')}-3-wheels`);
-        out.routes[key] = r;
-        await R.close();
-      }
+    for (const how of Object.keys(SWITCH)) {
+      await toProject(A.projA);
+      const t0 = await openWin();
+      const r = { before: { ...(await win()), ...(await state()) } };
+      await SWITCH[how](A.projB); await sleep(1500);
+      r.here1 = await here();
+      r.away = { ...(await win()), ...(await state()) };
+      await p.shot(`${how}-1-wheels`);
+      await SWITCH[how](A.projA); await sleep(2500);
+      r.here2 = await here();
+      r.back = { ...(await win()), ...(await state()), same: false };
+      r.back.same = !!t0 && r.back.targetId === t0.targetId;
+      await p.shot(`${how}-2-motors`);
+      out.routes[how] = r;
+      await reset();
     }
-    // A docked chat panel keeps its per-project behaviour: set aside on
-    // Wheels' screen, back with Motors.
+    // A pinned window stays open, the same one, on every project's screen.
     await toProject(A.projA);
-    await p.evalIn(`pdChatOpen(${J(A.taskA)}) && 0`);
-    await p.until(`PD.rt.has('chat:' + ${J(A.taskA)}) && PD.dock.isVisible('chat:' + ${J(A.taskA)})`, 10000);
-    const vis = () => p.evalIn(`({ visible: PD.dock.isVisible('chat:' + ${J(A.taskA)}), out: PD.dock.isOut('chat:' + ${J(A.taskA)}) })`);
-    out.docked = { motors: await vis() };
+    {
+      const t0 = await openWin();
+      await p.evalIn(`pdWsPin(${J(TID)}, true); 0`);
+      await SWITCH.switcher(A.projB); await sleep(1500);
+      out.pinned = { wheels: { ...(await win()), ...(await state()) } };
+      out.pinned.wheels.same = !!t0 && out.pinned.wheels.targetId === t0.targetId;
+      await SWITCH.left(A.projA); await sleep(1500);
+      out.pinned.motors = { ...(await win()), ...(await state()) };
+      out.pinned.motors.same = !!t0 && out.pinned.motors.targetId === t0.targetId;
+      await reset();
+    }
+    // A tab of its own (window.open, noopener) is the browser's, not the page's: it stays.
+    await toProject(A.projA);
+    {
+      await p.evalIn(`swOpenRoomTab(${J(A.taskA)}); 0`);
+      const t0 = Date.now(); let t = null;
+      while (!t && Date.now() - t0 < 15000) { t = (await targets()).find(x => /\/session\?room=/.test(x.url)); if (!t) await sleep(200); }
+      const s = await attach(t.targetId);
+      await s.until(`document.readyState === 'complete' && document.body.innerText.includes(${J(A.lastA)})`, 20000);
+      await SWITCH.switcher(A.projB); await sleep(1500);
+      out.ownTab = brief(await readWin((await targets()).find(x => /\/session\?room=/.test(x.url))));
+      await c.send('Target.closeTarget', { targetId: t.targetId }); await sleep(300);
+    }
+    // A docked task tab: put away on Wheels' screen, back with Motors.
+    await toProject(A.projA);
+    await p.evalIn(`openDetail(${J(A.sidA)}); 0`);
+    await p.until(`PD.rt.has(${J(TID)}) && PD.dock.isVisible(${J(TID)})`, 10000);
+    out.docked = { motors: await state() };
     await SWITCH.switcher(A.projB); await sleep(1200);
-    out.docked.wheels = await vis();
-    await SWITCH.switcher(A.projA); await sleep(1200);
-    out.docked.back = await vis();
-    await p.evalIn(`openWorkspaceTab(${J(A.sidA)}); 0`);
-    await p.until(`SELECTED_SID === ${J(A.sidA)} && ISSUE_TAB === 'workspace' && pdTask() && !PD.rt.has('chat:' + ${J(A.taskA)})`, 15000);
-    out.docked.tool = await p.evalIn(`({ sel: SELECTED_SID, tab: ISSUE_TAB, chat: PD.rt.has('chat:' + ${J(A.taskA)}), out: PD.dock.isOut('po-chat') })`);
-    await p.evalIn(`closeDetail(); 0`);
-    // A task of the other project opened while this one is in the window:
-    // this one keeps the window, the other opens in the middle here.
+    out.docked.wheels = await state();
+    await SWITCH.switcher(A.projA); await sleep(1500);
+    out.docked.back = await state();
+    await reset();
+    // A task of the other project opened while this one is in its window:
+    // the page goes to Wheels, the window goes away with Motors.
     await toProject(A.projA);
-    await ROUTES.middle.open();
+    await openWin();
     await p.evalIn(`openDetail(${J(A.taskB)}); 0`);
     await p.until(`!!PD.dock && PD.pid === ${J(A.projB)} && pdTask()`, 20000).catch(() => null); await sleep(1500);
-    out.other = { win: brief(await ROUTES.middle.read()), mid: await p.evalIn(`({ sel: SELECTED_SID, task: pdTask(), inPage: document.contains(pdById('detail-panel')) })`) };
-    await ROUTES.middle.close();
-    // The person closing the task in the window (its ×): the window stays
-    // the conversation's, as before (#148).
+    out.other = { win: await win(), st: await state(), b: await p.evalIn(`({ sel: SELECTED_SID, tab: PD.rt.has('chat:' + ${J(A.taskB)}), front: PD.dock.frontOf('po-chat') })`) };
+    await toProject(A.projA); await sleep(800);
+    await reset();
+    // The task's actions from its window's ⋯ (review 2: was test_task_dock_panel's):
+    // the menu opens in the window, Rename… there runs the page's handler, and
+    // Terminal colours… (when the hub offers it) opens its picker in the window, under the ⋯.
     await toProject(A.projA);
-    await ROUTES.middle.open();
-    await p.evalIn(`PD.dock.popWindow('po-chat').document.querySelector('.dp-close').click(); 0`); await sleep(1000);
-    out.closed = { win: brief(await ROUTES.middle.read()) };
-    await ROUTES.middle.close();
-    // A reload of the main window after a switch: the window and its task
-    // come back to the page (Dock's adoption, by the window's marks).
+    await openWin();
+    const WD = `PD.dock.popWindow(${J(TID)}).document`;
+    await p.evalIn('window.__prompted = null; window.prompt = (m, c) => { window.__prompted = [m, c]; return null; }; 0');
+    out.winMenu = await p.evalIn(`(async () => {
+      const w = PD.dock.popWindow(${J(TID)}), d = w.document;
+      const btn = [...d.querySelectorAll('[data-dk-act="menu"]')].find(e => e.getBoundingClientRect().width > 0);
+      if (!btn) return { btn: false };
+      btn.click(); await new Promise(r => setTimeout(r, 300));
+      const m = d.querySelector('.dk-menu.dk-options');
+      const rows = m ? [...m.querySelectorAll('[data-dk-app]')].map(b => b.textContent.replace('▸', '').trim()) : [];
+      const r = m && m.getBoundingClientRect();
+      return { btn: true, open: !!m, inPageToo: !!document.querySelector('.dk-menu.dk-options'), rows,
+               fits: !!r && r.left >= 0 && r.top >= 0 && r.right <= w.innerWidth + 1 && r.bottom <= w.innerHeight + 1 }; })()`);
+    out.winPick = { found: await p.evalIn(`(() => { const b = [...${WD}.querySelectorAll('.dk-menu.dk-options [data-dk-app]')].find(e => e.textContent.trim().startsWith('Rename')); if (!b) return false; b.click(); return true; })()`) };
+    await sleep(400);
+    Object.assign(out.winPick, await p.evalIn(`({ prompted: window.__prompted, menuOpen: !!${WD}.querySelector('.dk-menu.dk-options') })`));
+    out.winColours = await p.evalIn(`(async () => {
+      const d = ${WD};
+      const mb = [...d.querySelectorAll('[data-dk-act="menu"]')].find(e => e.getBoundingClientRect().width > 0);
+      mb.click(); await new Promise(r => setTimeout(r, 300));
+      const b = [...d.querySelectorAll('.dk-menu.dk-options [data-dk-app]')].find(x => x.textContent.startsWith('Terminal colours'));
+      if (!b) { mb.click(); return { offered: false }; }
+      if (b.getAttribute('aria-disabled') === 'true') { mb.click(); return { offered: true, disabled: true }; }
+      b.click(); await new Promise(r => setTimeout(r, 400));
+      const m = d.querySelector('.theme-dd-menu');
+      const res = { offered: true, disabled: false, inWindow: !!m, inPage: !!document.querySelector('.theme-dd-menu'), focusIn: !!m && m.contains(d.activeElement) };
+      if (m) { const a = m.getBoundingClientRect(), t = mb.getBoundingClientRect(); res.under = a.top >= t.bottom - 1 && a.right <= d.defaultView.innerWidth + 1 && a.left >= 0; }
+      closeThemeMenu();
+      return res; })()`);
+    await reset();
+    // The person closing the task in the window (its ×): the task and its window close.
     await toProject(A.projA);
-    await ROUTES.middle.open();
+    await openWin();
+    await p.evalIn(`PD.dock.popWindow(${J(TID)}).document.querySelector('.dp-close').click(); 0`); await sleep(1000);
+    out.closed = { win: await win(), st: await state() };
+    await reset();
+    // A reload of the main window on Wheels' screen: the put-away window is
+    // remembered; back on Motors it comes back.
+    await toProject(A.projA);
+    await openWin();
     await SWITCH.left(A.projB); await sleep(1500);
-    out.reload = { before: brief(await ROUTES.middle.read()) };
+    out.reload = { before: { ...(await win()), ...(await state()) } };
     await c.send('Page.reload', {}, p.sessionId);
     await load();
-    out.reload.home = brief(await ROUTES.middle.read());
-    // Back on the project it was on: the page takes the window back.
-    await toProject(A.projB);
-    await p.until(`!!PD.dock && PD.dock.isOpenOut('chat:' + ${J(A.taskA)})`, 20000).catch(() => null);
-    await sleep(1500);
-    out.reload.after = brief(await ROUTES.middle.read());
-    await p.shot('middle-reload');
-    await ROUTES.middle.close();
-    // A task tool opened from the retained chat window must not close it.
-    // The same window takes the task back into the middle's conversation,
-    // while Changes or Workspace opens beside it.
+    await SWITCH.left(A.projA); await sleep(2500);
+    out.reload.after = { ...(await win()), ...(await state()) };
+    await reset();
+    // A task tool asked for from the task's window: the window stays the task's,
+    // the tool opens beside it in the page.
     out.tools = {};
     for (const tool of ['changes', 'workspace']) {
       await toProject(A.projA);
-      await ROUTES.middle.open();
-      await SWITCH.left(A.projB); await sleep(1000);
-      out.tools[tool] = { before: brief(await ROUTES.middle.read()) };
-      if (tool === 'changes') {
-        await p.evalIn(`PD.dock.popWindow('chat:' + ${J(A.taskA)}).document.querySelector('iframe.dp-session').contentWindow.cpShowDiff(1); 0`);
-        await p.until(`SELECTED_SID === ${J(A.sidA)} && ISSUE_TAB === 'changes' && pdTask() && PD.dock.isOpenOut('po-chat')`, 15000);
-      } else {
-        await p.evalIn(`runTaskAction(${J(A.taskA)}, 'workspace')`);
-        await p.until(`SELECTED_SID === ${J(A.sidA)} && ISSUE_TAB === 'workspace' && pdTask() && PD.dock.isOpenOut('po-chat')`, 15000);
-      }
-      await sleep(700);
-      out.tools[tool].after = brief(await ROUTES.middle.read());
-      out.tools[tool].state = await p.evalIn(`({ sel: SELECTED_SID, tab: ISSUE_TAB, turn: TCH_VIEWS.get(${J(A.sidA)})?.turn ?? TCH_TURN_WANT.get(${J(A.sidA)}) ?? null, poOut: PD.dock.isOpenOut('po-chat'), chat: PD.rt.has('chat:' + ${J(A.taskA)}), toolVisible: PD.dock.isVisible(${J(tool)}) })`);
-      await c.send('Page.reload', {}, p.sessionId);
-      await load();
-      await toProject(A.projA);
-      await sleep(900);
-      out.tools[tool].reload = brief(await ROUTES.middle.read());
-      await ROUTES.middle.close();
-    }
-    // Two tasks with windows of their own: opening A's tool must leave B's
-    // window attached to B when B currently occupies the conversation.
-    await toProject(A.projA);
-    await ROUTES.chat.open();
-    const aWin = (await popTarget('ensemble-panel-chat:' + A.taskA)).target;
-    await p.evalIn(`openDetail(${J(A.taskB)}); 0`);
-    await p.until(`SELECTED_SID === ${J(A.taskB)} && pdTask()`, 15000);
-    await p.evalIn(`PD.dock.popOut('po-chat'); 0`);
-    await p.until(`!!PD.dock.popWindow('po-chat')`, 15000);
-    const bWin = (await popTarget('ensemble-panel-po-chat')).target;
-    await p.evalIn(`openWorkspaceTab(${J(A.sidA)}); 0`);
-    await p.until(`SELECTED_SID === ${J(A.sidA)} && ISSUE_TAB === 'workspace' && PD.dock.isOpenOut('po-chat') && PD.dock.isOpenOut('chat:' + ${J(A.taskB)})`, 15000);
-    await p.until(`(() => { const w = PD.dock.popWindow('chat:' + ${J(A.taskB)}); const f = w && w.document.querySelector('iframe.dp-session'); try { return !!f && f.contentDocument.body.innerText.includes(${J(A.lastB)}); } catch (e) { return false; } })()`, 20000);
-    const ts = await targets();
-    out.twoWindows = { a: brief(await readWin(ts.find(x => x.targetId === aWin.targetId))),
-      b: brief(await readWin(ts.find(x => x.targetId === bWin.targetId))), count: ts.filter(x => /popout/.test(x.url)).length };
-    await p.evalIn(`closeDetail(); PD.dock.popIn('po-chat'); pdChatUnpanel(${J(A.taskB)}); if (PD.dock.isOut('po-chat')) PD.dock.popIn('po-chat'); 0`);
-    // A separate PO window also stays open when a task chat asks for a tool.
-    await toProject(A.projA);
-    await ROUTES.chat.open();
-    const taskWin = (await popTarget('ensemble-panel-chat:' + A.taskA)).target;
-    await p.evalIn(`PD.dock.popOut('po-chat'); 0`);
-    await p.until(`!!PD.dock.popWindow('po-chat')`, 15000);
-    const poWin = (await popTarget('ensemble-panel-po-chat')).target;
-    await p.evalIn(`openWorkspaceTab(${J(A.sidA)}); 0`);
-    await p.until(`SELECTED_SID === ${J(A.sidA)} && ISSUE_TAB === 'workspace' && PD.dock.isOpenOut('po-chat')`, 15000);
-    await (await attach(poWin.targetId)).until(`location.pathname === '/session' && location.search.includes(${J(A.poOf[A.projA])})`, 15000);
-    const ts2 = await targets();
-    out.poWindow = { task: brief(await readWin(ts2.find(x => x.targetId === taskWin.targetId))),
-      po: brief(await readWin(ts2.find(x => x.targetId === poWin.targetId))) };
-    await p.evalIn(`closeDetail(); PD.dock.popIn('po-chat'); 0`);
-    // Review 3: B is docked in the middle while A keeps its own window.
-    // Opening A's tool must not hand A's window to B.
-    out.otherMiddleTool = {};
-    for (const tool of ['changes', 'workspace']) {
-      await toProject(A.projA);
-      await ROUTES.middle.open();
-      await SWITCH.left(A.projB); await sleep(900);
-      await p.evalIn(`openDetail(${J(A.taskB)}); 0`);
-      await p.until(`SELECTED_SID === ${J(A.taskB)} && pdTask() && !PD.dock.isOut('po-chat')`, 15000);
+      await openWin();
       if (tool === 'changes')
-        await p.evalIn(`PD.dock.popWindow('chat:' + ${J(A.taskA)}).document.querySelector('iframe.dp-session').contentWindow.cpShowDiff(1); 0`);
-      else await p.evalIn(`openWorkspaceTab(${J(A.sidA)}); 0`);
-      await p.until(`SELECTED_SID === ${J(A.sidA)} && ISSUE_TAB === ${J(tool)}`, 15000);
-      await sleep(700);
-      out.otherMiddleTool[tool] = { win: brief(await ROUTES.middle.read()),
-        state: await p.evalIn(`({ sel: SELECTED_SID, tab: ISSUE_TAB, poOut: PD.dock.isOpenOut('po-chat') })`) };
-      await p.evalIn(`if (PD.dock.isOut('po-chat')) PD.dock.popIn('po-chat'); for (const room of [${J(A.taskA)}, ${J(A.taskB)}]) { const id = pdChatId(room); if (PD.rt.has(id)) PD.dock.removePanel(id); } if (SELECTED_SID) closeDetail(); 0`);
-      MID.target = null;
+        await p.evalIn(`PD.dock.popWindow(${J(TID)}).document.querySelector('iframe.dp-session').contentWindow.cpShowDiff(1); 0`);
+      else await p.evalIn(`runTaskAction(${J(A.taskA)}, 'workspace')`);
+      await p.until(`SELECTED_SID === ${J(A.sidA)} && ISSUE_TAB === ${J(tool)}`, 15000).catch(() => null);
+      await sleep(900);
+      out.tools[tool] = { win: await win(), st: await state(),
+        ui: await p.evalIn(`({ sel: SELECTED_SID, tab: ISSUE_TAB, turn: TCH_VIEWS.get(${J(A.sidA)})?.turn ?? TCH_TURN_WANT.get(${J(A.sidA)}) ?? null, toolVisible: PD.dock.isVisible(${J(tool)}) })`) };
+      await reset();
     }
   } finally {
     out.errors = c.errors;
@@ -361,7 +304,7 @@ main().catch(e => { console.error(e.stack || String(e)); process.exit(1); });
 
 
 @unittest.skipUnless(NODE and CHROME, "needs Node and Chrome")
-class TaskWindowSurvivesProjectSwitch(unittest.TestCase):
+class TaskWindowFollowsItsProject(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory(prefix="ens-tw-", ignore_cleanup_errors=True)
@@ -424,8 +367,7 @@ class TaskWindowSurvivesProjectSwitch(unittest.TestCase):
         args = {**chrome_profile.node_args(), "tmp": cls.tmp.name, "base": f"http://127.0.0.1:{cls.server.server_address[1]}",
                 "projA": cls.projA, "projB": cls.projB, "taskA": cls.taskA, "sidA": cls.taskA, "taskB": cls.taskB,
                 "poOf": {cls.projA: cls.poA, cls.projB: cls.poB},
-                "titleA": "Gearbox fix", "lastA": "Latest gearbox note 7731", "lastB": "Latest tyre note 4410", "shots": shots,
-                "noFix": os.environ.get("ENSEMBLE_TW_NOFIX") == "1"}
+                "titleA": "Gearbox fix", "lastA": "Latest gearbox note 7731", "lastB": "Latest tyre note 4410", "shots": shots}
         script = base / "task_window_cdp.js"
         script.write_text(CDP_JS, encoding="utf-8")
         out = subprocess.run([NODE, str(script), json.dumps(args)], capture_output=True, encoding="utf-8", timeout=600)
@@ -444,98 +386,121 @@ class TaskWindowSurvivesProjectSwitch(unittest.TestCase):
         if MEASURE:
             self.skipTest("measuring")
 
+    def away_one(self, st):
+        away = json.loads(st["away"])
+        self.assertEqual(len(away), 1, st)
+        self.assertEqual(away[0]["id"], "chat:" + self.taskA, st)
+        return away[0]
+
     def test_each_switch_goes_where_asked(self):
         for key, r in self.got["routes"].items():
             with self.subTest(key):
-                self.assertEqual([r["here1"], r["here2"], r["here3"]], [self.projB, self.projA, self.projB])
+                self.assertEqual([r["here1"], r["here2"]], [self.projB, self.projA])
 
-    def test_the_window_stays_open_showing_the_same_task(self):
+    def test_the_window_goes_away_with_its_project_and_comes_back(self):
         for key, r in self.got["routes"].items():
-            for step in ("before", "after1", "after2", "after3"):
-                with self.subTest(key, step=step):
-                    w = r[step]
-                    self.assertTrue(w["open"], w)
-                    self.assertTrue(w["hasLast"], w)
-                    self.assertFalse(w["hasOther"], w)
-                    self.assertTrue(w["hasTitle"], w)
-                    self.assertTrue(self.taskA in w["rooms"] or self.taskA in (w.get("url") or ""), w)
-                    if step != "before" and key.startswith(("middle", "chat")):
-                        self.assertEqual(w["windows"], 1, w)   # the same window, no second one
-
-    def test_the_middle_window_becomes_the_tasks_own(self):
-        # Followed by its CDP target: the same window, now the task's chat
-        # panel's (its name), and the conversation's panel back in the page.
-        for key, r in self.got["routes"].items():
-            if not key.startswith("middle"):
-                continue
-            for step in ("after1", "after2", "after3"):
-                with self.subTest(key, step=step):
-                    w = r[step]
-                    self.assertEqual(w["name"], "ensemble-panel-chat:" + self.taskA, w)
-                    self.assertEqual(w["dock"], {"out": False, "openOut": False, "sel": None, "task": False, "chatOut": True}, w)
-
-    def test_a_task_of_another_project_leaves_the_window_to_this_one(self):
-        o = self.got["other"]
-        self.assertTrue(o["win"]["open"] and o["win"]["hasLast"] and not o["win"]["hasOther"], o)
-        self.assertEqual(o["win"]["name"], "ensemble-panel-chat:" + self.taskA, o)
-        self.assertEqual(o["mid"], {"sel": self.taskB, "task": True, "inPage": True}, o)
-
-    def test_closing_the_task_in_the_window_keeps_it_the_conversations(self):
-        w = self.got["closed"]["win"]
-        self.assertTrue(w["open"], w)
-        self.assertEqual(w["name"], "ensemble-panel-po-chat", w)
-        self.assertFalse(w["dock"]["chatOut"], w)
-        self.assertIsNone(w["dock"]["sel"], w)
-
-    def test_the_window_survives_a_reload_of_the_main_window(self):
-        for step in ("before", "home", "after"):
-            with self.subTest(step):
-                w = self.got["reload"][step]
-                self.assertTrue(w["open"] and w["hasLast"] and w["hasTitle"], w)
+            with self.subTest(key, step="before"):
+                w = r["before"]
+                self.assertTrue(w["open"] and w["hasTitle"] and w["hasLast"] and not w["hasOther"], w)
                 self.assertEqual(w["windows"], 1, w)
-                if step != "home":   # no project's page: nothing to take it back yet; it waits
-                    self.assertTrue(w["dock"]["chatOut"], w)
+                self.assertEqual(w["sel"], self.taskA, w)
+                self.assertTrue(w["has"] and w["out"] and w["openOut"], w)
+                self.assertEqual(w["away"], "[]", w)
+                self.assertFalse(w["pinned"], w)
+            with self.subTest(key, step="away"):
+                w = r["away"]
+                self.assertFalse(w["open"], w)
+                self.assertEqual(w["windows"], 0, w)
+                self.assertIsNone(w["sel"], w)
+                self.assertFalse(w["has"], w)
+                self.assertTrue(self.away_one(w).get("out"), w)   # kept as a window
+            with self.subTest(key, step="back"):
+                w = r["back"]
+                self.assertTrue(w["open"] and w["hasTitle"] and w["hasLast"], w)
+                self.assertEqual(w["windows"], 1, w)
+                self.assertEqual(w["sel"], self.taskA, w)
+                self.assertTrue(w["openOut"], w)
+                self.assertEqual(w["away"], "[]", w)
+                self.assertFalse(w["same"], w)   # a new window, opened by the click
 
-    def test_a_docked_chat_panel_keeps_its_per_project_place(self):
+    def test_a_pinned_window_stays_open_on_every_screen(self):
+        for step in ("wheels", "motors"):
+            with self.subTest(step):
+                w = self.got["pinned"][step]
+                self.assertTrue(w["open"] and w["hasLast"], w)
+                self.assertEqual(w["windows"], 1, w)
+                self.assertTrue(w["has"] and w["openOut"] and w["pinned"], w)
+                self.assertTrue(w["same"], w)
+                self.assertIsNone(w["sel"], w)
+
+    def test_a_tab_of_its_own_stays(self):
+        w = self.got["ownTab"]
+        self.assertTrue(w["open"] and w["hasTitle"] and w["hasLast"] and not w["hasOther"], w)
+
+    def test_a_docked_task_tab_is_put_away_and_comes_back(self):
         d = self.got["docked"]
-        self.assertEqual(d["motors"], {"visible": True, "out": False})
-        self.assertEqual(d["wheels"], {"visible": False, "out": False})
-        self.assertEqual(d["back"], {"visible": True, "out": False})
-        self.assertEqual(d["tool"], {"sel": self.taskA, "tab": "workspace", "chat": False, "out": False})
+        self.assertEqual(d["motors"]["sel"], self.taskA, d)
+        self.assertTrue(d["motors"]["has"] and not d["motors"]["out"], d)
+        self.assertIsNone(d["wheels"]["sel"], d)
+        self.assertFalse(d["wheels"]["has"], d)
+        self.assertFalse(self.away_one(d["wheels"]).get("out"), d)
+        self.assertEqual(d["back"]["sel"], self.taskA, d)
+        self.assertTrue(d["back"]["has"] and not d["back"]["out"], d)
+
+    def test_a_task_of_another_project_takes_the_page_there(self):
+        o = self.got["other"]
+        self.assertFalse(o["win"]["open"], o)
+        self.assertEqual(o["win"]["windows"], 0, o)
+        self.assertEqual(o["st"]["pid"], self.projB, o)
+        self.assertEqual(o["st"]["sel"], self.taskB, o)
+        self.assertFalse(o["st"]["has"], o)
+        self.away_one(o["st"])
+        self.assertTrue(o["b"]["tab"], o)
+        self.assertEqual(o["b"]["front"], "chat:" + self.taskB, o)
+
+    def test_the_tasks_actions_run_from_its_windows_menu(self):
+        m = self.got["winMenu"]
+        self.assertTrue(m["btn"] and m["open"], f"the window's ⋯ opens its menu in the window: {m}")
+        self.assertFalse(m["inPageToo"], m)
+        self.assertTrue(m["fits"], f"the menu fits the window: {m}")
+        for label in ("Rename…", "Agents and models…", "Delete task…"):
+            self.assertIn(label, m["rows"])
+        k = self.got["winPick"]
+        self.assertTrue(k["found"], k)
+        self.assertTrue(k["prompted"] and k["prompted"][0].startswith("Label for this session"), f"Rename… ran the page's handler: {k}")
+        self.assertFalse(k["menuOpen"], k)
+        c = self.got["winColours"]
+        if c.get("offered") and not c.get("disabled"):
+            self.assertTrue(c["inWindow"] and not c["inPage"] and c["under"] and c["focusIn"], f"the colour picker opens in the window, under its ⋯: {c}")
+
+    def test_closing_the_task_in_the_window_keeps_its_tab(self):
+        c = self.got["closed"]
+        self.assertTrue(c["win"]["open"] and c["win"]["hasLast"], c)
+        self.assertIsNone(c["st"]["sel"], c)
+        self.assertTrue(c["st"]["has"] and c["st"]["openOut"], c)
+
+    def test_a_reload_remembers_the_put_away_window(self):
+        r = self.got["reload"]
+        self.assertFalse(r["before"]["open"], r)
+        self.away_one(r["before"])
+        a = r["after"]
+        self.assertTrue(a["open"] and a["hasLast"], r)
+        self.assertEqual(a["windows"], 1, r)
+        self.assertEqual(a["sel"], self.taskA, r)
+        self.assertTrue(a["openOut"], r)
 
     def test_task_tools_keep_the_window_and_open_beside_it(self):
         for tool, r in self.got["tools"].items():
             with self.subTest(tool):
-                self.assertEqual(r["state"]["sel"], self.taskA, r)
-                self.assertEqual(r["state"]["tab"], tool, r)
-                self.assertTrue(r["state"]["poOut"] and r["state"]["toolVisible"], r)
-                self.assertFalse(r["state"]["chat"], r)
+                w = r["win"]
+                self.assertTrue(w["open"] and w["hasTitle"] and w["hasLast"], r)
+                self.assertEqual(w["windows"], 1, r)
+                self.assertTrue(r["st"]["out"] and r["st"]["openOut"], r)
+                self.assertEqual(r["ui"]["sel"], self.taskA, r)
+                self.assertEqual(r["ui"]["tab"], tool, r)
+                self.assertTrue(r["ui"]["toolVisible"], r)
                 if tool == "changes":
-                    self.assertEqual(r["state"]["turn"], 1, r)
-                for step in ("before", "after", "reload"):
-                    w = r[step]
-                    self.assertTrue(w["open"] and w["hasTitle"] and w["hasLast"], w)
-                    self.assertEqual(w["windows"], 1, w)
-                self.assertEqual(r["after"]["name"], "ensemble-panel-po-chat", r)
-
-    def test_another_tasks_window_also_stays_open(self):
-        r = self.got["twoWindows"]
-        self.assertEqual(r["count"], 2, r)
-        self.assertTrue(r["a"]["open"] and r["a"]["hasLast"] and not r["a"]["hasOther"], r)
-        self.assertTrue(r["b"]["open"] and r["b"]["hasOther"] and not r["b"]["hasLast"], r)
-
-    def test_a_separate_po_window_stays_open(self):
-        r = self.got["poWindow"]
-        self.assertTrue(r["task"]["open"] and r["task"]["hasLast"], r)
-        self.assertTrue(r["po"]["open"] and self.poA in r["po"]["url"], r)
-
-    def test_a_tool_keeps_the_window_when_another_project_task_is_in_the_middle(self):
-        for tool, r in self.got["otherMiddleTool"].items():
-            with self.subTest(tool):
-                self.assertEqual(r["state"], {"sel": self.taskA, "tab": tool, "poOut": True}, r)
-                self.assertTrue(r["win"]["open"] and r["win"]["hasTitle"] and r["win"]["hasLast"], r)
-                self.assertFalse(r["win"]["hasOther"], r)
-                self.assertEqual(r["win"]["name"], "ensemble-panel-po-chat", r)
+                    self.assertEqual(r["ui"]["turn"], 1, r)
 
     def test_the_page_threw_nothing(self):
         self.assertEqual(self.got["errors"], [])

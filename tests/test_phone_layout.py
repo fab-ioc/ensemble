@@ -431,7 +431,9 @@ class TheWiring(unittest.TestCase):
         self.assertIn("const PD_KEYS = { desk: 'cd-tool-strip', phone: 'cd-phone-tabs' };", INDEX)
 
     def test_a_task_closing_by_itself_goes_back_to_the_list(self):
-        self.assertIn("function closeTask() {\n  if (phoneNow()) goHome(); else closeDetail();\n}", INDEX)
+        self.assertIn("function closeTask() {\n  if (phoneNow()) { goHome(); return; }", INDEX)
+        # #386: on a computer, a task in its own tab closes with its tab.
+        self.assertIn("if (tab) { try { PD.dock.removePanel(tab); } catch (e) {} }\n  if (SELECTED_SID) closeDetail();\n}", INDEX)
         for line in ("if (SELECTED_SID) { if (phoneNow()) barBack(); else closeTask(); }", "if (archiving && SELECTED_SID === sid) closeTask();",
                      "if (SELECTED_SID === sid) closeTask();", "if (SELECTED_SID === row.sessionId) closeTask();"):
             self.assertIn(line, INDEX)

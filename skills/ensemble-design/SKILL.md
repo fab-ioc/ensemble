@@ -1116,9 +1116,13 @@ as in a task chat's window: a known limit. Its frame is `iframe.po-thread`, neve
 thread here.
 On a phone both are tabs of the one column, as everything is. **Still interim**: the PO's two (Switch agent, the PO's task) wait in
 its header's ⋯, marked `data-interim="dock-menu"`, until they follow the same hook. The Board's own **⤢** (`.pd-board-max`, beside its view
-switch) takes the whole width and gives it back. **Panels is available on a desktop** (#143):
-it recovers Tasks and tools whose closed window has no former strip button, including Spec.
-**A popped-out window outlives a reload** (#204, P170; Dock's own since v0.22.0, #205): Dock keeps its windows while the page is leaving and the reloaded page adopts them (`popAdoptTimeout`, 10 min: a hub restart can take minutes); Ensemble only keeps each window's file and scroll (`pdPopKeep` on `pagehide`, sessionStorage `cd-pop-keep`) and puts them back on Dock's `pop-adopt` event (`pdOnAdopt`). The panel stays in its window with its file, scroll and place, and there is **no notice** (`popLostNotice: 'quiet'`). A window closed meanwhile leaves its panel out with a quiet mark: Dock's muted ring on its strip button (`.dk-out-lost`, `isOutLost`) and Ensemble's on Panels (`.pd-out-closed`), whose menu lists it first as "window closed" with one click to open it again and "Bring back here". The layout is kept under `cd-tool-strip` (the old `cd-po-dock` is not
+switch) takes the whole width and gives it back. **No Panels ▾ on a computer** (#386; it was
+there from #143 to #386): every panel is reached from its strip button and from the **tail of every ⋯**
+of both docks (`pdCommonItems`, `pdWithCommon`): a chat or file panel's **Pin** checkbox, each panel
+whose window is closed ("*Name*: window closed" ▸ Open its window again / Bring back here), **Show
+*Name*** for a hidden panel, the list dock's **Inbox** (and **Tasks** on a test page with
+`ensListDocked`), then **Reset layout**. Panels ▾ stays on a phone, where the narrow dock hides panels.
+**A popped-out window outlives a reload** (#204, P170; Dock's own since v0.22.0, #205): Dock keeps its windows while the page is leaving and the reloaded page adopts them (`popAdoptTimeout`, 10 min: a hub restart can take minutes); Ensemble only keeps each window's file and scroll (`pdPopKeep` on `pagehide`, sessionStorage `cd-pop-keep`) and puts them back on Dock's `pop-adopt` event (`pdOnAdopt`). The panel stays in its window with its file, scroll and place, and there is **no notice** (`popLostNotice: 'quiet'`). A window closed meanwhile leaves its panel out with a quiet mark: Dock's muted ring on its strip button (`.dk-out-lost`, `isOutLost`) and the ⋯ tail's "*Name*: window closed" row (a phone's Panels ▾ keeps its `.pd-out-closed` ring), with Open its window again and Bring back here. The layout is kept under `cd-tool-strip` (the old `cd-po-dock` is not
 read). An open task is the same dock's middle (see *The middle* in §5), with its own Changes,
 Files and Spec in the tools. **A phone has the same tools as tabs** (#129): the dock is narrow
 there (`pdNarrow()` is `isPhone()`), one column of tabs in the strip's order, `Chat · Needs you ·
@@ -1126,7 +1130,23 @@ Changes · Files · Board · Spec`, with Panels ▾ in the bar. An open task is 
 too (`pdTask()` holds on a phone), so its tools are the same tabs, not the task panel's own:
 tabs, not a sheet, because they are the same dock and panes as the desktop's strip (no new
 component) and the mockup (`a2-…-390.png`) shows a tab row. The conversation's tab names what it holds
-(`pdSyncTitles`, Dock's `setTitle`): the PO's chat is its **project's name** (#261, P213), on its tab, its window's name (once: `popTitle` adds no second project), and the Panels menu; "#12 The title" with a task in the middle, as a task's chat panel names its task. **The header under a tab does not name it again**: the PO's says "PO" (a drawer, which has no tab, keeps "*Project* · PO"), and a docked task panel hides its title (`body.dp-docked … .dp-head h2`). A switch of project or a rename re-titles the tab. Long names are cut by Dock's tab ellipsis (`--dk-tab-max`) with the whole name in its tooltip. On a phone (the narrow dock) a task's conversation tab keeps reading **Chat** (`PD_TITLES`); the PO's is the project's name cut at 112 px (`#po-dock.dk-narrow .dk-tab[data-dk-tab="po-chat"]`), and a long press on a cut tab shows the whole name in a toast. The row scrolls sideways (Board is past a 390 px row's edge). The Tabs rule above ("a tab that renames itself…") is about the task panel's fixed tab set; a dock panel names its content, as a file panel does.
+(`pdSyncTitles`, Dock's `setTitle`): on a computer the PO's tab is **"PO"** with its project's icon (#386, P374's drawing; #261 named it after the project), its window "PO · *Project*" (`popTitle` names the panel's own project, so a pinned file of another one is "x.md · *Other*"); an Unassigned task in the middle titles it after the task, with no icon. A task of a project with a PO is **a tab of its own** (see *Each project's workspace* below), named after the task. **The header under a tab does not name it again**: the PO's says "PO" (a drawer, which has no tab, keeps "*Project* · PO"), and a docked task panel hides its title (`body.dp-docked … .dp-head h2`). A switch of project or a rename re-titles the tab. Long names are cut by Dock's tab ellipsis (`--dk-tab-max`) with the whole name in its tooltip. On a phone (the narrow dock) a task's conversation tab keeps reading **Chat** (`PD_TITLES`); the PO's is the project's name cut at 112 px (`#po-dock.dk-narrow .dk-tab[data-dk-tab="po-chat"]`), and a long press on a cut tab shows the whole name in a toast. The row scrolls sideways (Board is past a 390 px row's edge). The Tabs rule above ("a tab that renames itself…") is about the task panel's fixed tab set; a dock panel names its content, as a file panel does.
+
+**Each project's workspace** (#386, P374, P376, P377; the drawing `Documents/P374 Workspace plan/drawing.html`).
+On a computer the PO's tab is first; **a task of a project with a PO opens as a tab of its own** after the
+last tab of the PO's stack (`pdTaskTabEnsure`), the task panel moved into it (`pdPlaceTask`) and lent the
+tab's own chat page (`pdFrameLend`: one page per room, kept across clicks). The PO's tab in front, or Esc,
+closes the task and its tab stays; closing the tab closes the task. Each context (a project, or an Unassigned
+task) keeps what it put away (`static/workspace.js`, `cd-pd-ctx`): a project switch puts the other
+contexts' chat and file panels away (out of the dock, places kept) and brings this one's back, the tab that
+was in front in front, a window as a window (if the click allows, else a tab and one quiet line). **A pin**
+(`.pd-pin` on the tab, faint on hover, filled while pinned; the ⋯'s Pin) keeps a chat or file panel in every
+project; closing a pinned one unpins it. Nine tabs: the least recently shown unpinned one closes (windows do
+not count). **Icons** (`pdTabExtra`, `ldpSwatch`): the PO's tab carries its project's icon; a chat or file
+tab carries its panel's project's icon, hidden for this project's own except in a window or a float
+(`.pd-ico-cur`), so a pinned tab of another project says whose it is. None on a phone, where a task stays the
+Chat tab, and an Unassigned task keeps the middle (the PO's tab titled with it). The drawing's dashed "Put
+away" boxes and green outline are annotation, not UI.
 
 A project with a PO opens on its **PO screen**: a Dock (`static/dock`, a vendored copy of the Dock
 library; `VERSION` names its commit, v0.24.0 now) of five panels, **PO chat, Needs you, Board, Workspace,
@@ -1141,7 +1161,7 @@ brings it back** (the library's, from v0.3.5: `minClickRestores`, on by default)
 keep their own clicks, a drag is not a click, and a double click still maximises (also when the
 restored chat's iframe slides under the pointer: for 500 ms after that click the dock's iframes
 let clicks through, `pdDblGuard`). The layout is remembered in the browser (`cd-po-dock`; a phone's apart, `cd-phone-tabs`: a new key
-since #129, as the older one had Spec hidden), with **Reset layout** in the Panels menu. The
+since #129, as the older one had Spec hidden), with **Reset layout** at the end of every ⋯ (a phone's Panels ▾ too). The
 library is never edited in this repository: a need goes to the Dock project's `ENSEMBLE-NEEDS.md`.
 The page has two docks (this one and the task list's, #137): Dock v0.9.0+ keeps one pop-out key
 per page, so both docks' windows find their way back (the page's own `pdKeepPopKey` went with
@@ -1195,7 +1215,7 @@ per page, so both docks' windows find their way back (the page's own `pdKeepPopK
   `$('#modal')` to open one), a toast, a menu under its button, a selection's Comment button; `$`
   finds an element in a popped-out window when this page has none.
 - **The PO's header** (`poHeadHtml`, #126, the mockup's conversation header): its avatar,
-  "PO" at `--fs-400` 600 (the tab above is the project's name, #261; a drawer says "*Project* · PO"),
+  "PO" at `--fs-400` 600 (a drawer says "*Project* · PO"),
   and one `--fs-200` `--fg-muted` line of what is true: agent and model, the project (a drawer only), its open tasks (`poOpenCount`), the run chip, what needs you. **Resume** is
   the one button (Default), and only while the PO is not running; Switch agent and the PO's task
   wait in a `⋯` menu (`.po-menu`, `--surface-overlay`, `--e-200`; `poMenuItems` is the data), whose

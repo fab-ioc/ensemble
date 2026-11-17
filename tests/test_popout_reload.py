@@ -79,7 +79,7 @@ async function main() {
   const out = {};
   const attach = async (targetId) => {
     const { sessionId } = await c.send('Target.attachToTarget', { targetId, flatten: true });
-    const evalIn = async (expr) => { const r = await c.send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true }, sessionId); if (r.exceptionDetails) throw new Error(expr.slice(0, 160) + ' :: ' + JSON.stringify(r.exceptionDetails).slice(0, 600)); return r.result.value; };
+    const evalIn = async (expr, userGesture = false) => { const r = await c.send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true, userGesture }, sessionId); if (r.exceptionDetails) throw new Error(expr.slice(0, 160) + ' :: ' + JSON.stringify(r.exceptionDetails).slice(0, 600)); return r.result.value; };
     const until = async (expr, ms = 20000) => { const t = Date.now(); let last = null; while (Date.now() - t < ms) { let v = null; try { v = await evalIn(expr); } catch (e) { last = e; } if (v) return v; await sleep(150); } throw new Error('timeout: ' + expr + (last ? ' :: ' + last.message : '')); };
     return { sessionId, evalIn, until };
   };
@@ -264,10 +264,11 @@ async function main() {
         return { out: PD.dock.isOut(id), open: PD.dock.isOpenOut(id), notice: ${noteShown}, panelsMark: !!document.querySelector('.pd-panels.pd-out-closed'),
           noticeEls: [...document.querySelectorAll('.dk-outnote')].map(n => getComputedStyle(n).display) }; })()`);
       await p.shot('closed-1440');
-      // Panels lists it first; one click opens its window again.
-      await p.evalIn('document.querySelector(".pd-panels").click(); 0');
-      out.closedMenu = await p.evalIn(`[...document.querySelectorAll('.pd-menu .pd-out-row [data-pd-pop]')].map(b => b.dataset.pdPop + ':' + b.textContent.trim())`);
-      await p.evalIn('document.querySelector(\'.pd-menu .pd-out-row [data-pd-pop="open"]\').click(); 0');
+      // #386: no Panels ▾ on a computer; the ⋯ tail lists it, its submenu opens its window again.
+      await p.evalIn(DK_MENU_OPEN()); await sleep(200);
+      await p.evalIn(DK_MENU_PICK('#1 Notes.md: window closed')); await sleep(200);
+      out.closedMenu = (await p.evalIn(DK_MENU_ROWS)).map(r => r.text).filter(t => /window|Bring back/.test(t));
+      await p.evalIn(DK_MENU_PICK('Open its window again'), true);   // a person's click: a window may open
       await p.until(`PD.dock.isOpenOut(${JSON.stringify(fid)}) && !!PD.dock.popWindow(${JSON.stringify(fid)}).document.querySelector('#dk-pop-root .dk-panel')`, 10000).catch(() => null);
       out.reopened = await p.evalIn(`({ open: PD.dock.isOpenOut(${JSON.stringify(fid)}), mark: !!document.querySelector('.pd-panels.pd-out-closed') })`);
       // A tool closed the same way: the ring on its strip button, whose click opens it.
@@ -478,8 +479,8 @@ class PopOutReload(unittest.TestCase):
         self.assertTrue(c["out"] and not c["open"])
         self.assertFalse(c["notice"])
         self.assertEqual(c["noticeEls"], [], "no notice at all (popLostNotice 'quiet')")
-        self.assertTrue(c["panelsMark"], "Panels carries the mark")
-        self.assertEqual(self.got["closedMenu"], ["open:#1 Notes.md window closed", "back:Bring back here"])
+        self.assertFalse(c["panelsMark"], "no Panels ▾ on a computer (#386)")
+        self.assertEqual(self.got["closedMenu"], ["#1 Notes.md: window closed", "Open its window again", "Bring back here"])
         self.assertEqual(self.got["reopened"], {"open": True, "mark": False}, "one click opens it again")
         t = self.got["toolClosed"]
         self.assertTrue(t["out"] and not t["open"] and t["ring"] and not t["notice"], t)

@@ -87,8 +87,8 @@ const STRIP = `(() => {
     title: b.title, svg: !!b.querySelector('svg'), badge: (b.querySelector('.dk-strip-badge') || {}).textContent || '', on: b.classList.contains('on'),
     expanded: b.getAttribute('aria-expanded'), box: box(b) }));
   const dp = document.getElementById('detail-panel');
-  return { vw: innerWidth, vh: innerHeight, strip: box(strip), btns, fly: PD.dock.flyOpen(), flyBox: box(fly), mid: box(PD.els['po-chat']),
-    open: document.body.classList.contains('detail-open'), dpIn: dp.parentNode === PD.els['po-chat'], docked: document.body.classList.contains('dp-docked'),
+  return { vw: innerWidth, vh: innerHeight, strip: box(strip), btns, fly: PD.dock.flyOpen(), flyBox: box(fly), mid: box(pdHostEl()),
+    open: document.body.classList.contains('detail-open'), dpIn: dp.parentNode === pdHostEl(), tab: pdTabNow(), docked: document.body.classList.contains('dp-docked'),
     tabsShown: !!dp.querySelector('.dp-tabs') && getComputedStyle(dp.querySelector('.dp-tabs')).display !== 'none',
     scrollW: document.documentElement.scrollWidth, scrollH: document.documentElement.scrollHeight, saved: localStorage.getItem('cd-tool-open'),
     trail: [...document.querySelectorAll('#bar-crumbs [data-crumb]')].map(e => [e.dataset.crumb, e.textContent]),
@@ -361,14 +361,14 @@ async function main() {
       if (await p.evalIn('PD.dock.flyOpen()') !== 'spec') { await p.click(tool('spec')); await sleep(400); }
       await menuPick(p, '#po-dock .dk-flyout.open', 'side', 'side:right'); await sleep(500);
       out.moveTo.right = await p.evalIn(SIDE('spec'));
-      // Hide in the window, reopen from Panels, and reopen through each API.
+      // Hide in the window, reopen from the ⋯ tail's Show Spec (#386: no Panels ▾ on a computer), and through each API.
       const hidden = () => p.until('!PD.dock.isVisible("spec") && !PD.dock.isOut("spec")');
       const popped = () => p.until('!!PD.dock.popWindow("spec") && PD.els.spec.ownerDocument !== document');
       await menuPick(p, '#po-dock .dk-flyout.open', 'mode', 'mode:window'); await popped();
       await p.evalIn(`PD.dock.popWindow('spec').document.querySelector('[data-dk-act="hide"]').click(); 0`); await hidden();
-      await p.click('.pd-panels'); await p.click('[data-pd-toggle="spec"]'); await popped();
+      await p.evalIn(DK_MENU_OPEN()); await sleep(200); await p.evalIn(DK_MENU_PICK('Show Spec'), true); await popped();
       out.panelReopen = await p.evalIn(SIDE('spec'));
-      await p.evalIn('pdMenuClose(false); PD.dock.popWindow("spec").close(); 0'); await hidden();
+      await p.evalIn('PD.dock.popWindow("spec").close(); 0'); await hidden();
       for (const call of ['showPanel("spec")', 'setVisible("spec", true)', 'reveal("spec")']) {
         await p.evalIn('PD.dock.' + call + '; 0', true); await popped();
         await p.evalIn('PD.dock.popWindow("spec").close(); 0'); await hidden();
@@ -590,7 +590,7 @@ class TheStrip(unittest.TestCase):
                 self.assertEqual((g["strip"]["w"], g["strip"]["r"]), (44, g["vw"]), "44px at the right edge")
                 self.assertEqual(g["mid"]["r"], g["strip"]["x"], "the conversation reaches the strip")
                 self.assertIsNone(g["fly"])
-                self.assertTrue(g["panels"], "Panels recovers windows without a former strip button")
+                self.assertFalse(g["panels"], "#386: no Panels ▾ on a computer (each ⋯ ends with closed windows)")
                 self.no_scroll(g, f"PO at {w}")
 
     def test_each_tool_opens_beside_the_conversation_at_its_width(self):
@@ -643,11 +643,12 @@ class TheStrip(unittest.TestCase):
         self.assertIn("1,656 lines added, 40 removed", g["badgeTip"], "the tooltip has them all")
         self.assertTrue(g["badgeFits"], "the count stays on its button")
 
-    def test_a_task_is_the_middle_with_its_own_tools(self):
+    def test_a_task_is_its_own_tab_with_its_own_tools(self):
+        # #386: a task of a PO project is a tab of its own, after the PO's (the PO's tab stays first).
         for w in (1280, 1440, 1728):
             g = self.got[f"task{w}"]
             with self.subTest(w=w):
-                self.assertTrue(g["open"] and g["dpIn"] and g["docked"], "the task panel is in the middle")
+                self.assertTrue(g["open"] and g["dpIn"] and g["docked"] and g["tab"], "the task panel is in its own tab")
                 self.assertFalse(g["tabsShown"], "its tabs are gone")
                 self.assertEqual(g["fly"], "changes")
                 self.assertLessEqual(g["mid"]["r"], g["flyBox"]["x"])
