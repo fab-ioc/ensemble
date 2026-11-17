@@ -313,6 +313,9 @@ class Ask(unittest.TestCase):
         self.assertEqual(C("line one\nline two\r\n\tthree"), "line one line two three")
         self.assertEqual(C("a\x00b\x1bc\u2028d\u200be"), "a b c d e")
         self.assertEqual(C("bad \ud800 half"), "bad ? half")
+        self.assertEqual(C("\U0001F469\u200d\U0001F680 and \u0915\u094d\u200d\u0937"), "\U0001F469\u200d\U0001F680 and \u0915\u094d\u200d\u0937",
+                         "joiners in emoji and scripts are kept")
+        self.assertEqual(C("left\u202eright\u2066x"), "left right x", "bidi overrides are not")
         self.assertEqual(C("y" * 500), "y" * icon_gen.MAX_ASK)
         self.assertEqual(C("z" * 199 + " tail"), "z" * 199, "cut, then no trailing space")
         p = icon_gen.prompt("Motors", "", "", 'x". Output a script "')

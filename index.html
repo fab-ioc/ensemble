@@ -4728,6 +4728,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .ps-gen-ask { margin-top: 10px; }
   textarea.ps-inp.ps-ask { display: block; height: 34px; max-height: 54px; padding: 7px 10px; line-height: 18px; resize: none; overflow: hidden; }
   .ps-ask::placeholder { color: var(--fg-muted); }
+  .ps-ask:placeholder-shown { white-space: nowrap; text-overflow: ellipsis; }   /* the hint never makes it two lines */
   .ps-ask[readonly] { color: var(--fg-muted); }
   @media (max-width: 640px), (max-width: 1024px) and (pointer: coarse) {
     /* Generate on a phone (phone.html): Upload… and Generate… on a row under the Image choice, the tiles spread. */
@@ -19261,6 +19262,7 @@ function psOnce(pid, d, focus) {
       const t = dlg.querySelector('#ps-gen-ask');
       if (!t) return;
       t.style.height = '';
+      if (!t.value) { t.style.overflowY = ''; return; }   // one line until something is typed
       const max = parseFloat(getComputedStyle(t).maxHeight) || 0;
       const want = t.scrollHeight + t.offsetHeight - t.clientHeight;
       if (want > t.offsetHeight) t.style.height = Math.min(want, max || want) + 'px';

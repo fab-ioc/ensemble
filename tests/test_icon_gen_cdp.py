@@ -304,6 +304,17 @@ async function main() {
     await sleep(200);
     out.phCands = await ph.evalIn(GEN);
     await ph.shot('gen-cands');
+    const PH_ASK = `(() => { const t = document.querySelector('#modal #ps-gen-ask'); return t && Math.round(t.getBoundingClientRect().height); })()`;
+    out.phAskEmpty = await ph.evalIn(PH_ASK);
+    await ph.evalIn(`(() => { const t = document.querySelector('#modal #ps-gen-ask'); t.focus(); return 0; })()`);
+    await ph.type('a compass with a needle pointing north-east');
+    await sleep(100);
+    out.phAskTwo = await ph.evalIn(PH_ASK);
+    await ph.type(', in thick strokes, nothing else, and longer than two lines of this box');
+    await sleep(100);
+    out.phAskMore = await ph.evalIn(PH_ASK);
+    await ph.evalIn(`(() => { const t = document.querySelector('#modal #ps-gen-ask'); t.value = ''; t.dispatchEvent(new Event('input')); return 0; })()`);
+    out.phAskCleared = await ph.evalIn(PH_ASK);
     await ph.click('#modal #ps-gt-1');
     await sleep(200);
     out.phPicked = await ph.evalIn(GEN);
@@ -557,6 +568,10 @@ class GenerateInChrome(unittest.TestCase):
         self.assertEqual(asks[0], "")
         self.assertEqual(asks[1], "a 'compass', flat and simple")
         self.assertEqual(asks[-1], "")
+
+    def test_a_description_on_a_phone(self):
+        """P373 review 1: one 44px line while empty (the long hint does not wrap), two at most."""
+        self.assertEqual((self.g("phAskEmpty"), self.g("phAskTwo"), self.g("phAskMore"), self.g("phAskCleared")), (44, 64, 64, 44))
 
     def test_no_errors(self):
         self.assertEqual(self.g("errors"), [])

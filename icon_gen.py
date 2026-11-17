@@ -210,15 +210,25 @@ MAX_ASK = 200   # characters of what the person asks for (P373)
 _QUOTES = str.maketrans({'"': "'", "\u201c": "'", "\u201d": "'", "\u201e": "'", "\u00ab": "'", "\u00bb": "'", "\\": "/"})
 
 
+_JOINERS = {"\u200c", "\u200d"}   # zero-width (non-)joiner: part of emoji and scripts, kept
+
+
+def _BREAKS(ch: str) -> bool:
+    """A character that becomes a space: control, separator, or an invisible
+    format character (bidi overrides, zero-width space) other than a joiner."""
+    cat = unicodedata.category(ch)
+    return cat == "Cc" or cat[0] == "Z" or (cat == "Cf" and ch not in _JOINERS)
+
+
 def clean_ask(text) -> str:
     """What the person typed in Generate's box (P373), safe to quote in the
-    prompt: control characters gone, whitespace one space, double quotes and
+    prompt: control and invisible format characters a space (joiners kept), whitespace one space, double quotes and
     backslashes made plain so it cannot close its quotes, at most MAX_ASK
     characters. Anything else ("" when it is not a string) is ""."""
     if not isinstance(text, str):
         return ""
     text = text.encode("utf-8", "replace").decode("utf-8")
-    text = "".join(" " if unicodedata.category(ch)[0] in "CZ" else ch for ch in text)
+    text = "".join(" " if _BREAKS(ch) else ch for ch in text)
     text = " ".join(text.translate(_QUOTES).split())
     return text[:MAX_ASK].rstrip()
 
