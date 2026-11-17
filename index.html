@@ -17564,7 +17564,9 @@ function ibxLdPid() {
   if (!LD_SEL) {
     let s = '';
     try { s = localStorage.getItem(LD_SEL_KEY) || ''; } catch (e) {}
-    LD_SEL = { sel: s || here, seen: here, at: Date.now(), ready: ldProjectsLoaded() };
+    LD_SEL = { sel: s || here, seen: here, at: Date.now(), ready: ldProjectsLoaded(), settled: false };
+    // #390: look again once the page has settled (below).
+    setTimeout(() => { if (window.LD && LD.dock && IBX.ldPid !== ibxLdPid()) ibxPaint(); }, LD_SEL_SETTLE_MS + 100);
     return LD_SEL.sel;
   }
   const wasReady = LD_SEL.ready;
@@ -17578,6 +17580,14 @@ function ibxLdPid() {
     // Opening a project or task picks it. #390 (GitHub issue 56): All stays
     // All; the pick still moves, so a later "This project" is the new one.
     if (here && (!arriving || !LD_SEL.sel)) ldSelSet(here);
+  }
+  // #390: the page settled on another project than the remembered one (loaded
+  // on another project's chat, or the pick was made in another window): the
+  // pick follows it, once. A pick of a task in no project (room:) stays.
+  if (!LD_SEL.settled && LD_SEL.ready && Date.now() - LD_SEL.at >= LD_SEL_SETTLE_MS) {
+    LD_SEL.settled = true;
+    const proj = v => !!v && !v.startsWith('room:');
+    if (proj(here) && proj(LD_SEL.sel) && LD_SEL.sel !== here) ldSelSet(here);
   }
   // A pick whose project or task is gone: back to All, and forgotten.
   if (LD_SEL.sel && LD_SEL.sel !== here && ldSelGone(LD_SEL.sel)) ldSelSet('');
@@ -18268,7 +18278,7 @@ function ldpTerms(b, r) {
   // has its terminals toggled there (a second pick hides them).
   const mid = room && onHubMachine() ? document.querySelector(`#detail-panel iframe.dp-session[data-room="${CSS.escape(room)}"]`) : null;
   if (mid) { toggleCapturedTerms(mid); return; }
-  ldpScope('project');
+  // #390: showing its terminals is no pick of the filter: All stays All.
   ldSelSet('room:' + room);
   showCapturedTerminal(room);
   ibxRepaint();
@@ -18293,7 +18303,8 @@ function ldpProjMenu(b, pid, rect) {
     const a = it.dataset.act;
     const kb = document.activeElement === it;
     ldpMenuClose();
-    if (a === 'open') { ldpScope('project'); ldSelSet(pid); projPick(pid); ibxRepaint(); }
+    // #390: Open is a switch, not the row's pick: All stays All.
+    if (a === 'open') { ldSelSet(pid); projPick(pid); ibxRepaint(); }
     else if (a === 'pin' || a === 'up' || a === 'down') {
       if (a === 'pin') pinToggle(pid); else pinMove(pid, a === 'up' ? -1 : 1);
       // Back on the row's ⋯, wherever the row went: the next Move is one Enter away.
@@ -18576,6 +18587,8 @@ rowExpandWire(document.getElementById('ld-ibx-body'),
     if (pid) {
       const fly = (document.body.classList.contains('po-dock') && PD.dock && !PD.dock.narrow() ? PD.dock.flyOpen() : null) || keptFly;
       keptFly = null;
+      // The row is the computer's Inbox filter, picked by hand (#328): it picks
+      // this project (All gives way) and opens it. Other switches keep All (#390).
       ldpScope('project'); ldSelSet(pid); projPick(pid); ibxRepaint();
       // The PO screen switches to the new project's after this click: slide the
       // tool back out once it shows that project.
@@ -27033,7 +27046,7 @@ async function deepOpenRoom(qs, live) {
 // /?inbox=<project id> (#359): the Inbox on that project's cards.
 async function deepOpenInbox(pid) {
   if (!PROJECTS) await refreshProjects();
-  ldpScope('project');
+  // #390 (GitHub issue 56): a switch, as a notification's is: All stays All.
   if (projectById(pid)) { ldSelSet(pid); projPick(pid); }
   ibxRepaint();
   if (phoneNow() && !document.body.classList.contains('po-dock')) { if (PH_PANE !== 'inbox') phPane('inbox'); }

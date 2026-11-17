@@ -58,7 +58,7 @@ async function main() {
     await until('!!document.querySelector("#ld-projs .ldp-row")', 20000);
   };
   // The switcher's own menu: open it, click the project's row.
-  const viaSwitcher = pid => `(() => { openProjMenu(); const b = document.querySelector('#proj-menu .pm-item[data-proj="${pid}"]'); if (b) { b.click(); return 1; } projPick(${J(pid)}); return 2; })()`;
+  const viaSwitcher = pid => `(() => { openProjMenu(); const b = document.querySelector('#proj-menu .pm-item[data-proj="${pid}"]'); if (!b) throw new Error('no switcher row'); b.click(); return 1; })()`;
   // The left list's project row (a pick there switches the project too).
   const viaList = pid => `document.querySelector('#ld-projs .ldp-row[data-ldp-proj="${pid}"]').click()`;
   const allRow = `document.querySelector('#ld-projs .ldp-row[data-ldp="all"]').click()`;
@@ -70,7 +70,6 @@ async function main() {
     // 1. Inbox on Big (the list's row), then the switcher to Other: Other.
     await step('onBig', viaList(P.Big));
     await step('switchOther', viaSwitcher(P.Other), 2000);
-    out.switcherClicked = await evalIn(`!!document.querySelector('#proj-menu') && 1`);
     // 2. The left list to Big: Big.
     await step('listBig', viaList(P.Big), 2000);
     // 3. A task of Other opened: Other.
@@ -81,6 +80,11 @@ async function main() {
     await step('allSwitch', viaSwitcher(P.Other), 2000);
     await step('allTask', `openDetail(${sid(T.b1)})`, 2000);
     await step('allBack', `closeDetail(); projPick(${J(P.Other)})`, 2000);
+    // A project row's ⋯ Open, and the /?inbox= route a notification takes, keep All too.
+    await evalIn(`document.querySelector('#ld-projs [data-ldp-pmenu="${P.Big}"]').click(); 0`);
+    await sleep(400);
+    await step('allOpen', `document.querySelector('.dcm-item[data-act="open"]').click()`, 2000);
+    await step('allDeep', `deepOpenInbox(${J(P.Other)})`, 2000);
     // 5. A reload keeps All.
     await c.send('Page.reload', {}, sessionId);
     await sleep(500);
@@ -110,6 +114,15 @@ async function main() {
     await load(); await sleep(2500);
     out.pickReload = await evalIn(ST);
     await step('pickReloadSwitch', `projPick(${J(P.Other)})`, 2000);
+    // 9. One project: the /?inbox= route moves it.
+    await step('deepPick', `deepOpenInbox(${J(P.Big)})`, 2000);
+    // 10. A page that loads on another project than the remembered pick (made
+    // in another window): once settled, the pick is the page's project.
+    await evalIn(`localStorage.setItem('cd-ld-sel', ${J(P.Other)}); 0`);
+    await c.send('Page.reload', {}, sessionId);
+    await sleep(500);
+    await load(); await sleep(6000);
+    out.loadElsewhere = await evalIn(ST);
     out.errors = c.exceptions;
   } finally {
     try { await c.send('Browser.close'); } catch (e) {}
@@ -235,6 +248,21 @@ class InboxFollowsSwitch(unittest.TestCase):
         self.assertTrue((g["winSwitch"]["winHead"] or "").startswith("Inbox · Big"), g["winSwitch"])
         self.assertTrue((g["winAllSwitch"]["winHead"] or "").startswith("Inbox · All"), g["winAllSwitch"])
         self.assertEqual(g["winAllSwitch"]["scope"], "all")
+
+    def test_open_from_the_menu_and_the_inbox_route_keep_all(self):
+        self.all("allOpen")
+        self.assertEqual(self.got["allOpen"]["here"], self.ids["Big"])
+        self.all("allDeep")
+        self.assertEqual(self.got["allDeep"]["here"], self.ids["Other"])
+
+    def test_the_inbox_route_moves_one_project(self):
+        self.on("deepPick", "Big")
+        self.assertEqual(self.got["deepPick"]["here"], self.ids["Big"])
+
+    def test_a_load_on_another_project_moves_one_project(self):
+        s = self.got["loadElsewhere"]
+        self.assertEqual(s["here"], self.ids["Big"], s)
+        self.on("loadElsewhere", "Big")
 
     def test_the_put_away_inbox_follows(self):
         g = self.got
