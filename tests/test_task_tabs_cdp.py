@@ -64,7 +64,7 @@ const ST = `(() => { const d = PD.dock, L = d.layout();
     dpIn: !host ? 'detached' : host === PD.els['po-chat'] ? 'po-chat' : host.classList.contains('pd-chat-x') ? 'chat:' + host.dataset.room : 'home',
     docked: document.body.classList.contains('dp-docked'),
     frames: [...document.querySelectorAll('iframe.dp-session')].map(f => ({ room: f.dataset.room, inPane: !!f.closest('.dp-pane'), lent: f.classList.contains('pd-adopted') })),
-    poTitle: d.title('po-chat') }; })()`;
+    poTitle: d.title('po-chat'), pid: PD.pid }; })()`;
 async function main() {
   const { ch, ws } = await launch();
   const c = new Cdp(ws); await c.open();
@@ -103,6 +103,22 @@ async function main() {
     await step('closeWipers', `PD.dock.close('chat:${T.Wipers}')`, 1200);
     await step('loose', `openDetail(${sid(T.Loose)})`);
     await step('brakesBack', `openDetail(${sid(T.Brakes)})`, 1500);
+    // Review 1, finding 1: the tab in front comes back in front, not the last one.
+    await step('wipers2', `openDetail(${sid(T.Wipers)})`, 1200);
+    await step('brakes2', `openDetail(${sid(T.Brakes)})`, 1200);
+    await step('trading2', `openProjectPage(${JSON.stringify(P.Trading)})`, 1500);
+    await step('motors2', `openProjectPage(${JSON.stringify(P.Motors)})`, 2000);
+    // Finding 3: a phone width and back keeps one chat page for the room, the tab's.
+    await c.send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true }, sessionId);
+    await sleep(1500);
+    await c.send('Emulation.setDeviceMetricsOverride', { width: 1728, height: 1117, deviceScaleFactor: 1, mobile: false }, sessionId);
+    await sleep(1500);
+    out.resized = await evalIn(ST);
+    // Finding 4: a task of another project opened beside (middle click) is added on its project's screen.
+    await step('trading3', `openProjectPage(${JSON.stringify(P.Trading)})`, 1500);
+    out.besideOk = await evalIn(`pdRowPanel(${sid(T.Wipers)})`);
+    await sleep(1500);
+    out.beside = await evalIn(ST);
     out.errors = c.exceptions;
   } finally {
     try { await c.send('Browser.close'); } catch (e) {}
@@ -207,7 +223,7 @@ class TaskTabs(unittest.TestCase):
         self.in_tab(g["brakes"], T["Brakes"], "Brakes")
         self.assertEqual(g["wipers"]["stack"], ["po-chat", "chat:" + T["Brakes"], "chat:" + T["Wipers"]], "after the last tab")
         self.in_tab(g["wipers"], T["Wipers"], "Wipers")
-        self.assertEqual(g["wipers"]["poTitle"], "Motors", "the PO's tab keeps the project's name")
+        self.assertEqual(g["wipers"]["poTitle"], "PO", "the PO's tab is titled PO (the drawing); its icon names the project")
 
     def test_the_po_tab_closes_the_task_and_its_tab_opens_it_again_on_the_same_page(self):
         g, T = self.got, self.tasks
@@ -243,6 +259,23 @@ class TaskTabs(unittest.TestCase):
         self.assertEqual(s["dpIn"], "po-chat", s)
         self.assertEqual(s["stack"], ["po-chat"], s)
         self.in_tab(g["brakesBack"], T["Brakes"], "Brakes from the Unassigned task")
+
+    def test_the_tab_in_front_comes_back_in_front(self):
+        g, T = self.got, self.tasks
+        self.assertEqual(g["brakes2"]["stack"], ["po-chat", "chat:" + T["Brakes"], "chat:" + T["Wipers"]], g["brakes2"])
+        self.in_tab(g["brakes2"], T["Brakes"], "Brakes in front, Wipers last")
+        self.assertEqual(g["trading2"]["stack"], ["po-chat"])
+        self.in_tab(g["motors2"], T["Brakes"], "back on Motors: Brakes (in front when put away), not Wipers (the last tab)")
+
+    def test_a_phone_width_and_back_keeps_the_tabs_page(self):
+        self.in_tab(self.got["resized"], self.tasks["Brakes"], "after 390 px and back")
+
+    def test_a_task_of_another_project_opened_beside_switches_to_its_project(self):
+        g, T = self.got, self.tasks
+        self.assertEqual(g["trading3"]["pid"], self.ids["Trading"])
+        self.assertTrue(g["besideOk"], g["beside"])
+        self.assertEqual(g["beside"]["pid"], self.ids["Motors"], g["beside"])
+        self.assertIn("chat:" + T["Wipers"], g["beside"]["stack"], g["beside"])
 
     def test_the_page_threw_no_exception(self):
         self.assertEqual(self.got["errors"], [])

@@ -4163,6 +4163,30 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .fd-tab-drag { display: inline-flex; width: 12px; height: 14px; margin-right: var(--s-100); vertical-align: -3px; cursor: grab; }
   .fd-tab-drag svg { width: 12px; height: 12px; margin: auto; fill: none; stroke: currentColor; stroke-width: 1.4; }
   .dk-tab.on { color: var(--fg); border-bottom-color: var(--accent); }
+  /* #386 (the approved drawing): a tab's project icon (P375 option C) goes
+     before its title, as part of the tab (pdTabExtra); this project's own
+     only in a window or a float (P377). Its pin: faint on hover, filled and
+     always there while pinned (P376). */
+  .dk-tab-wrap > .dk-tab-extra:has(> .pd-tab-ico, > .pd-pin) { display: contents; }
+  .dk-tab-wrap > .dk-tab-extra > .pd-tab-ico { order: -1; --pt: 15px; margin: 0 -3px 0 0; align-self: center; font-size: 9px; }
+  .dk-tab-wrap:has(> .dk-tab-extra > .pd-tab-ico) { padding-left: var(--s-200); }
+  .dk-tab-wrap:has(> .dk-tab-extra > .pd-tab-ico) > .dk-tab { padding-left: var(--s-150, 6px); }
+  .dk-tab-wrap > .dk-tab-extra > .pd-ico-cur { display: none; }
+  .dk-tab-wrap:has(> .dk-tab-extra > .pd-ico-cur):not(:has(> .dk-tab-extra > .pd-tab-ico:not(.pd-ico-cur))) { padding-left: 0; }
+  .dk-tab-wrap:has(> .dk-tab-extra > .pd-ico-cur):not(:has(> .dk-tab-extra > .pd-tab-ico:not(.pd-ico-cur))) > .dk-tab { padding-left: var(--s-300); }
+  body.dk-popwin .dk-tab-wrap > .dk-tab-extra > .pd-ico-cur, .dk-float .dk-tab-wrap > .dk-tab-extra > .pd-ico-cur { display: grid; }
+  body.dk-popwin .dk-tab-wrap > .dk-tab-extra > .pd-ico-cur.ldp-pic, .dk-float .dk-tab-wrap > .dk-tab-extra > .pd-ico-cur.ldp-pic { display: block; }
+  body.dk-popwin .dk-tab-wrap:has(> .dk-tab-extra > .pd-ico-cur), .dk-float .dk-tab-wrap:has(> .dk-tab-extra > .pd-ico-cur) { padding-left: var(--s-200); }
+  body.dk-popwin .dk-tab-wrap:has(> .dk-tab-extra > .pd-ico-cur) > .dk-tab, .dk-float .dk-tab-wrap:has(> .dk-tab-extra > .pd-ico-cur) > .dk-tab { padding-left: var(--s-150, 6px); }
+  .dk-tab-wrap.on:has(> .dk-tab-extra > .pd-tab-ico) { background: var(--selected-bg); }
+  .pd-pin { width: 16px; height: 16px; flex: none; display: inline-flex; align-items: center; justify-content: center; padding: 0; border: 0;
+    border-radius: var(--r-100, 3px); background: none; color: var(--fg-subtlest, var(--fg-subtle)); cursor: pointer; visibility: hidden; }
+  .pd-pin svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.2; }
+  .pd-pin .pd-pin-stem { fill: none; stroke-width: 1.4; }
+  .pd-pin.on { color: var(--fg-subtle); visibility: visible; }
+  .pd-pin.on svg { fill: currentColor; stroke-width: 1; }
+  .dk-tab-wrap:hover .pd-pin, .pd-pin:focus-visible, body.dk-popwin .pd-pin, .dk-float .pd-pin { visibility: visible; }
+  .pd-pin:hover { color: var(--fg); background: var(--hover, rgba(9,30,66,.06)); }
   /* A tab's count (the Points panel's) is quiet words, never a badge (the
      --dk-badge-* tokens above). */
   .dk-badge { margin-left: var(--s-100); }
@@ -11645,7 +11669,7 @@ function wsPanelAdd(v, t, where) {
   v.panels.set(k, { id, el, path: t.path, at: Date.now() });
   PD.rt.set(id, { kind: 'file', v, path: t.path, el });
   let res = null;
-  try { res = PD.dock.addPanel({ id, title: wsTabName(t.path), el, closable: true, menuItems: (pid, ctx) => wsPanelMenuItems(v, t.path, ctx) }, where); } catch (e) { res = null; }
+  try { res = PD.dock.addPanel({ id, title: wsTabName(t.path), el, closable: true, menuItems: pdWithCommon((pid, ctx) => wsPanelMenuItems(v, t.path, ctx)) }, where); } catch (e) { res = null; }
   if (res !== 'added') { v.panels.delete(k); PD.rt.delete(id); return false; }
   wsPanelPaint(v, t);
   wsPanelsRemember();
@@ -15425,6 +15449,10 @@ function pdEnsure() {
     fill: 'po-chat',
     // Each project's put-away panels keep their places (#386).
     keepSlots: 300,
+    // A tab's project icon and pin (#386, pdTabExtra); every ⋯ ends with
+    // what the bar's Panels menu held (pdCommonItems).
+    tabExtra: p => pdTabExtra(p),
+    menuItems: pdWithCommon(null),
     minSize: pdMinOf,
     sizes: { head: 32, strip: 44, unpinSize: 720 },
     // A click opens a tool beside the conversation; a click or focus
@@ -15457,9 +15485,14 @@ function pdEnsure() {
       if (h && h.name === name) { PD_HELD_WIN = null; try { if (!h.win.closed) return h.win; } catch (e) {} }
       return window.open(url, name, features);
     },
-    // A window is named after its panel, then the project. The library asks
-    // again when a panel's title changes (Dock v0.11.0's setTitle, pdSyncTitles).
-    popTitle: p => { const pj = pdProjectName() || 'Ensemble'; return p.title === pj ? pj : `${p.title} · ${pj}`; },
+    // A window is named after its panel, then its project (a pinned one
+    // another project's, #386). The library asks again when a panel's title
+    // changes (Dock v0.11.0's setTitle, pdSyncTitles).
+    popTitle: p => {
+      const e = PD.rt.get(p.id), pid = e ? pdPanelProject(e) || PD.pid : PD.pid;
+      const pj = (projectById(pid) || {}).name || 'Ensemble';
+      return p.title === pj ? pj : `${p.title} · ${pj}`;
+    },
     // The page's body classes (mid, dp-docked, detail-open…) hold in every
     // panel window too: the task panel's rules are keyed on them (#148). The
     // library copies them and keeps them in step, as it does <html>'s theme
@@ -15518,7 +15551,7 @@ function pdEnsure() {
 // A panel of this dock as createDock and addPanel take it.
 function pdPanelDef(id, vw) {
   return { id, title: PD_TITLES[id], el: PD.els[id], icon: PD_ICON[id], unpinSize: PD_ICON[id] ? pdToolSize(id, vw || innerWidth) : undefined,
-           menuItems: id === 'po-chat' ? (pid, ctx) => pdMenuItems(ctx) : undefined };
+           menuItems: id === 'po-chat' ? pdWithCommon((pid, ctx) => pdMenuItems(ctx)) : undefined };
 }
 // #322: how a layout saved before the Inbox moved to the list dock kept it
 // ('pinned', 'unpinned', 'float', or '' for the default), read once, before
@@ -15958,6 +15991,16 @@ function pdChatOpen(roomId, o) {
   }
   const r = ALL_ROWS.find(x => x.roomId === roomId);
   if (!r) return false;
+  // #386 rule 3 (review 1): a task of another project (a Ctrl/⌘ or middle
+  // click, Open in new panel) is added on that project's screen: the switch
+  // first, as a plain click's.
+  if (!o?.restore) {
+    const own = pdWsCtxOfTask(roomId), here = pdWsHere();
+    if (own && here && own !== here && !own.startsWith('task:') && projectById(own)) {
+      openProjectPage(own);
+      if (!pdPanelsOn()) return false;
+    }
+  }
   // #386: a task with a tab of its own (pdTabFor) is open in that tab: the
   // task panel moves into it (pdPlaceTask), and the chat it already shows
   // is the tab's (no second page of the room).
@@ -15998,7 +16041,7 @@ function pdChatOpen(roomId, o) {
       if (d.frontOf('po-chat') !== end) { try { d.activate(end); } catch (e) {} }
       where = { kind: 'stack', stack: end };
     }
-    res = d.addPanel({ id, title: pdRowTitle(r), el, closable: true, menuItems: (pid, ctx) => pdChatMenuItems(roomId, ctx) }, where);
+    res = d.addPanel({ id, title: pdRowTitle(r), el, closable: true, menuItems: pdWithCommon((pid, ctx) => pdChatMenuItems(roomId, ctx)) }, where);
   } catch (e) { res = null; }
   finally { PD.tabAdding = false; }
   if (res !== 'added') { if (adopt) adopt.classList.remove('pd-adopted'); PD.rt.delete(id); return res === 'exists'; }
@@ -16409,6 +16452,17 @@ function pdProjectPanels() {
     else if (ok === null) { PdWorkspace.drop(PD_WS, it.id); try { PD.dock.forget(it.id); } catch (e) {} }
     else if (it.out) wins.push(it.id);
   }
+  // The tab that was its stack's front is front again, once all are back
+  // (review 1: a tab added after it took the front, and pdWsBehind gave it
+  // to the stack's front from before the switch).
+  for (const it of res.back) {
+    if (!it.front || it.out || !PD.rt.has(it.id)) continue;
+    let f = null;
+    try { f = PD.dock.frontOf(it.id); } catch (e) { f = null; }
+    if (f === it.id) continue;
+    PD.opening = true;
+    try { PD.dock.activate(it.id); } catch (e) {} finally { PD.opening = false; }
+  }
   // Not listed yet (the hub warming): tried again at the next settle.
   if (keep.length) PD_WS.ctxs[here].items.push(...keep);
   pdChatsRemember();
@@ -16416,6 +16470,7 @@ function pdProjectPanels() {
   pdTabTips();
   pdWsWindowBack(wins);
   pdWsSave(true);
+  pdTabExtrasSync();
 }
 function pdWsBehind(id, fronts) {
   let f = null;
@@ -16484,6 +16539,96 @@ function pdWsPin(id, on) {
   try { PD.dock.refreshTabExtras(); } catch (e) {}
   if (!on) pdProjectPanels();   // another project's, unpinned here: put away now
 }
+// What a tab carries after its title (#386, the approved drawing; Dock's
+// tabExtra, drawn on its tab and on its window's title bar): the project's
+// icon on the PO's tab and on another project's panel (P375 option C); on
+// this project's own panel only in a window or a float, where nothing else
+// says whose it is (P377, CSS .pd-ico-cur); and a chat or file panel's pin
+// (P376): faint on hover, filled while pinned. None on a phone.
+const PD_PIN_SVG = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.2 1.5h5.6l-.9 1.2v3.6l2.6 2.6v1.3H3.5V8.9l2.6-2.6V2.7z"/><path class="pd-pin-stem" d="M8 10.2v4.4"/></svg>';
+function pdTabExtra(p) {
+  const d = PD.dock;
+  if (!d || d.narrow()) return '';
+  if (p.id === 'po-chat') {
+    // The PO's conversation (not an Unassigned task in the middle).
+    const pid = pdTaskWanted() && !pdTabNow() ? null : PD.pid;
+    return pid ? ldpSwatch(pid, 'ldp-ico pd-tab-ico') : '';
+  }
+  const e = PD.rt.get(p.id);
+  if (!e || (e.kind !== 'chat' && e.kind !== 'file')) return '';
+  const pid = pdPanelProject(e);
+  const ico = pid ? ldpSwatch(pid, 'ldp-ico pd-tab-ico' + (pid === PD.pid ? ' pd-ico-cur' : '')) : '';
+  const on = PdWorkspace.isPinned(PD_WS, p.id);
+  const what = on ? 'Unpin: it goes away with this project again' : 'Pin: keep it open in every project';
+  return ico + `<button type="button" class="pd-pin${on ? ' on' : ''}" data-pd-pin="${esc(p.id)}" tabindex="-1" aria-pressed="${on}" aria-label="${what}" title="${what}">${PD_PIN_SVG}</button>`;
+}
+// Asked again only when what it draws from changed: the project, whose
+// panel each is, whether the PO's tab is the PO's.
+function pdTabExtrasSync() {
+  const d = PD.dock;
+  if (!d) return;
+  const sig = [PD.pid, pdTaskWanted() && !pdTabNow(), ...[...PD.rt].map(([id, e]) => id + ':' + pdPanelProject(e))].join('|');
+  if (sig === PD.extraSig) return;
+  PD.extraSig = sig;
+  try { d.refreshTabExtras(); } catch (e) {}
+}
+// A click on a pin, or on a tab's icon (the tab's, as its title is): in the
+// page and in a panel's window (pdDocListenerAdded gives them this listener).
+document.addEventListener('click', e => {
+  const t = e.target && e.target.closest ? e.target : null;
+  const pin = t && t.closest('[data-pd-pin]');
+  if (pin && PD.dock) {
+    e.preventDefault(); e.stopPropagation();
+    const id = pin.dataset.pdPin;
+    pdWsPin(id, !PdWorkspace.isPinned(PD_WS, id));
+    return;
+  }
+  const ico = t && t.closest('.dk-tab-extra .pd-tab-ico');
+  const tab = ico && ico.closest('.dk-tab-wrap')?.querySelector('[data-dk-tab]');
+  if (tab && PD.dock) { try { PD.dock.activate(tab.dataset.dkTab); } catch (err) {} }
+}, true);
+// What every ⋯ of the two docks ends with, now that the bar has no Panels
+// menu (#386): a panel whose window is closed (open it again, or bring it
+// back here), a panel hidden, the list dock's Inbox (and a test page's
+// Tasks), and Reset layout. The tools are on their strips.
+function pdCommonItems(ctx) {
+  const items = [{ sep: true }];
+  for (const c of pdOutClosed()) {
+    const d = c.key === 'ld' ? LD.dock : PD.dock, id = c.id;
+    items.push({ id: 'out:' + id, label: `${c.title}: window closed`, title: 'Its own window is closed', sub: [
+      { id: 'open', label: 'Open its window again', run: () => { try { d.popOut(id); } catch (e) {} } },
+      { id: 'back', label: 'Bring back here', run: () => { try { d.popIn(id); } catch (e) {} } }] });
+  }
+  if (PD.dock && document.body.classList.contains('po-dock')) {
+    for (const id of PD_IDS) {
+      let t = null, vis = true;
+      try { t = PD.dock.title(id); vis = PD.dock.isVisible(id); } catch (e) {}
+      if (t != null && !vis) items.push({ id: 'show:' + id, label: `Show ${t}`, run: () => { try { PD.dock.setVisible(id, true); } catch (e) {} } });
+    }
+  }
+  if (LD.dock) {
+    const ld = (id, name) => {
+      const vis = ldOnScreen(id), kept = vis && !LD.dock.isAuto(id) && !LD.dock.can(id, 'hide');
+      return { id: 'ld:' + id, label: name, checked: vis, disabled: kept, title: kept ? 'This panel stays on screen' : '',
+               run: () => { const d = LD.dock; if (d.flyOpen() === id) d.closeFly(); else if (ldOnScreen(id) && d.can(id, 'hide')) d.setVisible(id, false); else d.reveal(id); } };
+    };
+    // #322 (P287): no Tasks on a computer (a test page's ensListDocked keeps it).
+    if (window.ensListDocked) items.push(ld('list', 'Tasks'));
+    items.push(ld('inbox', 'Inbox'));
+  }
+  items.push({ sep: true }, { id: 'reset', label: 'Reset layout', title: 'Put the panels back in their default layout',
+    run: () => { if (LD.dock) { LD.dock.reset(); ldDefaults(); } PD.dock?.reset(); } });
+  return items;
+}
+// A panel's own ⋯ items, its pin (a chat's or a file's, as on its tab:
+// rule 5), then the common tail.
+function pdPinItem(id) {
+  const e = PD.rt.get(id);
+  if (!PD.dock || PD.dock.narrow() || !e || (e.kind !== 'chat' && e.kind !== 'file')) return [];
+  return [{ sep: true }, { id: 'pin', label: 'Pin: keep it in every project', checked: PdWorkspace.isPinned(PD_WS, id),
+            run: () => pdWsPin(id, !PdWorkspace.isPinned(PD_WS, id)) }];
+}
+const pdWithCommon = hook => (id, ctx) => [...(hook ? hook(id, ctx) || [] : []), ...pdPinItem(id), ...pdCommonItems(ctx)];
 // The open task's actions in the conversation panel's ⋯ menu (need 14, the
 // CEO's P109): the same model as a list row's (static/actions.js), asked each
 // time the menu opens, drawn by Dock above its own items (View Mode, Take
@@ -16850,11 +16995,12 @@ function pdPlaceChat() {
   pdSyncTitles();
 }
 // What the conversation is called: the open task (#148 "#12 The title"), else
-// the PO's chat, by its project's name (#261: the header under it then says
-// only "PO"); popTitle adds the project to its window's name, once.
+// the PO's chat: "PO", after its project's icon (#386, the approved drawing;
+// it was the project's name, #261); popTitle adds the project to its
+// window's name.
 function pdChatTitle() {
   const r = pdTaskWanted() && !pdTabNow() ? rowBySid(SELECTED_SID) : null;
-  return r ? [taskNoText(r, false), detailTitle(r)].filter(Boolean).join(' ') : pdProjectName() || 'PO chat';
+  return r ? [taskNoText(r, false), detailTitle(r)].filter(Boolean).join(' ') : 'PO';
 }
 function pdProjectName() { return (projectById(PD.pid) || {}).name || ''; }
 // A panel's title follows what it shows (Dock v0.11.0's setTitle, need 15:
@@ -16875,6 +17021,7 @@ function pdSyncTitles() {
     const r = ALL_ROWS.find(x => x.roomId === e.room);
     if (r) { try { d.setTitle(id, pdRowTitle(r)); } catch (err) {} }
   }
+  pdTabExtrasSync();
 }
 // An open task on a desktop (pdTask) is the middle's conversation: the task
 // panel moves into the conversation's place in the dock, and back to the page
@@ -16899,6 +17046,13 @@ function pdPlaceTask(on) {
     pdFrameReturn(DP_EL, inTab ? inTab.room : '');
   }
   if (moved) pdMove(home, DP_EL, on ? null : DP_RESIZE);
+  // Back in its tab after a phone's width (review 1): the chat the phone's
+  // middle made for the room gives way to the tab's own page, so the room
+  // has one page again.
+  if (on && moved && host !== ph) {
+    const act = DP_EL._panes && DP_EL._panes.activity, tab = PD.rt.get(pdTaskTabId());
+    if (act && tab && act.dataset.room === tab.room && act.querySelector('iframe.dp-session:not(.pd-adopted)')) pdFrameLend(act, tab.room);
+  }
   // The task's tab comes to the front with it (one brought back behind
   // another, with its project, #386).
   if (on && moved && host !== ph && PD.dock) {
@@ -23055,7 +23209,7 @@ function ldMake() {
       root: LD_ROOT,
       // #322 (P287): the Tasks panel only on a test page that drives the list
       // (window.ensListDocked); a layout saved with it parks it (Dock's normalizeLayout).
-      panels: (window.ensListDocked ? [{ id: 'list', title: 'Tasks', el: SW_EL, icon: LD_ICON, unpinSize: LD_W, menuItems: () => swMenuItems() }] : [])
+      panels: (window.ensListDocked ? [{ id: 'list', title: 'Tasks', el: SW_EL, icon: LD_ICON, unpinSize: LD_W, menuItems: pdWithCommon(() => swMenuItems()) }] : [])
         .concat([{ id: 'inbox', title: 'Inbox', el: LD_INBOX, icon: toolIcon('inbox'), unpinSize: LD_IBX_W },
                  { id: 'page', title: 'Page', el: LD_PAGE }]),
       storageKey: LD_KEY,
@@ -23075,6 +23229,7 @@ function ldMake() {
       stripOpen: 'beside',
       // The Inbox hides only from its own window.
       can: (id, a) => id === 'list' || (id === 'inbox' && (a !== 'hide' || LD.dock?.viewMode(id) === 'window')),
+      menuItems: pdWithCommon(null),
       popName: 'ensemble-list-',
       popTitle: () => nounText('Inbox and {projects}') + ' · Ensemble',
       // No bodyAttrs: the page's body classes are copied into the PO dock's windows only (#154);
@@ -23765,7 +23920,10 @@ function barPaint() {
   // default docked list, or a tool moved out of its strip before popping out).
   const panels = !document.body.classList.contains('mid');
   const tabs = poDockProject() || pdTaskWanted();
-  if (here) writeSlot(here, LD?.dock || (inProj && tabs && panels) ? pdCtlHtml() : '');
+  // #386: on a computer every panel is reached from its strip and each ⋯
+  // (pdCommonItems): Panels ▾ stays on a phone only, where the dock hides
+  // panels and Panels ▾ brings them back.
+  if (here) writeSlot(here, phone && (LD?.dock || (inProj && tabs && panels)) ? pdCtlHtml() : '');
   barCrumbs();
   // #322: the list dock's Inbox is for the project the bar names, on every screen.
   if (window.LD && LD.dock && IBX.ldPid !== ibxLdPid()) ibxPaint();

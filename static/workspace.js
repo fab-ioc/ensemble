@@ -97,10 +97,12 @@
   // Which open panel a new one closes (P376): with `adding` one more of
   // context `here`'s, more than CAP would be open, so the one of `here`'s
   // least recently shown that is not pinned goes (never `adding` itself, nor
-  // `keep`'s). Pinned ones count but stay. Null: none has to go.
+  // `keep`'s). Pinned ones count but stay. Only tabs count: a panel in a
+  // window of its own (item.out) is no tab, and is never closed this way
+  // (the person put it out to keep it in sight). Null: none has to go.
   function overflow(s, here, open, adding, keep) {
     const ownHere = o => o.owner === here || (s.cur === here && s.here.includes(o.item.id));
-    const mine = open.filter(o => ownHere(o) || isPinned(s, o.item.id));
+    const mine = open.filter(o => !o.item.out && (ownHere(o) || isPinned(s, o.item.id)));
     const n = mine.length + (adding && !mine.some(o => o.item.id === adding) ? 1 : 0);
     if (n <= CAP) return null;
     const keepSet = new Set([adding, ...(keep || [])]);

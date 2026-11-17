@@ -69,7 +69,8 @@ class TheLibraryDoesIt(unittest.TestCase):
 
     def test_the_page_uses_set_title_and_body_attrs(self):
         self.assertIn("bodyAttrs: ['class'],", INDEX)
-        self.assertIn("popTitle: p => { const pj = pdProjectName() || 'Ensemble'; return p.title === pj ? pj : `${p.title} · ${pj}`; },", INDEX)
+        # #386: a window names its panel's own project (a pinned file of another one: "x.md · Ensemble").
+        self.assertIn("const e = PD.rt.get(p.id), pid = e ? pdPanelProject(e) || PD.pid : PD.pid;\n      const pj = (projectById(pid) || {}).name || 'Ensemble';\n      return p.title === pj ? pj : `${p.title} · ${pj}`;", INDEX)
         self.assertIn("function pdSyncTitles() {", INDEX)
         self.assertIn("d.setTitle('po-chat', d.narrow() ? PD_TITLES['po-chat'] : pdChatTitle())", INDEX)
         self.assertIn("if (r) { try { d.setTitle(id, pdRowTitle(r)); } catch (err) {} }", INDEX)
@@ -202,7 +203,7 @@ async function main() {
                fits: tabs.scrollWidth <= tabs.clientWidth + 1, row: Math.round(tabs.clientWidth), need: Math.round(tabs.scrollWidth),
                rects: wraps.map(w => { const r = w.getBoundingClientRect(); return [(w.querySelector('.dk-tab') || {}).textContent, Math.round(r.left - R.left), Math.round(r.right - R.left)]; }) }; })()`);
     await c.send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false }, sessionId);
-    await until(`!PD.dock.narrow() && PD.dock.title('po-chat') === 'Motors'`, 15000);
+    await until(`!PD.dock.narrow() && PD.dock.title('po-chat') === 'PO'`, 15000);
     await sleep(300);
     out.poWideAgain = await evalIn(NAMES('po-chat'));
     // The task opened again: its tab, named after it; then a phone shows it in the middle, its conversation tab
@@ -317,22 +318,22 @@ class TitlesAndBodyClassesInTheBrowser(unittest.TestCase):
         # (Ensemble's Panels menu lists the fixed panels; a chat or file panel has no row in it.)
         self.assertEqual(names["menuRow"], title if menu else None, "Ensemble's Panels menu row")
         if window:
-            # The project once: the PO's conversation is named after it (#261).
-            self.assertEqual(names["win"]["title"], title if title == "Motors" else f"{title} · Motors", "the window's document.title")
+            # #386: the PO's tab is "PO" (its icon names the project); its window "PO · Motors".
+            self.assertEqual(names["win"]["title"], f"{title} · Motors", "the window's document.title: the panel, then its project")
 
-    def test_the_conversation_is_named_after_the_project_until_a_task_is_in_it(self):
+    def test_the_conversation_is_named_po(self):
         g = self.got
         self.assertIsNone(g["poChat"]["win"])
-        self.everywhere(g["poChat"], "Motors", window=False)
-        self.everywhere(g["poChatOut"], "Motors")
+        self.everywhere(g["poChat"], "PO", window=False)
+        self.everywhere(g["poChatOut"], "PO")
 
     # #386: a task of a project with a PO is a tab of its own, named after the task; the PO's conversation (here
-    # in its window) keeps the project's name.
+    # in its window) stays "PO".
     def test_a_task_in_its_tab_names_the_tab_and_the_po_keeps_the_project(self):
         g = self.got
         self.assertTrue(g["titles"]["a"].endswith("Brakes that squeal"), g["titles"])
         self.everywhere(g["task"], g["titles"]["a"], window=False, menu=False)
-        self.everywhere(g["poWithTask"], "Motors")
+        self.everywhere(g["poWithTask"], "PO")
 
     def test_a_rename_through_the_hub_follows_at_the_next_refresh(self):
         g = self.got
@@ -346,7 +347,7 @@ class TitlesAndBodyClassesInTheBrowser(unittest.TestCase):
     def test_the_title_survives_the_window_closing_and_the_panel_coming_back(self):
         g = self.got
         self.assertIsNone(g["back"]["win"])
-        self.everywhere(g["back"], "Motors", window=False)
+        self.everywhere(g["back"], "PO", window=False)
 
     def test_a_body_class_reaches_the_window_and_leaves_it_again(self):
         b = self.got["bodyCls"]
@@ -370,9 +371,9 @@ class TitlesAndBodyClassesInTheBrowser(unittest.TestCase):
         self.assertLessEqual(rect["Chat"][1] - rect["Chat"][0], 60, p["rects"])
         self.assertLessEqual(rect["Board"][1], p["row"] + 1, f"Board off the row: {p['rects']} in {p['row']}px")
         self.assertLess(p["need"], p["row"] + 60, f"the tab row needs {p['need']}px in {p['row']}px, tabs {p['tabs']}")
-        # A computer again: the task opened again is in its tab, named after it; the PO's tab is the project's.
+        # A computer again: the task opened again is in its tab, named after it; the PO's tab is "PO".
         self.everywhere(self.got["wideAgain"], self.got["renamed"]["a"], window=False, menu=False)
-        self.everywhere(self.got["poWideAgain"], "Motors", window=False)
+        self.everywhere(self.got["poWideAgain"], "PO", window=False)
         # The task open in its tab, then a phone: the phone shows it in the middle; a computer again, in its tab.
         t = self.got["phoneTask"]
         self.assertEqual((t["task"], t["mid"], t["inMid"], t["chat"]), (True, True, True, "Chat"), t)

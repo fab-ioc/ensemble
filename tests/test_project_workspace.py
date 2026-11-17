@@ -74,6 +74,12 @@ out.cap = W.overflow(s3, 'E', open, 'chat:new');
 out.capAgain = W.overflow(s3, 'E', open, 'chat:c4');   // already open: no 9th
 out.capOther = W.overflow(s3, 'E', [...open, o(chat('t9'), 'T')], 'chat:c5');  // another project's: not counted
 out.capKeep = W.overflow(s3, 'E', open, 'chat:new', ['chat:c3']);
+// Only tabs count: 7 tabs and a window, then one more tab: no 9th tab, nothing
+// closes; 8 tabs and a window: a tab goes, never the window.
+const win = o({ ...chat('w1'), out: true }, 'E');
+W.touch(s3, 'chat:w1', 1);                           // the oldest of all
+out.capWinNone = W.overflow(s3, 'E', [...open.slice(0, 7), win], 'chat:new');
+out.capWin = W.overflow(s3, 'E', [...open, win], 'chat:new');
 for (let i = 1; i <= 8; i++) W.pin(s3, 'chat:c' + i, true);
 out.capAllPinned = W.overflow(s3, 'E', open, 'chat:new');
 
@@ -149,6 +155,11 @@ class ProjectWorkspaceStore(unittest.TestCase):
         self.assertIsNone(o["capOther"])
         self.assertEqual(o["capKeep"], "chat:c4")
         self.assertIsNone(o["capAllPinned"])
+
+    def test_a_window_is_no_tab_for_the_cap(self):
+        # Review 1: a window neither counts nor closes for the 8 tabs.
+        self.assertIsNone(self.o["capWinNone"])
+        self.assertEqual(self.o["capWin"], "chat:c3")
 
     def test_it_stays_bounded(self):
         o = self.o
