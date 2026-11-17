@@ -73,6 +73,13 @@ const items = [
   { path: 'C:\\home\\Documents\\Loose.md', rel: 'Loose.md', title: 'Loose <b>', no: null, group: '', mtime: 1770000000, size: 5, inCode: false },
 ];
 out.list = wsDocsNodeHtml({ ...pv, sel: items[0].path }, { data: { dir, codeDocs: 'C:\\code\\docs', items, key: 'ED', truncated: false } }, { exists: true, mtime: 1790000000 });
+// A plan as a page and as text (P371): same title, each named with its kind.
+const pair = [
+  { path: 'C:\\home\\Documents\\#371 Plan.html', rel: '#371 Plan.html', title: 'Plan', no: 371, group: '', mtime: 1790000000, size: 9, inCode: false },
+  { path: 'C:\\home\\Documents\\#371 Plan.md', rel: '#371 Plan.md', title: 'Plan', no: 371, group: '', mtime: 1790000000, size: 9, inCode: false },
+  { path: 'C:\\home\\Documents\\#372 Roadmap view.HTML', rel: '#372 Roadmap view.HTML', title: 'Roadmap view', no: 372, group: '', mtime: 1780000000, size: 9, inCode: false },
+];
+out.pair = wsDocsNodeHtml(pv, { data: { dir, items: pair, key: 'ED', truncated: false } }, null);
 out.capped = wsDocsNodeHtml(pv, { data: { dir, items: items.slice(0, 1), key: '', truncated: true } }, null);
 out.closed = wsDocsNodeHtml({ ...pv, docsOpen: false }, { data: { dir, items } }, null);
 out.task = wsDocsNodeHtml({ ctx: { kind: 'task', sid: 's' }, docsOpen: true }, { data: { dir, items } }, null);
@@ -159,7 +166,13 @@ class ThePureParts(unittest.TestCase):
         self.assertIn("The documents could not be read: 500 boom", o["failed"])
         self.assertIn("No documents yet", o["empty"])
         self.assertIn("C:\\home\\Documents", o["empty"], "says where they go")
-        self.assertIn("“#12 Title.md”", o["empty"], "and how they are named")
+        self.assertIn("“#12 Title.html” for a page, “#12 Title.md” for text", o["empty"], "and how they are named")
+
+    def test_a_page_is_listed_like_a_markdown_document(self):
+        # P371: a page and its Markdown with one title are told apart by their
+        # extension; a page alone is named by its title, like a .md.
+        names = re.findall(r'<span class="nm">([^<]*)</span><span class="wse-tag">(#\d+)</span>', self.o["pair"])
+        self.assertEqual(names, [("Plan.html", "#371"), ("Plan.md", "#371"), ("Roadmap view", "#372")])
 
     def test_rows_in_the_order_given_with_task_date_and_tooltip(self):
         h = self.o["list"]
