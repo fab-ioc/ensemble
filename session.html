@@ -11765,6 +11765,26 @@ function msgsResized() {
 }
 try { new ResizeObserver(msgsResized).observe($('#msgs')); } catch (e) {}
 window.addEventListener('resize', msgsResized);
+// At the end, what grows below keeps the chat at the end too (#387): a
+// picture in the last message loading after the draw put the chat at its
+// end, a card or a footer drawn taller. The box keeps its size then, so
+// msgsResized never hears of it; each row is watched instead. Scrolled up
+// (STICK false), nothing moves.
+function msgsGrew() {
+  const box = $('#msgs');
+  if (!box.clientHeight || !STICK) return;
+  if (box.scrollHeight - box.clientHeight - box.scrollTop >= 1) box.scrollTop = box.scrollHeight;
+}
+try {
+  const rowsRO = new ResizeObserver(msgsGrew), box = $('#msgs');
+  new MutationObserver(ms => {
+    for (const m of ms) {
+      m.removedNodes.forEach(n => { if (n.nodeType === 1) rowsRO.unobserve(n); });
+      m.addedNodes.forEach(n => { if (n.nodeType === 1) rowsRO.observe(n); });
+    }
+  }).observe(box, { childList: true });
+  [...box.children].forEach(n => rowsRO.observe(n));
+} catch (e) {}
 // A task link inside the dashboard (its task panel, the PO's drawer) opens the
 // task there, beside you. In a window of its own it opens the dashboard in a
 // new tab, on that task. A chip (a.task-chip) is TaskCard's: one click its
