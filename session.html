@@ -5106,6 +5106,25 @@ let MD_CACHE = new Map(), MD_CTX = '';
 // (nothing clickable is replaced on a timer); Just us or a name resolving does.
 let CU_POINT = null, CU_SHOWN = false, CU_OPENED = false, CU_SNAP = null, READ_MEM = null, READ_TIMER = 0;
 const nearEnd = box => box.scrollTop + box.clientHeight >= box.scrollHeight - 50;
+// The reader's own scroll (#387): a wheel, a touch, a key or the scrollbar,
+// and the scroll events that follow within a second (a smooth wheel scroll
+// goes on for a while after the last notch). While it moves, the chat is not
+// redrawn for the end and its scrollTop is not written: a write stops Chrome's
+// smooth scroll part-way and makes the view jump, and on the Linux app the
+// chat was then painted at two scroll positions for seconds (the dance). It
+// all happens once the scroll has settled (msgsSettle).
+let USER_SCROLL_T = -Infinity, SCROLL_T = -Infinity;
+const scrollMoving = () => Date.now() - SCROLL_T < 150;
+['wheel', 'touchmove', 'keydown', 'pointerdown'].forEach(t => window.addEventListener(t, e => {
+  if (t === 'keydown' && e.target && e.target.closest && e.target.closest('textarea, input, [contenteditable]')) return;
+  USER_SCROLL_T = Date.now();
+}, { capture: true, passive: true }));
+// To the end, written only when the view is not already there and the
+// reader's scroll is not moving (#387).
+function toEnd(box) {
+  if (scrollMoving()) return;
+  if (box.scrollHeight - box.clientHeight - box.scrollTop >= 1) box.scrollTop = box.scrollHeight;
+}
 // The first child at or below the top of the view, and where it sits in it.
 function readingPlace(box, el) {
   if (!el) {
@@ -5118,7 +5137,9 @@ function keepPlace(box, place) {
   if (!place) return;
   let el = place.el.isConnected ? place.el : null;
   if (!el && place.key) el = [...box.children].find(k => k.dataset.key === place.key) || null;
-  if (el) box.scrollTop = el.offsetTop - place.off;
+  if (!el) return;
+  const top = el.offsetTop - place.off;
+  if (Math.abs(box.scrollTop - top) >= 1) box.scrollTop = top;
 }
 function renderBubbles(items, opt = {}) {
   const box = $('#msgs');
@@ -5366,7 +5387,7 @@ function renderBubbles(items, opt = {}) {
   showAskLine(items);
   MD_CACHE = used;
   if (stick) {
-    box.scrollTop = box.scrollHeight;
+    toEnd(box);
     SEEN = new Set(keys); NEW_N = 0; DEC_N = 0;
   } else {
     keepPlace(box, place);
@@ -11725,17 +11746,26 @@ $('#thr-back').addEventListener('click', () => { const h = embedHost(); if (h) h
 // says nothing about the reader, so it is not counted.
 // Coming back to the end draws the chat again once, so what stayed open while
 // the reader was up folds as it would at the end (a quiet solo chat has no
-// poll that would); the end stays where it is.
+// poll that would); the end stays where it is. That draw waits until the
+// scroll has settled (#387): drawn while a smooth scroll was still on its
+// way, it stopped the scroll with a jump and the chat danced.
+let END_DUE = false, SETTLE_TIMER = 0, LAST_TOP = 0;
 function msgsScrolled() {
   const box = $('#msgs');
   if (!box.clientHeight) return;
-  const at = nearEnd(box);
-  if (at && !STICK) {
-    STICK = true;
-    if (LAST_ITEMS) renderBubbles(LAST_ITEMS);
-    SEEN = new Set([...box.children].map(k => k.dataset.seen || k.dataset.key).filter(Boolean)); NEW_N = 0; DEC_N = 0;
-  }
+  // The reader's scroll, still moving and heading down at the end, keeps the
+  // end when the chat grew below it meanwhile (a picture loading, a new
+  // message): the end it heads for is the new one, so the settle follows it
+  // (#387).
+  const going = scrollMoving() && box.scrollTop >= LAST_TOP - 0.5;
+  LAST_TOP = box.scrollTop;
+  if (Date.now() - USER_SCROLL_T < 1000) SCROLL_T = Date.now();
+  const at = nearEnd(box) || (STICK && going);
+  if (at && !STICK) END_DUE = true;
   STICK = at;
+  if (!at) END_DUE = false;
+  clearTimeout(SETTLE_TIMER);
+  SETTLE_TIMER = setTimeout(msgsSettle, 160);
   showLatest();
   readTick(true);
   if (!at && box.scrollTop < box.clientHeight && roomHasOlder() && !SOLO_MODE && !DRAW_HELD) loadOlder();
@@ -11744,6 +11774,22 @@ function msgsScrolled() {
   if (box.scrollHeight - box.scrollTop - box.clientHeight < box.clientHeight && ROOM_WIN && !DRAW_HELD) roomLoadDown();
   if (box.scrollHeight - box.scrollTop - box.clientHeight < box.clientHeight && SOLO_MODE && SOLO_WIN && !THREADED && !DRAW_HELD) soloLoadDown();
   if (!at && box.scrollTop < box.clientHeight && SOLO_MODE && !THREADED && SOLO_MORE && !DRAW_HELD) soloLoadUp();
+}
+// The scroll has stopped: the end's draw if one is due, and the end held
+// (a row that grew while the scroll moved).
+function msgsSettle() {
+  SETTLE_TIMER = 0;
+  const box = $('#msgs');
+  if (!box.clientHeight) return;
+  if (scrollMoving()) { SETTLE_TIMER = setTimeout(msgsSettle, 60); return; }
+  if (!STICK) { END_DUE = false; return; }
+  if (END_DUE) {
+    END_DUE = false;
+    if (LAST_ITEMS) renderBubbles(LAST_ITEMS);
+    SEEN = new Set([...box.children].map(k => k.dataset.seen || k.dataset.key).filter(Boolean)); NEW_N = 0; DEC_N = 0;
+    showLatest();
+  }
+  toEnd(box);
 }
 $('#msgs').addEventListener('scroll', msgsScrolled, { passive: true });
 // A conversation opens at its end, also when its frame is shown again (the
@@ -11759,12 +11805,32 @@ function msgsResized() {
     if (GOTO) { GOTO_OPEN = true; landPending(); if (CHAT_DRAWN) catchUpOpen(); }
     else { toLatest(); if (CHAT_DRAWN) catchUpOpen(); }
   }
-  else if (h && STICK) box.scrollTop = box.scrollHeight;
+  else if (h && STICK) toEnd(box);
   _msgsH = h;
   showLatest();
 }
 try { new ResizeObserver(msgsResized).observe($('#msgs')); } catch (e) {}
 window.addEventListener('resize', msgsResized);
+// At the end, what grows below keeps the chat at the end too (#387): a
+// picture in the last message loading after the draw put the chat at its
+// end, a card or a footer drawn taller. The box keeps its size then, so
+// msgsResized never hears of it; each row is watched instead. Scrolled up
+// (STICK false), nothing moves.
+function msgsGrew() {
+  const box = $('#msgs');
+  if (!box.clientHeight || !STICK) return;
+  toEnd(box);
+}
+try {
+  const rowsRO = new ResizeObserver(msgsGrew), box = $('#msgs');
+  new MutationObserver(ms => {
+    for (const m of ms) {
+      m.removedNodes.forEach(n => { if (n.nodeType === 1) rowsRO.unobserve(n); });
+      m.addedNodes.forEach(n => { if (n.nodeType === 1) rowsRO.observe(n); });
+    }
+  }).observe(box, { childList: true });
+  [...box.children].forEach(n => rowsRO.observe(n));
+} catch (e) {}
 // A task link inside the dashboard (its task panel, the PO's drawer) opens the
 // task there, beside you. In a window of its own it opens the dashboard in a
 // new tab, on that task. A chip (a.task-chip) is TaskCard's: one click its
