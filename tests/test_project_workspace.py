@@ -56,10 +56,11 @@ out.adoptSwitch = W.settle(s5, 'U', [o(ex, 'E')], 3);
 out.adoptAfter = { here: s5.here, E: W.putAway(s5, 'E').map(x => x.id) };
 out.adoptBack = W.settle(s5, 'T', [o(ex, 'E')], 4);
 
-// A window's item keeps out: true, a stack's front tab front: true; a reload's state comes back whole.
+// A window's item keeps out: true, a stack's front tab front: true, a floating one float: true (the page brings it
+// back once laid out); a reload's state comes back whole.
 const s2 = W.load(null);
 W.settle(s2, 'E', [], 1);
-W.settle(s2, 'T', [o({ ...e1, out: true }, 'E'), o({ ...chat('r2'), front: true }, 'E')], 2);
+W.settle(s2, 'T', [o({ ...e1, out: true }, 'E'), o({ ...chat('r2'), front: true }, 'E'), o({ ...chat('r3'), float: true, front: true }, 'E')], 2);
 const back = W.load(JSON.stringify(s2));
 out.reload = { cur: back.cur, E: W.putAway(back, 'E') };
 
@@ -166,7 +167,8 @@ class ProjectWorkspaceStore(unittest.TestCase):
 
     def test_a_window_and_a_reload(self):
         self.assertEqual(self.o["reload"], {"cur": "T", "E": [{"id": "chat:r1", "kind": "chat", "room": "r1", "out": True},
-                                                              {"id": "chat:r2", "kind": "chat", "room": "r2", "front": True}]})
+                                                              {"id": "chat:r2", "kind": "chat", "room": "r2", "front": True},
+                                                              {"id": "chat:r3", "kind": "chat", "room": "r3", "front": True, "float": True}]})
 
     def test_the_ninth_tab_closes_the_least_recently_shown_unpinned(self):
         o = self.o

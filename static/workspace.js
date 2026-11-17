@@ -18,7 +18,8 @@
 // An item is what brings a panel back: { id, kind: 'chat', room } or
 // { id, kind: 'file', path, ctx } (ctx: the Workspace's, wsCtxKey's input),
 // with out: true when it was in a window of its own, front: true when it was
-// the front tab of its stack (one brought back behind stays behind).
+// the front tab of its stack (one brought back behind stays behind), float:
+// true when it was floating (the page brings it back once laid out).
 // A context key is a project's id, or 'task:<sid>' for an Unassigned task.
 (function (root) {
   const KEY = 'cd-pd-ctx';
@@ -32,6 +33,7 @@
     const o = x.kind === 'chat' ? { id: x.id, kind: 'chat', room: x.room } : { id: x.id, kind: 'file', path: x.path, ctx: x.ctx };
     if (x.out) o.out = true;
     if (x.front) o.front = true;
+    if (x.float) o.float = true;
     return o;
   };
   // The stored state, made whole: anything it cannot use is left out.

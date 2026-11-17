@@ -153,6 +153,50 @@ async function main() {
     out.menuRows = await evalIn(DK_MENU_ROWS);
     await shot('menu-tail');
     await evalIn(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); 0`);
+    // The PO's live check against the drawing (P374): the bar's trail with the
+    // PO in front, a pinned tab's icon in an Unassigned task, a float's place.
+    const TRAIL = `(() => ({ front: PD.dock.frontOf('po-chat'), trail: [...document.querySelectorAll('#bar-crumbs [data-crumb]')].map(e => [e.dataset.crumb, e.textContent]) }))()`;
+    const TABX = id => `(() => { const id = ${JSON.stringify(id)}, t = document.querySelector('#po-dock .dk-tab[data-dk-tab="' + id + '"]'), wr = t && t.closest('.dk-tab-wrap');
+        if (!wr) return null; const ico = wr.querySelector('.pd-tab-ico');
+        return { ico: !!ico, cur: !!ico && ico.classList.contains('pd-ico-cur'), shown: !!ico && getComputedStyle(ico).display !== 'none' && ico.getBoundingClientRect().width > 0 }; })()`;
+    const ADDFILE = (f, where) => `(() => { const v = wsView({ kind: 'project', projectId: ${JSON.stringify(P.Motors)}, docs: false }); const t = wsTabOpen(v, ${JSON.stringify(f)});
+        return wsPanelAdd(v, t, ${JSON.stringify(where)}) ? wsPanelId(t.path) : null; })()`;
+    await evalIn(`openProjectPage(${JSON.stringify(P.Motors)}); 0`); await sleep(2000);
+    out.notesId = await evalIn(ADDFILE(A.files.notes, { beside: 'po-chat', side: 'right' }));
+    await sleep(600);
+    await evalIn(`PD.dock.activate('po-chat'); 0`); await sleep(600);
+    out.trailPo = await evalIn(TRAIL);
+    out.planId = await evalIn(ADDFILE(A.files.plan, { kind: 'stack', stack: 'po-chat' }));
+    await sleep(600);
+    await evalIn(`PD.dock.activate(${JSON.stringify(out.planId)}); 0`); await sleep(600);
+    out.trailFile = await evalIn(TRAIL);
+    await evalIn(`PD.dock.activate('po-chat'); 0`); await sleep(400);
+    await evalIn(`pdWsPin(${JSON.stringify(out.notesId)}, true); 0`); await sleep(400);
+    out.notesHome = await evalIn(TABX(out.notesId));
+    await evalIn(`openDetail(${sid(T.Loose)}); 0`); await sleep(1500);
+    out.notesLoose = Object.assign(await evalIn(TABX(out.notesId)) || {}, { pid: await evalIn('PD.pid'), here: await evalIn('pdWsHere()') });
+    await evalIn(`openProjectPage(${JSON.stringify(P.Motors)}); 0`); await sleep(2000);
+    // A task's tab floated low on the screen, then a round trip through the
+    // Unassigned task, twice: it comes back in the very same place (the dock
+    // is shorter for a moment during the switch, and Dock fitted it in).
+    await evalIn(`openDetail(${sid(T.Wipers)}); 0`); await sleep(1500);
+    const W = 'chat:' + T.Wipers;
+    const FLOAT = `(() => { const f = (PD.dock.layout().floats || []).find(x => x.stack.panels.includes(${JSON.stringify(W)}));
+        const t = document.querySelector('[data-dk-tab="${W}"]'), box = t && t.closest('.dk-float'), r = box && box.getBoundingClientRect();
+        return { mode: PD.dock.viewMode(${JSON.stringify(W)}), rect: f ? [f.x, f.y, f.w, f.h] : null, dom: r ? [r.x, r.y, r.width, r.height].map(Math.round) : null }; })()`;
+    out.floatOk = await evalIn(`PD.dock.setViewMode(${JSON.stringify(W)}, 'float')`); await sleep(600);
+    out.floatLow = await evalIn(`(() => { const f = (PD.dock.layout().floats || []).find(x => x.stack.panels.includes(${JSON.stringify(W)})); if (!f) return null;
+        f.y = Math.round(PD_ROOT.getBoundingClientRect().height - f.h); PD.dock.render(); return f.y; })()`);
+    await sleep(400);
+    out.floats = [await evalIn(FLOAT)];
+    for (let i = 0; i < 2; i++) {
+      await evalIn(`openDetail(${sid(T.Loose)}); 0`); await sleep(1500);
+      out.floats.push(Object.assign(await evalIn(FLOAT), { away: true }));
+      await evalIn(`openProjectPage(${JSON.stringify(P.Motors)}); 0`); await sleep(2000);
+      out.floats.push(await evalIn(FLOAT));
+    }
+    await evalIn(`(() => { pdWsPin(${JSON.stringify(out.notesId)}, false); for (const id of [${JSON.stringify(out.notesId)}, ${JSON.stringify(out.planId)}, ${JSON.stringify(W)}]) { try { PD.dock.close(id); } catch (e) {} } return 0; })()`);
+    await sleep(600);
     // A phone (review 2: was test_task_dock_panel's): the task opens in the
     // middle; the tab row's ⋯ holds its actions, nothing of Dock's that moves a
     // panel, and Rename… there runs the page's handler.
@@ -227,6 +271,10 @@ class TaskTabs(unittest.TestCase):
             ok, why = dashboard.set_project_po(proj["id"], po["id"])
             assert ok, why
             cls.ids[name] = proj["id"]
+            if name == "Motors":
+                (home / "NOTES.md").write_text("# Notes\n", encoding="utf-8")
+                (home / "PLAN.md").write_text("# Plan\n", encoding="utf-8")
+                cls.files = {"notes": str(home / "NOTES.md"), "plan": str(home / "PLAN.md")}
             for t in tasks:
                 cls.tasks[t] = room(t, home)
                 dashboard.assign_session_project(cls.tasks[t], proj["id"])
@@ -239,7 +287,7 @@ class TaskTabs(unittest.TestCase):
         if shots:
             Path(shots).mkdir(parents=True, exist_ok=True)
         args = {**chrome_profile.node_args(), "tmp": cls.tmp.name, "base": f"http://127.0.0.1:{cls.server.server_address[1]}",
-                "P": cls.ids, "T": cls.tasks, "shots": shots, "dump": os.environ.get("ENS_DUMP", "")}
+                "P": cls.ids, "T": cls.tasks, "files": cls.files, "shots": shots, "dump": os.environ.get("ENS_DUMP", "")}
         script = base / "tt_cdp.js"
         script.write_text(CDP_JS, encoding="utf-8")
         out = subprocess.run([NODE, str(script), json.dumps(args)], capture_output=True, encoding="utf-8", timeout=600)
@@ -375,6 +423,37 @@ class TaskTabs(unittest.TestCase):
         self.assertLessEqual(m["scrollW"], m["vw"])
         k = g["phonePick"]
         self.assertTrue(k["found"] and not k["menuOpen"] and k["prompted"] and k["prompted"][0].startswith("Label for this session"), k)
+
+    def test_with_the_po_in_front_the_bar_has_no_trail(self):
+        # The PO's live check (P374, row 1): a file open in a stack beside the PO's adds no trail;
+        # a file in front of the PO's own stack is where the person is.
+        g = self.got
+        self.assertTrue(g["notesId"] and g["planId"], g)
+        self.assertEqual(g["trailPo"], {"front": "po-chat", "trail": []}, g["trailPo"])
+        self.assertEqual(g["trailFile"]["front"], g["planId"])
+        self.assertEqual(g["trailFile"]["trail"], [["tool", "Files"], ["file", "PLAN.md"]])
+
+    def test_a_pinned_tab_shows_its_projects_icon_in_an_unassigned_task(self):
+        # Row 5: the Unassigned task keeps Motors' dock (PD.pid), yet Motors' pinned file is another's there.
+        home, loose = self.got["notesHome"], self.got["notesLoose"]
+        self.assertTrue(home["ico"] and home["cur"] and not home["shown"], f"on Motors, its own: no icon: {home}")
+        self.assertEqual(loose["pid"], self.ids["Motors"], loose)
+        self.assertEqual(loose["here"], "task:" + self.tasks["Loose"], loose)
+        self.assertTrue(loose["ico"] and not loose["cur"] and loose["shown"], f"Motors' icon shows: {loose}")
+
+    def test_a_floating_task_comes_back_in_the_same_place(self):
+        # Row 4: after a round trip through the Unassigned task it came back higher.
+        g = self.got
+        self.assertTrue(g["floatOk"])
+        first = g["floats"][0]
+        self.assertEqual(first["mode"], "float", first)
+        self.assertEqual(first["rect"][1], g["floatLow"], "put low on the screen")
+        for n, f in enumerate(g["floats"][1:], 1):
+            with self.subTest(n=n):
+                if f.get("away"):
+                    self.assertIsNone(f["mode"], f"put away in the Unassigned task: {f}")
+                else:
+                    self.assertEqual((f["mode"], f["rect"], f["dom"]), ("float", first["rect"], first["dom"]), f)
 
     def test_the_page_threw_no_exception(self):
         self.assertEqual(self.got["errors"], [])

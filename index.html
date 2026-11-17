@@ -16476,8 +16476,13 @@ function pdProjectPanels() {
   // behind, its task closed).
   const fronts = new Set();
   for (const x of PD.dock.panels()) { try { const f = PD.dock.frontOf(x.id); if (f) fronts.add(f); } catch (e) {} }
+  const floats = [];
   for (const it of res.back) {
     const had = PD.rt.has(it.id);
+    // A floating one comes back once the page is laid out for this screen:
+    // added now, the dock is still the size of the screen being left, and
+    // Dock fits the float into it for good (it came back higher, P374).
+    if (it.float && !had) { floats.push(it); continue; }
     const ok = pdWsBringBack(it);
     if (ok === true && !had && !it.front && !it.out) pdWsBehind(it.id, fronts);
     if (ok === false) keep.push(it);
@@ -16502,6 +16507,25 @@ function pdProjectPanels() {
   wsPanelsRemember();
   pdTabTips();
   pdWsWindowBack(wins);
+  pdWsSave(true);
+  pdTabExtrasSync();
+  if (floats.length) setTimeout(() => pdWsFloatsBack(here, floats), 0);
+}
+// The floating ones of context `here`, in their kept places; gone on to
+// another screen meanwhile, they wait with their context.
+function pdWsFloatsBack(here, list) {
+  if (!PD.dock) return;
+  const c = PD_WS.ctxs[here] || (PD_WS.ctxs[here] = { at: 0, items: [] });
+  const wait = it => { if (!c.items.some(x => x.id === it.id)) c.items.push(it); };
+  if (pdWsHere() !== here) list.forEach(wait);
+  else for (const it of list) {
+    const ok = pdWsBringBack(it);
+    if (ok === false) wait(it);
+    else if (ok === null) { PdWorkspace.drop(PD_WS, it.id); try { PD.dock.forget(it.id); } catch (e) {} }
+  }
+  pdChatsRemember();
+  wsPanelsRemember();
+  pdTabTips();
   pdWsSave(true);
   pdTabExtrasSync();
 }
@@ -16589,8 +16613,10 @@ function pdTabExtra(p) {
   }
   const e = PD.rt.get(p.id);
   if (!e || (e.kind !== 'chat' && e.kind !== 'file')) return '';
+  // This context's own (not PD.pid: an Unassigned task keeps the last
+  // project's dock, yet a pinned file of that project is another's there).
   const pid = pdPanelProject(e);
-  const ico = pid ? ldpSwatch(pid, 'ldp-ico pd-tab-ico' + (pid === PD.pid ? ' pd-ico-cur' : '')) : '';
+  const ico = pid ? ldpSwatch(pid, 'ldp-ico pd-tab-ico' + (pid === pdWsHere() ? ' pd-ico-cur' : '')) : '';
   const on = PdWorkspace.isPinned(PD_WS, p.id);
   const what = on ? 'Unpin: it goes away with this project again' : 'Pin: keep it open in every project';
   return ico + `<button type="button" class="pd-pin${on ? ' on' : ''}" data-pd-pin="${esc(p.id)}" tabindex="-1" aria-pressed="${on}" aria-label="${what}" title="${what}">${PD_PIN_SVG}</button>`;
@@ -16600,7 +16626,7 @@ function pdTabExtra(p) {
 function pdTabExtrasSync() {
   const d = PD.dock;
   if (!d) return;
-  const sig = [PD.pid, pdTaskWanted() && !pdTabNow(), ...[...PD.rt].map(([id, e]) => id + ':' + pdPanelProject(e))].join('|');
+  const sig = [PD.pid, pdWsHere(), pdTaskWanted() && !pdTabNow(), ...[...PD.rt].map(([id, e]) => id + ':' + pdPanelProject(e))].join('|');
   if (sig === PD.extraSig) return;
   PD.extraSig = sig;
   try { d.refreshTabExtras(); } catch (e) {}
@@ -24182,12 +24208,24 @@ function crumbState() {
       if (k === 'changes') { const v = TCH_VIEWS.get(r.sessionId); s.file = (v && v.file) || ''; }
     } else if (fp) Object.assign(s, fp);
   } else if (po && strip && !r) {
-    const k = pdToolShown(), fp = crumbFilePanel(pctx);
-    if (k) {
-      s.tool = { k, name: pdPanelName(k) };
-      if (k === 'workspace') s.file = crumbWsFile(pctx) || (fp ? fp.file : '');
-      if (k === 'changes') s.file = CH_FILE || '';
-    } else if (fp) Object.assign(s, fp);
+    // A trail only for what is in front (#386, P372 A): a tool slid out over
+    // the PO, or a tool or file panel in front of the PO's own stack. With
+    // the PO in front, a file or tool in a stack beside it adds nothing.
+    const fly = PD.dock.flyOpen(), front = PD.dock.frontOf('po-chat') || '';
+    const e = front && front !== 'po-chat' ? PD.rt.get(front) : null;
+    const k = fly || (front && front !== 'po-chat' && !e ? front : '');
+    // The PO's conversation not in a stack (hidden, in a window): as before.
+    const old = !fly && !front;
+    const fp = crumbFilePanel(pctx);
+    if (old ? pdToolShown() : k) {
+      const t = k || pdToolShown();
+      s.tool = { k: t, name: pdPanelName(t) };
+      if (t === 'workspace') s.file = crumbWsFile(pctx) || (fp ? fp.file : '');
+      if (t === 'changes') s.file = CH_FILE || '';
+    } else if (e && e.kind === 'file' && pdWsOwner(e) === pj.id) {
+      s.tool = { k: 'workspace', name: pdPanelName('workspace') };
+      s.file = e.path;
+    } else if (old && fp) Object.assign(s, fp);
   } else if (r) {
     s.task = { no: taskNoText(r, false), title: detailTitle(r) };
     const k = issueTab(r);
