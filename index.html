@@ -15858,16 +15858,32 @@ function wcToMain(focus = false) {
 document.getElementById('workspace-compose-back').addEventListener('click', () => {
   if (WC.target?.kind === 'thread') wcToMain(true);
 });
-// The PO's chat brought to the front by the person (its tab, the Panels
-// menu, a key, the thread's Back): the box is that chat's (P340). Not a
-// restore at load, nor the press that has just opened a thread (#363): the
-// chat shown within 600 ms of it may be that press's. A click on its tab
-// (tab), or a press or key on this page after the thread was aimed at (the
-// Panels menu, a key on the tabs: WC.ownAt), is the person's own, however soon.
-function wcPoFront(tab = false) {
+// The box's target for a panel of the dock: the PO's tab is the PO (the task
+// in the middle when the open task has no tab of its own), a task's tab that
+// task, the thread panel its thread.
+function wcPanelTarget(id) {
+  if (id === 'po-chat') return pdMid() ? wcMainTarget() : wcPoRoom() ? {kind:'po', room:wcPoRoom()} : null;
+  const e = PD.rt.get(id);
+  if (e?.kind === 'chat') return {kind:'task', room:e.room};
+  if (e?.kind === 'thread') return {kind:'thread', room:e.room, thread:e.tid || '', mid:e.tid ? '' : e.mid};
+  return null;
+}
+// A chat brought to the front by the person, or its tab clicked (tab): the box
+// is that chat's at once, its To: line too (P340, GitHub issue 57). In a stack
+// of its own beside another, the stack last clicked has it. The person's own:
+// a click on its tab, or a press or key on this page just before (a tab in
+// front closed, the arrow keys on the tabs, the Panels menu: WC.ownAt). Not a
+// chat that came by itself (#271): a restore at load, a project switch's tabs
+// coming back, a tab the page adds; nor what the press that has just opened a
+// thread brings with it (#363): shown within 600 ms of it, it may be that
+// press's. The thread's Back gives the box back from the thread (P340).
+function wcFront(id, tab = false) {
   const own = tab || WC.ownAt > WC.aimAt;
-  if (PD.thrRestoring || !navigator.userActivation?.isActive || (!own && Date.now() - WC.aimAt < 600)) return;
-  if (WC.target?.kind === 'thread') wcToMain();
+  if (!PD.dock || PD.dock.narrow() || PD.thrRestoring || !navigator.userActivation?.isActive || (!own && Date.now() - WC.aimAt < 600)) return;
+  const t = wcPanelTarget(id);
+  const press = tab || (PD.restored && !PD.wsQuiet && !PD.tabAdding && Date.now() - WC.ownAt < 1500);
+  if (press && t && wcValid(t)) { if (wcKey(t) !== wcKey(WC.target)) wcChoose(t); }
+  else if (id === 'po-chat' && WC.target?.kind === 'thread') wcToMain();
 }
 document.getElementById('workspace-compose-link').addEventListener('click', e => {
   e.preventDefault();
@@ -16233,12 +16249,13 @@ function pdRuntimeRemoved(id) {
   pdToolsFit();
 }
 PD_ROOT.addEventListener('dock-removed', e => { try { pdRuntimeRemoved(e.detail && e.detail.id); } catch (err) {} });
-// The PO chat's tab clicked while the chat is on screen already (its thread
-// beside it): the person is back at the PO's chat, so is the box (P340).
-PD_ROOT.addEventListener('click', e => { if (e.target.closest?.('.dk-tab[data-dk-tab="po-chat"]')) wcPoFront(true); }, true);
+// A chat's tab clicked, even while the chat is on screen already (in a stack
+// of its own beside the one the box serves, or the PO's with its thread
+// beside it): the person is at that chat, so is the box (P340, issue 57).
+PD_ROOT.addEventListener('click', e => { const t = e.target.closest?.('.dk-tab[data-dk-tab]'); if (t) wcFront(t.dataset.dkTab, true); }, true);
 // A press or key on this page (not in a chat's frame, where a thread is
 // opened from): its time, so that what it brings forward counts as the
-// person's own (wcPoFront). It comes before whatever it opens, so the press
+// person's own (wcFront). It comes before whatever it opens, so the press
 // that opens a thread is older than that thread's WC.aimAt.
 for (const ev of ['pointerdown', 'keydown']) window.addEventListener(ev, e => { if (e.isTrusted) WC.ownAt = Date.now(); }, true);
 // Once after the dock is made: the file and chat panels of the last visit,
@@ -16957,13 +16974,15 @@ function pdShown(id) {
       pdWakeChat(rt.el.querySelector('iframe.dp-session'));
       // #386: a task's tab shown is that task open (its tools beside it).
       if (rt.kind === 'chat') pdTabShown(rt.room);
+      // Brought to the front by the person: the box is its chat's (issue 57).
+      if (rt.kind === 'chat') wcFront(id);
       barCrumbs();
     }
     pdTabTips();
     return;
   }
   if (id === 'board' || id === 'workspace' || id === 'changes') renderRows();
-  if (id === 'po-chat') wcPoFront();
+  if (id === 'po-chat') wcFront(id);
   // #386: the PO's tab in front of the open task's: the task closes (its tab stays).
   // (After the dock's own work: a tab being closed is still in its hands.)
   if (id === 'po-chat') pdPoFrontCloses();
