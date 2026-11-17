@@ -2,8 +2,8 @@
 
 A solo PO chat of 100 turns with pictures; the last message holds one the hub
 is slow to serve, so it loads after the draw has put the chat at its end. Then
-scrolled up and back down, by the wheel and by Latest: from 1 s after the end
-nothing moves (no scrollTop change, no layout shift). A new message arriving
+scrolled up and back down, by the wheel and by Latest, each recorded for 40 s:
+from 1 s after the end nothing writes scrollTop and nothing shifts. A new message arriving
 at the end is followed; a picture arriving while scrolled up moves nothing.
 """
 from __future__ import annotations
@@ -30,7 +30,8 @@ from tests import chrome_profile  # noqa: E402
 from tests.test_page_update import CHROME  # noqa: E402
 
 NODE = shutil.which('node')
-SLOW_MS = 1500      # how long the hub takes to serve a "late" picture
+SLOW_MS = 4000      # how long the hub takes to serve a "late" picture
+RECORD_MS = 40000   # how long each return to the end is recorded (the spec's 40 s)
 CDP_JS = chrome_profile.JS + r"""
 const {spawn} = require('child_process');
 const A = JSON.parse(process.argv[2]);
@@ -52,11 +53,13 @@ async function main() {
   await send('Emulation.setDeviceMetricsOverride',{width:760,height:1000,deviceScaleFactor:1.5,mobile:false},s);
   const ev=async expression => { const r=await send('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true},s); if(r.exceptionDetails) throw Error(expression.slice(0,100)+' '+JSON.stringify(r.exceptionDetails)); return r.result.value; };
   const until=async (expression, n=150) => { for(let i=0;i<n;i++){ try {if(await ev(expression)) return;}catch(e){} await sleep(100); } throw Error('timeout '+expression); };
-  // Every scrollTop write that moved the chat, and every layout shift in it.
-  const REC = `(() => { const box=$('#msgs'), L=window.__rec={moves:[],shifts:[],t0:performance.now()};
+  // Every scrollTop write (with its caller), those that moved the chat, and every layout shift in it.
+  const REC = `(() => { const box=$('#msgs'), L=window.__rec={writes:[],moves:[],shifts:[],t0:performance.now()};
     const d=Object.getOwnPropertyDescriptor(Element.prototype,'scrollTop');
     Object.defineProperty(box,'scrollTop',{configurable:true,get(){return d.get.call(this);},set(v){
       const b=d.get.call(this); d.set.call(this,v); const a=d.get.call(this);
+      L.writes.push({t:Math.round(performance.now()-L.t0),v:Math.round(+v),from:Math.round(b),to:Math.round(a),
+        by:(new Error().stack||'').split('\\n').slice(2,4).map(x=>x.trim()).join(' < ')});
       if(Math.abs(a-b)>=1) L.moves.push({t:Math.round(performance.now()-L.t0),from:Math.round(b),to:Math.round(a)}); }});
     new PerformanceObserver(l=>{ for(const e of l.getEntries()) { const inBox=(e.sources||[]).some(x=>x.node&&box.contains(x.node));
       if(inBox) L.shifts.push({t:Math.round(e.startTime-L.t0),v:+e.value.toFixed(4)}); } }).observe({type:'layout-shift'});
@@ -85,10 +88,10 @@ async function main() {
       if (how === 'wheel') { for(let i=0;i<80;i++){ await wheel(500); await sleep(60); if(await ev(`(() => { const b=$('#msgs'); return b.scrollHeight-b.clientHeight-b.scrollTop<2; })()`)) break; } }
       else { await until(`!$('#to-latest').hidden`, 30); await ev(`$('#to-latest').click(), 0`); }
       const bottom = await ev(`Math.round(performance.now()-__rec.t0)`);
-      await sleep(7000);
+      await sleep(RECORD_MS);
       const L = await ev(`__rec`);
       const after = x => (x||[]).filter(e => e.t > bottom + 1000);
-      out[how] = {away, bottom, end:await ev(state), movesAfter:after(L.moves), shiftsAfter:after(L.shifts), topsAfter:after(L.tops)};
+      out[how] = {away, bottom, end:await ev(state), writesAfter:after(L.writes), movesAfter:after(L.moves), shiftsAfter:after(L.shifts), topsAfter:after(L.tops)};
     }
     // A new message at the end: followed.
     await fetch(A.base + '/__test/append?n=1');
@@ -106,7 +109,7 @@ async function main() {
   } finally { await send('Browser.close').catch(()=>{}); ch.kill(); }
 }
 main().catch(e=>{console.error(e.stack||String(e));process.exit(1)});
-""".replace('${SLOW}', str(SLOW_MS))
+""".replace('${SLOW}', str(SLOW_MS)).replace('RECORD_MS', str(RECORD_MS))
 
 
 @unittest.skipUnless(NODE and CHROME, 'needs Node and Chrome')
@@ -194,7 +197,7 @@ class ChatSettle(unittest.TestCase):
         args = {**chrome_profile.node_args(), 'tmp': cls.tmp.name,
                 'base': f'http://127.0.0.1:{cls.server.server_address[1]}', 'room': cls.room}
         script = base / 'chat_settle_cdp.js'; script.write_text(CDP_JS, encoding='utf-8')
-        out = subprocess.run([NODE, str(script), json.dumps(args)], capture_output=True, encoding='utf-8', timeout=150)
+        out = subprocess.run([NODE, str(script), json.dumps(args)], capture_output=True, encoding='utf-8', timeout=300)
         assert out.returncode == 0, out.stderr[-4000:]
         cls.got = json.loads(out.stdout.strip().splitlines()[-1])
         print('\nchat settle CDP: ' + json.dumps(cls.got, indent=1)[:4000])
@@ -206,6 +209,10 @@ class ChatSettle(unittest.TestCase):
     def test_a_late_picture_at_the_end_keeps_the_end(self):
         before, after = self.got['beforeLoad'], self.got['afterLoad']
         self.assertTrue(before['stick'], before)
+        # The picture was still on its way when the draw put the chat at its end, and it grew the row.
+        self.assertTrue(before['lastImgs'] and not before['lastImgs'][0]['done'], before)
+        self.assertLess(before['lastImgs'][0]['h'], 20, before)
+        self.assertGreater(after['sh'], before['sh'] + 50, (before, after))
         self.assertTrue(after['lastImgs'] and after['lastImgs'][0]['done'], after)
         self.assertGreater(after['lastImgs'][0]['h'], 50, after)
         self.assertLessEqual(after['remaining'], 2, after)
@@ -216,6 +223,7 @@ class ChatSettle(unittest.TestCase):
                 g = self.got[how]
                 self.assertGreater(g['away']['remaining'], 1000, g['away'])   # it did scroll up
                 self.assertLessEqual(g['end']['remaining'], 2, g['end'])
+                self.assertEqual(g['writesAfter'], [], g)
                 self.assertEqual(g['movesAfter'], [], g)
                 self.assertEqual(g['topsAfter'], [], g)
                 self.assertEqual(g['shiftsAfter'], [], g)
