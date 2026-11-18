@@ -4064,11 +4064,12 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   /* #370: a task's or session's 12px icon sits in the project tile's 22px column. */
   .ldp-row > svg.ldp-ico { margin: 0 5px; }
   .ldp-ico { flex: none; display: block; width: 12px; height: 12px; }
-  .ldp-n { flex: none; padding: 0 6px; border-radius: 8px; background: var(--c-neutral-bg); color: var(--c-neutral-fg);
-    font-size: 10px; text-align: center; font-weight: 400; }
-  .ldp-row[aria-current="true"] .ldp-n, .ldp-row[data-cur] .ldp-n { background: var(--surface); }
+  /* #388 (GitHub issue 54): what waits on you is the "Waiting for you" pair, as the project
+     switcher's count (.pm-needs), on every row, the selected one included. */
+  .ldp-n { flex: none; padding: 0 6px; border-radius: 8px; background: var(--c-warning-bg); color: var(--c-warning-fg);
+    font-size: 10px; text-align: center; font-weight: 600; }
   /* #360: older questions only: their number outlined, no fill, muted. */
-  .ldp-row .ldp-n.ldp-old { background: transparent; box-shadow: inset 0 0 0 1px var(--border-strong); color: var(--fg-muted); }
+  .ldp-row .ldp-n.ldp-old { background: transparent; box-shadow: inset 0 0 0 1px var(--border-strong); color: var(--fg-muted); font-weight: 400; }
   .ldp-item { position: relative; display: flex; align-items: center; }
   .ldp-dots { position: absolute; right: 2px; top: 50%; transform: translateY(-50%); width: 24px; height: 22px; border: 0; border-radius: var(--r-200);
     background: var(--surface); color: var(--fg-subtle); font: inherit; cursor: pointer; opacity: 0; }

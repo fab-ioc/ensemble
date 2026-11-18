@@ -1452,7 +1452,10 @@ self-contained component, so a later layout can host it elsewhere.
   (#376) (`LDP_N` = 9, then
   "N more projects"), each with an 8px swatch (`.ldp-sw`; projects have no colour of their own, so
   `ldpColour(pid)` picks a status token's bold shade by a hash of the id: never treat it as a
-  status) and a neutral count pill; after a separator the **loose rows**: tasks and sessions in no
+  status) and its count of what waits on you as a pill in the "Waiting for you" pair
+  (`.ldp-n`: `--c-warning-bg`, `--c-warning-fg` at 600, on every row, the selected one too; none at
+  zero), the same amber as the project switcher's count (`.pm-needs`; #388, GitHub issue 54);
+  after a separator the **loose rows**: tasks and sessions in no
   project (the old list's folded Unassigned group, `LDP_LOOSE_N` = 5, then "N more tasks · M
   sessions in no project"), each with a small muted "task" / "session" label and a ⋯ (also its
   right click) with Open and Make PO (`SessionActions.makePoItem`; a `.dcm` menu on `body`). A

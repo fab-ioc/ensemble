@@ -92,7 +92,7 @@ async function main() {
     const old = B && B.querySelector('.ibx-row[data-stage="older"]');
     const css = (e, k) => e ? getComputedStyle(e)[k] : '';
     const chip = b => { const n = b.querySelector('.ldp-n'); return [(b.querySelector('.ldp-name') || {}).textContent, n ? n.textContent : '', !!b.querySelector('.ldp-old'),
-      n ? css(n, 'backgroundColor') : '', n ? css(n, 'boxShadow') : '', b.getAttribute('aria-current') === 'true', n ? (n.title || '') : '']; };
+      n ? css(n, 'backgroundColor') : '', n ? css(n, 'boxShadow') : '', b.getAttribute('aria-current') === 'true', n ? (n.title || '') : '', n ? css(n, 'fontWeight') : '']; };
     const ph = document.getElementById('ph-inbox-body');
     return {
       title: ((B && B.querySelector('.ibx-title')) || {}).textContent || '',
@@ -287,6 +287,7 @@ class OlderQuestionsInChrome(unittest.TestCase):
                 self.assertEqual(c[3], "rgba(0, 0, 0, 0)", c)
                 self.assertIn("inset", c[4], c)
                 self.assertRegex(c[6], r"^\d+ older questions?, not counted\. You wrote past them in their chat$", c)
+                self.assertEqual(c[7], "400", c)
         self.assertEqual(self.chips(g["min"]), self.chips(g["all"]))
         self.assertEqual(g["min"]["badge"], "", "the strip counts only what waits")
 
@@ -296,6 +297,7 @@ class OlderQuestionsInChrome(unittest.TestCase):
         self.assertTrue(sel[0][2])
         self.assertEqual(sel[0][3], "rgba(0, 0, 0, 0)")
         self.assertIn("inset", sel[0][4])
+        self.assertEqual(sel[0][7], "400")
         o = self.got["older"]["opTen"]
         self.assertRegex(o["title"], r"·\s*0$")
         self.assertEqual(o["older"][0], "Older questions · 10")
