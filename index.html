@@ -2090,6 +2090,32 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .rm-empty-title { font-size: var(--fs-400); line-height: var(--lh-400); font-weight: 600; color: var(--fg); margin-bottom: var(--s-200); }
   .rm-empty p { margin: 0 0 var(--s-400); }
   .rm-empty code { font-family: var(--font-mono); font-size: var(--fs-200); }
+  /* #389: the PO's Roadmap tool, built like the task's Spec in the same panel
+     (.pd-spec scrolls; the roadmap sits in the Spec's block, .dp-spec). */
+  #rm-panel.rm-tool { display: block; }
+  #rm-panel.rm-tool[hidden] { display: none; }
+  .rm.rm-t { display: block; height: auto; min-height: 0; border: 0; border-radius: 0; overflow: visible; background: transparent; }
+  .rm-t .rm-bar { flex-wrap: nowrap; gap: var(--s-100); margin: var(--s-300) var(--s-400) 0; padding: 0; border: 0; min-height: 24px; color: var(--fg-muted); }
+  .rm-t .rm-file { font-family: var(--font-sans); font-weight: 600; color: var(--fg-subtle); }
+  .rm-t .rm-meta { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .rm-t .rm-meta:not(:empty)::before { content: "· "; }
+  .rm-t .rm-acts { flex: none; gap: var(--s-100); }
+  .rm-t .rm-btn { height: 24px; padding: 0 var(--s-200); font-size: var(--fs-200); }
+  .rm-t .rm-btn.ghost { background: transparent; border-color: transparent; color: var(--fg-subtle); }
+  .rm-t .rm-btn.ghost:hover { background: var(--hover); color: var(--fg); }
+  .rm-t .rm-note { margin: var(--s-300) var(--s-400) 0; border: 0; border-radius: var(--r-200); font-size: var(--fs-200); line-height: var(--lh-200); }
+  .rm-t .rm-note-txt { flex-basis: 100%; }
+  .rm-t .rm-doc { max-width: none; font-family: inherit; }
+  .rm-t .rm-doc.dp-spec { padding: var(--s-300); font-size: var(--fs-200); line-height: var(--lh-300); color: var(--fg-subtle); }
+  .rm-t .rm-doc.dp-spec:has(> .rm-empty) { background: transparent; padding: 0; }
+  .rm-t:has(.rm-doc > .rm-empty) > .rm-bar { display: none; }
+  .rm-t .rm-src { display: block; box-sizing: border-box; width: calc(100% - 2 * var(--s-400)); min-height: 240px; margin: var(--s-200) var(--s-400) 0; resize: vertical;
+    border: 1px solid var(--border-strong); border-radius: var(--r-200); padding: var(--s-200) var(--s-300); background: var(--surface); }
+  .rm-t .rm-src:focus, .rm-t .rm-src:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .rm-t .rm-plabel { position: static; min-height: 24px; margin: var(--s-300) var(--s-400) 0; padding: 0; border: 0; background: transparent; }
+  .rm-t .rm-plabel + .rm-doc.dp-spec { margin-top: var(--s-100); }
+  .rm-t .rm-empty { margin: var(--s-600) auto; padding: 0 var(--s-400); max-width: 44ch; border: 0; border-radius: 0; text-align: center; font-size: var(--fs-200); }
+  .rm-t .rm-empty-title { font-size: var(--fs-300); line-height: var(--lh-300); }
   .rm-edit { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
   .rm-src { min-height: 0; resize: none; border: 0; border-right: 1px solid var(--border); border-radius: 0; margin: 0; padding: var(--s-400); background: var(--surface-sunken); color: var(--fg); font-family: var(--font-mono); font-size: var(--fs-200); line-height: var(--lh-300); tab-size: 2; }
   .rm-src:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--focus-ring); }
@@ -4204,8 +4230,11 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
      open tool's in the button's one colour, --selected-fg, as before. */
   .ti { --ti: currentColor; --ti-ink: var(--tool-ink); --ti-ring: var(--surface); color: var(--ti); }
   .ti-points { --ti: var(--tool-points); } .ti-changes { --ti: var(--tool-changes); } .ti-workspace { --ti: var(--tool-workspace); }
-  .ti-board { --ti: var(--tool-board); } .ti-spec { --ti: var(--tool-spec); } .ti-list { --ti: var(--tool-list); } .ti-projects { --ti: var(--tool-list); } .ti-inbox { --ti: var(--tool-inbox); }
+  .ti-board { --ti: var(--tool-board); } .ti-spec, .ti-roadmap { --ti: var(--tool-spec); } .ti-list { --ti: var(--tool-list); } .ti-projects { --ti: var(--tool-list); } .ti-inbox { --ti: var(--tool-inbox); }
   .ti-s-dot { color: inherit; }
+  /* #389: the fifth slot's two glyphs: Roadmap while the PO is in front, Spec while a task is. */
+  .pd-slot-ic { display: contents; }
+  body:not(.pd-task-front) .pd-slot-ic > .ti-spec, body.pd-task-front .pd-slot-ic > .ti-roadmap { display: none; }
   /* The inbox (#302): one row per thing that waits on you, in every project. */
   .pd-inbox { height: 100%; min-height: 0; overflow-y: auto; background: var(--surface); }
   .ibx { display: flex; flex-direction: column; gap: var(--s-300); padding: var(--s-300); min-width: 0; }
@@ -4399,7 +4428,6 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .pd-spec { overflow: auto; padding: var(--s-300) var(--s-400); }
   .pd-spec.pd-for-task > .dp-pane { display: block; flex: none; }
   .pd-spec > .dp-pane[data-pane="details"] { margin-top: var(--s-400); }
-  .pd-spec-po { margin: 0; color: var(--fg-muted); font-size: var(--fs-300); max-width: 60ch; }
   /* The Board's ⤢ (full width), at the end of its view switch's row. */
   .pd-board-max { margin-left: var(--s-200); width: 28px; height: 28px; border: 1px solid var(--border); border-radius: var(--r-200);
     background: var(--surface); color: var(--fg-subtle); font: inherit; cursor: pointer; }
@@ -4461,9 +4489,9 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .wfp > .wsp-bar { flex: none; }
   .wfp > .wsp-frames { flex: 1 1 auto; min-height: 0; position: relative; }
   .wfp .wsp-note:empty { display: none; }
-  .wsp.ws-panels:not(.ws-rm) { grid-template-columns: minmax(0, 1fr); }
-  .wsp.ws-panels:not(.ws-rm) > .wsp-side { border-right: 0; }
-  .wsp.ws-panels:not(.ws-rm) > .wsp-view { display: none; }
+  .wsp.ws-panels { grid-template-columns: minmax(0, 1fr); }
+  .wsp.ws-panels > .wsp-side { border-right: 0; }
+  .wsp.ws-panels > .wsp-view { display: none; }
   body.po-dock #po-panel.pd-off { position: absolute; inset: 0; visibility: hidden; border: 0; }
   /* Points: the person's points with the PO, as a list of their own. */
   .pdp { display: flex; flex-direction: column; gap: var(--s-200); }
@@ -5377,7 +5405,7 @@ window.DOC_LISTENERS_PAUSED = false;
       <div data-panel="board" data-title="Board" class="pd-board pd-pane"></div>
       <div data-panel="workspace" data-title="Files" class="pd-ws"></div>
       <div data-panel="changes" data-title="Changes" class="pd-changes"></div>
-      <div data-panel="spec" data-title="Spec" class="pd-spec"><p class="pd-spec-po">A PO has no spec: its conversation is where the work is asked for. Open a task to read its spec and details here.</p></div>
+      <div data-panel="spec" data-title="Roadmap" class="pd-spec"></div>
     </div>
     <!-- The PO's conversation, for the same reason again: it is a live session.
          On a Dock it is in the PO chat panel (pdPlaceChat). -->
@@ -11286,8 +11314,8 @@ const wsTabEl = (strip, path) => [...strip.querySelectorAll('.wst-tab')].find(e 
 function wsPaintTabs(v) {
   const strip = v.el && v.el.querySelector('.wst');
   if (!strip) return;
-  // Files as panels: only the roadmap's tab is the pane's (its own view).
-  const tabs = wsPanelsMode() ? v.tabs.filter(t => wsIsRoadmap(v, t.path)) : v.tabs;
+  // Files as panels: no tab is the pane's (files are panels, the roadmap the Roadmap tool's, #389).
+  const tabs = wsPanelsMode() ? [] : v.tabs;
   const html = tabs.map((t, i) => {
     // The roadmap's tab is its own view, which says so when it is not written yet.
     const on = wsSame(t.path, v.sel), name = wsTabName(t.path), gone = t.missing && !wsIsRoadmap(v, t.path);
@@ -11342,10 +11370,10 @@ function wsPaintViewNow(v, box) {
   wsPaintTabs(v);
   const stage = box.querySelector('.wsp-frames'), bar = box.querySelector('.wsp-bar');
   const sel = v.tabs.find(x => wsSame(x.path, v.sel)) || null;
-  // The roadmap shows in its own view and editor, not a viewer.
-  const rmTab = !!sel && wsIsRoadmap(v, sel.path);
-  v.el.classList.toggle('ws-rm', panels && rmTab);
-  const t = panels && !rmTab ? null : sel, gone = !!t && t.missing && !rmTab;
+  // The roadmap shows in its own view and editor, not a viewer; in panels
+  // mode it is the PO's Roadmap tool instead (#389), never a tab here.
+  const rmTab = !panels && !!sel && wsIsRoadmap(v, sel.path);
+  const t = panels ? null : sel, gone = !!t && t.missing && !rmTab;
   const key = t && !t.missing && !rmTab ? wsNorm(t.path) : '';
   // A viewer whose tab closed or whose file went is dropped: if the file comes
   // back, it is read again rather than shown as it was.
@@ -11411,7 +11439,7 @@ function wsPaintPane(v) {
   if (!box) return;
   const t = v.tabs.find(x => wsSame(x.path, v.sel));
   // Files as panels: the pane is the tree, unless the roadmap's view shows.
-  const panelsTree = wsPanelsMode() && !(t && wsIsRoadmap(v, t.path));
+  const panelsTree = wsPanelsMode();
   box.classList.toggle('ws-tree', panelsTree || v.pane === 'tree' || !t);
   barCrumbs();   // the file, or its tree, is where you are
 }
@@ -11559,6 +11587,8 @@ function wsOpenTab(v, path) { wsOpenTabAt(v, path, 0); }
 // there. A search result also gives where its match is on the line
 // ({col, len}), and the viewer marks it.
 function wsOpenTabAt(v, path, line, hit) {
+  // #389: the roadmap is the Roadmap tool's, not a tab in Files.
+  if (wsPanelsMode() && wsIsRoadmap(v, path) && pdOpenRoadmap()) return;
   // A file another Workspace shows as a panel: shown there (one panel per file).
   if (wsPanelsMode() && !wsIsRoadmap(v, path)) {
     const other = PD.rt.get(wsPanelId(path));
@@ -12055,7 +12085,9 @@ function wsRoadmapPaint(v, stage, show) {
   wrap.hidden = false;
   if (panel.parentElement !== wrap) wrap.appendChild(panel);
   panel.hidden = false;
-  if (panel.dataset.rmkey !== pj.id) { panel.dataset.rmkey = pj.id; rmBuild(panel, pj.id); }
+  if (panel.dataset.rmkey !== pj.id || panel.classList.contains('rm-tool')) {
+    panel.classList.remove('rm-tool'); panel.dataset.rmkey = pj.id; rmBuild(panel, pj.id);
+  }
   tickAgo(panel);
   rmLoad(pj.id, !rmState(pj.id).data);
 }
@@ -14206,7 +14238,18 @@ function rmMd(st, text) {
 function rmBuild(panel, pid) {
   const st = rmState(pid);
   panel.dataset.mode = st.editing ? 'edit' : 'view';
-  panel.innerHTML = `<div class="rm">
+  // #389: in the PO's Roadmap tool (rm-tool) it is built like the task's Spec:
+  // a quiet line, the roadmap in the Spec's block (dp-spec), and while editing
+  // the text above its preview, since 480 px is too narrow for side by side.
+  if (panel.classList.contains('rm-tool')) {
+    panel.innerHTML = `<div class="rm rm-t">
+    <div class="rm-bar"><span class="rm-file">ROADMAP.md</span><span class="rm-meta"></span><span class="rm-acts"></span></div>
+    <div class="rm-note" role="status" hidden></div>
+    ${st.editing
+      ? `<textarea class="rm-src" spellcheck="true" aria-label="Roadmap source, Markdown"></textarea><div class="rm-plabel"></div>`
+      : ''}<div class="rm-doc dp-spec"></div>
+  </div>`;
+  } else panel.innerHTML = `<div class="rm">
     <div class="rm-bar"><span class="rm-file">ROADMAP.md</span><span class="rm-path"></span><span class="rm-meta"></span><span class="rm-acts"></span></div>
     <div class="rm-note" role="status" hidden></div>
     ${st.editing
@@ -14240,14 +14283,15 @@ function rmPaint(panel, pid) {
   if ((panel.dataset.mode === 'edit') !== st.editing) { rmBuild(panel, pid); return; }
   const d = st.data;
   const home = rmDir(d && d.path);
+  const tool = panel.classList.contains('rm-tool');
   const pathEl = panel.querySelector('.rm-path');
-  if (pathEl.textContent !== tildeify(home)) { pathEl.textContent = home ? tildeify(home) : ''; pathEl.title = (d && d.path) || ''; }
+  if (pathEl && pathEl.textContent !== tildeify(home)) { pathEl.textContent = home ? tildeify(home) : ''; pathEl.title = (d && d.path) || ''; }
   const dirty = rmDirty(st);
   writeSlot(panel.querySelector('.rm-meta'), st.editing
-    ? (dirty ? 'Editing · unsaved changes' : 'Editing')
+    ? (tool ? (dirty ? 'editing · unsaved changes' : 'editing') : (dirty ? 'Editing · unsaved changes' : 'Editing'))
     : (d && d.exists ? `saved ${agoSpan(d.mtime)} ago` : ''));
   writeSlot(panel.querySelector('.rm-acts'), st.editing
-    ? `<button type="button" class="rm-btn${dirty ? ' danger' : ''}" data-rm="cancel">${dirty ? 'Discard changes' : 'Cancel'}</button>`
+    ? `<button type="button" class="rm-btn${dirty ? ' danger' : tool ? ' ghost' : ''}" data-rm="cancel">${dirty ? 'Discard changes' : 'Cancel'}</button>`
       + (st.conflict ? '' : `<button type="button" class="rm-btn primary" data-rm="save"${st.saving ? ' disabled' : ''} title="Save (Ctrl+S)">${st.saving ? 'Saving…' : 'Save'}</button>`)
     : (d && d.exists ? `<button type="button" class="rm-btn" data-rm="edit">Edit</button>` : ''));
   const note = panel.querySelector('.rm-note');
@@ -14279,7 +14323,7 @@ function rmPaint(panel, pid) {
     writeSlot(doc, st.err ? `<div class="rm-empty"><div class="rm-empty-title">Couldn’t read the roadmap</div><p>${esc(st.err)}</p></div>` : '<p>Loading…</p>');
   } else if (!d.exists) {
     writeSlot(doc, `<div class="rm-empty"><div class="rm-empty-title">No roadmap yet</div>`
-      + `<p>The roadmap is <code>ROADMAP.md</code> in this ${esc(noun('one'))}’s folder. The ${esc(noun('one'))}’s PO keeps it current, and you can write or change it here. The file is created the first time someone saves.</p>`
+      + `<p>The roadmap is <code>ROADMAP.md</code> in this ${esc(noun('one'))}’s folder. The ${esc(noun('one'))}’s PO keeps it current, and you can write or change it here.${tool ? '' : ' The file is created the first time someone saves.'}</p>`
       + `<button type="button" class="rm-btn primary" data-rm="edit">Write the roadmap</button></div>`);
   } else {
     writeSlot(doc, rmMd(st, d.text));
@@ -14919,7 +14963,7 @@ function poClosePeek() {
 // So does one saved with a Topics panel (#304; topics are gone, P345).
 const PD_IDS = ['po-chat', 'inbox', 'board', 'workspace', 'changes', 'spec'];
 // The conversation's tab is "Chat": on a phone it is an open task's too (#129).
-const PD_TITLES = { 'po-chat': 'Chat', inbox: 'Inbox', board: 'Board', workspace: 'Files', changes: 'Changes', spec: 'Spec' };
+const PD_TITLES = { 'po-chat': 'Chat', inbox: 'Inbox', board: 'Board', workspace: 'Files', changes: 'Changes', spec: 'Roadmap' };
 const PD_MIN = { 'po-chat': { w: 360, h: 200 }, inbox: { w: 240, h: 160 }, board: { w: 320, h: 160 },
                  workspace: { w: 300, h: 200 }, changes: { w: 300, h: 200 }, spec: { w: 320, h: 160 } };
 // desk: the tool strip's (layout A step 3); the phone's narrow dock keeps its
@@ -14966,6 +15010,10 @@ const TOOL_GLYPH = {
   // Spec: a page with a check on it, the goal it sets.
   spec: { t: '<circle cx="17" cy="17" r="4.6"/>',
           o: '<path d="M14 3H6.5A1.5 1.5 0 0 0 5 4.5v15A1.5 1.5 0 0 0 6.5 21H11M14 3l5 5v2.5M14 3v5h5M8 11h6M8 14.5h3"/><circle cx="17" cy="17" r="4.6"/><path d="M15.1 17.1l1.4 1.4 2.5-2.7"/>' },
+  // Roadmap (#389): a route from where it starts, past a milestone, to a flag.
+  roadmap: { t: '<circle cx="5.5" cy="18.5" r="2.5"/><path d="M17 2.5l4.5 2.25L17 7z"/>',
+             s: '<circle cx="11" cy="12.5" r="1.6"/>',
+             o: '<circle cx="5.5" cy="18.5" r="2.5"/><path d="M8 18.5h3.5a3 3 0 0 0 0-6h-1a3 3 0 0 1 0-6H17"/><path d="M17 11.5V2.5l4.5 2.25L17 7"/>' },
   // The task list: rows with their state dots, one row selected.
   list: { t: '<rect x="1.5" y="9" width="21" height="6" rx="2"/>',
           s: '<circle cx="5" cy="5.5" r="2.2"/><circle cx="5" cy="18.5" r="2.2"/>',
@@ -14997,6 +15045,9 @@ function toolIcon(id, style = TOOL_ICON_STYLE, o = {}) {
     + `${o.color && style !== 'dot' ? ` color="${o.color}"` : ''}>${body}</svg>`;
 }
 const PD_ICON = Object.fromEntries(PD_TOOLS.map(id => [id, toolIcon(id)]));
+// #389: the fifth slot is the PO's Roadmap while the PO is in front and the
+// task's Spec while a task is (pdRoadmapSync): both glyphs, CSS shows one.
+PD_ICON.spec = `<span class="pd-slot-ic">${toolIcon('roadmap')}${toolIcon('spec')}</span>`;
 // How far a tool slides out: the diff and the files take most of what the
 // list and the strip leave (a conversation keeps at least its 360px); the
 // asks and the spec are reading widths. Taken when the dock is made; on a
@@ -15560,7 +15611,7 @@ function pdEnsure() {
 }
 // A panel of this dock as createDock and addPanel take it.
 function pdPanelDef(id, vw) {
-  return { id, title: PD_TITLES[id], el: PD.els[id], icon: PD_ICON[id], unpinSize: PD_ICON[id] ? pdToolSize(id, vw || innerWidth) : undefined,
+  return { id, title: id === 'spec' ? pdSlotTitle() : PD_TITLES[id], el: PD.els[id], icon: PD_ICON[id], unpinSize: PD_ICON[id] ? pdToolSize(id, vw || innerWidth) : undefined,
            menuItems: id === 'po-chat' ? pdWithCommon((pid, ctx) => pdMenuItems(ctx)) : undefined };
 }
 // #322: how a layout saved before the Inbox moved to the list dock kept it
@@ -15591,6 +15642,7 @@ function pdMinOf(id) {
 // What a panel is called in the breadcrumb: a tool's name, a file's name, a
 // chat's task.
 function pdPanelName(k) {
+  if (k === 'spec') return pdSlotTitle();
   if (PD_TITLES[k]) return PD_TITLES[k];
   const e = PD.rt.get(k);
   if (!e) return k;
@@ -17008,6 +17060,8 @@ function pdShown(id) {
   }
   if (id === 'board' || id === 'workspace' || id === 'changes') renderRows();
   if (id === 'po-chat') wcFront(id);
+  // #389: the Roadmap tool reads its file when it comes on screen.
+  if (id === 'spec') pdRoadmapSync();
   // #386: the PO's tab in front of the open task's: the task closes (its tab stays).
   // (After the dock's own work: a tab being closed is still in its hands.)
   if (id === 'po-chat') pdPoFrontCloses();
@@ -17134,6 +17188,45 @@ function pdSyncTitles() {
     if (r) { try { d.setTitle(id, pdRowTitle(r)); } catch (err) {} }
   }
   pdTabExtrasSync();
+  pdRoadmapSync();
+}
+// #389: the fifth tool names what the conversation in front has: an open
+// task's Spec (its panes, pdPlaceTask), else the PO's Roadmap, the project's
+// ROADMAP.md read and edited in the one #rm-panel, which lives in this panel
+// then. Built like the Spec (rmBuild's tool form) and kept current the same
+// way: read again on every refresh while it shows (rmLoad, every 4 s at most).
+function pdSlotTitle() { return document.body.classList.contains('pd-task-front') ? 'Spec' : 'Roadmap'; }
+function pdRoadmapSync() {
+  const d = PD.dock, el = PD.els.spec;
+  if (!d || !el) return;
+  document.body.classList.toggle('pd-task-front', el.classList.contains('pd-for-task'));
+  const title = pdSlotTitle();
+  try { if (d.title('spec') !== title) d.setTitle('spec', title); } catch (e) {}
+  const pj = title === 'Roadmap' && document.body.classList.contains('po-dock') ? projectById(PD.pid) : null;
+  const panel = pdById('rm-panel');
+  if (!pj || !panel) return;
+  if (panel.parentElement !== el) el.appendChild(panel);
+  panel.hidden = false;
+  if (!panel.classList.contains('rm-tool') || panel.dataset.rmkey !== pj.id) {
+    panel.classList.add('rm-tool'); panel.dataset.rmkey = pj.id; rmBuild(panel, pj.id);
+  }
+  // Read only while it shows (review 1): the first read at once, a retry
+  // after a failed read, like any later one, 4 s on at most.
+  if (!pdToolOn('spec')) return;
+  const st = rmState(pj.id);
+  tickAgo(panel); rmLoad(pj.id, !st.data && !st.polledAt);
+}
+// The roadmap asked for (Documents' Roadmap row, Go to file, an old link):
+// the Roadmap tool comes out, in Files' place. With a task in front, the slot
+// is that task's Spec: the task closes first (its tab stays, as when the PO's
+// tab is clicked, #386), so the PO, and its Roadmap, is in front.
+function pdOpenRoadmap() {
+  if (!PD.dock || !document.body.classList.contains('po-dock')) return false;
+  if (PD.els.spec && PD.els.spec.classList.contains('pd-for-task') && SELECTED_SID) closeDetail();
+  pdRoadmapSync();
+  pdReveal('spec');
+  pdRoadmapSync();
+  return true;
 }
 // An open task on a desktop (pdTask) is the middle's conversation: the task
 // panel moves into the conversation's place in the dock, and back to the page
@@ -18772,7 +18865,7 @@ function pdMenuClose(refocus) {
 }
 // A row's icon: the tool's, as on its strip button (the chat's row keeps its
 // place empty, so the names line up).
-const pdMenuIcon = id => `<span class="pd-mi" aria-hidden="true">${TOOL_GLYPH[id] ? toolIcon(id) : ''}</span>`;
+const pdMenuIcon = id => `<span class="pd-mi" aria-hidden="true">${id === 'spec' ? PD_ICON.spec : TOOL_GLYPH[id] ? toolIcon(id) : ''}</span>`;
 function pdMenuHtml() {
   // A panel out in its own window whose window is closed (#204): first, with
   // one click to open the window again, or to bring the panel back for good.
@@ -21607,7 +21700,7 @@ function renderPoDock(pj) {
   // A tab asked for from somewhere else (a diff's Open file, a link back to
   // the Workspace) is a panel here: it comes on screen.
   if (PROJECT_TAB !== 'tasks') {
-    const want = { documents: 'workspace', workspace: 'workspace', changes: 'changes', roadmap: 'workspace' }[PROJECT_TAB];
+    const want = { documents: 'workspace', workspace: 'workspace', changes: 'changes', roadmap: 'spec' }[PROJECT_TAB];
     PROJECT_TAB = 'tasks';
     if (want) pdReveal(want);
   }
@@ -21642,9 +21735,10 @@ function renderRows() {
   const wsp = wsPlace(docked);
   // Needs you owns the whole view, so the project's stateful panels step
   // aside even if one of their tabs was last open. The roadmap and the
-  // documents are the first node of the Workspace's tree: an old "roadmap"
-  // or "documents" tab is the Workspace.
-  if (PROJECT_TAB === 'roadmap' || PROJECT_TAB === 'documents') PROJECT_TAB = 'workspace';
+  // documents are the first node of the Workspace's tree: an old "documents"
+  // tab is the Workspace; an old "roadmap" one the PO's Roadmap tool (#389,
+  // renderPoDock), the Workspace where there is no PO's dock.
+  if (PROJECT_TAB === 'documents' || (PROJECT_TAB === 'roadmap' && !(dockPj && docked))) PROJECT_TAB = 'workspace';
   if (wsp) wsp.hidden = !(SELECTED_PROJECT && (docked || PROJECT_TAB === 'workspace'));
   // No project: a phone's cards page (its home is the list, #129); a desktop
   // has no home page (#135): the list is home, and the middle waits for a row.

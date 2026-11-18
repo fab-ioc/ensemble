@@ -5,7 +5,7 @@ a project that has a PO (Motors), a task in it with a folder of its own, and a
 project without a PO (Plain):
 
 * a desktop's dock is the conversation in the middle and a 44px strip at the
-  right edge: Changes, Files, Board, Spec (the Inbox is the column left of
+  right edge: Changes, Files, Board, Spec or Roadmap (the Inbox is the column left of
   the chat), each an icon whose name
   is its tooltip and aria-label;
 * counts on the buttons: Changes' uncommitted files for
@@ -15,7 +15,7 @@ project without a PO (Plain):
 * the open tool is remembered per browser: a reload opens it again;
 * a task opened on a desktop is the middle's conversation with the same
   strip, its own Changes, Files and Spec (with Details) in the tools, and its
-  tabs gone; a PO's Spec says why it has none;
+  tabs gone; a PO's fifth tool is its Roadmap instead (#389);
 * a file open in Files keeps its page when the tool closes and opens again;
 * the Board's ⤢ takes the whole width and gives it back;
 * a tool opened by a click slides back on a click in the conversation (the
@@ -176,7 +176,7 @@ async function main() {
           badgeTip: (document.querySelector('${tool('changes')} .dk-strip-badge') || {}).title || '',
           badgeFits: (() => { const b = document.querySelector('${tool('changes')}'), x = b && b.querySelector('.dk-strip-badge'); if (!x) return false;
             const r = b.getBoundingClientRect(), q = x.getBoundingClientRect(); return q.left >= r.left && q.right <= r.right + 1; })(),
-          poNote: getComputedStyle(PD.els.spec.querySelector('.pd-spec-po')).display }; })()`);
+          poNote: getComputedStyle(document.getElementById('rm-panel')).display, slot: PD.dock.title('spec') }; })()`);
       await p.click(tool('spec')); await sleep(400);
       await p.until('PD.els.spec.textContent.includes("Quiet brakes")', 10000).catch(() => null);
       out.taskSpec = { ...(await p.evalIn(STRIP)), specText: await p.evalIn('PD.els.spec.innerText.slice(0, 400)') };
@@ -584,7 +584,7 @@ class TheStrip(unittest.TestCase):
             g = self.got[f"po{w}"]
             with self.subTest(w=w):
                 self.assertEqual([b["id"] for b in g["btns"]], TOOLS)
-                self.assertEqual([b["label"] for b in g["btns"]], ["Changes", "Files", "Board", "Spec"])
+                self.assertEqual([b["label"] for b in g["btns"]], ["Changes", "Files", "Board", "Roadmap"])
                 self.assertEqual([b["title"] for b in g["btns"]], [b["label"] for b in g["btns"]], "the name is the tooltip")
                 self.assertTrue(all(b["svg"] for b in g["btns"]), "every button is an icon")
                 self.assertEqual((g["strip"]["w"], g["strip"]["r"]), (44, g["vw"]), "44px at the right edge")
@@ -659,7 +659,8 @@ class TheStrip(unittest.TestCase):
         self.assertTrue(p["tch"], "Changes shows the task's branch")
         self.assertEqual(p["poChanges"], "none", "not the PO's")
         self.assertIn("Quiet brakes on a long descent", self.got["taskSpec"]["specText"], "Spec shows the task's spec")
-        self.assertEqual(p["poNote"], "none", "the PO's note steps aside for the task's spec")
+        self.assertEqual(p["poNote"], "none", "the PO's Roadmap steps aside for the task's spec (#389)")
+        self.assertEqual(p["slot"], "Spec", "a task in front: the slot is its Spec")
         self.assertEqual(self.got["taskSpec"]["fly"], "spec")
         self.assertEqual(self.got["taskFiles"]["fly"], "workspace")
         self.assertEqual(self.got["taskFiles"]["trail"][-1][0], "file", "the file is a crumb")
