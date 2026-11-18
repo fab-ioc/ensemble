@@ -17060,6 +17060,8 @@ function pdShown(id) {
   }
   if (id === 'board' || id === 'workspace' || id === 'changes') renderRows();
   if (id === 'po-chat') wcFront(id);
+  // #389: the Roadmap tool reads its file when it comes on screen.
+  if (id === 'spec') pdRoadmapSync();
   // #386: the PO's tab in front of the open task's: the task closes (its tab stays).
   // (After the dock's own work: a tab being closed is still in its hands.)
   if (id === 'po-chat') pdPoFrontCloses();
@@ -17208,15 +17210,22 @@ function pdRoadmapSync() {
   if (!panel.classList.contains('rm-tool') || panel.dataset.rmkey !== pj.id) {
     panel.classList.add('rm-tool'); panel.dataset.rmkey = pj.id; rmBuild(panel, pj.id);
   }
+  // Read only while it shows (review 1): the first read at once, a retry
+  // after a failed read, like any later one, 4 s on at most.
+  if (!pdToolOn('spec')) return;
   const st = rmState(pj.id);
-  if (!st.data || pdToolOn('spec')) { tickAgo(panel); rmLoad(pj.id, !st.data); }
+  tickAgo(panel); rmLoad(pj.id, !st.data && !st.polledAt);
 }
 // The roadmap asked for (Documents' Roadmap row, Go to file, an old link):
-// the Roadmap tool comes out, in Files' place.
+// the Roadmap tool comes out, in Files' place. With a task in front, the slot
+// is that task's Spec: the task closes first (its tab stays, as when the PO's
+// tab is clicked, #386), so the PO, and its Roadmap, is in front.
 function pdOpenRoadmap() {
-  if (!PD.dock) return false;
+  if (!PD.dock || !document.body.classList.contains('po-dock')) return false;
+  if (PD.els.spec && PD.els.spec.classList.contains('pd-for-task') && SELECTED_SID) closeDetail();
   pdRoadmapSync();
   pdReveal('spec');
+  pdRoadmapSync();
   return true;
 }
 // An open task on a desktop (pdTask) is the middle's conversation: the task

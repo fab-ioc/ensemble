@@ -12,7 +12,10 @@ In headless Chrome over CDP, against the hub test_tool_strip.py starts
   the file;
 * a task in front hides the roadmap and shows its spec; closed, the Roadmap is
   back;
-* Files › Documents › Roadmap opens the tool, never a Files tab;
+* Files › Documents › Roadmap opens the tool, never a Files tab; opened with
+  a task in front, the task closes and the Roadmap shows;
+* a dirty draft stays through a task in front and back;
+* no read while the tool is hidden; a failed read is retried 4 s on at most;
 * a phone's last tab reads Roadmap or Spec likewise.
 
 Screenshots go to $ENSEMBLE_SHOTS when it is set. Skipped without Node or Chrome.
@@ -123,8 +126,11 @@ async function main() {
     await p.evalIn('PD.dock.closeFly(); 0'); await sleep(200);
     await p.click('#po-dock .dk-strip-btn[data-dk-auto="workspace"]');
     await p.until('!!PD.els.workspace.querySelector(".wse.doc[data-roadmap]")', 20000);
-    await p.evalIn('PD.els.workspace.querySelector(".wse.doc[data-roadmap]").click(); 0');
-    await p.until('PD.dock.flyOpen() === "spec"', 10000);
+    // (Files may draw its tree again just after it shows: a row clicked then is gone.)
+    for (let i = 0; i < 3; i++) {
+      await p.evalIn('PD.els.workspace.querySelector(".wse.doc[data-roadmap]").click(); 0');
+      try { await p.until('PD.dock.flyOpen() === "spec"', 4000); break; } catch (e) { if (i === 2) throw e; }
+    }
     out.docsRow = { fly: await p.evalIn('PD.dock.flyOpen()'), tabs: await p.evalIn('PD.els.workspace.querySelectorAll(".wst-tab").length'),
       shown: (await p.evalIn(SLOT)).rmShown };
     // An old link to the roadmap's path (Go to file, a chat link) routes the same way.
@@ -132,6 +138,39 @@ async function main() {
     await p.evalIn(`(() => { const v = [...WS_VIEWS.values()].find(x => x.ctx.kind === 'project' && x.ctx.projectId === ${JSON.stringify(A.proj)}); wsOpenTabAt(v, ${JSON.stringify(file)}); return 0; })()`);
     await p.until('PD.dock.flyOpen() === "spec"', 10000);
     out.link = { fly: await p.evalIn('PD.dock.flyOpen()'), tabs: await p.evalIn('PD.els.workspace.querySelectorAll(".wst-tab").length') };
+    // Review 1: a roadmap open while a task is in front: the task closes, the Roadmap shows.
+    await p.evalIn('PD.dock.closeFly(); 0'); await sleep(200);
+    await p.evalIn(`openDetail(${sid}); 0`);
+    await p.until('document.body.classList.contains("pd-task-front")', 20000);
+    await p.evalIn(`(() => { const v = [...WS_VIEWS.values()].find(x => x.ctx.kind === 'project' && x.ctx.projectId === ${JSON.stringify(A.proj)}); wsOpenTabAt(v, ${JSON.stringify(file)}); return 0; })()`);
+    await p.until('!document.body.classList.contains("pd-task-front") && PD.dock.flyOpen() === "spec" && /Motors roadmap/.test(PD.els.spec.innerText)', 10000);
+    out.fromTask = { ...(await p.evalIn(SLOT)), selected: await p.evalIn('SELECTED_SID'), tabs: await p.evalIn('PD.els.workspace.querySelectorAll(".wst-tab").length') };
+    // A dirty draft stays through a task in front and back.
+    await p.click('#rm-panel button[data-rm="edit"]');
+    await p.until('!!document.querySelector("#rm-panel textarea.rm-src")');
+    await p.evalIn(`(() => { const ta = document.querySelector('#rm-panel .rm-src'); ta.value += '- A **kept draft**.\\n'; ta.dispatchEvent(new Event('input')); return 0; })()`);
+    await p.evalIn(`openDetail(${sid}); 0`);
+    await p.until('document.body.classList.contains("pd-task-front")', 20000); await sleep(300);
+    await p.evalIn('closeDetail(); 0');
+    await p.until('!document.body.classList.contains("pd-task-front")', 10000);
+    if (await p.evalIn('PD.dock.flyOpen()') !== 'spec') await p.click(tool);
+    await p.until('!!document.querySelector("#rm-panel textarea.rm-src")', 10000);
+    out.kept = await p.evalIn(`(() => { const rm = document.getElementById('rm-panel'); return { draft: /kept draft/.test(rm.querySelector('.rm-src').value), meta: rm.querySelector('.rm-meta').textContent }; })()`);
+    await p.click('#rm-panel button[data-rm="cancel"]');
+    await p.until('!document.querySelector("#rm-panel textarea.rm-src")', 5000);
+    // Review 1: no read while the tool is hidden, even after a failed one; on
+    // screen, a failed read is tried again 4 s on at most.
+    await p.evalIn('PD.dock.closeFly(); 0'); await sleep(300);
+    await p.evalIn(`(() => { window.__rmCalls = 0; window.__api = api;
+      api = (u, ...r) => { if (String(u).startsWith('/api/roadmap')) { window.__rmCalls++; return Promise.reject(new Error('down')); } return window.__api(u, ...r); };
+      const st = rmState(${JSON.stringify(A.proj)}); st.data = null; st.polledAt = 0; return 0; })()`);
+    for (let i = 0; i < 8; i++) { await p.evalIn('pdSyncTitles(); 0'); await sleep(100); }
+    out.hiddenCalls = await p.evalIn('window.__rmCalls');
+    await p.click(tool);
+    await p.until('PD.dock.flyOpen() === "spec" && window.__rmCalls >= 1', 5000);
+    for (let i = 0; i < 8; i++) { await p.evalIn('pdSyncTitles(); 0'); await sleep(100); }
+    out.shownCalls = await p.evalIn('window.__rmCalls');
+    await p.evalIn('api = window.__api; 0');
     await p.close();
     // A phone: the last tab reads Roadmap for the PO, Spec for a task.
     const q = await page(390, 844, true);
@@ -229,6 +268,20 @@ class TheRoadmapTool(unittest.TestCase):
     def test_documents_and_old_links_open_the_tool(self):
         self.assertEqual(self.got["docsRow"], {"fly": "spec", "tabs": 0, "shown": True})
         self.assertEqual(self.got["link"], {"fly": "spec", "tabs": 0})
+
+    def test_a_roadmap_open_with_a_task_in_front_shows_the_roadmap(self):
+        f = self.got["fromTask"]
+        self.assertEqual(f["title"], "Roadmap")
+        self.assertTrue(f["rmShown"] and f["rmInSpec"], f)
+        self.assertIsNone(f["selected"], "the task closed")
+        self.assertEqual(f["tabs"], 0, "no Files tab")
+
+    def test_a_dirty_draft_stays_through_a_task_in_front(self):
+        self.assertEqual(self.got["kept"], {"draft": True, "meta": "editing · unsaved changes"})
+
+    def test_the_hidden_tool_does_not_read_and_retries_are_throttled(self):
+        self.assertEqual(self.got["hiddenCalls"], 0)
+        self.assertEqual(self.got["shownCalls"], 1)
 
     def test_a_phone_s_last_tab_reads_roadmap_or_spec(self):
         po = dict(self.got["phonePo"])
