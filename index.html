@@ -2090,6 +2090,32 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .rm-empty-title { font-size: var(--fs-400); line-height: var(--lh-400); font-weight: 600; color: var(--fg); margin-bottom: var(--s-200); }
   .rm-empty p { margin: 0 0 var(--s-400); }
   .rm-empty code { font-family: var(--font-mono); font-size: var(--fs-200); }
+  /* #389: the PO's Roadmap tool, built like the task's Spec in the same panel
+     (.pd-spec scrolls; the roadmap sits in the Spec's block, .dp-spec). */
+  #rm-panel.rm-tool { display: block; }
+  #rm-panel.rm-tool[hidden] { display: none; }
+  .rm.rm-t { display: block; height: auto; min-height: 0; border: 0; border-radius: 0; overflow: visible; background: transparent; }
+  .rm-t .rm-bar { flex-wrap: nowrap; gap: var(--s-100); margin: var(--s-300) var(--s-400) 0; padding: 0; border: 0; min-height: 24px; color: var(--fg-muted); }
+  .rm-t .rm-file { font-family: var(--font-sans); font-weight: 600; color: var(--fg-subtle); }
+  .rm-t .rm-meta { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .rm-t .rm-meta:not(:empty)::before { content: "· "; }
+  .rm-t .rm-acts { flex: none; gap: var(--s-100); }
+  .rm-t .rm-btn { height: 24px; padding: 0 var(--s-200); font-size: var(--fs-200); }
+  .rm-t .rm-btn.ghost { background: transparent; border-color: transparent; color: var(--fg-subtle); }
+  .rm-t .rm-btn.ghost:hover { background: var(--hover); color: var(--fg); }
+  .rm-t .rm-note { margin: var(--s-300) var(--s-400) 0; border: 0; border-radius: var(--r-200); font-size: var(--fs-200); line-height: var(--lh-200); }
+  .rm-t .rm-note-txt { flex-basis: 100%; }
+  .rm-t .rm-doc { max-width: none; font-family: inherit; }
+  .rm-t .rm-doc.dp-spec { padding: var(--s-300); font-size: var(--fs-200); line-height: var(--lh-300); color: var(--fg-subtle); }
+  .rm-t .rm-doc.dp-spec:has(> .rm-empty) { background: transparent; padding: 0; }
+  .rm-t:has(.rm-doc > .rm-empty) > .rm-bar { display: none; }
+  .rm-t .rm-src { display: block; box-sizing: border-box; width: calc(100% - 2 * var(--s-400)); min-height: 240px; margin: var(--s-200) var(--s-400) 0; resize: vertical;
+    border: 1px solid var(--border-strong); border-radius: var(--r-200); padding: var(--s-200) var(--s-300); background: var(--surface); }
+  .rm-t .rm-src:focus, .rm-t .rm-src:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .rm-t .rm-plabel { position: static; min-height: 24px; margin: var(--s-300) var(--s-400) 0; padding: 0; border: 0; background: transparent; }
+  .rm-t .rm-plabel + .rm-doc.dp-spec { margin-top: var(--s-100); }
+  .rm-t .rm-empty { margin: var(--s-600) auto; padding: 0 var(--s-400); max-width: 44ch; border: 0; border-radius: 0; text-align: center; font-size: var(--fs-200); }
+  .rm-t .rm-empty-title { font-size: var(--fs-300); line-height: var(--lh-300); }
   .rm-edit { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
   .rm-src { min-height: 0; resize: none; border: 0; border-right: 1px solid var(--border); border-radius: 0; margin: 0; padding: var(--s-400); background: var(--surface-sunken); color: var(--fg); font-family: var(--font-mono); font-size: var(--fs-200); line-height: var(--lh-300); tab-size: 2; }
   .rm-src:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--focus-ring); }
@@ -4463,9 +4489,9 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .wfp > .wsp-bar { flex: none; }
   .wfp > .wsp-frames { flex: 1 1 auto; min-height: 0; position: relative; }
   .wfp .wsp-note:empty { display: none; }
-  .wsp.ws-panels:not(.ws-rm) { grid-template-columns: minmax(0, 1fr); }
-  .wsp.ws-panels:not(.ws-rm) > .wsp-side { border-right: 0; }
-  .wsp.ws-panels:not(.ws-rm) > .wsp-view { display: none; }
+  .wsp.ws-panels { grid-template-columns: minmax(0, 1fr); }
+  .wsp.ws-panels > .wsp-side { border-right: 0; }
+  .wsp.ws-panels > .wsp-view { display: none; }
   body.po-dock #po-panel.pd-off { position: absolute; inset: 0; visibility: hidden; border: 0; }
   /* Points: the person's points with the PO, as a list of their own. */
   .pdp { display: flex; flex-direction: column; gap: var(--s-200); }
@@ -11344,10 +11370,10 @@ function wsPaintViewNow(v, box) {
   wsPaintTabs(v);
   const stage = box.querySelector('.wsp-frames'), bar = box.querySelector('.wsp-bar');
   const sel = v.tabs.find(x => wsSame(x.path, v.sel)) || null;
-  // The roadmap shows in its own view and editor, not a viewer.
+  // The roadmap shows in its own view and editor, not a viewer; in panels
+  // mode it is the PO's Roadmap tool instead (#389), never a tab here.
   const rmTab = !panels && !!sel && wsIsRoadmap(v, sel.path);
-  v.el.classList.toggle('ws-rm', panels && rmTab);
-  const t = panels && !rmTab ? null : sel, gone = !!t && t.missing && !rmTab;
+  const t = panels ? null : sel, gone = !!t && t.missing && !rmTab;
   const key = t && !t.missing && !rmTab ? wsNorm(t.path) : '';
   // A viewer whose tab closed or whose file went is dropped: if the file comes
   // back, it is read again rather than shown as it was.
@@ -14212,7 +14238,18 @@ function rmMd(st, text) {
 function rmBuild(panel, pid) {
   const st = rmState(pid);
   panel.dataset.mode = st.editing ? 'edit' : 'view';
-  panel.innerHTML = `<div class="rm">
+  // #389: in the PO's Roadmap tool (rm-tool) it is built like the task's Spec:
+  // a quiet line, the roadmap in the Spec's block (dp-spec), and while editing
+  // the text above its preview, since 480 px is too narrow for side by side.
+  if (panel.classList.contains('rm-tool')) {
+    panel.innerHTML = `<div class="rm rm-t">
+    <div class="rm-bar"><span class="rm-file">ROADMAP.md</span><span class="rm-meta"></span><span class="rm-acts"></span></div>
+    <div class="rm-note" role="status" hidden></div>
+    ${st.editing
+      ? `<textarea class="rm-src" spellcheck="true" aria-label="Roadmap source, Markdown"></textarea><div class="rm-plabel"></div>`
+      : ''}<div class="rm-doc dp-spec"></div>
+  </div>`;
+  } else panel.innerHTML = `<div class="rm">
     <div class="rm-bar"><span class="rm-file">ROADMAP.md</span><span class="rm-path"></span><span class="rm-meta"></span><span class="rm-acts"></span></div>
     <div class="rm-note" role="status" hidden></div>
     ${st.editing
@@ -14246,14 +14283,15 @@ function rmPaint(panel, pid) {
   if ((panel.dataset.mode === 'edit') !== st.editing) { rmBuild(panel, pid); return; }
   const d = st.data;
   const home = rmDir(d && d.path);
+  const tool = panel.classList.contains('rm-tool');
   const pathEl = panel.querySelector('.rm-path');
-  if (pathEl.textContent !== tildeify(home)) { pathEl.textContent = home ? tildeify(home) : ''; pathEl.title = (d && d.path) || ''; }
+  if (pathEl && pathEl.textContent !== tildeify(home)) { pathEl.textContent = home ? tildeify(home) : ''; pathEl.title = (d && d.path) || ''; }
   const dirty = rmDirty(st);
   writeSlot(panel.querySelector('.rm-meta'), st.editing
-    ? (dirty ? 'Editing · unsaved changes' : 'Editing')
+    ? (tool ? (dirty ? 'editing · unsaved changes' : 'editing') : (dirty ? 'Editing · unsaved changes' : 'Editing'))
     : (d && d.exists ? `saved ${agoSpan(d.mtime)} ago` : ''));
   writeSlot(panel.querySelector('.rm-acts'), st.editing
-    ? `<button type="button" class="rm-btn${dirty ? ' danger' : ''}" data-rm="cancel">${dirty ? 'Discard changes' : 'Cancel'}</button>`
+    ? `<button type="button" class="rm-btn${dirty ? ' danger' : tool ? ' ghost' : ''}" data-rm="cancel">${dirty ? 'Discard changes' : 'Cancel'}</button>`
       + (st.conflict ? '' : `<button type="button" class="rm-btn primary" data-rm="save"${st.saving ? ' disabled' : ''} title="Save (Ctrl+S)">${st.saving ? 'Saving…' : 'Save'}</button>`)
     : (d && d.exists ? `<button type="button" class="rm-btn" data-rm="edit">Edit</button>` : ''));
   const note = panel.querySelector('.rm-note');
@@ -14285,7 +14323,7 @@ function rmPaint(panel, pid) {
     writeSlot(doc, st.err ? `<div class="rm-empty"><div class="rm-empty-title">Couldn’t read the roadmap</div><p>${esc(st.err)}</p></div>` : '<p>Loading…</p>');
   } else if (!d.exists) {
     writeSlot(doc, `<div class="rm-empty"><div class="rm-empty-title">No roadmap yet</div>`
-      + `<p>The roadmap is <code>ROADMAP.md</code> in this ${esc(noun('one'))}’s folder. The ${esc(noun('one'))}’s PO keeps it current, and you can write or change it here. The file is created the first time someone saves.</p>`
+      + `<p>The roadmap is <code>ROADMAP.md</code> in this ${esc(noun('one'))}’s folder. The ${esc(noun('one'))}’s PO keeps it current, and you can write or change it here.${tool ? '' : ' The file is created the first time someone saves.'}</p>`
       + `<button type="button" class="rm-btn primary" data-rm="edit">Write the roadmap</button></div>`);
   } else {
     writeSlot(doc, rmMd(st, d.text));

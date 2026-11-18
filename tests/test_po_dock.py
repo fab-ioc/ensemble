@@ -363,16 +363,18 @@ async function main() {
       const m = PD.els.workspace.querySelector('.dcm[role="menu"]'), items = m ? [...m.querySelectorAll('.dcm-item')].map(i => i.textContent) : [];
       if (m) m.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true}));
       return {items, share:FileDrag.canShare(), gone:!PD.els.workspace.querySelector('.dcm[role="menu"]')}; })()`);
-    // The roadmap opens in a tab, in its own view and editor.
+    // The roadmap opens the PO's Roadmap tool (#389), not a Files tab.
     await p.evalIn('PD.els.workspace.querySelector(".wse.doc[data-roadmap]").click(); 0');
-    await p.until('(() => { const rm = document.getElementById("rm-panel"); return !rm.hidden && !!rm.closest("#ws-panel") && /Motors roadmap/.test(rm.innerText); })()', 15000);
-    out.roadmap = await p.evalIn(`(() => { const rm = document.getElementById('rm-panel'); return { inWs: !!rm.closest('.wsp-frames'), edit: !!rm.querySelector('button[data-rm="edit"]'),
-      tab: (PD.els.workspace.querySelector('.wst-tab.on .wst-nm') || {}).textContent || '', frame: !!PD.els.workspace.querySelector('iframe.wsp-frame.on'), note: rm.querySelector('.rm-note').offsetHeight }; })()`);
+    await p.until('(() => { const rm = document.getElementById("rm-panel"); return PD.dock.flyOpen() === "spec" && !!rm.closest(".pd-spec") && /Motors roadmap/.test(rm.innerText); })()', 15000);
+    out.roadmap = await p.evalIn(`(() => { const rm = document.getElementById('rm-panel'); return { inSpec: rm.parentNode === PD.els.spec, tool: rm.classList.contains('rm-tool'), edit: !!rm.querySelector('button[data-rm="edit"]'),
+      tabs: PD.els.workspace.querySelectorAll('.wst-tab').length, title: PD.dock.title('spec'), note: rm.querySelector('.rm-note').offsetHeight }; })()`);
     await p.shot('po-dock-roadmap');
-    // A document opens as a panel of its own (#150), and the roadmap's view steps aside.
+    // A document opens as a panel of its own (#150).
+    await p.evalIn('document.querySelector(\'.dk-strip-btn[data-dk-auto="workspace"]\').click(); 0');
+    await p.until('PD.dock.flyOpen() === "workspace"', 10000);
     await p.evalIn('[...PD.els.workspace.querySelectorAll(".wse.doc[data-path]")].find(x => x.dataset.path.endsWith("#1 Notes.md")).click(); 0');
     await p.until(FILE_ON, 20000);
-    out.docOpen = await p.evalIn(`({ tab: [...document.querySelectorAll('#po-dock .dk-tab[data-dk-tab^="file:"]')].map(t => t.textContent).join(), rmHidden: document.getElementById('rm-panel').hidden,
+    out.docOpen = await p.evalIn(`({ tab: [...document.querySelectorAll('#po-dock .dk-tab[data-dk-tab^="file:"]')].map(t => t.textContent).join(), rmInSpec: document.getElementById('rm-panel').parentNode === PD.els.spec,
       marked: [...PD.els.workspace.querySelectorAll('.wse.doc.on')].map(x => x.querySelector('.nm').textContent), tabs: PD.els.workspace.querySelectorAll('.wst-tab').length,
       panels: document.querySelectorAll('#po-dock .wfp').length, inFiles: PD.els.workspace.querySelectorAll('iframe.wsp-frame').length })`);
     out.fallbackDrag = await p.evalIn(`(async () => { const v=[...WS_VIEWS.values()].find(x => x.tabs.some(t => /#1 Notes\.md$/.test(t.path)));
@@ -1065,16 +1067,16 @@ class InChrome(unittest.TestCase):
         self.assertGreater(len(d["roots"]), 1)
         self.assertEqual(d["flyScroll"], 0, "sliding the panel out does not shift the dock")
 
-    def test_the_roadmap_opens_in_a_tab_in_its_own_view_and_editor(self):
+    def test_the_roadmap_row_opens_the_roadmap_tool(self):
         r = self.got["roadmap"]
-        self.assertEqual(r, {"inWs": True, "edit": True, "tab": "ROADMAP.md", "frame": False, "note": 0}, r)
+        self.assertEqual(r, {"inSpec": True, "tool": True, "edit": True, "tabs": 0, "title": "Roadmap", "note": 0}, r)
 
     def test_a_document_opens_as_a_panel_of_its_own(self):
         d = self.got["docOpen"]
         self.assertEqual(d["tab"], "#1 Notes.md", "a panel of the dock named after the file (#150)")
-        self.assertTrue(d["rmHidden"], "the roadmap's view steps aside")
+        self.assertTrue(d["rmInSpec"], "the roadmap stays in its tool")
         self.assertEqual(d["marked"], ["Notes"], "its row is the one marked")
-        self.assertEqual((d["tabs"], d["panels"], d["inFiles"]), (1, 1, 0), "the roadmap's tab stays in Files; the document is a panel, no viewer in Files")
+        self.assertEqual((d["tabs"], d["panels"], d["inFiles"]), (0, 1, 0), "no file tab in Files; the document is a panel, no viewer in Files")
 
     def test_the_find_box_narrows_the_documents(self):
         f = self.got["filter"]

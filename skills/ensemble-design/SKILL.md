@@ -1233,8 +1233,14 @@ per page, so both docks' windows find their way back (the page's own `pdKeepPopK
   leaves the button out entirely; no Ensemble CSS needed. Closing hides the panel in Window mode.
   The window's ⋯ → View Mode docks it back; Panels or its retained active strip button reopens a
   hidden window. A reload of this page keeps the window and takes it back (#204; Dock's adoption since #205).
-- **The roadmap** is a document: the first row of the Workspace's Documents node, opening in a tab
-  that is its own view and editor. There is no Roadmap tab or panel.
+- **The roadmap** is the fifth tool while the PO is in front (#389): that slot reads **Roadmap**
+  (route-to-a-flag glyph, `--tool-spec`) for the PO and **Spec** for an open task — one panel, one
+  saved place (`spec`), its title set by `pdRoadmapSync` (`PD.dock.setTitle`). The Roadmap panel is
+  `#rm-panel` in its tool form (`.rm-tool`, `.rm-t`), built like the Spec: a quiet line (ROADMAP.md
+  · saved … · Edit), the roadmap in the Spec's block (`.dp-spec`), the text above its preview while
+  editing; it follows ROADMAP.md while open (`rmLoad`, every 4 s at most). Documents' first row
+  (Roadmap), Go to file and old roadmap links open the tool (`pdOpenRoadmap`); in panels mode the
+  roadmap is never a Files tab. A PO has no Spec tool.
 - **Phone:** the same dock, narrow (the library's `narrow`, switched by `setNarrow` on resize; its
   layout kept apart, under `cd-phone-tabs`): one column of tabs, no control that moves a panel.
   The tab row is `--touch-min` tall (plus its 1px rule) and scrolls sideways; the dock fills the

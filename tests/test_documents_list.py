@@ -307,7 +307,7 @@ class TheWiring(unittest.TestCase):
 
     def test_the_roadmaps_tab_is_its_own_view(self):
         view = js_function("wsPaintViewNow")   # (wsPaintView guards against re-entry, #150)
-        self.assertIn("const rmTab = !!sel && wsIsRoadmap(v, sel.path);", view)
+        self.assertIn("const rmTab = !panels && !!sel && wsIsRoadmap(v, sel.path);", view, "in panels mode the roadmap is the Roadmap tool (#389)")
         self.assertIn("wsRoadmapPaint(v, stage, rmTab);", view)
         self.assertIn("rmPark(panel);", js_function("wsRenderInto"), "its draft outlives a rebuilt Workspace")
         self.assertIn("rmPark(el);", js_function("docsPanelRender"))
