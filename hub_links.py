@@ -59,6 +59,9 @@ def _own_names() -> frozenset[str]:
 _SEEN: set[tuple[str, int]] = set()
 # This machine's tailnet names (MagicDNS), from `tailscale status`.
 _TS_NAMES: set[str] = set()
+# The https addresses tailscale serve gives the hub, as (host, port), in the
+# order `tailscale serve status` lists them (learn_tailscale).
+_HTTPS: list[tuple[str, int]] = []
 
 
 def _norm(host: str) -> str:
@@ -159,7 +162,22 @@ def learn_tailscale(status: dict | None, serve: dict | None) -> None:
                 continue
             if to == (hub_port(), True):
                 listens(where, "https")
+                hp = _split(where, "https")
+                if hp and hp not in _HTTPS:
+                    _HTTPS.append(hp)
                 break
+
+
+def https_address() -> str:
+    """Where tailscale serve gives the hub https, as ``host`` or ``host:port``
+    (the default port first), or "" when it serves none (P386): a page opened
+    on the tailnet's plain http is sent there, where the browser lets it use
+    the microphone."""
+    if not _HTTPS:
+        return ""
+    h, p = sorted(_HTTPS, key=lambda hp: hp[1] != 443)[0]
+    h = f"[{h}]" if ":" in h else h
+    return h if p == 443 else f"{h}:{p}"
 
 
 def hub_origin(host: str, port: int | None, scheme: str = "http") -> bool:
