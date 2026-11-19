@@ -5749,6 +5749,7 @@ function showLatest() {
 function toLatest() {
   const box = $('#msgs');
   STICK = true;
+  LAND_KEEP = null;
   if (ROOM_WIN) { ROOM_WIN = null; if (ROOM_OBJ) renderMsgs(ROOM_OBJ); }
   if (SOLO_WIN) { SOLO_WIN = null; if (SOLO_SID) renderSolo(SOLO_SID, SOLO_AGENT, true); }
   if (THREADED && THR_AFTER) {
@@ -5828,11 +5829,14 @@ let OLDER_BUSY = null;
 // (&after=) until the two meet; Latest leaves it.
 let ROOM_WIN = null, ROOM_DOWN = null;
 function roomHasOlder() { const w = ROOM_WIN || (ROOM_OBJ && ROOM_OBJ.window); return !!(w && w.before > 0); }
+// #394: the last loadOlder could not read the page (a fetch that failed), not "there is none".
+let OLDER_ERR = false;
 function loadOlder(upto = '') {
   if (OLDER_BUSY) return OLDER_BUSY;
   const shown = ROOM_WIN || ROOM_OBJ, first = shown && (shown.messages || [])[0];
   if (!roomHasOlder() || !first) return Promise.resolve(false);
   OLDER_BUSY = (async () => {
+    OLDER_ERR = false;
     try {
       const d = await fetch('/api/room?id=' + encodeURIComponent(ROOM) + '&n=100&before=' + encodeURIComponent(first.id)
         + (upto ? '&upto=' + encodeURIComponent(upto) : '')).then(r => r.json());
@@ -5861,16 +5865,20 @@ function loadOlder(upto = '') {
       // #234) stays at the end and keeps following.
       const atEnd = !upto && STICK && nearEnd(box);
       STICK = false;
+      // A render that landed a link (the page asked for a message older than
+      // those held) has put that message on screen: the old place is not kept.
+      const landed0 = LANDED;
       if (SOLO_MODE) { if (!threadedView() && SOLO_SID) renderSolo(SOLO_SID, SOLO_AGENT, true); }
       else if (ROOM_OBJ) renderMsgs(ROOM_OBJ);
-      if (atEnd && !DRAW_HELD) { box.scrollTop = box.scrollHeight; STICK = true; }
+      if (LANDED && LANDED !== landed0) { /* landed: stays on the message */ }
+      else if (atEnd && !DRAW_HELD) { box.scrollTop = box.scrollHeight; STICK = true; }
       else if (!DRAW_HELD && place) {
         const at = mid && [...box.querySelectorAll('[data-mid]')].find(e => e.dataset.mid === mid && e.offsetParent);
         const row = at && [...box.children].find(k => k.contains(at));
         box.scrollTop = row ? row.offsetTop - place.off : t0 + box.scrollHeight - h0;
       }
       return true;
-    } catch (e) { return false; }
+    } catch (e) { OLDER_ERR = true; return false; }
     finally { OLDER_BUSY = null; }
   })();
   return OLDER_BUSY;
@@ -6026,7 +6034,13 @@ function showGotoNote(text) {
 // just the relevant answer or point, rather than the full balloon").
 let GOTO_AT = 0;   // when a link last asked for a balloon: a `shown` in the same gesture defers to it
 function gotoMsg(mid, part) {
+  const was = GOTO;
   GOTO = String(mid || '').trim();
+  // #394: a new ask (the same balloon opened again, after a landing or from
+  // another Inbox row) asks the channel for it again: the last ask is no
+  // answer for it (the chat may be back on its newest page since).
+  if (GOTO !== was) THR_ASKED = '';
+  LAND_KEEP = null;
   GOTO_PART = String(part || '').trim();
   GOTO_AT = Date.now();
   if (SOLO_WANT && SOLO_WANT.failed) SOLO_WANT = null;   // a new try loads it again
@@ -6150,16 +6164,16 @@ function landPending() {
         if (roomHasOlder() && !(ROOM_OBJ.messages || []).some(m => m.id === mid)) {
           loadOlder(mid).then(ok => {
             if (ok) { landPending(); return; }
-            if (GOTO === mid) { GOTO = ''; GOTO_PART = ''; showGotoNote('The linked message is not shown in this chat.'); }
+            if (GOTO === mid) { GOTO = ''; GOTO_PART = ''; gotoFail(mid, OLDER_ERR ? GOTO_UNLOADED : 'The linked message is not shown in this chat.'); }
           });
           return;
         }
         GOTO = ''; GOTO_PART = '';
-        showGotoNote('The linked message is not shown in this chat.');
+        gotoFail(mid, 'The linked message is not shown in this chat.');
         return;
       }
       GOTO = ''; GOTO_PART = '';
-      openThread('', mid, passage);
+      if (!openThread('', mid, passage)) gotoDone(mid, true, 'thread');
       return;
     }
     if (!el) {
@@ -6185,16 +6199,16 @@ function landPending() {
           if (ok) return landPending();
           if (GOTO !== mid) return;
           GOTO = '';
-          showGotoNote('The linked message was not found in this conversation.');
+          gotoFail(mid, OLDER_ERR ? GOTO_UNLOADED : 'The linked message was not found in this conversation.');
         });
         return;
       }
       GOTO = '';
-      showGotoNote(failed ? 'The linked message could not be loaded. Reload the page to try again.'
+      gotoFail(mid, failed ? 'The linked message could not be loaded. Reload the page to try again.'
         : 'The linked message was not found in this conversation.');
       return;
     }
-    GOTO = '';
+    GOTO = ''; THR_ASKED = '';
     const part = GOTO_PART;
     GOTO_PART = '';
     unwrapMarks(box);
@@ -6215,6 +6229,8 @@ function landPending() {
       markLanded(el);
       try { el.focus({ preventScroll: true }); } catch (e) {}
       LANDED.el = el;   // the node with the focus: a redraw replacing it hands the focus on (ibxMark)
+      landKeepSet(el);
+      gotoDone(mid, true);
       return;
     }
     const at = partOf(el, part) || el;   // the whole balloon when it has no such passage
@@ -6228,7 +6244,53 @@ function landPending() {
     LANDED = { mid, part, at: Date.now() };
     seenLink(mid);
     markLanded(at);
+    landKeepSet(el);
+    gotoDone(mid, true);
   } finally { _landing = false; }
+}
+// #394: the balloon a link landed on stays where it is on screen while the
+// reader has not scrolled it away or asked for the latest: the chat shown
+// again (its panel back in front, its frame back from 0 high) puts it back
+// there, never at the latest.
+let LAND_KEEP = null;   // { mid, top }: the landed balloon and its top under the chat's top
+function landKeepEl() {
+  const box = $('#msgs');
+  return LAND_KEEP && box ? [...box.querySelectorAll('.msg[data-mid]')].find(e => e.dataset.mid === LAND_KEEP.mid) || null : null;
+}
+function landKeepSet(el) {
+  const box = $('#msgs');
+  LAND_KEEP = el && box ? { mid: el.dataset.mid, top: el.getBoundingClientRect().top - box.getBoundingClientRect().top } : null;
+}
+// The reader's scroll took it out of the chat's view: the keep is over.
+function landKeepScrolled() {
+  if (!LAND_KEEP || Date.now() - USER_SCROLL_T >= 1000) return;
+  const box = $('#msgs'), el = landKeepEl();
+  if (!box || !box.clientHeight) return;
+  const r = box.getBoundingClientRect(), e = el && el.getBoundingClientRect();
+  if (!e || e.bottom <= r.top || e.top >= r.bottom) { LAND_KEEP = null; return; }
+  LAND_KEEP.top = e.top - r.top;
+}
+// Shown again: back where it was. False when nothing is kept (or its balloon
+// is not drawn any more): the chat opens at the latest, as before.
+function landKeepPut() {
+  const box = $('#msgs'), el = landKeepEl();
+  if (!LAND_KEEP || !box) return false;
+  if (!el) { LAND_KEEP = null; return false; }
+  if (!box.clientHeight) return true;
+  const d = el.getBoundingClientRect().top - box.getBoundingClientRect().top - LAND_KEEP.top;
+  if (Math.abs(d) >= 1 && !scrollMoving()) box.scrollTop += d;
+  STICK = nearEnd(box);
+  showLatest();
+  return true;
+}
+// #394: the dashboard is told a link's balloon has landed, or why it cannot:
+// it keeps asking until then (a chat reloaded meanwhile is asked again), and
+// says plainly what could not be opened.
+const GOTO_UNLOADED = 'The linked message could not be loaded. Reload the page to try again.';
+function gotoFail(mid, text) { showGotoNote(text); gotoDone(mid, false, text); }
+function gotoDone(mid, ok, why) {
+  const h = embedHost();
+  if (h) try { h.postMessage({ type: 'goto-done', roomId: ROOM, msg: mid, ok: !!ok, why: why || '' }, location.origin); } catch (e) {}
 }
 // The landed mark, on the balloon (or its passage) or on the node a redraw
 // put in its place (a chip resolving changes its HTML), where the fade has
@@ -7105,7 +7167,7 @@ async function renderSolo(sid, agentId, force) {
       // A link opened with the chat, which has never loaded: the stat poll will
       // not ask again for an unchanged transcript, so try again here, then say so.
       if (++SOLO_FIRST_TRIES < 3) setTimeout(renderSolo, 2000 * SOLO_FIRST_TRIES, SOLO_SID, SOLO_AGENT, true);
-      else { GOTO = ''; showGotoNote('The linked message could not be loaded. Reload the page to try again.'); }
+      else { const mid = GOTO; GOTO = ''; gotoFail(mid, 'The linked message could not be loaded. Reload the page to try again.'); }
     }
   } finally {
     SOLO_FETCHING = false;
@@ -7745,10 +7807,10 @@ function thrNotShown(d) {
     chatFilterSet({ kind: 'all' });
     return;
   }
-  if (at === 'balloon' || (at === undefined && !room)) { openThread('', target, part); return; }
+  if (at === 'balloon' || (at === undefined && !room)) { if (!openThread('', target, part)) gotoDone(target, true, 'thread'); return; }
   const cardTid = at === 'thread' && ((d && d.cardThreads) || {})[target];
-  if (cardTid) { openThread(cardTid, target, part); return; }
-  showGotoNote(at === 'room' || (at == null && room) ? 'The linked message is not shown in this chat.'
+  if (cardTid) { if (!openThread(cardTid, target, part)) gotoDone(target, true, 'thread'); return; }
+  gotoFail(target, at === 'room' || (at == null && room) ? 'The linked message is not shown in this chat.'
     : 'The linked message was not found in this conversation.');
 }
 // The thread's title over its messages, and the way back on a phone.
@@ -8158,9 +8220,11 @@ function gotoThread(w) {
   else if (THREAD_MODE) openThread('', w.tmid, w.part || '');
   else sideOpen({ tid: '', mid: w.tmid, msg: w.msg || w.tmid, part: w.part || '' });
 }
+// #394: true when a thread frame (the Dock's panel or the side frame) took
+// the balloon: that page says whether it landed (goto-done), not this one.
 function openThread(tid, mid, part = '') {
   if (!tid && !mid) return;
-  if (!THREAD_MODE) { sideOpen({ tid: tid || '', mid: tid ? '' : (mid || ''), msg: mid || '', part }); return; }
+  if (!THREAD_MODE) return sideOpen({ tid: tid || '', mid: tid ? '' : (mid || ''), msg: mid || '', part });
   const host = embedHost();
   if (host) { host.postMessage({ type: 'open-thread', roomId: ROOM, thread: tid || '', mid: mid || '', part }, location.origin); return; }
   const u = '/session?id=' + encodeURIComponent(ROOM) + (tid ? '&thread=' + encodeURIComponent(tid) : '&thread=&tmid=' + encodeURIComponent(mid)) + (mid ? '&msg=' + encodeURIComponent(mid) : '') + (part ? '&part=' + encodeURIComponent(part) : '');
@@ -8232,8 +8296,9 @@ function sideNow() {
 }
 function sideOpen(o) {
   const side = $('#thr-side'), f = $('#ts-frame');
-  if (!side || !f || (!o.tid && !o.mid)) return;
-  if (sideTabAsked(o) && sideTab(o)) { SIDE_CLICK.mod = false; return; }
+  if (!side || !f || (!o.tid && !o.mid)) return false;
+  // A thread page in a tab of its own takes it (#393) and says whether it landed (#394).
+  if (sideTabAsked(o) && sideTab(o)) { SIDE_CLICK.mod = false; return true; }
   // The same thread open already, by its id or by the balloon it starts on.
   const same = !!TS && (o.tid ? TS.tid === o.tid : !TS.tid && !!o.mid && TS.mid === o.mid);
   TS = { tid: o.tid || '', mid: o.tid ? '' : o.mid };
@@ -8254,7 +8319,7 @@ function sideOpen(o) {
     sideAimNow(dock);
     if (!side.hidden) { side.hidden = true; f.setAttribute('src', 'about:blank'); }
     sideMark();
-    return;
+    return true;
   }
   setText($('#ts-title'), title);
   tsPenPaint();
@@ -8271,6 +8336,7 @@ function sideOpen(o) {
     f.setAttribute('src', u);
   }
   sideMark();
+  return true;
 }
 // The page framing this chat shows the thread in place over it when it can
 // (index.html's pdThreadPanel, synchronous): true when it did. A chat in a
@@ -10912,7 +10978,7 @@ window.addEventListener('message', (e) => {
   // (Opened for a link to one of its balloons in the same gesture — the task
   // leaving the middle brings this chat back — the balloon is where it stays.)
   else if (d.ensemble === 'shown' && e.source === window.parent) {
-    if (!GOTO && Date.now() - GOTO_AT > 2000) { toLatest(); if (CHAT_DRAWN) catchUpOpen(); }
+    if (!GOTO && Date.now() - GOTO_AT > 2000 && !landKeepPut()) { toLatest(); if (CHAT_DRAWN) catchUpOpen(); }
     if (typeof tickNow === 'function') tickNow();
   }
   // The dashboard opened this chat for a link to one of its balloons.
@@ -11802,6 +11868,7 @@ function msgsScrolled() {
   SETTLE_TIMER = setTimeout(msgsSettle, 160);
   showLatest();
   readTick(true);
+  landKeepScrolled();
   if (!at && box.scrollTop < box.clientHeight && roomHasOlder() && !SOLO_MODE && !DRAW_HELD) loadOlder();
   if (!at && box.scrollTop < box.clientHeight && THREADED && THR_BEFORE && !DRAW_HELD) thrLoadUp();
   if (box.scrollHeight - box.scrollTop - box.clientHeight < box.clientHeight && THREADED && THR_AFTER && !DRAW_HELD) thrLoadDown();
@@ -11837,7 +11904,7 @@ function msgsResized() {
   if (!h && _msgsH > 0 && STICK && CHAT_DRAWN) markRead();
   if (h && _msgsH === 0) {
     if (GOTO) { GOTO_OPEN = true; landPending(); if (CHAT_DRAWN) catchUpOpen(); }
-    else { toLatest(); if (CHAT_DRAWN) catchUpOpen(); }
+    else if (!landKeepPut()) { toLatest(); if (CHAT_DRAWN) catchUpOpen(); }
   }
   else if (h && STICK) toEnd(box);
   _msgsH = h;

@@ -29,7 +29,7 @@ class _Parts(_World):
         points._PARTS.clear()
         points._LOOKUPS.clear()
         # the cards as read: no background read between two views
-        for name, value in (("cards_ready", True), ("decisions", ([], []))):
+        for name, value in (("cards_ready", True), ("decisions", [])):
             p = mock.patch.object(asks, name, return_value=value)
             p.start()
             self.addCleanup(p.stop)

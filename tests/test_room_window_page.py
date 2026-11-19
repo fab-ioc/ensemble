@@ -71,7 +71,8 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     await until('typeof ROOM_OBJ !== "undefined" && !!ROOM_OBJ && CHAT_DRAWN');
     await until(`!!document.querySelector('#msgs .msg[data-mid="m7"]') || /not found/.test(document.body.innerText)`);
     out.opened = await ev(`({ landed: !!document.querySelector('#msgs .msg[data-mid="m7"]'), notFound: /not found/.test(document.body.innerText),
-      first: (ROOM_WIN || ROOM_OBJ).messages[0].id, win: !!ROOM_WIN, gap: ROOM_WIN && ROOM_WIN.gap })`);
+      first: (ROOM_WIN || ROOM_OBJ).messages[0].id, win: !!ROOM_WIN, gap: ROOM_WIN && ROOM_WIN.gap,
+      vis: (() => { const b = document.getElementById('msgs').getBoundingClientRect(), e = document.querySelector('#msgs .msg[data-mid="m7"]').getBoundingClientRect(); return e.bottom > b.top && e.top < b.bottom; })() })`);
     // Scrolling down the window pages it until it meets the messages held.
     for (let i = 0; i < 10 && await ev('!!ROOM_WIN'); i++) {
       await ev(`(() => { const b = document.getElementById('msgs'); b.scrollTop = b.scrollHeight; b.dispatchEvent(new Event('scroll')); return 0; })()`);
@@ -137,14 +138,17 @@ class RoomWindowPage(unittest.TestCase):
         o = self.got["opened"]
         self.assertTrue(o["landed"])
         self.assertFalse(o["notFound"])
-        self.assertEqual(o["first"], "m2", "the window from the link's balloon, with 5 before it")
+        # #394: the reader is left on the balloon (not at the old place, off screen);
+        # near the window's top, the page before it loads too (m0, m1).
+        self.assertTrue(o["vis"], "the linked balloon is on screen")
+        self.assertEqual(o["first"], "m0", "the window from the link's balloon with 5 before it, then the page before")
         self.assertTrue(o["win"], "a window, not everything down to the link")
         self.assertGreater(o["gap"], 100)
 
     def test_scrolling_down_a_window_joins_it_to_the_latest(self):
         j = self.got["joined"]
         self.assertFalse(j["win"])
-        self.assertEqual((j["first"], j["before"]), ("m2", 2))
+        self.assertEqual((j["first"], j["before"]), ("m0", 0))
         self.assertTrue(j["ids"], "no message missing or twice where they met")
 
     def test_a_link_far_back_gets_a_window_around_its_balloon(self):

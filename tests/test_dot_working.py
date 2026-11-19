@@ -127,12 +127,13 @@ class APORowKeepsTheSameRule(_Needs):
             self.addCleanup(patch.stop)
         attention._SUMMARY_CACHE.clear()
 
-    def test_its_old_read_ask_leaves_and_unread_stays(self):
+    def test_its_old_ask_stays_read_or_unread(self):
+        # P395: reading it removes nothing; Done with this does (below).
         chatroom.post_message(self.rid, "claude", "Ask: Which label first?", to="user")
         ts = self.age_last(9 * DAY)
         self.assertEqual(self.item()["askKind"], "asks")      # unread: stays however old
         self.seen(ts)
-        self.assertIsNone(self.item())
+        self.assertEqual(self.item()["askKind"], "asks")      # read: stays as well
 
     def test_done_with_this_takes_its_ask_out(self):
         chatroom.post_message(self.rid, "claude", "Ask: Which label first?", to="user")

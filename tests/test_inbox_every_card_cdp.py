@@ -1,23 +1,20 @@
-"""The Inbox says when its cards are older questions (#360, P333 option A), in
-headless Chrome over CDP against a hub in a thread.
+"""Every open question card is a row in Needs your answer (#394, P396): no
+Older questions group, in headless Chrome over CDP against a hub in a thread.
 
 Two projects whose PO asked and the person wrote past every question
-(Motors 4, opTen 10), then three new questions (Motors 1, opTen 2) and a
-project with only a new one (Plain 1). Checked, at 1440x900 and 390x844:
+(Motors 4, opTen 10), then three new questions (Motors 1, opTen 2), a
+project with only a new one (Plain 1), one asked the same question twice
+(Again: both cards) and one whose question came before Clear all (Cleared:
+none). Checked, at 1440x900 and 390x844:
 
-* nothing waiting, 14 older: the Inbox heading reads 0, "Older questions · 14"
-  and "You wrote past them in their chat" come first under it, the older
-  cards are quiet (grey bar, sunken ground, regular title); All, opTen and
-  Motors show an outlined grey 14, 10, 4; the left strip has no badge with
-  the Inbox put away; a selected row's grey count stays outlined;
-* a closed older card waiting on its Undo leaves both the heading's N and
-  the grey counts (13, opTen 9); Undo brings back 14 and 10;
-* 5 waiting and 16 older: heading 5, the filled chips All 5, opTen 2,
-  Motors 1, Plain 1, Again 1, the grey 1 of Cleared (its question from before
-  Clear all), the older heading after the 5 waiting cards, the strip badge 5;
-  Plain alone lists no older heading; Again (a question asked twice) and
-  Cleared say their own reason, All names the three;
-* the phone's Inbox pane: "Older questions 14" and the why line under it;
+* written past, 14 open: the Inbox heading reads 14, 14 answer cards with the
+  amber bar, no Older heading anywhere; All, opTen and Motors show filled
+  14, 10, 4; the left strip's badge with the Inbox put away is 14;
+* a closed card waiting on its Undo leaves the counts (13, opTen 9); Undo
+  brings back 14 and 10;
+* mixed: heading 20, chips All 20, opTen 12, Motors 5, Plain 1, Again 2, no
+  chip for Cleared (its Inbox empty);
+* the phone's Inbox pane: only "Needs your answer N";
 * every count on screen agrees, nothing is wider than the screen, the page
   threw nothing.
 
@@ -85,27 +82,21 @@ async function main() {
     return { evalIn, until, click, hover, shot, close: () => c.send('Target.closeTarget', { targetId }) };
   };
   const HIDE = `document.querySelector('#list-dock .dk-stack:has([data-dk-tab="inbox"]) .dk-head [data-dk-act="hide"]')`;
-  const settled = box => `!IBX.data.pending && document.querySelectorAll("${box} .ibx-row").length === ibxRows(IBX.data, IBX.scope, IBX.ldPid).length + ibxOlder(IBX.data, IBX.scope, IBX.ldPid).length`;
+  const settled = box => `!IBX.data.pending && document.querySelectorAll("${box} .ibx-row").length === ibxRows(IBX.data, IBX.scope, IBX.ldPid).length`;
   const geo = p => p.evalIn(`(() => {
     const B = document.getElementById('ld-ibx-body'), cards = B ? [...B.querySelector('.ibx-cards') ? B.querySelector('.ibx-cards').children : []] : [];
-    const head = B && B.querySelector('.ibx-older-head');
-    const old = B && B.querySelector('.ibx-row[data-stage="older"]');
     const css = (e, k) => e ? getComputedStyle(e)[k] : '';
-    const chip = b => { const n = b.querySelector('.ldp-n'); return [(b.querySelector('.ldp-name') || {}).textContent, n ? n.textContent : '', !!b.querySelector('.ldp-old'),
+    const chip = b => { const n = b.querySelector('.ldp-n'); return [(b.querySelector('.ldp-name') || {}).textContent, n ? n.textContent : '', !!b.querySelector('.ldp-n:not([class="ldp-n"])'),
       n ? css(n, 'backgroundColor') : '', n ? css(n, 'boxShadow') : '', b.getAttribute('aria-current') === 'true', n ? (n.title || '') : '', n ? css(n, 'fontWeight') : '']; };
     const ph = document.getElementById('ph-inbox-body');
     return {
       title: ((B && B.querySelector('.ibx-title')) || {}).textContent || '',
-      older: head ? [head.querySelector('.ibx-older-t').textContent, head.querySelector('.ibx-older-why').textContent] : null,
-      headAt: head ? cards.indexOf(head) : -1,
-      headTop: head ? css(head, 'borderTopWidth') : '',
-      stages: cards.map(e => e.classList.contains('ibx-older-head') ? 'HEAD' : (e.dataset.stage || '')),
-      oldCard: old ? { bar: css(old, 'borderLeftColor'), bg: css(old, 'backgroundColor'), w: css(old.querySelector('.ibx-line'), 'fontWeight') } : null,
+      olderAnywhere: document.querySelectorAll('[class*="older"], [data-stage="older"]').length,
+      stages: cards.map(e => e.dataset.stage || e.className),
       newCard: (n => n ? { bar: css(n, 'borderLeftColor'), bg: css(n, 'backgroundColor'), w: css(n.querySelector('.ibx-line'), 'fontWeight') } : null)(B && B.querySelector('.ibx-row[data-stage="answer"]')),
-      tokens: (s => ({ strong: s.getPropertyValue('--border-strong').trim(), sunken: s.getPropertyValue('--surface-sunken').trim() }))(getComputedStyle(document.documentElement)),
       chips: [...document.querySelectorAll('#ld-projs .ldp-row')].map(chip),
       badge: ((document.querySelector('#list-dock .dk-strip-btn[data-dk-auto="inbox"] .dk-strip-badge') || {}).textContent || '').trim(),
-      phone: ph ? [...ph.querySelectorAll('.pdp-head, .ibx-older-why')].map(e => e.textContent.trim()) : [],
+      phone: ph ? [...ph.querySelectorAll('.pdp-head, [class*="older"]')].map(e => e.textContent.trim()) : [],
       W: document.documentElement.clientWidth, scrollW: document.documentElement.scrollWidth };
   })()`);
   // A colour as the page resolves it, for comparing a token with a computed style.
@@ -118,7 +109,7 @@ async function main() {
     await p.until(settled('#ld-ibx-body') + ' && document.querySelectorAll("#ld-ibx-body .ibx-row").length > 2', 20000);
     await sleep(300);
     out.all = await geo(p); await p.shot(A.scene + '-all');
-    out.colours = { strong: await rgb(p, 'var(--border-strong)'), sunken: await rgb(p, 'var(--surface-sunken)'), muted: await rgb(p, 'var(--fg-muted)') };
+    out.colours = { warn: await rgb(p, 'var(--c-warning-bold)') };
     // A project row selected: its count keeps its own look.
     await p.click(`document.querySelector('#ld-projs [data-ldp-proj="${A.ids.opTen}"]')`); await sleep(400);
     await p.until(settled('#ld-ibx-body'), 20000);
@@ -131,21 +122,46 @@ async function main() {
     }
     await p.click(`document.querySelector('#ld-projs [data-ldp="all"]')`); await sleep(400);
     await p.until(settled('#ld-ibx-body'), 20000);
-    if (A.scene === 'older') {
-      // Close the first older card; while its Undo shows it is not counted, then Undo.
-      const row = `document.querySelector('#ld-ibx-body .ibx-row[data-stage="older"]')`;
+    if (A.scene === 'past') {
+      // Close the first card; while its Undo shows it is not counted, then Undo.
+      const row = `document.querySelector('#ld-ibx-body .ibx-row[data-stage="answer"]')`;
       await p.hover(row); await sleep(150);
+      // Done with this comes with the Needs you items (attention), which may be a poll behind the rows.
+      await p.until(`${row}.querySelectorAll('.ibx-acts .ibx-btn').length === 3`, 10000).catch(() => null);
+      // Its actions stay inside the card in this narrow column (#394: three of them wrap).
+      out.acts = await p.evalIn(`(() => { const r = ${row}, c = r.getBoundingClientRect();
+        return [...r.querySelectorAll('.ibx-acts .ibx-btn')].map(b => { const x = b.getBoundingClientRect(); return x.left >= c.left && x.right <= c.right && x.top >= c.top && x.bottom <= c.bottom; }); })()`);
       await p.click(`${row}.querySelector('[data-ibx-close]')`); await sleep(300);
       out.closing = await geo(p); await p.shot(A.scene + '-closing');
-      await p.click(`document.querySelector('#ld-ibx-body [data-ibx-undo]')`); await sleep(300);
+      // The PO chat's phone strip counts agree (ibxStripCounts writes them on its frame).
+      out.closingStrip = await p.evalIn(`ibxStripCounts(${JSON.stringify(A.ids.opTen)}).q + ibxStripCounts(${JSON.stringify(A.ids.Motors)}).q`);
+      // #394 review 2: the project switcher, open meanwhile, counts as the Inbox does, while open.
+      const pmN = `[...document.querySelectorAll('#proj-menu .pm-item:not(.pm-set)[data-proj="${A.ids.opTen}"]')].map(b => (b.querySelector('.pm-needs') || {}).textContent || '')`;
+      await p.evalIn('openProjMenu(), 0'); await sleep(200);
+      out.menuClosing = await p.evalIn(pmN);
+      // (Undo pressed by hand closes the switcher, as any press outside it; called here, as a count that changes while it is open.)
+      await p.evalIn(`(() => { const b = document.querySelector('#ld-ibx-body [data-ibx-undo]'); ibxRowUndo(b.dataset.ibxUndo, document.getElementById('ld-ibx-body')); return 0; })()`); await sleep(300);
+      out.menuUndone = await p.evalIn(pmN);
+      out.menuSetBare = await p.evalIn(`document.querySelectorAll('#proj-menu .pm-set .pm-needs').length === 0`);
+      out.menuOpen = await p.evalIn(`!document.getElementById('proj-menu').hidden`);
+      // #394 review 4: its Undo over and the hub not yet answered (IBX.hide), the switcher still agrees.
+      out.hidden = await p.evalIn(`(() => { const id = ibxRows(IBX.data, 'project', ${JSON.stringify(A.ids.opTen)}).filter(ibxLive).find(r => r.kind !== 'check').id;
+        window.__rs = ibxRowSend; ibxRowSend = () => new Promise(() => {}); ibxRowAct(id, 'Closed'); const g = IBX.gone.get(id); clearTimeout(g.timer); g.fire();
+        return { id, held: IBX.hide.has(id), inbox: ibxLiveN(ibxRows(IBX.data, 'project', ${JSON.stringify(A.ids.opTen)})) }; })()`);
+      await sleep(200);
+      out.hidden.menu = await p.evalIn(pmN);
+      await p.evalIn(`(() => { ibxRowSend = window.__rs; IBX.hide.delete(${JSON.stringify(out.hidden.id)}); return 0; })()`);
+      await p.evalIn('ibxRepaint(), 0'); await sleep(200);
+      await p.evalIn('closeProjMenu(), 0'); await sleep(200);
       out.undone = await geo(p);
+      out.undoneStrip = await p.evalIn(`ibxStripCounts(${JSON.stringify(A.ids.opTen)}).q + ibxStripCounts(${JSON.stringify(A.ids.Motors)}).q`);
     }
     await p.click(HIDE); await sleep(600);
     out.min = await geo(p); await p.shot(A.scene + '-min');
     await p.close();
     const q = await page(390, 844, true);
     await q.evalIn(`(() => { IBX.scope = 'all'; phPane('inbox'); return 0; })()`);
-    await q.until('!IBX.data.pending && document.querySelectorAll("#ph-inbox-body .ibx-row").length === ibxRows(IBX.data, "all", "").length + ibxOlder(IBX.data, "all", "").length', 20000);
+    await q.until('!IBX.data.pending && document.querySelectorAll("#ph-inbox-body .ibx-row").length === ibxRows(IBX.data, "all", "").length', 20000);
     await sleep(300);
     out.phone = await geo(q); await q.shot(A.scene + '-phone');
     await q.close();
@@ -171,10 +187,10 @@ def ask_msg(asks):
 
 
 @unittest.skipUnless(NODE and CHROME, "needs node and Chrome")
-class OlderQuestionsInChrome(unittest.TestCase):
+class EveryOpenCardIsARowInChrome(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.tmp = tempfile.TemporaryDirectory(prefix="ens-ibo-", ignore_cleanup_errors=True)
+        cls.tmp = tempfile.TemporaryDirectory(prefix="ens-ibe-", ignore_cleanup_errors=True)
         base = Path(cls.tmp.name)
         state = base / "state"
         state.mkdir()
@@ -215,7 +231,7 @@ class OlderQuestionsInChrome(unittest.TestCase):
             ok, why = dashboard.set_project_po(proj["id"], po["id"])
             assert ok, why
             for k in range(2 if twice else 1):
-                if k:       # asked again after the person wrote: the earlier card is a repeat, not past
+                if k:       # asked again after the person wrote: both cards stay open (P396)
                     chatroom.post_message(po["id"], "user", "Busy today.", to="claude")
                 for i in range(0, len(asks), 2):
                     chatroom.post_message(po["id"], "claude", ask_msg(asks[i:i + 2]), to="user")
@@ -234,17 +250,17 @@ class OlderQuestionsInChrome(unittest.TestCase):
         shots = os.environ.get("ENSEMBLE_SHOTS", "")
         if shots:
             Path(shots).mkdir(parents=True, exist_ok=True)
-        script = base / "inbox_older_cdp.js"
+        script = base / "inbox_every_card_cdp.js"
         script.write_text(CDP_JS, encoding="utf-8")
         cls.got = {}
-        for scene in ("older", "mixed"):
+        for scene in ("past", "mixed"):
             if scene == "mixed":
                 for name in ("Motors", "opTen"):
                     chatroom.post_message(pos[name], "claude", ask_msg(NEW[name]), to="user")
                 project("Plain", NEW["Plain"], False)
                 project("Again", NEW["Again"], False, twice=True)     # the earlier card: why "repeat"
                 project("Cleared", NEW["Cleared"], False)
-                # Clear all on the room's Needs you Decisions (#279) marks the questions before now (why "cleared"); the Needs you item is dismissed too, so it does not re-add the card.
+                # Clear all on the room's Needs you Decisions (#279) closes the questions before now; the Needs you item is dismissed too.
                 points.clear_decisions(pos["Cleared"], now=time.time() + 1)
                 dashboard.attention_done_many([pos["Cleared"]])
             args = {**chrome_profile.node_args(), "tmp": cls.tmp.name, "base": f"http://127.0.0.1:{server.server_address[1]}",
@@ -261,91 +277,59 @@ class OlderQuestionsInChrome(unittest.TestCase):
     def chips(g):
         return {c[0]: (c[1], c[2]) for c in g["chips"] if c[1]}
 
-    def test_nothing_waiting_heading_0_and_the_older_heading_right_under_it(self):
-        a = self.got["older"]["all"]
-        self.assertRegex(a["title"], r"·\s*0$", a["title"])
-        self.assertEqual(a["older"], ["Older questions · 14", "You wrote past them in their chat"])
-        self.assertEqual(a["headAt"], 0, "first under the Inbox heading")
-        self.assertEqual(a["headTop"], "0px", "no hairline above it when it comes first")
-        self.assertEqual(a["stages"], ["HEAD"] + ["older"] * 14)
+    def test_written_past_cards_are_rows_with_no_older_heading(self):
+        a = self.got["past"]["all"]
+        self.assertRegex(a["title"], r"·\s*14$", a["title"])
+        self.assertEqual(a["stages"], ["answer"] * 14)
+        self.assertEqual(a["olderAnywhere"], 0)
+        self.assertEqual(a["newCard"]["bar"], self.got["past"]["colours"]["warn"])
+        self.assertEqual(a["newCard"]["w"], "600")
 
-    def test_older_cards_are_quiet(self):
-        g = self.got["older"]
-        o, col = g["all"]["oldCard"], g["colours"]
-        self.assertEqual(o["bar"], col["strong"])
-        self.assertEqual(o["bg"], col["sunken"])
-        self.assertEqual(o["w"], "500")
-        n = self.got["mixed"]["all"]["newCard"]
-        self.assertEqual(n["w"], "600")
-        self.assertNotEqual(n["bar"], col["strong"])
-
-    def test_grey_counts_for_projects_with_only_older_questions(self):
-        g = self.got["older"]
-        self.assertEqual(self.chips(g["all"]), {"All": ("14", True), "opTen": ("10", True), "Motors": ("4", True)})
-        for c in g["all"]["chips"]:
-            if c[2]:
-                self.assertEqual(c[3], "rgba(0, 0, 0, 0)", c)
-                self.assertIn("inset", c[4], c)
-                self.assertRegex(c[6], r"^\d+ older questions?, not counted\. You wrote past them in their chat$", c)
-                self.assertEqual(c[7], "400", c)
+    def test_project_chips_count_them_filled(self):
+        g = self.got["past"]
+        self.assertEqual(self.chips(g["all"]), {"All": ("14", False), "opTen": ("10", False), "Motors": ("4", False)})
         self.assertEqual(self.chips(g["min"]), self.chips(g["all"]))
-        self.assertEqual(g["min"]["badge"], "", "the strip counts only what waits")
+        self.assertEqual(g["min"]["badge"], "14")
+        o = g["opTen"]
+        self.assertRegex(o["title"], r"·\s*10$")
+        self.assertEqual(o["stages"], ["answer"] * 10)
 
-    def test_a_selected_rows_grey_count_stays_outlined(self):
-        sel = [c for c in self.got["older"]["opTen"]["chips"] if c[5]]
-        self.assertEqual([c[0] for c in sel], ["opTen"])
-        self.assertTrue(sel[0][2])
-        self.assertEqual(sel[0][3], "rgba(0, 0, 0, 0)")
-        self.assertIn("inset", sel[0][4])
-        self.assertEqual(sel[0][7], "400")
-        o = self.got["older"]["opTen"]
-        self.assertRegex(o["title"], r"·\s*0$")
-        self.assertEqual(o["older"][0], "Older questions · 10")
-
-    def test_a_closed_older_card_waiting_on_undo_is_not_counted(self):
-        g = self.got["older"]
+    def test_a_closed_card_waiting_on_undo_is_not_counted(self):
+        g = self.got["past"]
+        self.assertEqual(g["acts"], [True] * 3, "Close, Close this and earlier and Done with this, all inside the card")
         c, u = g["closing"], g["undone"]
-        self.assertEqual(c["older"][0], "Older questions · 13")
-        self.assertEqual(self.chips(c), {"All": ("13", True), "opTen": ("9", True), "Motors": ("4", True)})
-        self.assertIn("HEAD", c["stages"], "the heading stays above the card waiting on its Undo")
-        self.assertEqual(u["older"][0], "Older questions · 14")
+        self.assertEqual(self.chips(c), {"All": ("13", False), "opTen": ("9", False), "Motors": ("4", False)})
         self.assertEqual(self.chips(u), self.chips(g["all"]))
+        self.assertRegex(c["title"], r"·\s*13$", c["title"])
+        self.assertRegex(u["title"], r"·\s*14$", u["title"])
+        self.assertEqual((g["closingStrip"], g["undoneStrip"]), (13, 14), "the PO chats' strip counts")
+        self.assertTrue(g["menuClosing"] and set(g["menuClosing"]) == {"9"}, g["menuClosing"])
+        self.assertTrue(set(g["menuUndone"]) == {"10"}, g["menuUndone"])
+        self.assertTrue(g["menuOpen"], "counted again while it stays open")
+        self.assertTrue(g["menuSetBare"], "its settings items get no count")
+        h = g["hidden"]
+        self.assertTrue(h["held"], h)
+        self.assertEqual(h["inbox"], 9, h)
+        self.assertEqual(set(h["menu"]), {"9"}, h)
 
-    def test_waiting_and_older_filled_chips_and_the_older_heading_after_the_waiting_cards(self):
+    def test_mixed_asked_again_counts_both_and_cleared_none(self):
         a = self.got["mixed"]["all"]
-        self.assertRegex(a["title"], r"·\s*5$", a["title"])
-        self.assertEqual(self.chips(a), {"All": ("5", False), "opTen": ("2", False), "Motors": ("1", False), "Plain": ("1", False),
-                                         "Again": ("1", False), "Cleared": ("1", True)})
-        self.assertEqual(a["older"], ["Older questions · 16",
-                                      "Not counted: written past in their chat, asked again later or from before Clear all"])
-        self.assertEqual(a["stages"], ["answer"] * 5 + ["HEAD"] + ["older"] * 16)
-        self.assertEqual(a["headTop"], "1px", "a hairline parts it from the waiting cards")
-        self.assertEqual(self.got["mixed"]["min"]["badge"], "5")
-
-    def test_waiting_only_lists_no_older_heading(self):
-        p = self.got["mixed"]["Plain"]
-        self.assertRegex(p["title"], r"·\s*1$", p["title"])
-        self.assertIsNone(p["older"])
-        self.assertEqual(p["stages"], ["answer"])
-
-    def test_a_repeated_or_cleared_question_says_its_own_reason(self):
-        g = self.got["mixed"]
-        self.assertEqual(g["Again"]["older"], ["Older questions · 1", "Asked again later: only the newest counts"])
-        self.assertEqual(g["Again"]["stages"], ["answer", "HEAD", "older"])
-        cl = g["Cleared"]
+        self.assertRegex(a["title"], r"·\s*20$", a["title"])
+        self.assertEqual(self.chips(a), {"All": ("20", False), "opTen": ("12", False), "Motors": ("5", False),
+                                         "Plain": ("1", False), "Again": ("2", False)})
+        self.assertEqual(a["stages"], ["answer"] * 20)
+        self.assertEqual(self.got["mixed"]["Again"]["stages"], ["answer"] * 2)
+        cl = self.got["mixed"]["Cleared"]
         self.assertRegex(cl["title"], r"·\s*0$")
-        self.assertEqual(cl["older"], ["Older questions · 1", "From before Clear all"])
-        tip = [c[6] for c in cl["chips"] if c[0] == "Cleared"]
-        self.assertEqual(tip, ["1 older question, not counted. From before Clear all"])
+        self.assertEqual(cl["stages"], [])
+        self.assertEqual(self.got["mixed"]["min"]["badge"], "20")
 
-    def test_phone_pane_says_why_under_older_questions(self):
-        for scene, lead, older in (("older", [], ["Older questions 14", "You wrote past them in their chat"]),
-                                   ("mixed", ["Needs your answer 5"], ["Older questions 16",
-                                    "Not counted: written past in their chat, asked again later or from before Clear all"])):
-            self.assertEqual(self.got[scene]["phone"]["phone"], lead + older, scene)
+    def test_phone_pane_lists_only_needs_your_answer(self):
+        for scene, n in (("past", 14), ("mixed", 20)):
+            self.assertEqual(self.got[scene]["phone"]["phone"], [f"Needs your answer {n}"], scene)
 
     def test_nothing_wider_than_the_screen_and_no_errors(self):
-        for scene in ("older", "mixed"):
+        for scene in ("past", "mixed"):
             for k in ("all", "phone"):
                 g = self.got[scene][k]
                 self.assertLessEqual(g["scrollW"], g["W"], (scene, k))
