@@ -313,7 +313,7 @@ async function main() {
       ct = await p.evalIn(TAB(c1));
       await hover(p, ct.x, ct.y);
       o.chatTab.x = await p.evalIn(`(() => { const x = document.querySelector('.row-expanded .dk-tab-x'); if (!x) return null; const r = x.getBoundingClientRect(); return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }; })()`);
-      // a drag from the raised copy is Dock's: the tab goes after the other one
+      // A drag from the raised copy reaches Dock and splits the two tabs.
       {
         await hover(p, ct.x, ct.y);
         const raised = await p.evalIn(EXP);
@@ -325,7 +325,9 @@ async function main() {
         for (let i = 1; i <= 10; i++) await send('mouseMoved', ct.x + (tx - ct.x) * i / 10, ct.y, 1);
         await send('mouseReleased', tx, ct.y, 0);
         await sleep(800);
-        o.chatTab.drag = { raised: !!raised, before: ct.sib, after: (await p.evalIn(TAB(c1))).sib, copy: await p.evalIn(EXP) };
+        const copy = await p.evalIn(EXP);
+        o.chatTab.drag = { raised: !!raised, before: ct.sib, target: c1, other: c2,
+          after: (await p.evalIn(TAB(c1))).sib, otherAfter: (await p.evalIn(TAB(c2))).sib, copy };
         ct = await p.evalIn(TAB(c1));
         await hover(p, ct.x, ct.y);
         o.chatTab.x = await p.evalIn(`(() => { const x = document.querySelector('.row-expanded .dk-tab-x'); if (!x) return null; const r = x.getBoundingClientRect(); return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }; })()`);
@@ -376,15 +378,20 @@ async function main() {
       await sleep(600);
       const pair = await p.evalIn(`(() => { const t = document.querySelector('#po-dock .dk-tab[data-dk-tab=${JSON.stringify(c3)}]');
         return [...t.closest('.dk-tabs').querySelectorAll('.dk-tab')].map(t => t.dataset.dkTab).slice(0, 3); })()`);
-      const right = await p.evalIn(closePoint(pair[1]));
       await p.evalIn(`document.querySelector('#po-dock .dk-tab[data-dk-tab=${JSON.stringify(pair[0])}]').scrollIntoView({inline:'nearest', block:'nearest'}); 0`);
       const left = await p.evalIn(closePoint(pair[0]));
+      const right = await p.evalIn(closePoint(pair[1]));
       await p.shot('neighbour-close-before');
       const visible = await p.evalIn(`(() => { const t = document.querySelector('#po-dock .dk-tab[data-dk-tab=${JSON.stringify(pair[0])}]');
         const r = t.closest('.dk-tabs').getBoundingClientRect(); return ${left.x} >= r.left && ${left.x} <= r.right; })()`);
+      await hover(p, right.nx, right.ny);
+      const copyOver = await p.evalIn(`(() => { const c = document.querySelector('.tab-expanded');
+        const t = document.elementFromPoint(${left.x}, ${left.y}); return { shown: !!c, over: !!(c && t && c.contains(t)) }; })()`);
+      await p.shot('neighbour-close-hover');
+      for (let i = 1; i <= 15; i++) await p.move(right.nx + (left.x - right.nx) * i / 15, left.y);
       await p.clickAt(left.x, left.y); await sleep(500);
       const remaining = await p.evalIn(`(() => [...document.querySelectorAll('#po-dock .dk-tab')].map(t => t.dataset.dkTab))()`);
-      o.neighbourClose = { target: pair[0], others: pair.slice(1), before: pair, left, right, visible,
+      o.neighbourClose = { target: pair[0], others: pair.slice(1), before: pair, left, right, visible, copyOver,
         after: remaining.filter(id => pair.includes(id)) };
 
       // ---- a file tab: its tip stays off while it is raised, even when it is drawn again
@@ -675,11 +682,12 @@ class LeftPanelOrderInChrome(unittest.TestCase):
                 self.assertEqual(o["raised"]["h"], o["before"]["h"], "the name that fits stays on one line")
                 self.assertEqual(o["after"], [id for id in o["before"]["siblings"] if id != o["target"]])
 
-    def test_an_overflowed_neighbours_x_still_closes_its_tab(self):
+    def test_a_neighbours_raised_name_does_not_cover_this_tabs_x(self):
         o = self.w()["neighbourClose"]
         self.assertEqual(len(o["before"]), 3)
         self.assertTrue(o["left"]["cut"] and o["right"]["cut"])
         self.assertTrue(o["visible"], "the target × is inside the scrolled tab row")
+        self.assertTrue(o["copyOver"]["shown"] and o["copyOver"]["over"], "the right tab's name covers the target ×")
         self.assertEqual(o["after"], o["others"], "one click closed the target and kept both neighbours")
 
     def test_a_cut_workspace_file_tab_closes_at_its_original_x(self):
@@ -689,10 +697,12 @@ class LeftPanelOrderInChrome(unittest.TestCase):
         self.assertTrue(o["poStayed"], "the neighbouring tab stayed open")
 
     def test_a_drag_from_a_raised_tab_moves_it(self):
-        # pressed on the copy, dragged past the other tab: Dock takes the panel there
+        # Pressed on the copy, Dock separates it from its former neighbour.
         d = self.w()["chatTab"]["drag"]
         self.assertTrue(d["raised"], "the copy was up when pressed")
-        self.assertNotEqual(d["after"], d["before"], "Dock's drag moved the tab")
+        self.assertEqual(d["before"], [d["target"], d["other"]])
+        self.assertEqual(d["after"], [d["target"]], "the dragged tab has its own stack")
+        self.assertEqual(d["otherAfter"], [d["other"]], "its former neighbour stayed in the other stack")
         self.assertIsNone(d["copy"], "the copy went once it moved")
 
     def test_a_long_project_shows_whole_at_1728(self):

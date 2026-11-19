@@ -712,7 +712,7 @@ class TheListDock(unittest.TestCase):
 
     def test_a_phone_keeps_the_list_home(self):
         g = self.got["phone"]
-        self.assertTrue(g["home"] and not g["shown"], g)  # #307: shown only in the phone's Task list pane
+        self.assertTrue(g["home"] and not g["shown"], g)  # #322: shown only in the phone's Task list pane
         self.assertFalse(g["dock"])
         t = self.got["toPhone"]
         self.assertFalse(t["dock"])

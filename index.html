@@ -26774,16 +26774,18 @@ function openMsgLink(rid, msg, part) {
 function sendGotoMsg(rid) {
   const g = gotoPending(rid);
   if (!g) return;
+  const frames = [];
   for (const d of [document, ...PD_POP_DOCS.keys()]) {
     let fs = [];
     try { fs = [...d.querySelectorAll('iframe.dp-session, iframe.po-session')]; } catch (e) {}
-    fs.forEach(f => {
-      if (f.dataset.room !== rid || !f.contentWindow) return;
-      // A phone can retain the same chat in an off-screen Dock panel and in
-      // the task pane. Only the shown frame should take this landing and focus.
-      if (phoneNow() && f.closest && f.closest('.dk-off')) return;
-      try { f.contentWindow.postMessage({ ensemble: 'goto-msg', msg: g.msg, part: g.part || '', thread: g.thread || '', tmid: g.tmid || '', hl: inboxHlSec() }, location.origin); } catch (e) {}
-    });
+    frames.push(...fs.filter(f => f.dataset.room === rid && f.contentWindow));
+  }
+  // A phone can retain this room in both a shown task pane and an off-screen
+  // Dock panel. Let the shown frame take the landing and focus. If the only
+  // frame is off-screen, it still receives the request for its later reveal.
+  const shown = frames.filter(f => !(f.closest && f.closest('.dk-off')));
+  for (const f of shown.length ? shown : frames) {
+    try { f.contentWindow.postMessage({ ensemble: 'goto-msg', msg: g.msg, part: g.part || '', thread: g.thread || '', tmid: g.tmid || '', hl: inboxHlSec() }, location.origin); } catch (e) {}
   }
 }
 // Settings › Preferences › Inbox highlight, seconds (the hub's inboxHighlightSec, #343).

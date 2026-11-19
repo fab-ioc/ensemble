@@ -279,8 +279,8 @@ class CloseInChrome(unittest.TestCase):
         self.assertTrue(all(b["close"]), b)
         self.assertEqual(b["earlier"], [8, 7, 6, 5, 4, 3, 2, 0], "N counts itself and every one below; the last has none")
         self.assertTrue(all(m.startswith("PO") for m in b["meta"]), b["meta"])
-        self.assertTrue(all(a == self.got["hoverMedia"] for a in self.got["restHidden"]),
-                        "the action buttons follow the browser's hover capability")
+        self.assertFalse(self.got["hoverMedia"], "this headless fixture has no hover capability")
+        self.assertFalse(any(self.got["restHidden"]), "without hover, actions remain available")
 
     def test_hover_marks_this_and_every_question_below(self):
         b, h = self.got["before"], self.got["hovered"]

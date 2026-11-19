@@ -145,6 +145,23 @@ async function main() {
         try { sendGotoMsg(rid); } finally { PD_POP_DOCS.delete(doc); GOTO_MSG.delete(rid); }
         return sent[0] || null;
       })()`);
+      o.offscreenForward = await p.evalIn(`(() => {
+        const rid = 'room-offscreen-inbox-check', sent = { hidden: [], shown: [] };
+        const hidden = { dataset: { room: rid }, closest: () => ({}),
+          contentWindow: { postMessage: data => sent.hidden.push(data.msg) } };
+        const shown = { dataset: { room: rid }, closest: () => null,
+          contentWindow: { postMessage: data => sent.shown.push(data.msg) } };
+        const frames = [hidden], doc = { querySelectorAll: () => frames };
+        GOTO_MSG.set(rid, { msg: 'one-frame', part: 'inbox' });
+        PD_POP_DOCS.set(doc, []);
+        try {
+          sendGotoMsg(rid);
+          frames.push(shown);
+          GOTO_MSG.set(rid, { msg: 'shown-frame', part: 'inbox' });
+          sendGotoMsg(rid);
+        } finally { PD_POP_DOCS.delete(doc); GOTO_MSG.delete(rid); }
+        return sent;
+      })()`);
       o.inboxRowMarked = await p.evalIn(`[...document.querySelectorAll('.ibx-row')].some(r => /landed|current/.test(r.className) || r.hasAttribute('aria-current'))`);
       // (a) the answer, from a real Inbox click
       o.answer = await series(p, tag + '-answer', A.answer, 3500, () => p.click(link(A.answer)));
@@ -380,6 +397,11 @@ class InboxHighlightInChrome(unittest.TestCase):
                 self.assertEqual(sent["data"]["part"], "inbox,ask:0")
                 self.assertEqual(sent["data"]["hl"], 3.5)
                 self.assertTrue(sent["origin"].startswith("http://127.0.0.1:"))
+
+    def test_an_offscreen_frame_receives_a_landing_only_when_it_is_the_sole_frame(self):
+        for o, gap, tag in self.each():
+            with self.subTest(tag):
+                self.assertEqual(o["offscreenForward"], {"hidden": ["one-frame"], "shown": ["shown-frame"]})
 
     def test_a_second_click_moves_it_and_an_ask_marks_its_whole_message(self):
         for o, gap, tag in self.each():
