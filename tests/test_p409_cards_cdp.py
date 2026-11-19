@@ -140,6 +140,30 @@ async function main() {
     await until(`!document.querySelector('#input').value`, 10000);
     await sleep(300);
     out.chipBack = await until(chip);
+    // 3c. An older card answered from the box, then Undo before it is read:
+    // the card is open again where it stood, and its words go back under its chip.
+    const BQ = `[...document.querySelectorAll('#msgs .qa')].find(q => /nightly backup/.test(q.textContent))`;
+    await click('#compose-answers-pick');
+    await until(`!document.querySelector('#answers-menu').hidden`);
+    await evalIn(`(() => { const b = [...document.querySelectorAll('#answers-menu button')].find(x => /nightly backup/.test(x.textContent)); b.click(); return 1; })()`);
+    out.holdChip = await evalIn(chip);
+    await typeAndSend('Hold on, not yet');
+    await until(`(() => { const c = ${BQ}; return c && c.classList.contains('done') && !!c.querySelector('.qa-undo'); })()`, 10000);
+    out.holdChipAfter = await evalIn(chip);
+    await evalIn(`(() => { ${BQ}.querySelector('.qa-undo').dataset.p409 = 'undo'; return 1; })()`);
+    await click('[data-p409="undo"]');
+    await until(`document.querySelector('#input').value === 'Hold on, not yet'`, 10000);
+    await sleep(300);
+    out.undoChip = await evalIn(chip);
+    out.undoInput = await evalIn(`document.querySelector('#input').value`);
+    out.undoCardOpen = await evalIn(`!${BQ}.classList.contains('done')`);
+    await click('#compose-answers-pick');
+    await until(`!document.querySelector('#answers-menu').hidden`);
+    out.undoMenu = await evalIn(`[...document.querySelectorAll('#answers-menu button')].map(b => ({ q: b.querySelector('.am-q').textContent, on: b.getAttribute('aria-checked') === 'true' }))`);
+    await evalIn(`(() => { document.querySelector('#answers-menu button[aria-checked="true"]').click(); return 1; })()`);
+    await click('#send');
+    await until(`!document.querySelector('#input').value`, 10000);
+    await until(`(() => { const c = ${BQ}; return c && c.classList.contains('done') && !c.classList.contains('busy'); })()`, 10000);
     // 4. The pick-any card: two ticks, Send (2).
     const PQ = `[...document.querySelectorAll('#msgs .qa')].find(q => /export formats/.test(q.textContent))`;
     out.pickHead = await evalIn(`${PQ}.querySelector('.qa-no').textContent`);
@@ -182,8 +206,16 @@ class TheBoxAndPickAny(unittest.TestCase):
         (base / "cs").mkdir()
         cls.sent = []
 
+        cls.held = []
+
         def resume(h, room, text="", to="", key="", quiet=False):
             cls.sent.append((text, to, key))
+            if "Hold on, not yet" in text and not cls.held:
+                # Not read yet: held by a resume under way, so Undo withdraws it.
+                cls.held.append(key)
+                res = dashboard._RESUMES.setdefault(room["id"], dashboard._Resume(room["id"]))
+                res.queue.append({"text": text, "to": to, "key": key, "at": time.time()})
+                return {"queued": 1}
             sends.mark(room["id"], [key], "delivered")
             return {"delivered": 1}
 
@@ -299,7 +331,22 @@ class TheBoxAndPickAny(unittest.TestCase):
         self.assertTrue(picks[0][0].startswith("Re “Which export formats should the report offer?”: CSV; XML"), picks)
         self.assertIn("You picked: CSV · XML", g["pickDone"])
         self.assertNotIn("Which export formats should the report offer?", self.open)
-        self.assertEqual(sorted(self.open), ["Turn on the nightly backup?", "Which retention for old transcripts?"])
+        self.assertEqual(self.open, ["Which retention for old transcripts?"])
+
+    def test_undo_of_an_unread_box_answer_gives_back_its_own_card(self):
+        g = self.got
+        self.assertEqual(g["holdChip"], "Turn on the nightly backup?")
+        self.assertEqual(g["holdChipAfter"], "Which export formats should the report offer?")
+        self.assertEqual(g["undoChip"], "Turn on the nightly backup?", "the words go back under the card they answered")
+        self.assertEqual(g["undoInput"], "Hold on, not yet")
+        self.assertTrue(g["undoCardOpen"])
+        self.assertEqual([m["q"] for m in g["undoMenu"]][:3], ["Which export formats should the report offer?",
+                                                               "Which retention for old transcripts?", "Turn on the nightly backup?"])
+        self.assertEqual([m["q"] for m in g["undoMenu"] if m["on"]], ["Turn on the nightly backup?"])
+        holds = [s for s in self.sent if "Hold on, not yet" in s[0]]
+        self.assertEqual(len(holds), 2, self.sent)
+        self.assertNotEqual(holds[0][2], holds[1][2], "the second send is a new message")
+        self.assertTrue(holds[1][0].startswith("Re “Turn on the nightly backup?”: Hold on, not yet"), holds)
 
 
 if __name__ == "__main__":

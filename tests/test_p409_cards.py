@@ -177,6 +177,23 @@ class TheBoxAnswers(_Cards):
         self.assertNotIn(mid, points.load(rid)["asks"], "refused: the card may be answered again")
         self.assertEqual([a["n"] for a in asks.open_in(chatroom.get_room(rid))], [0, 1])
 
+    def test_a_kept_send_discarded_opens_the_card_again(self):
+        rid, mid = self._po()
+
+        def fail(h, room, text="", to="", key="", quiet=False):
+            sends.mark(room["id"], [key], "failed", "the agent stopped")
+            raise dashboard.StartRoomError("the agent stopped")
+        with mock.patch.object(dashboard.Handler, "_resume_room", fail):
+            status, r = http("/api/room/resume", {"roomId": rid, "text": "Yes, ship", "key": "k6",
+                                                  "answers": {"mid": mid, "n": 0}})
+        self.assertEqual((status, r.get("kept")), (400, True), r)
+        self.assertTrue(points.load(rid)["asks"][mid]["0"]["box"], "kept for Retry: still the card's answer")
+        self.assertEqual([a["n"] for a in asks.open_in(chatroom.get_room(rid))], [1])
+        # Discarded (as after a hub restart, from the sends the hub keeps): never sent, the card is open again.
+        self.assertTrue(dashboard.discard_pending(rid, "k6"))
+        self.assertNotIn(mid, points.load(rid)["asks"])
+        self.assertEqual([a["n"] for a in asks.open_in(chatroom.get_room(rid))], [0, 1])
+
     def test_undo_of_a_read_box_answer_says_sent_by_mistake(self):
         rid, mid = self._po()
         sent = []
@@ -214,7 +231,7 @@ const ctx = { esc, attSplit: t => ({ paths: [], words: t }), stripRefBlocks: t =
 ctx.cardTextHtml = esc; ctx.hubUrlWords = s => String(s ?? ''); ctx.cardText = s => ({ html: esc(s), words: String(s ?? ''), links: [] }); ctx.cardWords = s => String(s ?? '');
 vm.createContext(ctx);
 vm.runInContext(code + `
-  globalThis.t = { parseAsks, askCardHtml, pointMaps, CHAT_NAMES, ASK_TICKS, ASK_DRAFT, boxAnswerStrip,
+  globalThis.t = { parseAsks, askCardHtml, pointMaps, CHAT_NAMES, ASK_TICKS, ASK_DRAFT, boxAnswerStrip, askBoxMid,
     setItems: v => { LAST_ITEMS = v; }, setPoints: v => { POINTS = v; } };`, ctx);
 const T = ctx.t;
 Object.assign(T.CHAT_NAMES, { operator: 'sam', po: 'claude', taskNo: () => null });
@@ -233,10 +250,29 @@ const yn = T.parseAsks('Ask (yes/no): Ship it tonight?')[0];
 const box = { option: '', comment: 'After 22:00', box: true, key: 'k1', question: 'Ship it tonight?', at: 1 };
 const said = { id: 's:2', from: 'user', text: 'Re “Ship it tonight?”: After 22:00\n\n[point P3]' };
 T.setItems([m, said]);
+T.setPoints({ asks: { 's:1': { '0': box } } });
 out.box = T.askCardHtml({ ...m, text: 'Ask (yes/no): Ship it tonight?' }, yn, 1, led(box));
 T.setPoints({ asks: { 's:1': { '0': box } } });
 out.strip = T.boxAnswerStrip(said);
 out.plain = T.boxAnswerStrip({ id: 's:3', from: 'user', text: 'Re “Ship it tonight?”: something else' });
+// The same answer to the same question twice, and one answer the start of
+// another: each card has its own balloon, each balloon its own card.
+const q = 'Ship it tonight?', A = (comment, at, key) => ({ option: '', comment, box: true, key, question: q, at });
+T.setPoints({ asks: { 'a:1': { '0': A('After 22:00', 100, 'k1') }, 'a:5': { '0': A('After 22:00', 500, 'k5') },
+  'a:7': { '0': A('Yes', 700, 'k7') }, 'a:8': { '0': A('Yes, but later', 800, 'k8') }, 'a:9': { '0': A('Yes', 900, 'k9') } } });
+T.setItems([
+  { id: 'u:2', from: 'user', ts: 101, text: 'Re “Ship it tonight?”: After 22:00\n\n[point P3]' },
+  { id: 'u:6', from: 'user', ts: 501, text: 'Re “Ship it tonight?”: After 22:00\n\n[point P4]' },
+  { id: 'u:71', from: 'user', ts: 701, text: 'Re “Ship it tonight?”: Yes' },
+  { id: 'u:81', from: 'user', ts: 801, text: 'Re “Ship it tonight?”: Yes, but later' }]);
+out.pairs = { a1: T.askBoxMid('a:1', 0), a5: T.askBoxMid('a:5', 0), a7: T.askBoxMid('a:7', 0), a8: T.askBoxMid('a:8', 0), a9: T.askBoxMid('a:9', 0) };
+const mid = t => { const r = T.boxAnswerStrip(t); return r ? /data-ref-msg="([^"]*)"/.exec(r.html)[1] : null; };
+out.back = { u6: mid({ id: 'u:6', from: 'user', text: 'Re “Ship it tonight?”: After 22:00\n\n[point P4]' }),
+  u81: mid({ id: 'u:81', from: 'user', text: 'Re “Ship it tonight?”: Yes, but later' }),
+  pending: mid({ from: 'user', text: 'Re “Ship it tonight?”: Yes\n\n[point P9]' }),
+  // A send still pending whose balloon is drawn already: its own key's answer.
+  keyed: mid({ from: 'user', sendKey: 'k7', text: 'Re “Ship it tonight?”: Yes\n\n[point P7]' }),
+  wrongKey: mid({ from: 'user', sendKey: 'k8', text: 'Re “Ship it tonight?”: Yes' }) };
 console.log(JSON.stringify(out));
 """
 
@@ -280,6 +316,12 @@ class TheCard(unittest.TestCase):
         self.assertIn('Answers <a class="card-jump"', s["html"])
         self.assertIn("Ship it tonight? ↑", s["html"])
         self.assertIsNone(self.o["plain"], "words of its own: not the box's answer")
+
+    def test_the_same_words_twice_link_each_to_its_own(self):
+        self.assertEqual(self.o["pairs"], {"a1": "u:2", "a5": "u:6", "a7": "u:71", "a8": "u:81", "a9": ""},
+                         "in turn, by the whole words: a repeat and a prefix each find their own balloon")
+        self.assertEqual(self.o["back"], {"u6": "a:5", "u81": "a:8", "pending": "a:9", "keyed": "a:7", "wrongKey": None},
+                         "a balloon names its own card; a send not drawn yet the answer still without one")
 
 
 if __name__ == "__main__":

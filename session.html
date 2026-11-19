@@ -4062,7 +4062,7 @@ function askCardHtml(m, a, total, P) {
       const state = busy ? 'Sending…' : undo ? 'Sent' : '';
       return `<div class="qa${busy ? ' busy' : ''} done" data-ask="${esc(key)}">${head}${opts ? `<div class="qa-opts">${opts}</div>` : ''}`
         + `<div class="qa-done">${ticks.length ? `<span class="qa-dw">You picked:</span> ${ticks.map(t => `<strong>${cardTextHtml(t, m.id, a.n)}</strong>`).join(' · ')}`
-          : `<span class="qa-dw">${got.box ? askBoxWords(got) : 'You answered:'}</span>`}`
+          : `<span class="qa-dw">${got.box ? askBoxWords(got, m.id, a.n) : 'You answered:'}</span>`}`
         + `${got.comment ? `<span class="qa-dc">${cardTextHtml(got.comment, m.id, a.n)}</span>` : ''}`
         + (state || got.undone ? `<span class="qa-ds">${state}${undo ? ` · <button type="button" class="qa-undo" data-ask="${esc(key)}" title="Take this answer back">Undo</button>` : ''}${got.undone ? (state ? ' · ' : '') + 'taken back' : ''}</span>` : '')
         + `</div></div>`;
@@ -4253,10 +4253,20 @@ async function askUndo(b) {
     if (r && r.points) pointsChanged(r.points, ptTicket());
     // A message typed in the box as the card's answer (P409): taken back,
     // its words go back in the box when it is empty.
+    // Its card is open again here at once, where it stood, before the
+    // words are back under its chip (P409).
+    const was = r && r.withdrawn && typeof BOX_SENT_CARDS !== 'undefined' && BOX_SENT_CARDS.get(key);
+    if (was && ROOM_OBJ && Array.isArray(ROOM_OBJ.openCards) && !ROOM_OBJ.openCards.some(x => x.mid === was.card.mid && x.n === was.card.n)) {
+      const oc = ROOM_OBJ.openCards.slice();
+      oc.splice(Math.min(was.i, oc.length), 0, was.card);
+      ROOM_OBJ.openCards = oc;
+    }
+    if (r && r.withdrawn && typeof BOX_SENT_CARDS !== 'undefined') BOX_SENT_CARDS.delete(key);
     if (r && r.withdrawn && typeof r.text === 'string' && r.text && !$('#input').value.trim() && !(ED.points || []).length) {
       $('#input').value = r.text; SEND_KEY = ''; edHeadInput(); fitSendInput();
       ANSWER_PICK = { mid: key.slice(0, cut), n: +key.slice(cut + 1) };
     }
+    try { answersPaint(); } catch (e2) {}
     pointsNote(r && r.withdrawn ? 'Taken back before it was read: the question is open again.'
       : 'It was read already: the agent is told to ignore that answer.');
   } catch (e) {
@@ -4664,31 +4674,60 @@ function replyStrip(m) {
     + `${prev ? `<span class="q">“${esc(prev)}”</span>` : ''}<span class="up" aria-hidden="true">↑</span></a>` };
 }
 // The card's answer typed in the box: its words, the way to the message.
-function askBoxWords(got) {
-  const mid = askBoxMid(got);
-  return mid ? `You answered in <a class="msg-link" href="${esc(refHref(ROOM, mid, ''))}" data-ref-room="${esc(ROOM)}" data-ref-msg="${esc(mid)}">your message ↓</a>:`
+function askBoxWords(got, mid, n) {
+  const at = askBoxMid(mid, n);
+  return at ? `You answered in <a class="msg-link" href="${esc(refHref(ROOM, at, ''))}" data-ref-room="${esc(ROOM)}" data-ref-msg="${esc(at)}">your message ↓</a>:`
     : 'You answered in your message:';
 }
 const askBoxHead = got => `Re “${String(got.question || '')}”: `;
-// The person's balloon that is this answer: the one whose words it typed.
-function askBoxMid(got) {
-  const head = askBoxHead(got) + String(got.comment || '').trim();
-  const m = (LAST_ITEMS || []).find(x => x && x.from === 'user' && x.id && String(x.text || '').trim().startsWith(head));
-  return m ? m.id : '';
+// The words a balloon or a send says after the head, as the card keeps them
+// (its "[point Pn]" lines aside; the card keeps at most 4000 characters).
+const boxWords = t => String(t || '').replace(/\n*[ \t]*\[point P\d{1,5}[a-z]?\][ \t]*/g, '').trim().slice(0, 4000).trim();
+function boxSays(text, got) {
+  const t = String(text || ''), head = askBoxHead(got);
+  return t.startsWith(head) && boxWords(t.slice(head.length)) === boxWords(got.comment);
 }
-// The other way: the card a balloon of the person's answers from the box.
+// Each card answered from the box and the person's balloon that is that
+// answer: the same words, in turn (the earliest answer takes the earliest
+// balloon sent after it), so the same answer given to the same question
+// twice, or one answer the start of another, links each to its own.
+var BOX_PAIRS = null;
+function boxPairs() {
+  const items = (typeof LAST_ITEMS !== 'undefined' && LAST_ITEMS) || [], asks = (POINTS && POINTS.asks) || {};
+  if (BOX_PAIRS && BOX_PAIRS.items === items && BOX_PAIRS.asks === asks) return BOX_PAIRS;
+  const answers = [];
+  for (const mid of Object.keys(asks)) for (const n of Object.keys(asks[mid] || {})) {
+    const got = asks[mid][n];
+    if (got && got.box) answers.push({ mid, n: +n, got, at: +got.at || 0 });
+  }
+  answers.sort((a, b) => a.at - b.at);
+  const users = items.filter(x => x && x.from === 'user' && x.id && String(x.text || '').startsWith('Re “'))
+    .map((x, i) => ({ x, i })).sort((a, b) => ((+a.x.ts || 0) - (+b.x.ts || 0)) || a.i - b.i).map(o => o.x);
+  const byCard = new Map(), byMsg = new Map(), used = new Set();
+  for (const a of answers) {
+    const m = users.find(x => !used.has(x.id) && (!x.ts || !a.at || +x.ts >= a.at - 120) && boxSays(x.text, a.got));
+    if (!m) continue;
+    used.add(m.id);
+    byCard.set(a.mid + ':' + a.n, m.id);
+    byMsg.set(m.id, a);
+  }
+  return BOX_PAIRS = { items, asks, byCard, byMsg, answers };
+}
+// The person's balloon that is the answer card (mid, n) has from the box.
+const askBoxMid = (mid, n) => boxPairs().byCard.get(mid + ':' + n) || '';
+// The other way: the card a balloon of the person's answers from the box. A
+// send not drawn yet (no id) is the answer made under its own send key (its
+// balloon may be drawn already, beside it); without a key, the newest answer
+// that says its words and has no balloon yet.
 function boxAnswerOf(m) {
   const t = String((m && m.text) || '');
   if (!t.startsWith('Re “')) return null;
-  const all = (POINTS && POINTS.asks) || {};
-  for (const mid of Object.keys(all)) for (const n of Object.keys(all[mid] || {})) {
-    const got = all[mid][n];
-    if (!got || !got.box || got.undone) continue;
-    const head = askBoxHead(got);
-    if (t.startsWith(head) && t.slice(head.length).trim().startsWith(String(got.comment || '').trim()))
-      return { mid, n: +n, question: String(got.question || ''), text: t.slice(head.length) };
-  }
-  return null;
+  const P = boxPairs();
+  const a = m.id ? P.byMsg.get(m.id)
+    : m.sendKey ? P.answers.filter(x => x.got.key === m.sendKey && boxSays(t, x.got)).pop()
+    : P.answers.filter(x => !P.byCard.has(x.mid + ':' + x.n) && boxSays(t, x.got)).pop();
+  if (!a || a.got.undone) return null;
+  return { mid: a.mid, n: a.n, question: String(a.got.question || ''), text: t.slice(askBoxHead(a.got).length) };
 }
 function boxAnswerStrip(m) {
   const b = boxAnswerOf(m);
@@ -6742,7 +6781,7 @@ function sendHtml(s, md) {
         + (s.state === 'delivered' ? ` <button type="button" class="send-hide" data-send="${esc(s.key)}" title="Stop showing it here (it was typed in)">Hide</button>` : '') + '</div>';
   // A send that answers a card from the box (P409) reads as its balloon will:
   // "Answers <question> ↑" over the words, without the "Re “…”:" head.
-  const bs = typeof boxAnswerStrip === 'function' ? boxAnswerStrip({ from: 'user', text: s.text }) : null;
+  const bs = typeof boxAnswerStrip === 'function' ? boxAnswerStrip({ from: 'user', text: s.text, sendKey: s.key }) : null;
   return `<div class="msg user${read ? '' : ' pending'}${s.state === 'failed' ? ' failed' : ''}" data-from="user" data-key="send-${esc(s.key)}">`
     + `<div class="from">${whoHtml({ from: 'user', to: s.to || '' })}</div>${bs ? bs.html : ''}<div class="text md">${md(stripPointLines(bs ? bs.text : s.text))}</div>${sendPointsHtml(s.text)}${st}</div>`;
 }
@@ -9970,12 +10009,18 @@ $('#answers-menu').addEventListener('keydown', e => {
 document.addEventListener('pointerdown', e => { if (!e.target.closest || !e.target.closest('#compose-answers, #answers-menu')) answersMenuClose(false); }, true);
 // Sent: the card it answered is answered here at once (Undo for a while);
 // the next message gets the chip again, on the newest open card.
+var BOX_SENT_CARDS = new Map();     // 'mid:n' -> { card, i }: a card the box answered, where it stood
 function answersSent(d) {
   ANSWER_PICK = null;
   const a = d && d.answered;
   if (a && a.mid) {
     if (d.points) pointsChanged(d.points, ptTicket());
-    if (ROOM_OBJ && Array.isArray(ROOM_OBJ.openCards)) ROOM_OBJ.openCards = ROOM_OBJ.openCards.filter(x => x.mid !== a.mid || x.n !== a.n);
+    if (ROOM_OBJ && Array.isArray(ROOM_OBJ.openCards)) {
+      const i = ROOM_OBJ.openCards.findIndex(x => x.mid === a.mid && x.n === a.n);
+      // Kept for its Undo: taken back unread, the card is open again at once.
+      if (i >= 0) BOX_SENT_CARDS.set(a.mid + ':' + a.n, { card: ROOM_OBJ.openCards[i], i });
+      ROOM_OBJ.openCards = ROOM_OBJ.openCards.filter(x => x.mid !== a.mid || x.n !== a.n);
+    }
     askUndoOffer(a.mid + ':' + a.n);
   }
   answersPaint();

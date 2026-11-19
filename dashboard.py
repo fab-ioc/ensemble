@@ -4106,6 +4106,10 @@ def discard_pending(room_id: str, key: str = "") -> bool:
                 if mid and n.isdigit():
                     points.unanswer_ask(room_id, mid, int(n))
                     asks.forget()
+            elif points.unanswer_box(room_id, key):
+                # A message typed in the box as a card's answer (P409), never
+                # delivered: its card is open again.
+                asks.forget()
         except Exception as e:      # noqa: BLE001 — the discard itself stands
             print(f"[points] {room_id}: held points not taken back: {e!r}", flush=True)
     return True
