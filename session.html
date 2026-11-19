@@ -6474,6 +6474,8 @@ function landPending() {
       if (THR_ASKED !== GOTO) { renderThreaded(true); return; }
       // Its answer still on the way: it draws, then lands (P414, #396).
       if (THR_FETCHING) return;
+      // A page read for a different link has not decided this one yet.
+      if (THR_VIEW?.uptoFor !== GOTO) { renderThreaded(true); return; }
       thrNotShown(THR_VIEW);
       const h = embedHost(); if (h) h.postMessage({ type:'goto-taken', roomId:ROOM }, location.origin);
       return;
@@ -8057,10 +8059,11 @@ async function renderThreaded(force) {
   if (THR_FETCHING) { if (force) THR_AGAIN = true; return; }
   THR_FETCHING = true;
   const roomTs = roomLatestTs(ROOM_OBJ), gen = THR_GEN;
-  let asked = false;
+  let asked = false, uptoFor = '';
   try {
     asked = !!thrUptoId();
     const url = thrUrl(force ? '' : THR_SIG), pre = THR_PRE;
+    uptoFor = asked ? THR_ASKED : '';
     THR_PRE = null;
     const r = pre && pre.url === url ? await pre.p.catch(() => pollFetch(url, null, 90000)) : await pollFetch(url, null, 90000);
     let d = await r.json();
@@ -8137,6 +8140,7 @@ async function renderThreaded(force) {
       threadHead();
     }
     if (asked || !THR_FROM) { THR_OLDER = []; THR_HUB = new Map(); }
+    if (asked) d.uptoFor = uptoFor;
     THR_VIEW = d;
     THR_LATEST_MID = d.latestMid || THR_LATEST_MID;
     THR_FROM = ((d.items || [])[0] || {}).mid || '';
@@ -8189,7 +8193,7 @@ function thrDraw(roomTs, d = THR_VIEW) {
     // in its thread when the hub placed it there (#379).
     // Only the answer to that ask says so (its uptoAt): a view held from
     // before it (a page above drawn meanwhile) has not looked (P414, #396).
-    if (!THREAD_MODE && GOTO && THR_ASKED === GOTO && d && d.uptoAt !== undefined
+    if (!THREAD_MODE && GOTO && THR_ASKED === GOTO && d && d.uptoFor === GOTO && d.uptoAt !== undefined
         && !items.some(m => m.id === GOTO)) thrNotShown(d);
     document.body.classList.toggle('po-thread-channel', !THREAD_MODE);
     const earlier = $('#earlier-threads'); if (earlier) earlier.hidden = !!THREAD_MODE || !THR_BEFORE;
