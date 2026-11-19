@@ -142,30 +142,37 @@ def listens(host: str, scheme: str = "http") -> None:
         _add(*hp)
 
 
+def _proxies_hub(proxy, whole: bool = False) -> bool:
+    """Whether a tailscale serve proxy target is the hub's port on this
+    machine's loopback; whole: and its root, not a path under it."""
+    proxy = str(proxy or "")
+    if not proxy:
+        return False
+    try:
+        u = urlsplit(proxy if "://" in proxy else "http://" + proxy)
+        to = (u.port, _loopback(_norm(u.hostname or "")))
+    except ValueError:
+        return False
+    return to == (hub_port(), True) and (not whole or u.path in ("", "/"))
+
+
 def learn_tailscale(status: dict | None, serve: dict | None) -> None:
     """What `tailscale status --json` and `tailscale serve status --json` say:
     this machine's tailnet name, and each https address tailscale serve proxies
-    to the hub's port on this machine."""
+    to the hub's port on this machine. One whose "/" is the hub (the whole
+    address, not a path of it) is also where a page is sent for https."""
     me = (status or {}).get("Self") or {}
     name = _norm(me.get("DNSName") or "")
     if name:
         _TS_NAMES.add(name)
     for where, cfg in ((serve or {}).get("Web") or {}).items():
-        for h in ((cfg or {}).get("Handlers") or {}).values():
-            proxy = str((h or {}).get("Proxy") or "")
-            if not proxy:
-                continue
-            try:
-                u = urlsplit(proxy if "://" in proxy else "http://" + proxy)
-                to = (u.port, _loopback(_norm(u.hostname or "")))
-            except ValueError:
-                continue
-            if to == (hub_port(), True):
-                listens(where, "https")
-                hp = _split(where, "https")
-                if hp and hp not in _HTTPS:
-                    _HTTPS.append(hp)
-                break
+        handlers = (cfg or {}).get("Handlers") or {}
+        if any(_proxies_hub((h or {}).get("Proxy")) for h in handlers.values()):
+            listens(where, "https")
+        if _proxies_hub((handlers.get("/") or {}).get("Proxy"), whole=True):
+            hp = _split(where, "https")
+            if hp and hp not in _HTTPS:
+                _HTTPS.append(hp)
 
 
 def https_address() -> str:

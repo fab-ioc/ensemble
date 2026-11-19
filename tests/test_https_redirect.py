@@ -7,15 +7,18 @@ hub at http://<tailnet address>:8765. Checked, on Handler._to_https with a
 request shaped like each case (no socket, no listener):
 
 * hub_links.https_address: the address tailscale serve proxies to the hub's
-  port, the default port first and without it; another port as host:port; a
-  serve address proxying another program is not one; none gives "";
+  port at "/", the default port first and without it; another port as
+  host:port; a serve address proxying another program, or the hub at a path
+  only, is not one; none gives "";
 * a page navigation (/ and /session without embed=1) from a tailnet address
   on the tailnet listener is a 302 to the same page and query on https; the
   reader's valid token (cookie or ?token=) goes along as ?token=, a wrong one
   is dropped, a reader with none goes without;
 * left alone: this machine (loopback), a proxy here (tailscale serve itself),
-  a LAN address, a chat's frame (embed=1), an API call, a fetch that is not a
-  navigation, a POST, and a hub that tailscale serve does not serve.
+  a LAN reader, a tailnet-range source arriving at the LAN address of a
+  wildcard bind, a chat's frame (embed=1), an API call, a fetch that is not a
+  navigation, a POST, and a hub that tailscale serve does not serve whole
+  (no "/" handler for it: only a path of it, or none).
 """
 from __future__ import annotations
 
@@ -93,6 +96,14 @@ class HttpsAddress(unittest.TestCase):
                      f"{NAME}:9443": {"Handlers": {"/": {"Proxy": "http://127.0.0.1:8789"}}}})
         self.assertEqual(hub_links.https_address(), NAME)
 
+    def test_a_serve_address_proxying_only_a_path_is_not_where_pages_go(self):
+        # /, /session and their query would land on paths it does not serve.
+        self._learn({f"{NAME}:443": {"Handlers": {"/hub": {"Proxy": "http://127.0.0.1:8765"}}}})
+        self.assertEqual(hub_links.https_address(), "")
+        self._learn({f"{NAME}:443": {"Handlers": {"/": {"Proxy": "http://127.0.0.1:8765/sub"}}}})
+        self.assertEqual(hub_links.https_address(), "")
+        self.assertTrue(hub_links.hub_origin(NAME, 443, "https"), "its links are still the hub's")
+
     def test_no_serve_no_address(self):
         hub_links.learn_tailscale(None, None)
         self.assertEqual(hub_links.https_address(), "")
@@ -150,7 +161,9 @@ class ToHttps(unittest.TestCase):
                     local="127.0.0.1",
                     headers=dict(HTTP_NAV, **{"X-Forwarded-For": MAC, "X-Forwarded-Host": NAME}))
         self._stays("/", "a LAN reader cannot reach the tailnet name", client="192.168.1.178",
-                    local="0.0.0.0")
+                    local="192.168.1.222")
+        self._stays("/", "a wildcard bind: a tailnet-range source to the LAN address stays there",
+                    client=MAC, local="192.168.1.222")
         self._stays("/session?id=room-1edda3f5&embed=1", "a chat's frame stays on its page's origin")
         self._stays("/api/ptys", "an API call")
         self._stays("/fileview?path=/x", "only the dashboard and a chat page")

@@ -19196,13 +19196,16 @@ class Handler(BaseHTTPRequestHandler):
         q = parse_qs(u.query)
         if not (u.path == "/" or (u.path == "/session" and not q.get("embed"))):
             return False
+        # From the tailnet, and to the hub's own tailnet address: on a wildcard
+        # bind a request to the LAN address stays there, its reader may not
+        # reach the tailnet name.
         if not _addr_on_tailnet(self._client_ip()):
             return False
         try:
             local = self.connection.getsockname()[0]
         except (OSError, AttributeError, IndexError):
             return False
-        if _addr_is_loopback(str(local)) or not self._is_page_navigation():
+        if not _addr_on_tailnet(str(local)) or not self._is_page_navigation():
             return False
         where = hub_links.https_address()
         if not where:
