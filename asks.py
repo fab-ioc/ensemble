@@ -142,6 +142,8 @@ def title(question: str, who: str = "") -> str:
 
 _YESNO_TAG = re.compile(r"^(?:yes[ \t]*(?:/|-|or)[ \t]*no|y/n|yesno)$", re.I)
 _OPEN_TAG = re.compile(r"^(?:open|free[ \t]*text|text)$", re.I)
+# P409: "Ask (pick any):" — a card whose options are ticked, several at once.
+_MULTI_TAG = re.compile(r"^(?:pick[ \t]+(?:any|several|many)|several|any|multi(?:ple|[ \t-]*select)?)$", re.I)
 
 
 def _indent(s: str) -> int:
@@ -509,12 +511,14 @@ def parse(text: str) -> list[dict]:
             # No list: the options its words give, Yes and No for a yes/no
             # question, two asks for two questions.
             found = [(g["question"][:QUESTION_MAX], g["options"]) for g in inline(_plain(q))] or [(question, [])]
+        multi = bool(_MULTI_TAG.match(tag))
         for question, opts in found:
             rec = next((k for k, o in enumerate(opts) if o["recommended"]), -1)
             for k, o in enumerate(opts):
                 o["recommended"] = k == rec
             out.append({"n": len(out), "question": question, "kind": _kind(opts), "options": opts,
-                        "recommended": rec, "line": start, "end": max(end, start + 1)})
+                        "recommended": rec, "line": start, "end": max(end, start + 1),
+                        **({"multi": True} if multi and len(opts) >= 2 else {})})
     return out
 
 
@@ -526,6 +530,21 @@ def answer_text(ask: dict, option: str, comment: str) -> str:
     if option and comment:
         return f"{head}{option}\n\n{comment}"
     return head + (option or comment)
+
+
+def check_many(ask: dict, options) -> list[str] | None:
+    """The ticks of a pick-any card (P409) as the ask names them, in the
+    card's order, each once; None when it is not such a card or a tick is
+    not one of its options. [] for none (a comment alone)."""
+    if not ask.get("multi") or not isinstance(options, list) or len(options) > 20:
+        return None
+    picked = set()
+    for option in options:
+        label = check(ask, str(option or "")) if str(option or "").strip() else None
+        if not label:
+            return None
+        picked.add(label)
+    return [o["label"] for o in ask["options"] if o["label"] in picked]
 
 
 def check(ask: dict, option: str) -> str | None:
@@ -562,6 +581,13 @@ def validated(questions, warnings: list | None = None) -> list[dict]:
         yesno = item.get("yesno", False)
         if not isinstance(yesno, bool):
             raise ValueError(f"{where}.yesno must be true or false")
+        multi = item.get("multiSelect", False)
+        if multi is None:
+            multi = False
+        if not isinstance(multi, bool):
+            raise ValueError(f"{where}.multiSelect must be true or false")
+        if multi and (yesno or len(item.get("options") or []) < 2):
+            raise ValueError(f"{where}.multiSelect needs 2-6 options (not yesno): the person ticks any of them")
         raw = item.get("options", [])
         if raw is None:
             raw = []
@@ -622,7 +648,8 @@ def validated(questions, warnings: list | None = None) -> list[dict]:
             labels = sorted(o["label"].lower() for o in opts)
             kind = "yesno" if yesno or labels == ["no", "yes"] else "decision" if opts else "open"
             out.append({"n": len(out), "question": question[:QUESTION_MAX], "kind": kind,
-                        "options": opts, "recommended": recommended[0] if recommended else -1})
+                        "options": opts, "recommended": recommended[0] if recommended else -1,
+                        **({"multi": True} if multi else {})})
     if len(out) > 10:
         raise ValueError("questions may contain at most 10 questions")
     return out
@@ -728,8 +755,16 @@ _ROOM_CACHE: dict[str, tuple] = {}      # room id → (updatedAt, [(mid, ts, [qu
 _RESULT: tuple[float, dict] = (0.0, {})
 
 
+# P409: the pick-any asks of the cards read so far, {mid: {n}}, for the
+# Inbox row's "pick any" (a card's tuple keeps only its questions).
+_MULTI: dict[str, set] = {}
+
+
 def _marked(mid: str, ts: float, text: str, who: str, message: dict | None = None) -> tuple | None:
     found = of_message(message or {"text": text})
+    multi = {k for k, a in enumerate(found or []) if a.get("multi")}
+    if multi:
+        _MULTI[mid] = multi
     return (mid, ts, [a["question"] for a in found], who) if found else None
 
 
@@ -845,7 +880,8 @@ def open_in(summary: dict, now: float | None = None) -> list[dict]:
                 continue
             if mid in approved and _approved_settles(rid, mid, n):
                 continue
-            out.append({"mid": mid, "n": n, "question": q, "ts": ts, "who": who})
+            out.append({"mid": mid, "n": n, "question": q, "ts": ts, "who": who,
+                        **({"multi": True} if n in _MULTI.get(mid, ()) else {})})
     out.sort(key=lambda a: (a["ts"], a["n"]))
     return out
 
@@ -1133,7 +1169,8 @@ def _open_cards(rid: str, room: dict, led: dict | None) -> list[dict]:
                 who = next((p.get("identity") for p in room.get("participants") or []
                             if p.get("kind") == "agent" and not str(p.get("role") or "").lower().startswith("reviewer")), "")
             out.append({"mid": mid, "n": n, "question": q, "ts": float(ts or 0), "who": who,
-                        **({"task": task} if task else {}), **({"points": pids} if pids else {})})
+                        **({"task": task} if task else {}), **({"points": pids} if pids else {}),
+                        **({"multi": True} if n in _MULTI.get(mid, ()) else {})})
     out.sort(key=lambda c: (c["ts"], c["mid"], -c["n"]), reverse=True)
     return out
 

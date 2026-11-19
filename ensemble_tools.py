@@ -205,7 +205,7 @@ _ALL_TOOLS = [
             "routes the question to that PO unless forCeo is true, which sends "
             "a card to the user. One call posts one message in your own chat. "
             "Give every question its answers: 2-6 options (one may be recommended), "
-            "or yesno: true. A question without options gets Yes and No when it is a "
+            "or yesno: true; multiSelect: true lets the person tick several. A question without options gets Yes and No when it is a "
             "yes/no question; any other comes back with a warning, and its card is a "
             "comment box only. A card stays open until the person answers or closes it: "
             "a question one of your chat's open cards already asks is not posted again "
@@ -217,6 +217,10 @@ _ALL_TOOLS = [
                           "items": {"type": "object", "properties": {
                               "question": {"type": "string"},
                               "yesno": {"type": "boolean"},
+                              "multiSelect": {"type": "boolean",
+                                              "description": "The person ticks any of the options, several "
+                                                             "at once, and sends them together (needs 2-6 "
+                                                             "options; not with yesno)."},
                               "options": {"type": "array", "minItems": 1, "maxItems": 6,
                                           "items": {"type": "object", "properties": {
                                               "label": {"type": "string", "maxLength": 80},
@@ -1392,7 +1396,7 @@ def _ask_once(ctx, args, handler):
     about = list(dict.fromkeys(about))
     lines = [context.strip()] if context.strip() else []
     for ask in questions:
-        lines.append(f"{ask['n'] + 1}. {ask['question']}")
+        lines.append(f"{ask['n'] + 1}. {ask['question']}" + (" (pick any)" if ask.get("multi") else ""))
         for option in ask["options"]:
             detail = f" — {option['detail']}" if option["detail"] else ""
             rec = " (recommended)" if option["recommended"] else ""
