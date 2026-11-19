@@ -675,6 +675,43 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .crumb-sep { color: var(--fg-muted); flex: none; }
   .crumb-here { color: var(--fg); font-size: var(--fs-300); font-weight: 500; padding: 0 var(--s-100); flex: 0 1 auto; max-width: 420px; }
   .crumb-here[data-crumb="task"] { flex-shrink: 4; }
+  /* #393 (P388): the tabs in the bar, one row (a computer with the dock:
+     body.bar-tabs, barTabsSync). ENSEMBLE / project ▾ / thread ▾ is the
+     conversation's tab (.bar-grp: underlined as a selected tab while the
+     conversation is in front), then a thin divider, then the other tabs of
+     the conversation's stack: Dock's own title bar of that stack, fixed over
+     #bar-tabs (--bt-*), so a tab drags, closes and has its menu and the ⋯
+     follows the last tab. Its own tab (the conversation's) is not drawn:
+     the group is it. Names shrink first; then the rest scroll and Dock's ▾
+     says how many are out of view ("+N ▾"). */
+  .bar-grp { display: contents; }
+  .bar-thr-sep, #thr-switch, .bar-vr, #bar-tabs { display: none; }
+  body.bar-tabs .bar-grp {
+    display: flex; align-items: center; gap: var(--s-100); min-width: 0; flex: 0 1 auto;
+    align-self: stretch; padding: 0 var(--s-100); cursor: pointer;
+  }
+  body.bar-tabs .bar-grp.on { box-shadow: inset 0 -2px 0 var(--accent); }
+  body.bar-tabs.bt-thr .bar-thr-sep { display: inline; }
+  body.bar-tabs.bt-thr #thr-switch { display: inline-flex; min-width: 0; flex: 0 1 auto; max-width: 260px; color: var(--fg); font-size: var(--fs-300); }
+  .ldp-ico.bt-hash { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; margin-right: 6px; border-radius: var(--r-200); background: var(--c-neutral-bg); color: var(--c-neutral-fg); font-size: var(--fs-100); font-weight: 600; }
+  #thr-switch-name { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  body.bar-tabs .bar-vr { display: block; flex: none; width: 1px; height: 20px; background: var(--border); }
+  body.bar-tabs #bar-tabs { display: block; flex: 1 1 0; min-width: 0; align-self: stretch; }
+  body.bar-tabs #bar-here + .bar-break + .bar-gap { display: none; }
+  body.po-dock.bar-tabs #po-dock-host { z-index: 11; }
+  body.bar-tabs .dk-head.bt-head {
+    position: fixed; left: var(--bt-l, 0); top: var(--bt-t, 0); width: var(--bt-w, 0); height: var(--bt-h, 48px);
+    background: transparent; border: 0; z-index: 1; align-items: stretch;
+  }
+  body.bar-tabs .dk-head.bt-head > .dk-tabs { flex: 0 1 auto; height: 100%; align-items: stretch; }
+  body.bar-tabs .dk-head.bt-head .dk-tab-wrap { flex: 0 1 auto; min-width: 72px; height: 100%; background: transparent; }
+  body.bar-tabs .dk-head.bt-head .dk-tab-wrap:has(> [data-dk-tab="po-chat"]) { display: none; }
+  body.bar-tabs .dk-head.bt-head .dk-tab { height: 100%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; background: transparent; font-size: var(--fs-200); }
+  body.bar-tabs .dk-head.bt-head .dk-tab:not(.on) { color: var(--fg-subtle); }
+  body.bar-tabs .dk-head.bt-head > .dk-ctl { align-self: center; margin-left: 0; }
+  body.bar-tabs .dk-head.bt-head > .dk-ctl > .dk-btn:not([data-dk-act="menu"]) { display: none; }
+  body.bar-tabs .dk-head.bt-head > .dk-tabs-btn { align-self: center; width: auto; padding: 0 6px; gap: 2px; display: inline-flex; align-items: center; }
+  body.bar-tabs .dk-head.bt-head > .dk-tabs-btn[data-n]::before { content: "+" attr(data-n); font-size: var(--fs-200); color: var(--fg-subtle); }
   .avatar-btn {
     width: 28px; height: 28px; padding: 0; justify-content: center;
     border-radius: var(--r-full); background: var(--c-neutral-bg);
@@ -684,12 +721,12 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .avatar-btn:hover { background: var(--c-neutral-bg); filter: brightness(.96); }
   #plan-usage-slot { display: flex; align-items: center; }
   /* Menus dropped from the bar. One shape, three users. */
-  #me-menu, #proj-menu, #search-help-pop, #filters-menu {
+  #me-menu, #proj-menu, #thr-menu, #search-help-pop, #filters-menu {
     position: fixed; z-index: 60; background: var(--surface-overlay);
     border: 1px solid var(--border); border-radius: var(--r-300);
     box-shadow: var(--e-200); padding: var(--s-100); min-width: 200px;
   }
-  #me-menu[hidden], #proj-menu[hidden], #search-help-pop[hidden] { display: none; }
+  #me-menu[hidden], #proj-menu[hidden], #thr-menu[hidden], #search-help-pop[hidden] { display: none; }
   .me-item, .pm-item {
     display: flex; align-items: center; gap: var(--s-200); width: 100%;
     padding: 7px 10px; border: 0; border-radius: var(--r-200);
@@ -4949,11 +4986,25 @@ window.DOC_LISTENERS_PAUSED = false;
          switcher (#303: recent projects, then all of them, and this
          project's settings), then the conversation, the tool and the file
          (barCrumbs). -->
+    <!-- #393: on a computer the project and its thread are the first tab
+         (.bar-grp, underlined while the conversation is in front; a click on
+         it brings the conversation to the front): project ▾ / thread ▾. -->
+    <span class="bar-grp" id="bar-grp">
     <button id="proj-switch" class="bar-btn" data-noun-title="Switch {project}, or change this {project}'s settings" title="Switch project, or change this project's settings" aria-haspopup="true" aria-expanded="false" aria-controls="proj-menu">
       <span id="proj-switch-ico" aria-hidden="true"></span><span id="proj-switch-name" data-noun="All {projects}">All projects</span><span class="caret">▾</span>
     </button>
+    <span class="bar-sep bar-thr-sep" aria-hidden="true">/</span>
+    <button id="thr-switch" class="bar-btn" type="button" title="Threads of this conversation (Ctrl/⌘-click one: open it as a new tab)" aria-haspopup="true" aria-expanded="false" aria-controls="thr-menu">
+      <span id="thr-switch-name">Main</span><span class="caret">▾</span>
+    </button>
+    </span>
     <span id="bar-crumbs"></span>
   </nav>
+  <!-- #393: the tabs, after a thin divider. The conversation's own Dock tab
+       row is drawn here (fixed over this box, barTabsSync), so a tab drags,
+       closes and has its menu as in the dock. -->
+  <span class="bar-vr" aria-hidden="true"></span>
+  <div id="bar-tabs"></div>
   <!-- What you can do here: a PO screen's Panels menu (barPaint). -->
   <div id="bar-here"></div>
   <div class="bar-break"></div>
@@ -5059,6 +5110,8 @@ window.DOC_LISTENERS_PAUSED = false;
   <button class="me-item" data-me="settings">Settings</button>
 </div>
 <div id="proj-menu" role="dialog" aria-label="Switch project" data-noun-aria-label="Switch {project}" hidden></div>
+<!-- #393: the threads of the conversation in the project's tab (thrMenuOpen). -->
+<div id="thr-menu" role="menu" aria-label="Threads" hidden></div>
 <div id="usage-tray" hidden>
   <div class="usage-head">Plan allowance <span id="usage-sub"></span></div>
   <div class="usage-allowance-control">
@@ -24401,6 +24454,9 @@ function crumbState() {
   // A phone's tabs (#129): the task's tab in front of its Chat.
   const tabs = PD.dock && PD.dock.narrow() && document.body.classList.contains('po-dock');
   const tctx = r ? { kind: 'task', sid: r.sessionId } : null;
+  // #393: a computer's trail is the project alone (its tab is the bar's
+  // project group); a task, a tool and a file are named on their tabs.
+  if (strip) return s;
   if (r && tabs && pdTask()) {
     s.task = { no: taskNoText(r, false), title: detailTitle(r) };
     const k = PD.dock.frontOf('po-chat'), fp = crumbFilePanel(tctx), e = k ? PD.rt.get(k) : null;
@@ -24414,33 +24470,6 @@ function crumbState() {
       if (k === 'workspace') s.file = crumbWsFile(tctx);
       if (k === 'changes') { const v = TCH_VIEWS.get(r.sessionId); s.file = (v && v.file) || ''; }
     }
-  } else if (r && strip && pdTask()) {
-    s.task = { no: taskNoText(r, false), title: detailTitle(r) };
-    const k = pdToolShown(), fp = crumbFilePanel(tctx);
-    if (k) {
-      s.tool = { k, name: pdPanelName(k) };
-      if (k === 'workspace') s.file = crumbWsFile(tctx) || (fp ? fp.file : '');
-      if (k === 'changes') { const v = TCH_VIEWS.get(r.sessionId); s.file = (v && v.file) || ''; }
-    } else if (fp) Object.assign(s, fp);
-  } else if (po && strip && !r) {
-    // A trail only for what is in front (#386, P372 A): a tool slid out over
-    // the PO, or a tool or file panel in front of the PO's own stack. With
-    // the PO in front, a file or tool in a stack beside it adds nothing.
-    const fly = PD.dock.flyOpen(), front = PD.dock.frontOf('po-chat') || '';
-    const e = front && front !== 'po-chat' ? PD.rt.get(front) : null;
-    const k = fly || (front && front !== 'po-chat' && !e ? front : '');
-    // The PO's conversation not in a stack (hidden, in a window): as before.
-    const old = !fly && !front;
-    const fp = crumbFilePanel(pctx);
-    if (old ? pdToolShown() : k) {
-      const t = k || pdToolShown();
-      s.tool = { k: t, name: pdPanelName(t) };
-      if (t === 'workspace') s.file = crumbWsFile(pctx) || (fp ? fp.file : '');
-      if (t === 'changes') s.file = CH_FILE || '';
-    } else if (e && e.kind === 'file' && pdWsOwner(e) === pj.id) {
-      s.tool = { k: 'workspace', name: pdPanelName('workspace') };
-      s.file = e.path;
-    } else if (old && fp) Object.assign(s, fp);
   } else if (r) {
     s.task = { no: taskNoText(r, false), title: detailTitle(r) };
     const k = issueTab(r);
@@ -24473,11 +24502,85 @@ function barCrumbs() {
   const pc = cs.find(c => c.level === 'project');
   document.body.classList.toggle('bar-proj', !!pc);
   // The switcher names the project you are in: an open task's too (#303).
-  const nm = pc ? pc.text : projSwitchLabel();
+  // #393: a task in no project in the middle is the top level itself.
+  const top = barTopTask();
+  const nm = top ? ((taskNoText(top, false) ? taskNoText(top, false) + ' ' : '') + detailTitle(top)) : pc ? pc.text : projSwitchLabel();
   if (name.textContent !== nm) name.textContent = nm;
-  projSwitchIco(projHere());
+  if (top) { const el = document.getElementById('proj-switch-ico'), h = '<span class="ldp-ico bt-hash">#</span>'; if (el && el.innerHTML !== h) el.innerHTML = h; }
+  else projSwitchIco(projHere());
   writeSlot(box, crumbsHtml(cs));
   projNoteOpened(projHere());
+  barTabsSync();
+}
+// ---- #393 (P388): the tabs in the bar ----------------------------------------
+// A computer with the dock showing a conversation: the conversation's stack's
+// title bar is drawn over #bar-tabs (the CSS of .bt-head), its own tab is
+// the bar's project group. Called by barCrumbs (every dock change, every
+// paint) and on resize.
+function barTabsOn() {
+  const d = PD.dock, b = document.body.classList;
+  return !!d && !PD.failed && !d.narrow() && b.contains('mid') && b.contains('po-dock');
+}
+// The title bar of the stack the conversation is in, while that stack is in
+// the page's dock (not a window, a float or minimised).
+function barTabsHead() {
+  const t = PD.dock && PD_ROOT.querySelector('.dk-main .dk-stack:not(.dk-min) > .dk-head [data-dk-tab="po-chat"]');
+  return t ? t.closest('.dk-head') : null;
+}
+function barTabsSync() {
+  const body = document.body, on = barTabsOn();
+  body.classList.toggle('bar-tabs', on);
+  const head = on ? barTabsHead() : null;
+  for (const h of PD_ROOT ? PD_ROOT.querySelectorAll('.dk-head.bt-head') : []) if (h !== head) h.classList.remove('bt-head');
+  const grp = document.getElementById('bar-grp');
+  const front = !!head && PD.dock.frontOf('po-chat') === 'po-chat';
+  if (grp) grp.classList.toggle('on', front);
+  body.classList.toggle('bt-thr', on && !!thrBarRoom());
+  if (!head) return;
+  head.classList.add('bt-head');
+  const r = document.getElementById('bar-tabs').getBoundingClientRect();
+  const hr = document.querySelector('header').getBoundingClientRect();
+  const set = (k, v) => { v = Math.round(v) + 'px'; if (body.style.getPropertyValue(k) !== v) body.style.setProperty(k, v); };
+  set('--bt-l', r.left); set('--bt-w', r.width); set('--bt-t', hr.top); set('--bt-h', hr.height - 1);
+  barTabsMore(head);
+}
+// Dock's ▾ (the row's every tab) shows only while the row overflows: it
+// says how many tabs are out of view, "+N ▾".
+function barTabsMore(head) {
+  const row = head.querySelector(':scope > .dk-tabs'), btn = head.querySelector(':scope > .dk-tabs-btn');
+  if (!row || !btn) return;
+  if (!row._btScroll) { row._btScroll = true; row.addEventListener('scroll', () => barTabsMore(head), { passive: true }); }
+  const rr = row.getBoundingClientRect();
+  let n = 0;
+  for (const w of row.querySelectorAll(':scope > .dk-tab-wrap')) {
+    if (w.querySelector(':scope > [data-dk-tab="po-chat"]')) continue;
+    const b = w.getBoundingClientRect();
+    if (b.right > rr.right + 1 || b.left < rr.left - 1) n++;
+  }
+  const v = n ? String(n) : '';
+  if ((btn.dataset.n || '') !== v) { if (v) btn.dataset.n = v; else delete btn.dataset.n; }
+}
+window.addEventListener('resize', () => barTabsSync());
+if (window.ResizeObserver) new ResizeObserver(() => barTabsSync()).observe(document.getElementById('bar-tabs'));
+document.getElementById('bar-grp').addEventListener('click', (e) => {
+  if (!document.body.classList.contains('bar-tabs') || e.target.closest('#proj-switch, #thr-switch')) return;
+  pdReveal('po-chat');
+});
+// A task in no project shown in the middle on a computer: the top level of
+// the bar (ENSEMBLE / the task ▾ / thread ▾), with no PO.
+function barTopTask() {
+  if (!barTabsOn() || !pdMid()) return null;
+  const r = rowBySid(SELECTED_SID);
+  if (!r) return null;
+  const pj = projectOfRoom(r.roomId) || wsProjectForRow(r);
+  return !pj || pj.id === UNASSIGNED_ID ? r : null;
+}
+// The room whose threads thread ▾ lists: the conversation in the project's
+// tab (the PO's, or a task in no project that is the top level).
+function thrBarRoom() {
+  if (pdMid()) { const r = rowBySid(SELECTED_SID); return (r && r.roomId) || ''; }
+  const pj = poDockProject(), po = pj && poRowOf(pj);
+  return (po && po.roomId) || '';
 }
 // Going up to a level.
 function crumbGo(level) {
