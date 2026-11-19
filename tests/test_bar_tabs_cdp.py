@@ -33,6 +33,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 import chatroom  # noqa: E402
 import dashboard  # noqa: E402
+import inbox  # noqa: E402
 import threads  # noqa: E402
 from tests import chrome_profile  # noqa: E402
 from tests.test_page_update import CHROME  # noqa: E402
@@ -109,7 +110,11 @@ async function main() {
   const out = {};
   try {
     await size(1728,1117);
+    // The first page opens on no task (else on Wipers, the Inbox's waiting card); a reload as a person's.
+    const {identifier:noBootOpen} = await send('Page.addScriptToEvaluateOnNewDocument',{source:'window.ensBootOpen = false;'},s);
     await send('Page.navigate',{url:A.base+'/'},s);
+    await until(`window.ensBooted===true`,'booted');
+    await send('Page.removeScriptToEvaluateOnNewDocument',{identifier:noBootOpen},s);
     await until(`typeof ALL_ROWS!=='undefined' && ALL_ROWS.some(r=>r.roomId===${JSON.stringify(A.po)}) && ALL_ROWS.some(r=>r.roomId===${JSON.stringify(A.loose)})`,'rows');
     await ev(`SELECTED_PROJECT=${JSON.stringify(A.proj)}; PROJECT_TAB='tasks'; renderRows(); 0`);
     await until(`!!PD.dock && PD.restored && ${threadsIn}.length===2`,'PO chat with two threads');
@@ -134,8 +139,11 @@ async function main() {
     await until(`PD.dock.frontOf('po-chat')==='po-chat'`, 'group click');
     await sleep(300);
     out.grpClick = await ev(BAR);
-    // 3. A task opened from an Inbox card (its open: ibxOpenRoom): a tab too.
-    await ev(`ibxOpenRoom(${JSON.stringify(A.wipers)}); 0`);
+    // 3. A task opened from an Inbox card (a waiting row: its link opens the room): a tab too.
+    const IBX_LINK = `li.ibx-row[data-kind="waiting"] a.ibx-link[data-room="${A.wipers}"]`;
+    await ev(`if (window.LD && LD.dock) LD.dock.reveal('inbox'); 0`);
+    await until(`!!IBX.data && !!document.querySelector(${JSON.stringify(IBX_LINK)}) && !document.querySelector(${JSON.stringify(IBX_LINK)}).dataset.mid`, 'the Inbox card of Wipers');
+    await clickAt(null, IBX_LINK);
     await until(`PD.rt.has('chat:'+${JSON.stringify(A.wipers)}) && PD.dock.frontOf('po-chat')==='chat:'+${JSON.stringify(A.wipers)}`, 'task tab from the Inbox');
     await sleep(400);
     out.inbox = await ev(BAR);
@@ -256,6 +264,39 @@ async function main() {
     try { await until(`WC.target?.kind!=='task' && ${boxReady}`, 'box after the × ', 40); } catch (e) {}
     await sleep(500);
     out.box.x = { target: await ev(`WC.target`), front: await ev(`PD.dock.frontOf('po-chat')`), thrIn: await ev(`!!PD.thrIn && pdThreadInShown()`) };
+    // 8c. The keyboard from the group (review 1): the box on the thread in
+    // place, project ▾ focused, ArrowRight: the first tab in front, and the box
+    // goes with it (a real key, not Dock's own row).
+    await clickAt(null, '#bar-grp .bar-thr-sep');
+    await until(onThread, 'box on the thread before the keys');
+    await sleep(700);
+    await ev(`document.getElementById('proj-switch').focus(); 0`);
+    const key = async (k, vk) => { for (const type of ['rawKeyDown','keyUp']) await send('Input.dispatchKeyEvent',{type,key:k,code:k,windowsVirtualKeyCode:vk},s); };
+    await key('ArrowRight', 39);
+    const first = await ev(`barTabIds()[0]`);
+    try { await until(`PD.dock.frontOf('po-chat')===${JSON.stringify(first)} && WC.target?.kind==='task' && 'chat:'+WC.target.room===${JSON.stringify(first)} && ${boxReady}`, 'box with the key'); } catch (e) {}
+    out.keys = { first, front: await ev(`PD.dock.frontOf('po-chat')`), target: await ev(`WC.target`), focus: await ev(`document.activeElement?.dataset?.dkTab||document.activeElement?.id||''`) };
+    out.keys.route = await boxRoute();
+    await ev(`PD.dock.activate('po-chat'); 0`);
+    await sleep(500);
+    // 8d. The conversation out of the page's dock (review 1): floated, then
+    // minimised, it has no row in the bar; Dock's own row shows its tab.
+    await ev(`PD.dock.float('po-chat'); 0`);
+    await sleep(600);
+    out.floated = await ev(BAR);
+    out.floated.poTabShown = await ev(`[...PD_ROOT.querySelectorAll('[data-dk-tab="po-chat"]')].some(t => t.getBoundingClientRect().width > 0 && getComputedStyle(t.closest('.dk-tab-wrap')||t).display !== 'none')`);
+    out.floated.grpShown = await ev(`getComputedStyle(document.getElementById('bar-grp')).display !== 'none' && getComputedStyle(document.getElementById('bar-tabs')).display !== 'none'`);
+    await ev(`PD.dock.dockBack('po-chat'); 0`);
+    await until(`document.body.classList.contains('bar-tabs')`, 'docked back');
+    await sleep(500);
+    out.dockedBack = await ev(BAR);
+    await ev(`PD.dock.toggleMin('po-chat'); 0`);
+    await sleep(600);
+    out.minimised = await ev(BAR);
+    await ev(`PD.dock.toggleMin('po-chat'); 0`);
+    await until(`document.body.classList.contains('bar-tabs')`, 'shown again');
+    await sleep(500);
+    out.unminimised = await ev(BAR);
     // 9. Many tabs: "+N".
     await size(1100, 900);
     for (const r of A.many) await ev(`pdChatOpen(${JSON.stringify(r)}); 0`);
@@ -275,6 +316,12 @@ async function main() {
       const row=ALL_ROWS.find(r=>r.roomId===${JSON.stringify(A.loose)});
       return {un:un?(un.sessions||[]).map(x=>x.roomId||x.sessionId):null, row:row&&{h:row.headless,wf:row.workflow,sid:row.sessionId,pid:row.projectId}, menu:document.getElementById('proj-menu').innerHTML.slice(-600)}})()`))); }
     out.free = await ev(`[...document.querySelectorAll('#proj-menu .pm-free [data-pm-task]')].map(b => [b.dataset.pmTask, b.textContent.trim()])`);
+    // More than eight (review 1): "All N tasks…" shows the rest, the focus on the ninth.
+    out.freeMore = await ev(`document.querySelector('#proj-menu [data-pm-free-all]')?.textContent || null`);
+    await clickAt(null, '#proj-menu [data-pm-free-all]');
+    await until(`document.querySelectorAll('#proj-menu .pm-free [data-pm-task]').length > 8`, 'all tasks in no project');
+    out.freeAll = await ev(`({n: document.querySelectorAll('#proj-menu .pm-free [data-pm-task]').length, more: !!document.querySelector('#proj-menu [data-pm-free-all]'),
+      open: !document.getElementById('proj-menu').hidden, focus: [...document.querySelectorAll('#proj-menu .pm-free [data-pm-task]')].indexOf(document.activeElement)})`);
     await clickAt(null, `#proj-menu [data-pm-task="${await ev(sid(A.loose))}"]`);
     await until(`!!barTopTask() && barTopTask().roomId===${JSON.stringify(A.loose)}`, 'top level task');
     await sleep(600);
@@ -332,6 +379,7 @@ class BarTabs(unittest.TestCase):
         ]
         for p in cls.patches:
             p.start(); cls.addClassCleanup(p.stop)
+        inbox.bind(dashboard)       # tests/test_inbox.py leaves it bound to its fake hub
         ok, proj, _ = dashboard.register_project('Motors'); assert ok, proj
         cls.proj = proj['id']; home = Path(proj.get('home') or proj['path'])
         sid = 'bar-po'
@@ -355,7 +403,17 @@ class BarTabs(unittest.TestCase):
             return t['id']
         cls.brakes = task('Brakes', cls.proj)
         cls.wipers = task('Wipers', cls.proj)
+        # Wipers waits on the person (its folder is gone): a waiting Inbox card whose link opens the room.
+        gone = home / 'wipers_task' / 'repo'
+        chatroom.patch_room(cls.wipers, cwd=str(gone), folderMissing={
+            'path': str(gone), 'identity': 'claude', 'kind': 'missing', 'since': time.time() - 120,
+            'reason': f"claude's folder {gone} is missing", 'roomCwd': str(gone), 'seatCwd': str(home)})
         cls.many = [task(f'Lamp {i}', cls.proj) for i in range(4)]
+        # Nine in no project before it, older: project ▾ shows eight, then "All 10 tasks…".
+        cls.older = []
+        for i in range(9):
+            cls.older.append(task(f'Old loose {i}')); time.sleep(0.02)
+        time.sleep(1.1)
         cls.loose = task('Loose ends')
         ok, proj2, _ = dashboard.register_project('Garden'); assert ok, proj2
         cls.proj2 = proj2['id']
@@ -508,8 +566,12 @@ class BarTabs(unittest.TestCase):
         self.assertIsNone(f['more'], 'with room for every tab: no +N')
 
     def test_a_task_in_no_project_is_the_top_level(self):
-        self.assertEqual([x[0] for x in self.got['free']], [self.loose_sid])
+        free = [x[0] for x in self.got['free']]
+        self.assertEqual(len(free), 8, 'the latest eight')
+        self.assertEqual(free[0], self.loose_sid, 'latest first')
         self.assertIn('Loose ends', self.got['free'][0][1])
+        self.assertIn('All 10 tasks in no project', self.got['freeMore'] or '')
+        self.assertEqual(self.got['freeAll'], {'n': 10, 'more': False, 'open': True, 'focus': 8}, 'the rest shown, the focus on the ninth')
         g = self.got['top']
         self.one_row(g, 'top')
         self.assertEqual(g['top'], self.loose)
@@ -519,6 +581,26 @@ class BarTabs(unittest.TestCase):
         self.assertFalse(g['thrIn']['shown'], "the PO's thread in place is not over another chat")
         self.assertEqual(g['target'], {'kind': 'task', 'room': self.loose})
         self.assertEqual(self.got['free2'], [self.loose_sid], 'project ▾ marks it')
+
+    def test_the_keys_from_the_group_aim_the_box(self):
+        k = self.got['keys']
+        self.assertTrue(k['first'].startswith('chat:'), k)
+        self.assertEqual(k['front'], k['first'], 'ArrowRight from project ▾: the first tab in front')
+        self.assertEqual(k['focus'], k['first'], 'and focused')
+        self.assertEqual(k['target'], {'kind': 'task', 'room': k['first'][5:]}, 'the box goes with it, not left on the thread')
+        self.assertEqual(k['route'], {'room': k['first'][5:], 'thread': ''})
+
+    def test_the_conversation_out_of_the_dock_has_no_row_in_the_bar(self):
+        for key in ('floated', 'minimised'):
+            with self.subTest(key=key):
+                g = self.got[key]
+                self.assertFalse(g['on'], 'no tabs in the bar')
+                self.assertEqual(g['tabs'], [])
+        self.assertTrue(self.got['floated']['poTabShown'], "Dock's own row shows the conversation's tab")
+        self.assertFalse(self.got['floated']['grpShown'], 'no group, no empty row in the bar')
+        for key in ('dockedBack', 'unminimised'):
+            with self.subTest(key=key):
+                self.one_row(self.got[key], key)
 
     def test_a_phone_keeps_its_own_bar(self):
         g = self.got['phone']

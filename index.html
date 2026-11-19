@@ -24659,10 +24659,13 @@ function barTabsHead() {
   const t = PD.dock && PD_ROOT.querySelector('.dk-main .dk-stack:not(.dk-min) > .dk-head [data-dk-tab="po-chat"]');
   return t ? t.closest('.dk-head') : null;
 }
+// The conversation out of the page's dock (a window, a float, minimised):
+// no title bar to draw in the bar, so no tabs there; Dock's own rows show
+// every tab (the conversation's too) and the bar its trail, as on a page
+// without the dock.
 function barTabsSync() {
-  const body = document.body, on = barTabsOn();
+  const body = document.body, head = barTabsOn() ? barTabsHead() : null, on = !!head;
   body.classList.toggle('bar-tabs', on);
-  const head = on ? barTabsHead() : null;
   for (const h of PD_ROOT ? PD_ROOT.querySelectorAll('.dk-head.bt-head') : []) if (h !== head) h.classList.remove('bt-head');
   const grp = document.getElementById('bar-grp');
   const front = !!head && PD.dock.frontOf('po-chat') === 'po-chat';
@@ -24731,6 +24734,8 @@ document.addEventListener('keydown', (e) => {
   const id = e.key === 'ArrowRight' || e.key === 'Home' ? ids[0] : ids[ids.length - 1];
   PD.dock.activate(id);
   PD_ROOT.querySelector(`[data-dk-tab="${CSS.escape(id)}"]`)?.focus();
+  // The person's pick, as a key on the tabs (outside Dock: WC.dockAt is not set).
+  wcFront(id, true);
 });
 // The chat page in the project's tab: the PO's, or the task in no project
 // that is the top level (its chat in the middle).
@@ -25089,20 +25094,25 @@ function projMenuHtml() {
 }
 // #393: a computer's switcher also lists the tasks in no project, latest
 // first (the left list's, by its rule: a headless room is a task); a pick makes
-// that task the top level. A phone keeps its own (its task list).
+// that task the top level. A phone keeps its own (its task list). The latest
+// eight, then "All N tasks…" shows the rest (PROJ_FREE_ALL, till it closes).
 const PROJ_FREE_N = 8;
+let PROJ_FREE_ALL = false;
 function projFreeHtml(sw) {
   if (phoneNow() || !sw) return '';
   const cur = barTopTask(), seen = new Set();
-  const l = (sw.recent || []).filter(e => !e.po && !e.proj && !e.pid && e.row && e.row.headless && e.row.sessionId
-    && !seen.has(e.row.sessionId) && seen.add(e.row.sessionId)).slice(0, PROJ_FREE_N);
+  const all = (sw.recent || []).filter(e => !e.po && !e.proj && !e.pid && e.row && e.row.headless && e.row.sessionId
+    && !seen.has(e.row.sessionId) && seen.add(e.row.sessionId));
+  const l = PROJ_FREE_ALL ? all : all.slice(0, PROJ_FREE_N);
   if (!l.length) return '';
+  const more = all.length > l.length
+    ? `<button type="button" class="pm-item pm-free-more" data-pm-free-all>${esc(nounText('All ' + all.length + ' tasks in no {project}…'))}</button>` : '';
   return `<div class="pm-free"><div class="pm-rule"></div><div class="pm-head" id="pm-free-h">${esc(nounText('Tasks in no {project}'))}</div>`
     + `<div role="group" aria-labelledby="pm-free-h">` + l.map(e => {
       const r = e.row, no = taskNoText(r, true), title = rowTitle(r), on = cur && cur.sessionId === r.sessionId;
       return `<button type="button" class="pm-item pm-task${on ? ' on' : ''}" data-pm-task="${esc(r.sessionId)}" title="${esc((no ? no + ' ' : '') + title)}"`
         + (on ? ' aria-current="true"' : '') + `>${ldpKindIcon('task', 'ldp-ico pm-tico')}<span class="pm-name">${no ? esc(no) + ' ' : ''}${esc(title)}</span></button>`;
-    }).join('') + '</div></div>';
+    }).join('') + more + '</div></div>';
 }
 function projMenuItems() {
   return [...$('#proj-menu').querySelectorAll('.pm-item, .pm-find')].filter(e => e.offsetParent !== null);
@@ -25111,6 +25121,7 @@ function closeProjMenu(back) {
   const m = $('#proj-menu');
   const was = !m.hidden;
   m.hidden = true;
+  PROJ_FREE_ALL = false;
   $('#proj-switch').setAttribute('aria-expanded', 'false');
   if (document.body.classList.contains('ph-switch')) { document.body.classList.remove('ph-switch'); barPaint(); }
   if (was && back) $('#proj-switch').focus();
@@ -25221,6 +25232,14 @@ $('#proj-menu').addEventListener('click', (ev) => {
   ev.stopPropagation();
   if (it.hasAttribute('data-ph-list')) { phPane('list'); return; }
   if (it.classList.contains('pm-new')) { closeProjMenu(); projectSetupFlow(); return; }
+  if (it.hasAttribute('data-pm-free-all')) {
+    // The rest shown in place; the focus on the first of them.
+    PROJ_FREE_ALL = true;
+    const m = $('#proj-menu'), top = m.scrollTop;
+    m.innerHTML = projMenuHtml(); m.scrollTop = top;
+    m.querySelectorAll('.pm-free [data-pm-task]')[PROJ_FREE_N]?.focus();
+    return;
+  }
   if (it.hasAttribute('data-pm-task')) {
     closeProjMenu();
     const r = rowBySid(it.getAttribute('data-pm-task'));
