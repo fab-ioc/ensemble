@@ -746,7 +746,8 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .me-item:hover, .pm-item:hover { background: var(--hover); }
   .pm-item.on { background: var(--selected-bg); color: var(--selected-fg); font-weight: 500; }
   .pm-item .pm-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .pm-item .pm-sw { flex: none; }   /* #328: the left panel's icons; #370: sized as .ptile */
+  .pm-item .pm-sw { flex: none; }
+  .pm-item > .pm-tico { flex: none; width: 22px; height: 14px; }   /* #393: a task in no project, its name in line with the projects' */   /* #328: the left panel's icons; #370: sized as .ptile */
   .sw-kind-ico { display: inline-block; width: 12px; height: 12px; vertical-align: -1px; }
   .pm-item .pm-needs {
     margin-left: auto; background: var(--c-warning-bg); color: var(--c-warning-fg);
@@ -769,7 +770,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .pm-item:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--focus-ring); }
   .pm-none { margin: 0; padding: 7px 10px; font-size: var(--fs-200); color: var(--fg-muted); }
   #proj-menu.pm-finding .pm-recent, #proj-menu.pm-finding .pm-recent + .pm-rule,
-  #proj-menu.pm-finding #pm-recent-h, #proj-menu.pm-finding .pm-tail { display: none; }
+  #proj-menu.pm-finding #pm-recent-h, #proj-menu.pm-finding .pm-tail, #proj-menu.pm-finding .pm-free { display: none; }
   /* #362: the switcher's rows: the project's button and its pin button side by side (no nested buttons). */
   #proj-menu.pm-finding .pm-pins, #proj-menu.pm-finding .pm-pins + .pm-rule, #proj-menu.pm-finding #pm-pin-h { display: none; }
   .pm-pins { display: flex; flex-direction: column; }
@@ -25028,10 +25029,11 @@ function projMenuHtml() {
   const pinIds = pinList();
   const pins = pinIds.map(id => list.find(p => p.id === id)).filter(Boolean);
   const rest = list.filter(p => !pinIds.includes(p.id));
-  let recent = [];
+  let recent = [], sw = null;
   try {
-    recent = projRecent(rest, swRecent(ALL_ROWS, attentionItems(), registeredProjects(),
-      { dayStart: today / 1000, unassigned: (un && un.sessions) || [] }).recent, projOpened());
+    sw = swRecent(ALL_ROWS, attentionItems(), registeredProjects(),
+      { dayStart: today / 1000, unassigned: (un && un.sessions) || [] });
+    recent = projRecent(rest, sw.recent, projOpened());
   } catch (e) { recent = projRecent(rest, [], projOpened()); }
   // All projects is a phone's cards page; a desktop has no such page (#135).
   // A phone's task list is a pane of its own (#307): every task, Unassigned and past sessions.
@@ -25046,8 +25048,26 @@ function projMenuHtml() {
     + `<div class="pm-findrow"><input type="search" class="pm-find" placeholder="${esc(nounText('Find a {project}…'))}"`
     + ` aria-label="${esc(nounText('Find a {project}'))}" autocomplete="off" spellcheck="false"></div>`
     + `<div class="pm-all" role="group" aria-labelledby="pm-all-h">${cards}${projAllHtml(list, here, '')}</div>`
+    + projFreeHtml(sw)
     + `<div class="pm-tail">${projMenuSettingsHtml(pj)}<div class="pm-rule"></div>`
     + `<button type="button" class="pm-item pm-new" title="A name, then code or documents">${esc(nounText('New {project}…'))}</button></div>`;
+}
+// #393: a computer's switcher also lists the tasks in no project, latest
+// first (the left list's, by its rule: a headless room is a task); a pick makes
+// that task the top level. A phone keeps its own (its task list).
+const PROJ_FREE_N = 8;
+function projFreeHtml(sw) {
+  if (phoneNow() || !sw) return '';
+  const cur = barTopTask(), seen = new Set();
+  const l = (sw.recent || []).filter(e => !e.po && !e.proj && !e.pid && e.row && e.row.headless && e.row.sessionId
+    && !seen.has(e.row.sessionId) && seen.add(e.row.sessionId)).slice(0, PROJ_FREE_N);
+  if (!l.length) return '';
+  return `<div class="pm-free"><div class="pm-rule"></div><div class="pm-head" id="pm-free-h">${esc(nounText('Tasks in no {project}'))}</div>`
+    + `<div role="group" aria-labelledby="pm-free-h">` + l.map(e => {
+      const r = e.row, no = taskNoText(r, true), title = rowTitle(r), on = cur && cur.sessionId === r.sessionId;
+      return `<button type="button" class="pm-item pm-task${on ? ' on' : ''}" data-pm-task="${esc(r.sessionId)}" title="${esc((no ? no + ' ' : '') + title)}"`
+        + (on ? ' aria-current="true"' : '') + `>${ldpKindIcon('task', 'ldp-ico pm-tico')}<span class="pm-name">${no ? esc(no) + ' ' : ''}${esc(title)}</span></button>`;
+    }).join('') + '</div></div>';
 }
 function projMenuItems() {
   return [...$('#proj-menu').querySelectorAll('.pm-item, .pm-find')].filter(e => e.offsetParent !== null);
@@ -25166,6 +25186,12 @@ $('#proj-menu').addEventListener('click', (ev) => {
   ev.stopPropagation();
   if (it.hasAttribute('data-ph-list')) { phPane('list'); return; }
   if (it.classList.contains('pm-new')) { closeProjMenu(); projectSetupFlow(); return; }
+  if (it.hasAttribute('data-pm-task')) {
+    closeProjMenu();
+    const r = rowBySid(it.getAttribute('data-pm-task'));
+    if (r) { openDetail(r.sessionId); if (PD.dock && !PD.dock.narrow()) PD.dock.closeFly(); }
+    return;
+  }
   projPick(it.dataset.proj || '');
 });
 window.addEventListener('resize', () => { if (!phoneNow()) closeProjMenu(); });
