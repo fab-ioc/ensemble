@@ -141,12 +141,13 @@ async function main() {
       PD.dock._replaceLayout(JSON.parse(__L0)); PD.dock.activate('po-chat'); 0`); await sleep(500); };
     out.names = await ev(`({ A: PD.dock.title(${JSON.stringify(TA)}), B: PD.dock.title(${JSON.stringify(TB)}), C: PD.dock.title(${JSON.stringify(TC)}) })`);
     // A run: set the dock up, right-click a tab, maybe click items; the menu seen, the layout after.
-    const run = async (what, setup, tab, labels) => {
+    const run = async (what, setup, tab, labels, shot) => {
       await restore();
       for (const x of setup || []) await ev(x + '; 0');
       if (setup && setup.length) await sleep(600);
       const before = await ev(TREE);
       const menu = await rightClick(tab);
+      if (shot) await snap(shot);
       for (const l of labels || []) await click(l);
       if (!(labels || []).length) await ev(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); 0`);
       await sleep(300);
@@ -154,8 +155,7 @@ async function main() {
     };
     const side2 = [`PD.dock.dockEdge(${JSON.stringify(TA)}, 'right')`, `PD.dock.moveTo(${JSON.stringify(TB)}, {kind:'stack', stack:PD.dock.layout().root.kids[1]}, 'center')`];
     // The menu of a task's tab in the top bar, and the same tab's ⋯ (one list).
-    await run('bar-menu', [], tabSel(TA), []);
-    await snap('bar-menu');
+    await run('bar-menu', [], tabSel(TA), [], 'bar-menu');
     await restore();
     await ev(`PD.dock.activate(${JSON.stringify(TA)}); 0`); await sleep(300);
     // From a right-click and from ⋯ on a side stack: the same rows.
@@ -191,6 +191,21 @@ async function main() {
     await run('tool-menu', [`PD.dock.setViewMode('board', 'pinned')`], tabSel('board'), []);
     await run('tool:unsplit', [`PD.dock.setViewMode('board', 'pinned')`], tabSel('board'), ['Unsplit']);
     out.toolMode = await ev(`PD.dock.viewMode('board')`);
+    // A tab in a floating window: its menu has the same rows; a window holds one stack, so no split.
+    const fl = id => `PD.dock.float(${JSON.stringify(id)})`;
+    await run('float-menu', [fl(TA)], tabSel(TA), []);
+    await run('float:unsplit', [fl(TA)], tabSel(TA), ['Unsplit']);
+    await run('float:move-bar', [fl(TA)], tabSel(TA), ['Move to Other Stack', 'Top bar']);
+    // From the top bar into the window.
+    await run('bar:move-float', [fl(TA)], tabSel(TB), ['Move to Other Stack', out.names.A + ', a window']);
+    // A minimised window's tab has them too.
+    await run('min-float-menu', [fl(TA), `PD.dock.toggleMin(${JSON.stringify(TA)})`], tabSel(TA), []);
+    // The conversation floated: Unsplit takes a side stack's tabs into its window; in that window it is greyed.
+    await run('conv-float:unsplit', [...side2, fl('po-chat')], tabSel(TA), ['Unsplit']);
+    await run('conv-float-menu', [...side2, fl('po-chat'), `PD.dock.moveTo(${JSON.stringify(TC)}, {kind:'stack', stack:PD.dock.layout().floats[0].stack}, 'center')`], tabSel(TC), []);
+    await run('conv-float:move-out', [...side2, fl('po-chat'), `PD.dock.moveTo(${JSON.stringify(TC)}, {kind:'stack', stack:PD.dock.layout().floats[0].stack}, 'center')`], tabSel(TC), ['Move to Other Stack', out.names.A + ' · ' + out.names.B]);
+    // The conversation's own tab, in its window: its Split and Move are greyed (the other tabs move).
+    await run('conv-own-menu', [...side2, fl('po-chat')], tabSel('po-chat'), []);
     // The layout a menu made stays after a reload.
     await run('reload:split', [], tabSel(TA), ['Split Right']);
     out.beforeReload = await ev(TREE);
@@ -342,6 +357,49 @@ class TabMenu(unittest.TestCase):
         self.assertFalse(next(r for r in rows if r.lstrip('~').startswith('Unsplit')).startswith('~'))
         self.assertEqual(self.runs('tool:unsplit')['tree'], '[T*,A,B,C]')
         self.assertEqual(self.got['toolMode'], 'unpinned')
+
+    @staticmethod
+    def row(rows, label):
+        return next(r for r in rows if r.lstrip('~').split(' {')[0].rstrip('▸') == label)
+
+    def test_a_tab_in_a_window_has_the_rows_without_splits(self):
+        for what in ('float-menu', 'min-float-menu'):
+            with self.subTest(what):
+                r = self.runs(what)
+                rows = r['menu'][0]
+                self.assertEqual(self.bare(rows)[self.bare(rows).index('Split Right'):][:8], self.SPLITS)
+                for l in ('Split Right', 'Split Left', 'Split Down', 'Split Up'):
+                    self.assertTrue(self.row(rows, l).startswith('~'))
+                    self.assertIn('A window holds one stack', self.row(rows, l))
+                self.assertFalse(self.row(rows, 'Move to Other Stack').startswith('~'))
+                self.assertFalse(self.row(rows, 'Unsplit').startswith('~'))
+        self.assertEqual(self.runs('float-menu')['before'], '[T*,B,C] ~[A*]')
+
+    def test_a_tab_in_a_window_moves_and_unsplits(self):
+        self.assertEqual(self.runs('float:unsplit')['tree'], '[T,B,C,A*]')
+        self.assertEqual(self.runs('float:move-bar')['tree'], '[T,B,C,A*]')
+        r = self.runs('bar:move-float')
+        self.assertEqual(r['tree'].replace('*', ''), '[T,C] ~[A,B]')
+        self.assertIn('B*', r['tree'])
+
+    def test_with_the_conversation_in_a_window(self):
+        r = self.runs('conv-float:unsplit')
+        self.assertEqual(r['before'], 'row([C*]|[A,B*]) ~[T*]')
+        self.assertEqual(r['tree'].replace('*', ''), '[C] ~[T,A,B]')
+        rows = self.runs('conv-float-menu')['menu'][0]
+        self.assertTrue(self.row(rows, 'Unsplit').startswith('~'))
+        self.assertIn('already with the conversation', self.row(rows, 'Unsplit'))
+
+    def test_a_tab_with_the_conversation_in_its_window_can_move_out(self):
+        rows = self.runs('conv-float-menu')['menu'][0]
+        self.assertFalse(self.row(rows, 'Move to Other Stack').startswith('~'))
+        self.assertEqual(self.runs('conv-float:move-out')['tree'].replace('*', ''), '[A,B,C] ~[T]')
+
+    def test_the_conversations_own_tab_stays(self):
+        rows = self.runs('conv-own-menu')['menu'][0]
+        for l in ('Split Right', 'Split Left', 'Split Down', 'Split Up', 'Move to Other Stack'):
+            self.assertTrue(self.row(rows, l).startswith('~'), l)
+            self.assertIn('The conversation stays where it is', self.row(rows, l))
 
     def test_the_layout_survives_a_reload(self):
         self.assertEqual(self.got['beforeReload'].replace('*', ''), 'row([T,B,C]|[A])')

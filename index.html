@@ -16994,9 +16994,19 @@ function pdPinItem(id) {
 // tab (a chat opens once). Tools stay out of the conversation's stack
 // (pdKeepMiddle): their Unsplit puts them back on their strip.
 function pdStacks() {
-  const out = [], walk = n => { if (!n) return; if (n.t === 'stack') out.push(n); else (n.kids || []).forEach(walk); };
-  walk(PD.dock.layout().root);
+  const L = PD.dock.layout(), out = [], walk = n => { if (!n) return; if (n.t === 'stack') out.push(n); else (n.kids || []).forEach(walk); };
+  walk(L.root);
+  for (const f of L.floats || []) out.push(f.stack);
   return out;
+}
+// A window's stack (a floating window holds one stack: it takes tabs, no split).
+function pdInFloat(st) { return (PD.dock.layout().floats || []).some(f => f.stack === st); }
+// The stack a menu row was made for, as the dock holds it when the row runs
+// (the dock may have rebuilt its layout since the menu opened): the stack that
+// now holds the same tabs (`id`'s, or its first).
+function pdLive(st, id) {
+  const p = id || st.panels[0], all = pdStacks();
+  return all.includes(st) ? st : (p && all.find(s => s.panels.includes(p))) || null;
 }
 function pdStackEl(st) {
   const id = st.panels.find(p => PD_ROOT.querySelector(`[data-dk-tab="${CSS.escape(p)}"]`));
@@ -17004,41 +17014,48 @@ function pdStackEl(st) {
 }
 function pdSplitItems(id, ctx) {
   const d = PD.dock;
-  if (!d || d.narrow() || !ctx || ctx.where !== 'dock') return [];
+  if (!d || d.narrow() || !ctx || (ctx.where !== 'dock' && ctx.where !== 'float')) return [];
   const stacks = pdStacks(), st = stacks.find(s => s.panels.includes(id));
   if (!st) return [];
   const conv = stacks.find(s => s.panels.includes('po-chat'));
+  const convFloat = !!conv && pdInFloat(conv), inFloat = pdInFloat(st);
   const tool = PD_TOOLS.includes(id), name = p => d.title(p) || p;
-  const alone = id === 'po-chat' ? 'The conversation stays in the top bar'
-    : st.panels.length < 2 ? 'It is the only tab here: Move to Other Stack, or drag it' : '';
+  const isConv = id === 'po-chat' ? 'The conversation stays where it is: move the other tabs' : '';
+  const alone = isConv || (inFloat ? 'A window holds one stack: Move to Other Stack, or drag the tab out'
+    : st.panels.length < 2 ? 'It is the only tab here: Move to Other Stack, or drag it' : '');
   const split = (label, side) => ({ id: 'split-' + side, label, disabled: !!alone, title: alone,
-    run: () => { d.moveTo(id, { kind: 'stack', stack: st }, side); d.activate(id); } });
+    run: () => { const at = pdLive(st, id); if (at) { d.moveTo(id, { kind: 'stack', stack: at }, side); d.activate(id); } } });
   // The other stacks, named by their tabs and where they are from this one.
   const here = pdStackEl(st)?.getBoundingClientRect();
   const where = s => {
+    if (pdInFloat(s)) return ', a window';
     const r = pdStackEl(s)?.getBoundingClientRect();
-    if (!here || !r) return '';
+    if (!here || !r || inFloat) return '';
     const dx = (r.left + r.right - here.left - here.right) / 2, dy = (r.top + r.bottom - here.top - here.bottom) / 2;
     return Math.abs(dx) >= Math.abs(dy) ? (dx > 0 ? ', on the right' : ', on the left') : (dy > 0 ? ', below' : ', above');
   };
-  const label = s => s === conv ? 'Top bar'
+  const label = s => s === conv && !convFloat ? 'Top bar'
     : s.panels.slice(0, 3).map(name).join(' · ') + (s.panels.length > 3 ? ` +${s.panels.length - 3}` : '');
-  const others = id === 'po-chat' ? [] : stacks.filter(s => s !== st && !(tool && s === conv));
+  const others = isConv ? [] : stacks.filter(s => s !== st && !(tool && s === conv));
   const keep = p => p === 'po-chat' || !d.can(p, 'close') || PdWorkspace.isPinned(PD_WS, p);
   const shut = list => () => list.forEach(p => d.close(p));
   const rest = st.panels.filter(p => p !== id && !keep(p));
   const right = st.panels.slice(st.panels.indexOf(id) + 1).filter(p => !keep(p));
-  const inBar = st === conv;
+  // Unsplit: the stack's tabs go to the conversation's stack (in the top bar,
+  // or its window), its tools back to their strip.
+  const noUnsplit = st === conv ? (convFloat ? `${name(id)} is already with the conversation` : `${name(id)} is already in the top bar`)
+    : !conv && st.panels.some(p => !PD_TOOLS.includes(p)) ? 'The conversation is not open' : '';
   return [{ sep: true },
     split('Split Right', 'right'), split('Split Left', 'left'), split('Split Down', 'bottom'), split('Split Up', 'top'),
-    { id: 'move-stack', label: 'Move to Other Stack', title: others.length ? '' : 'There is no other stack',
+    { id: 'move-stack', label: 'Move to Other Stack', title: isConv || (others.length ? '' : 'There is no other stack'),
       sub: others.map((s, i) => ({ id: 'to-' + i, label: label(s) + where(s),
-        run: () => { d.moveTo(id, { kind: 'stack', stack: s }, 'center'); d.activate(id); } })) },
-    { id: 'unsplit', label: 'Unsplit', disabled: inBar, title: inBar ? `${name(id)} is already in the top bar` : '',
+        run: () => { const to = pdLive(s); if (to) { d.moveTo(id, { kind: 'stack', stack: to }, 'center'); d.activate(id); } } })) },
+    { id: 'unsplit', label: 'Unsplit', disabled: !!noUnsplit, title: noUnsplit,
       run: () => {
-        for (const p of [...st.panels]) {
-          if (PD_TOOLS.includes(p)) d.setViewMode(p, 'unpinned');
-          else if (conv) d.moveTo(p, { kind: 'stack', stack: pdStacks().find(s => s.panels.includes('po-chat')) }, 'center');
+        for (const p of [...(pdLive(st, id) || st).panels]) {
+          if (PD_TOOLS.includes(p)) { d.setViewMode(p, 'unpinned'); continue; }
+          const to = pdStacks().find(s => s.panels.includes('po-chat'));
+          if (to && to !== st) d.moveTo(p, { kind: 'stack', stack: to }, 'center');
         }
         d.activate(id);
       } },
