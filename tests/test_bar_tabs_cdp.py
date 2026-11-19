@@ -309,6 +309,38 @@ async function main() {
     out.unminimised = await ev(BAR);
     await ev(`PD.dock.activate('po-chat'); 0`);
     await sleep(400);
+    // 8e. Split, then float (review 4): a task moved to a stack of its own on
+    // the left, then the conversation floated; the bar keeps the tabs of the
+    // stack the conversation left, not the split one. Before the float, that
+    // stack minimised in a row lies flat in the bar (Dock stands it on its side).
+    const brakesTab = 'chat:' + A.brakes;
+    out.split = { tabs: await ev(`barTabIds()`), moved: brakesTab };
+    await ev(`PD.dock.dockEdge(${JSON.stringify(brakesTab)}, 'left'); 0`);
+    await until(`!PD_ROOT.querySelector('.dk-head.bt-head [data-dk-tab=${JSON.stringify(brakesTab)}]')`, 'split');
+    await ev(`PD.dock.activate('po-chat'); 0`);
+    await sleep(500);
+    out.split.before = await ev(BAR);
+    await ev(`PD.dock.toggleMin('po-chat'); 0`);
+    await sleep(600);
+    out.split.minRow = await ev(`(() => { const h = document.querySelector('.dk-stack.dk-min > .dk-head.bt-head'); return h && {
+      row: h.parentElement.parentElement.classList.contains('dk-row'), mode: getComputedStyle(h).writingMode, h: Math.round(h.getBoundingClientRect().height) }; })()`);
+    out.split.min = await ev(BAR);
+    await ev(`PD.dock.toggleMin('po-chat'); 0`);
+    await until(`!PD_ROOT.querySelector('.dk-stack.dk-min')`, 'split stack open');
+    await ev(`PD.dock.float('po-chat'); 0`);
+    await sleep(600);
+    out.split.floated = await ev(BAR);
+    out.split.floated.otherRows = await ev(OTHER_ROWS);
+    out.split.floated.movedHead = await ev(`PD_ROOT.querySelector('[data-dk-tab=${JSON.stringify(brakesTab)}]').closest('.dk-head').classList.contains('bt-head')`);
+    await ev(`PD.dock.dockBack('po-chat'); 0`);
+    await until(`!PD_ROOT.querySelector('.dk-float [data-dk-tab="po-chat"]')`, 'docked back after the split');
+    await ev(`PD.dock.close(${JSON.stringify(brakesTab)}); 0`);
+    await until(`!PD.rt.has(${JSON.stringify(brakesTab)})`, 'split tab closed');
+    await ev(`pdChatOpen(${JSON.stringify(A.brakes)}); 0`);
+    await until(`!!PD_ROOT.querySelector('.dk-head.bt-head [data-dk-tab=${JSON.stringify(brakesTab)}]')`, 'Brakes back in the bar');
+    await ev(`PD.dock.activate('po-chat'); 0`);
+    await sleep(500);
+    out.split.after = await ev(BAR);
     // 9. Many tabs: "+N".
     await size(1100, 900);
     for (const r of A.many) await ev(`pdChatOpen(${JSON.stringify(r)}); 0`);
@@ -317,6 +349,26 @@ async function main() {
     await sleep(800);
     out.many = await ev(BAR);
     await snap('bar-many');
+    // Minimised (review 4): the "+N ▾" stays, and a tab picked in its list
+    // opens the stack again with that tab in front.
+    await ev(`PD.dock.toggleMin('po-chat'); 0`);
+    await sleep(700);
+    out.manyMin = await ev(BAR);
+    out.manyMin.min = await ev(`!!PD_ROOT.querySelector('.dk-stack.dk-min > .dk-head.bt-head')`);
+    await snap('bar-many-min');
+    await clickAt(null, '.dk-head.bt-head > [data-dk-tabs]');
+    await until(`document.querySelectorAll('.dk-tablist [data-dk-pick]').length > 1`, 'the tab list');
+    out.manyMin.list = await ev(`[...document.querySelectorAll('.dk-tablist [data-dk-pick]')].map(b => b.dataset.dkPick)`);
+    const lastMany = 'chat:' + A.many[A.many.length - 1];
+    out.manyMin.offView = await ev(`(() => { const t = document.querySelector('.dk-head.bt-head [data-dk-tab=${JSON.stringify(lastMany)}]'), r = t.getBoundingClientRect(),
+      q = t.closest('.dk-tabs').getBoundingClientRect(); return r.right > q.right + 1 || r.left < q.left - 1; })()`);
+    await clickAt(null, `.dk-tablist [data-dk-pick=${JSON.stringify(lastMany)}]`);
+    await until(`!PD_ROOT.querySelector('.dk-stack.dk-min') && PD.dock.frontOf('po-chat')===${JSON.stringify(lastMany)}`, 'a tab picked opens the minimised stack');
+    await sleep(400);
+    out.manyMin.picked = lastMany;
+    out.manyMin.after = await ev(BAR);
+    await ev(`PD.dock.activate('po-chat'); 0`);
+    await sleep(400);
     for (const r of A.many) await ev(`PD.dock.close('chat:'+${JSON.stringify(r)}); 0`);
     await size(1728, 1117);
     await sleep(800);
@@ -576,6 +628,39 @@ class BarTabs(unittest.TestCase):
         self.assertEqual(sorted(g['tabs']), sorted(want), 'every tab is in the row, some out of view')
         self.assertTrue(g['more'] and int(g['more']) >= 1, g)
         self.assertIsNone(f['more'], 'with room for every tab: no +N')
+
+    def test_many_tabs_minimised_keep_the_more_list(self):
+        g = self.got['manyMin']
+        self.one_row(g, 'many, minimised')
+        self.assertTrue(g['min'], "the bar's title bar is the minimised stack's")
+        self.assertTrue(g['more'] and int(g['more']) >= 1, f'minimised: still "+N ▾" {g}')
+        self.assertTrue(g['offView'], 'the tab picked is out of view in the row')
+        self.assertIn(g['picked'], g['list'], "the ▾ lists the stack's every tab")
+        a = g['after']
+        self.one_row(a, 'after the pick')
+        self.assertEqual(a['front'], g['picked'], 'the tab picked is in front, the stack open again')
+
+    def test_split_then_float_keeps_the_stack_it_left(self):
+        g = self.got['split']
+        moved = g['moved']
+        self.assertIn(moved, g['tabs'], 'Brakes is in the bar before the split')
+        rest = [t for t in g['tabs'] if t != moved]
+        self.assertTrue(rest, 'another tab stays in the stack')
+        self.assertEqual(g['before']['tabs'], rest, 'split: the bar keeps the conversation\'s stack')
+        f = g['floated']
+        self.one_row(f, 'split, floated')
+        self.assertEqual(f['tabs'], rest, 'floated: the tabs of the stack it left, not the split one')
+        self.assertFalse(f['movedHead'], "the split stack's title bar is not the bar's")
+        self.assertEqual(f['otherRows'], [moved], 'the split stack keeps its own row, nothing else does')
+        self.assertFalse(f['grpOn'])
+        m = g['minRow']
+        self.assertEqual((m['row'], m['mode']), (True, 'horizontal-tb'), 'minimised in a row: the title bar lies flat in the bar')
+        self.assertLessEqual(m['h'], 50, 'and is no taller than the bar')
+        self.one_row(g['min'], 'split, minimised')
+        self.assertEqual(g['min']['tabs'], rest)
+        a = g['after']
+        self.one_row(a, 'after the split')
+        self.assertEqual(sorted(a['tabs']), sorted(g['tabs']), 'docked back: every tab in the bar')
 
     def test_a_task_in_no_project_is_the_top_level(self):
         free = [x[0] for x in self.got['free']]

@@ -725,6 +725,11 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   body.bar-tabs .dk-head.bt-head .dk-tab:not(.on) { color: var(--fg-subtle); }
   /* The stack minimised: no tab is shown, none is underlined (a tab pressed opens it again). */
   body.bar-tabs .dk-stack.dk-min > .dk-head.bt-head .dk-tab.on { color: var(--fg-subtle); background: transparent; border-bottom-color: transparent; box-shadow: none; }
+  /* Minimised in a row, Dock stands the title bar on its side: in the bar it lies flat, as its tabs do. */
+  body.bar-tabs .dk-row > .dk-stack.dk-min > .dk-head.bt-head { writing-mode: horizontal-tb; flex: none; height: var(--bt-h, 48px); }
+  body.bar-tabs .dk-row > .dk-stack.dk-min > .dk-head.bt-head .dk-tab-wrap { border-bottom: none; border-right: 1px solid var(--dk-line); padding: 0 6px 0 0; }
+  body.bar-tabs .dk-row > .dk-stack.dk-min > .dk-head.bt-head .dk-tab { padding: 0 4px 0 9px; border-left: none; border-bottom: 2px solid transparent; }
+  body.bar-tabs .dk-row > .dk-stack.dk-min > .dk-head.bt-head .dk-ctl { padding: 0 3px; margin: 0; }
   body.bar-tabs .dk-head.bt-head > .dk-ctl { align-self: center; margin-left: 0; }
   body.bar-tabs .dk-head.bt-head > .dk-ctl > .dk-btn:not([data-dk-act="menu"]) { display: none; }
   body.bar-tabs .dk-head.bt-head > .dk-tabs-btn { align-self: center; width: auto; padding: 0 6px; gap: 2px; display: inline-flex; align-items: center; }
@@ -24666,8 +24671,17 @@ function barTabsHead() {
   const main = PD.dock && PD_ROOT.querySelector('.dk-main');
   if (!main) return null;
   const tabs = [...main.querySelectorAll('.dk-stack > .dk-head > .dk-tabs [data-dk-tab]')];
-  const t = tabs.find(x => x.dataset.dkTab === 'po-chat') || tabs.find(x => /^(chat|thread):/.test(x.dataset.dkTab));
-  return t ? t.closest('.dk-head') : null;
+  const conv = tabs.find(x => x.dataset.dkTab === 'po-chat');
+  if (conv) return conv.closest('.dk-head');
+  // The stack it left: the one holding most of the tabs last drawn in the bar
+  // (after a split, another stack's tasks are not it).
+  let best = null, most = 0;
+  const last = PD.btLast || new Set();
+  for (const h of new Set(tabs.filter(x => last.has(x.dataset.dkTab)).map(x => x.closest('.dk-head')))) {
+    const n = [...h.querySelectorAll(':scope > .dk-tabs [data-dk-tab]')].filter(x => last.has(x.dataset.dkTab)).length;
+    if (n > most) { most = n; best = h; }
+  }
+  return best;
 }
 // Whether the bar's title bar holds the conversation's own tab (the group is it).
 function barTabsHasConv(head) {
@@ -24684,6 +24698,9 @@ function barTabsSync() {
   pdThreadInSync();
   if (on) { const nm = document.getElementById('thr-switch-name'), l = thrBarLabel(); if (nm.textContent !== l) nm.textContent = l; }
   if (!head) return;
+  // The tabs drawn in the bar: the stack the conversation leaves, once it
+  // floats or goes to a window, is the one that holds them (barTabsHead).
+  PD.btLast = new Set([...head.querySelectorAll(':scope > .dk-tabs [data-dk-tab]')].map(t => t.dataset.dkTab).filter(id => id !== 'po-chat'));
   head.classList.add('bt-head');
   const r = document.getElementById('bar-tabs').getBoundingClientRect();
   const hr = document.querySelector('header').getBoundingClientRect();
@@ -24694,9 +24711,29 @@ function barTabsSync() {
 // Dock's ▾ (the row's every tab) shows only while the row overflows: it
 // says how many tabs are out of view, "+N ▾".
 function barTabsMore(head) {
-  const row = head.querySelector(':scope > .dk-tabs'), btn = head.querySelector(':scope > .dk-tabs-btn');
-  if (!row || !btn) return;
-  if (!row._btScroll) { row._btScroll = true; row.addEventListener('scroll', () => barTabsMore(head), { passive: true }); }
+  const row = head.querySelector(':scope > .dk-tabs');
+  if (!row) return;
+  if (!row._btScroll) {
+    row._btScroll = true; row.addEventListener('scroll', () => barTabsMore(head), { passive: true });
+    // After Dock's own check of the row (its observer is older): the ▾ of a
+    // minimised stack's row is put back here.
+    if (window.ResizeObserver) new ResizeObserver(() => { if (head.classList.contains('bt-head')) barTabsMore(head); }).observe(row);
+  }
+  // Dock gives a minimised stack's row no ▾ (its row is not shown there); in
+  // the bar it is: the same ▾, Dock's tab list (a tab picked opens the stack).
+  if (head.closest('.dk-min')) {
+    const over = row.scrollWidth > row.clientWidth + 1;
+    let b = head.querySelector(':scope > [data-dk-tabs]');
+    if (over && !b) {
+      b = document.createElement('button');
+      b.type = 'button'; b.className = 'dk-btn dk-tabs-btn'; b.dataset.dkTabs = '';
+      b.setAttribute('aria-haspopup', 'menu'); b.setAttribute('aria-label', 'Show all tabs'); b.title = 'Show all tabs';
+      b.innerHTML = '<svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true" focusable="false"><path d="M3 4.5 6 7.5 9 4.5"/></svg>';
+      row.after(b);
+    } else if (!over && b) b.remove();
+  }
+  const btn = head.querySelector(':scope > .dk-tabs-btn');
+  if (!btn) return;
   const rr = row.getBoundingClientRect();
   let n = 0;
   for (const w of row.querySelectorAll(':scope > .dk-tab-wrap')) {
@@ -24707,6 +24744,14 @@ function barTabsMore(head) {
   const v = n ? String(n) : '';
   if ((btn.dataset.n || '') !== v) { if (v) btn.dataset.n = v; else delete btn.dataset.n; }
 }
+// A tab picked in that ▾'s list of a minimised stack opens the stack again, as
+// a tab pressed in the bar does (Dock only brings it to the front).
+document.addEventListener('click', (e) => {
+  const b = e.target.closest?.('.dk-tablist [data-dk-pick]'), from = b && b.closest('.dk-tablist')._from;
+  if (!from || !from.closest('.dk-head.bt-head') || !from.closest('.dk-min')) return;
+  const id = b.dataset.dkPick;
+  setTimeout(() => { if (PD_ROOT.querySelector(`.dk-stack.dk-min [data-dk-tab="${CSS.escape(id)}"]`)) PD.dock.toggleMin(id); });
+}, true);
 window.addEventListener('resize', () => barTabsSync());
 if (window.ResizeObserver) new ResizeObserver(() => barTabsSync()).observe(document.getElementById('bar-tabs'));
 document.getElementById('bar-grp').addEventListener('click', (e) => {
