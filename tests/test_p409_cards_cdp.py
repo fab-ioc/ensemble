@@ -147,9 +147,22 @@ async function main() {
     await until(`!document.querySelector('#answers-menu').hidden`);
     await evalIn(`(() => { const b = [...document.querySelectorAll('#answers-menu button')].find(x => /nightly backup/.test(x.textContent)); b.click(); return 1; })()`);
     out.holdChip = await evalIn(chip);
+    // A poll overtakes the send: the page has the card closed before the hub's answer.
+    await evalIn(`(() => { const f = window.fetch; window.fetch = async (u, o) => { const r = await f(u, o);
+      if (String(u).includes('/api/room/resume') && String(o && o.body).includes('Hold on, not yet') && !window.__polled) {
+        const open = () => (ROOM_OBJ.openCards || []).some(c => /nightly backup/.test(c.question));
+        for (let t = Date.now(); Date.now() - t < 5000; await new Promise(z => setTimeout(z, 150))) { await refresh(); if (!open()) break; }
+        window.__polled = open() ? 'still open' : 'closed'; }
+      return r; }; return 1; })()`);
     await typeAndSend('Hold on, not yet');
     await until(`(() => { const c = ${BQ}; return c && c.classList.contains('done') && !!c.querySelector('.qa-undo'); })()`, 10000);
+    out.polled = await evalIn('window.__polled || null');
     out.holdChipAfter = await evalIn(chip);
+    // A new card comes in before Undo: the card taken back goes in its own place.
+    fs.appendFileSync(A.transcript, JSON.stringify({ type: 'assistant', timestamp: new Date().toISOString(), sessionId: 'po-sid',
+      message: { role: 'assistant', stop_reason: 'end_turn', content: [{ type: 'text', text: 'Later.\n\n**Ask:** Which colour for the report header?\n- Blue\n- Grey' }] } }) + '\n');
+    await evalIn('refresh()');
+    await until(`(ROOM_OBJ.openCards || []).some(c => /report header/.test(c.question))`, 10000);
     await evalIn(`(() => { ${BQ}.querySelector('.qa-undo').dataset.p409 = 'undo'; return 1; })()`);
     await click('[data-p409="undo"]');
     await until(`document.querySelector('#input').value === 'Hold on, not yet'`, 10000);
@@ -331,17 +344,19 @@ class TheBoxAndPickAny(unittest.TestCase):
         self.assertTrue(picks[0][0].startswith("Re “Which export formats should the report offer?”: CSV; XML"), picks)
         self.assertIn("You picked: CSV · XML", g["pickDone"])
         self.assertNotIn("Which export formats should the report offer?", self.open)
-        self.assertEqual(self.open, ["Which retention for old transcripts?"])
+        self.assertEqual(sorted(self.open), ["Which colour for the report header?", "Which retention for old transcripts?"])
 
     def test_undo_of_an_unread_box_answer_gives_back_its_own_card(self):
         g = self.got
         self.assertEqual(g["holdChip"], "Turn on the nightly backup?")
+        self.assertEqual(g["polled"], "closed", "a poll before the hub's answer has the card closed")
         self.assertEqual(g["holdChipAfter"], "Which export formats should the report offer?")
         self.assertEqual(g["undoChip"], "Turn on the nightly backup?", "the words go back under the card they answered")
         self.assertEqual(g["undoInput"], "Hold on, not yet")
         self.assertTrue(g["undoCardOpen"])
-        self.assertEqual([m["q"] for m in g["undoMenu"]][:3], ["Which export formats should the report offer?",
-                                                               "Which retention for old transcripts?", "Turn on the nightly backup?"])
+        self.assertEqual([m["q"] for m in g["undoMenu"]], ["Which colour for the report header?", "Which export formats should the report offer?",
+                                                           "Which retention for old transcripts?", "Turn on the nightly backup?",
+                                                           "No card: a plain message"], "newest first, the card taken back in its place")
         self.assertEqual([m["q"] for m in g["undoMenu"] if m["on"]], ["Turn on the nightly backup?"])
         holds = [s for s in self.sent if "Hold on, not yet" in s[0]]
         self.assertEqual(len(holds), 2, self.sent)

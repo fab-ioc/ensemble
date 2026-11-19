@@ -4253,14 +4253,11 @@ async function askUndo(b) {
     if (r && r.points) pointsChanged(r.points, ptTicket());
     // A message typed in the box as the card's answer (P409): taken back,
     // its words go back in the box when it is empty.
-    // Its card is open again here at once, where it stood, before the
-    // words are back under its chip (P409).
+    // Its card is open again here at once, in its place among the open
+    // cards as they are now, before the words are back under its chip (P409).
     const was = r && r.withdrawn && typeof BOX_SENT_CARDS !== 'undefined' && BOX_SENT_CARDS.get(key);
-    if (was && ROOM_OBJ && Array.isArray(ROOM_OBJ.openCards) && !ROOM_OBJ.openCards.some(x => x.mid === was.card.mid && x.n === was.card.n)) {
-      const oc = ROOM_OBJ.openCards.slice();
-      oc.splice(Math.min(was.i, oc.length), 0, was.card);
-      ROOM_OBJ.openCards = oc;
-    }
+    if (was && ROOM_OBJ && Array.isArray(ROOM_OBJ.openCards) && !ROOM_OBJ.openCards.some(x => x.mid === was.mid && x.n === was.n))
+      ROOM_OBJ.openCards = ROOM_OBJ.openCards.concat([was]).sort(openCardOrder);
     if (r && r.withdrawn && typeof BOX_SENT_CARDS !== 'undefined') BOX_SENT_CARDS.delete(key);
     if (r && r.withdrawn && typeof r.text === 'string' && r.text && !$('#input').value.trim() && !(ED.points || []).length) {
       $('#input').value = r.text; SEND_KEY = ''; edHeadInput(); fitSendInput();
@@ -9922,7 +9919,11 @@ async function sendResuming(text, to, key, attachments, now, box = false) {
   }
   // P409: the box's chip names an open card: this message is its answer.
   const card = box && !body.thread && !body.newThread && text ? answerTarget() : null;
-  if (card) body.answers = { mid: card.mid, n: card.n };
+  if (card) {
+    body.answers = { mid: card.mid, n: card.n };
+    // Kept now for its Undo: a poll may close the card before the hub answers.
+    BOX_SENT_CARDS.set(card.mid + ':' + card.n, card);
+  }
   if (attachments && attachments.length) body.attachments = attachments;
   return postOk('/api/room/resume', body);
 }
@@ -10009,16 +10010,16 @@ $('#answers-menu').addEventListener('keydown', e => {
 document.addEventListener('pointerdown', e => { if (!e.target.closest || !e.target.closest('#compose-answers, #answers-menu')) answersMenuClose(false); }, true);
 // Sent: the card it answered is answered here at once (Undo for a while);
 // the next message gets the chip again, on the newest open card.
-var BOX_SENT_CARDS = new Map();     // 'mid:n' -> { card, i }: a card the box answered, where it stood
+var BOX_SENT_CARDS = new Map();     // 'mid:n' -> the open card a box send answers, as it was sent
+// The open cards' order (asks.open_cards): newest message first, then the
+// message id the other way, then a message's cards in their order.
+const openCardOrder = (a, b) => ((+b.ts || 0) - (+a.ts || 0)) || (a.mid < b.mid ? 1 : a.mid > b.mid ? -1 : 0) || (a.n - b.n);
 function answersSent(d) {
   ANSWER_PICK = null;
   const a = d && d.answered;
   if (a && a.mid) {
     if (d.points) pointsChanged(d.points, ptTicket());
     if (ROOM_OBJ && Array.isArray(ROOM_OBJ.openCards)) {
-      const i = ROOM_OBJ.openCards.findIndex(x => x.mid === a.mid && x.n === a.n);
-      // Kept for its Undo: taken back unread, the card is open again at once.
-      if (i >= 0) BOX_SENT_CARDS.set(a.mid + ':' + a.n, { card: ROOM_OBJ.openCards[i], i });
       ROOM_OBJ.openCards = ROOM_OBJ.openCards.filter(x => x.mid !== a.mid || x.n !== a.n);
     }
     askUndoOffer(a.mid + ':' + a.n);
