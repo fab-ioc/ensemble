@@ -90,6 +90,9 @@ FIXTURES = {
     "other_link": "Ask: https://example.org/help",
     # A link to a message, not to one of its cards: still a question (review 2).
     "message_link": "Ask: http://127.0.0.1:8765/session?room=room-12345678&msg=abc",
+    # P409: a pick-any card; with one option, a plain one.
+    "pick_any": "**Ask (pick any):** Which export formats?\n- CSV\n- JSON (recommended)\n- XML",
+    "pick_any_one": "Ask (pick any): Which?\n- Only",
 }
 
 NODE_JS = r"""

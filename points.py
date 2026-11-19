@@ -1592,6 +1592,27 @@ def unanswer_ask(room_id: str, mid: str, n: int) -> None:
             _save(room_id, led)
 
 
+def unanswer_box(room_id: str, key: str) -> list[tuple[str, int]]:
+    """P409: the message typed in the box as a card's answer (its send
+    ``key``) was never delivered (discarded): the cards it answered may be
+    answered again. Returns the ``(mid, n)`` opened again."""
+    if not key:
+        return []
+    out = []
+    with _LOCK:
+        led = load(room_id)
+        for mid, got in list(led["asks"].items()):
+            for n, e in list((got or {}).items()):
+                if isinstance(e, dict) and e.get("box") and e.get("key") == key and not e.get("undone"):
+                    del got[n]
+                    out.append((mid, int(n)))
+            if not got:
+                led["asks"].pop(mid, None)
+        if out:
+            _save(room_id, led)
+    return out
+
+
 def undo_ask(room_id: str, mid: str, n: int, now: float | None = None) -> bool:
     """The answer was read before its Undo (#198): it stays answered, marked
     taken back (the card says so). False when there is no answer, or it was
