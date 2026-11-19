@@ -21,7 +21,7 @@ messages near its start and a recent answer to check in the Inbox. Checked at
   one card of four questions opened in turn, and the first again, the chat
   back on its newest page between: every open lands on the card;
 * a message the PO filed in a thread (its reply to the person's new thread):
-  opened from the Inbox, the thread's panel opens beside the chat and marks
+  opened from the Inbox, the thread opens in place in the chat and marks
   it "From the Inbox"; the chat says nothing is missing;
 * the pages threw nothing.
 
@@ -187,10 +187,11 @@ async function main() {
     }
     } catch (e) { out.threadedErr = String(e).slice(0, 300); }
     let SIDE, mark, doneOf;
-    // (8) a row whose message is filed in a thread: the thread's panel opens
-    // beside the chat and marks it as opened from the Inbox
+    // (8) a row whose message is filed in a thread: the thread opens in place
+    // in the chat and marks it as opened from the Inbox
     try {
-    SIDE = `PD.rt.get('thread:po')?.el.querySelector('iframe')`;
+    // #393: the thread shows in place in the PO's chat (PD.thrIn), not as a panel beside it.
+    SIDE = `PD.thrIn?.el.querySelector('iframe')`;
     await latest(A.tpo, [A.card]);
     mark = `(() => { const f = ${SIDE}; const d = f && f.contentDocument; const m = d && [...d.querySelectorAll('.msg[data-mid]')].find(e => e.dataset.mid === ${JSON.stringify(A.tmid)});
       if (!m) return null; const b = d.getElementById('msgs').getBoundingClientRect(), r = m.getBoundingClientRect();
