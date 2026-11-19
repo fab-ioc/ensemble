@@ -2402,6 +2402,10 @@ _SETTINGS_DEFAULTS = {
     # "flat" (a tile with its initials) or "glossy" (the same, as an app icon).
     # One choice for the hub, so every device draws the same.
     "projectIcons": "flat",
+    # #401 (P412): Settings › Preferences › Chat › Chat as a log. "on" sets
+    # every chat on a computer as a log (every message on the left, one thin
+    # line between items) with author colours; a phone is unchanged.
+    "chatLog": "off",
 }
 # An accent is an opaque colour a primary button can be painted with: #rgb or
 # #rrggbb, a CSS colour name, rgb(r g b) or hsl(h s% l%) (commas or spaces).
@@ -2484,6 +2488,7 @@ def project_noun(n: str = "one", case: str = "lower") -> str:
 _SETTINGS_ALLOWED_VALUES = {
     "openMode": {"window", "tab"},
     "projectIcons": {"flat", "glossy"},
+    "chatLog": {"off", "on"},
     "theme": {"", "light", "dark", "dim", "paper", "contrast", "fjord", "intellij-dark", "system"},
     "taskAgentTools": TASK_AGENT_TOOLS_VALUES,
     "editor": {""} | {eid for eid, _label in EDITORS} | {EDITOR_CUSTOM},
