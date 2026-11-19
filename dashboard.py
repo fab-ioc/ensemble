@@ -2346,6 +2346,9 @@ _SETTINGS_DEFAULTS = {
     # and a headless `claude -p --model haiku` line for Codex, with a brief that
     # says when to use it. Off by default: in the trial a sweep took longer.
     "readerForTasks": False,
+    # #402 (issue 60): the PO chat with or without the team's traffic (hub
+    # lines, task rows, reports, "answers Pn"). "shown" | "hidden".
+    "poTeamActivity": "shown",
     # A restart at a safe point (restart_drain.py): how long the hub waits for
     # every working agent to reach one before it restarts anyway.
     "restartDrainMinutes": restart_drain.DEFAULT_DEADLINE_MIN,
@@ -2484,6 +2487,7 @@ _SETTINGS_ALLOWED_VALUES = {
     "theme": {"", "light", "dark", "dim", "paper", "contrast", "fjord", "intellij-dark", "system"},
     "taskAgentTools": TASK_AGENT_TOOLS_VALUES,
     "editor": {""} | {eid for eid, _label in EDITORS} | {EDITOR_CUSTOM},
+    "poTeamActivity": {"shown", "hidden"},
 }
 
 
