@@ -128,7 +128,7 @@ async function main() {
       await p.hover(row); await sleep(150);
       // Done with this comes with the Needs you items (attention), which may be a poll behind the rows.
       await p.until(`${row}.querySelectorAll('.ibx-acts .ibx-btn').length === 3`, 10000).catch(() => null);
-      // Its actions stay inside the card in this narrow column (#394: three of them wrap).
+      // Its actions stay inside the card in this narrow column (P408: on one line, their labels shortened).
       out.acts = await p.evalIn(`(() => { const r = ${row}, c = r.getBoundingClientRect();
         return [...r.querySelectorAll('.ibx-acts .ibx-btn')].map(b => { const x = b.getBoundingClientRect(); return x.left >= c.left && x.right <= c.right && x.top >= c.top && x.bottom <= c.bottom; }); })()`);
       await p.click(`${row}.querySelector('[data-ibx-close]')`); await sleep(300);

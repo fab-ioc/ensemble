@@ -8,6 +8,7 @@
 <title>Ensemble</title>
 <script src="/static/noun.js"></script>
 <script src="/static/hub-resilience.js"></script>
+<script src="/static/frame-guard.js"></script>
 <script>
 // Appearance, resolved before first paint so the page never flashes the wrong
 // theme. A theme is a complete token set under :root[data-theme="<name>"].
@@ -4388,8 +4389,31 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .ldp-expanded .ibx-reason { font-size: 11px; line-height: 1.4; margin-top: 0; color: var(--fg-subtle); }
   .ibx-listed .ibx-row.ibx-mark { margin: 5px 0; padding: 7px 8px; box-shadow: none; border-left-color: var(--c-danger-bold); }
   /* #394: within the card, the narrow column's three actions wrap to the right (none past its left edge). */
-  @media (hover: hover) { .ibx-listed .ibx-row:not(.ibx-confirming) > .ibx-acts, .ibx-listed .ibx-row.ibx-mark:not(.ibx-confirming) > .ibx-acts { right: 8px; bottom: 6px;
-    left: 8px; flex-wrap: wrap; justify-content: flex-end; padding-left: 0; background: var(--ibx-ground); } }
+  /* #394, P408: on a computer the row's actions are one line over its meta line only, inside the card, never over its
+     question: 18px buttons at 11px; their labels shorten with the Inbox's width (Close · Earlier N · Done with this at
+     the default 260px, Close · Earlier · Done when narrower, full words from 320px; full words always in the tooltip
+     and to a screen reader). Still too wide, the line is cut at its left, never wrapped. */
+  .ibx-ls { display: none; }
+  .ibx-listed .ibx-cards { container: ibx-cards / inline-size; }
+  @media (hover: hover) {
+    .ibx-listed .ibx-row:not(.ibx-confirming) > .ibx-acts, .ibx-listed .ibx-row.ibx-mark:not(.ibx-confirming) > .ibx-acts { left: auto; right: 8px; bottom: 4px;
+      max-width: calc(100% - 16px); overflow: hidden; flex-wrap: nowrap; justify-content: flex-end; padding-left: var(--s-300);
+      background: linear-gradient(to right, transparent, var(--ibx-ground) var(--s-200)); }
+    .ibx-listed .ibx-row:not(.ibx-confirming) > .ibx-acts > .ibx-btn { flex: none; height: 18px; padding: 0 6px; font-size: var(--fs-100); }
+    @container ibx-cards (max-width: 319.98px) {
+      .ibx-row:not(.ibx-confirming) > .ibx-acts > .ibx-earlier .ibx-lw { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+      .ibx-row:not(.ibx-confirming) > .ibx-acts > .ibx-earlier .ibx-ls { display: inline; }
+    }
+    @container ibx-cards (max-width: 239.98px) {
+      .ibx-row:not(.ibx-confirming) > .ibx-acts > .ibx-btn .ibx-lw { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+      .ibx-row:not(.ibx-confirming) > .ibx-acts > .ibx-btn .ibx-ls { display: inline; }
+      .ibx-row:not(.ibx-confirming) > .ibx-acts > .ibx-earlier .ibx-cn { display: none; }
+    }
+    /* P408 review 1: in the listed Inbox, a row with the could-not-open note under its meta line has its actions on their
+       own line at its foot, under the note's ways, always shown: they cover neither, and nothing moves on hover. */
+    .ibx-listed .ibx-row:has(> .ibx-fail):not(.ibx-confirming) > .ibx-acts { display: flex; position: static; max-width: none;
+      margin-top: var(--s-100); padding: 0; background: none; justify-content: flex-start; }
+  }
   .ibx-row.ibx-mark.ibx-confirming .ibx-link, .ibx-row.ibx-mark.ibx-confirming .ibx-line, .ibx-row.ibx-mark:hover .ibx-line { color: var(--fg); }
   .ibx-conf { margin-top: var(--s-200); padding: var(--s-200) var(--s-300); background: var(--surface); border: 1px solid var(--border-strong);
     border-radius: var(--r-300); box-shadow: var(--e-200); }
@@ -5334,6 +5358,16 @@ window.DOC_LISTENERS_PAUSED = false;
       </div>
     </div>
     <p class="cfg-hint" data-noun="{A project} without an icon of its own shows as a tile in its colour with its initials, flat or glossy, in every list. An icon uploaded in its settings takes the tile&#39;s place. One choice for this hub, so every device shows the same.">A project without an icon of its own shows as a tile in its colour with its initials, flat or glossy, in every list. An icon uploaded in its settings takes the tile's place. One choice for this hub, so every device shows the same.</p>
+    <!-- #402 (issue 60, P422): the PO chat with only you and the PO in it. -->
+    <h5 class="sp-sub">PO chat</h5>
+    <div class="pref-row" style="margin-top: 14px;">
+      <span class="pref-label" id="pref-po-team-label">Team activity in the PO chat</span>
+      <div class="seg pref-seg" id="pref-po-team" role="group" aria-labelledby="pref-po-team-label">
+        <button type="button" data-val="shown" aria-pressed="true">Shown</button>
+        <button type="button" data-val="hidden" aria-pressed="false">Hidden</button>
+      </div>
+    </div>
+    <p class="cfg-hint">Hides hub lines, task rows, reports and “answers Pn”. Shown by default.</p>
     <!-- #343 (P317): how long a message opened from the Inbox stays marked in its chat. -->
     <h5 class="sp-sub">Inbox</h5>
     <div class="pref-row" style="margin-top: 14px;">
@@ -9346,6 +9380,17 @@ function renderPrefs() {
     rtkSeg.querySelectorAll('button').forEach(b => {
       b.classList.toggle('active', b.dataset.val === value);
     });
+  }
+  // #402: Team activity in the PO chat. Every open PO chat (an iframe, a
+  // pop-out) reads the copy in localStorage at once (its storage event).
+  const poTeamSeg = document.getElementById('pref-po-team');
+  if (poTeamSeg) {
+    const value = PREFS.poTeamActivity === 'hidden' ? 'hidden' : 'shown';
+    poTeamSeg.querySelectorAll('button').forEach(b => {
+      b.classList.toggle('active', b.dataset.val === value);
+      b.setAttribute('aria-pressed', String(b.dataset.val === value));
+    });
+    try { if (localStorage.getItem('cd-po-team') !== value) localStorage.setItem('cd-po-team', value); } catch (e) {}
   }
   const readerSeg = document.getElementById('pref-reader-tasks');
   if (readerSeg) {
@@ -16988,8 +17033,86 @@ function pdPinItem(id) {
   return [{ sep: true }, { id: 'pin', label: 'Pin: keep it in every project', checked: PdWorkspace.isPinned(PD_WS, id),
             run: () => pdWsPin(id, !PdWorkspace.isPinned(PD_WS, id)) }];
 }
+// IntelliJ's tab items (issue 66, drawing A): a docked tab splits off its
+// stack to one side, joins another stack, or its stack goes back to the top
+// bar (Unsplit); Close Other Tabs and Close Tabs to the Right close the
+// stack's other tabs but the conversation and pinned ones. A split moves the
+// tab (a chat opens once). Tools stay out of the conversation's stack
+// (pdKeepMiddle): their Unsplit puts them back on their strip.
+function pdStacks() {
+  const L = PD.dock.layout(), out = [], walk = n => { if (!n) return; if (n.t === 'stack') out.push(n); else (n.kids || []).forEach(walk); };
+  walk(L.root);
+  for (const f of L.floats || []) out.push(f.stack);
+  return out;
+}
+// A window's stack (a floating window holds one stack: it takes tabs, no split).
+function pdInFloat(st) { return (PD.dock.layout().floats || []).some(f => f.stack === st); }
+// The stack a menu row was made for, as the dock holds it when the row runs
+// (the dock may have rebuilt its layout since the menu opened): the stack that
+// now holds the same tabs (`id`'s, or its first).
+function pdLive(st, id) {
+  const p = id || st.panels[0], all = pdStacks();
+  return all.includes(st) ? st : (p && all.find(s => s.panels.includes(p))) || null;
+}
+function pdStackEl(st) {
+  const id = st.panels.find(p => PD_ROOT.querySelector(`[data-dk-tab="${CSS.escape(p)}"]`));
+  return id ? PD_ROOT.querySelector(`[data-dk-tab="${CSS.escape(id)}"]`).closest('.dk-stack') : null;
+}
+function pdSplitItems(id, ctx) {
+  const d = PD.dock;
+  if (!d || d.narrow() || !ctx || (ctx.where !== 'dock' && ctx.where !== 'float')) return [];
+  const stacks = pdStacks(), st = stacks.find(s => s.panels.includes(id));
+  if (!st) return [];
+  const conv = stacks.find(s => s.panels.includes('po-chat'));
+  const convFloat = !!conv && pdInFloat(conv), inFloat = pdInFloat(st);
+  const tool = PD_TOOLS.includes(id), name = p => d.title(p) || p;
+  const isConv = id === 'po-chat' ? 'The conversation stays where it is: move the other tabs' : '';
+  const alone = isConv || (inFloat ? 'A window holds one stack: Move to Other Stack, or drag the tab out'
+    : st.panels.length < 2 ? 'It is the only tab here: Move to Other Stack, or drag it' : '');
+  const split = (label, side) => ({ id: 'split-' + side, label, disabled: !!alone, title: alone,
+    run: () => { const at = pdLive(st, id); if (at) { d.moveTo(id, { kind: 'stack', stack: at }, side); d.activate(id); } } });
+  // The other stacks, named by their tabs and where they are from this one.
+  const here = pdStackEl(st)?.getBoundingClientRect();
+  const where = s => {
+    if (pdInFloat(s)) return ', a window';
+    const r = pdStackEl(s)?.getBoundingClientRect();
+    if (!here || !r || inFloat) return '';
+    const dx = (r.left + r.right - here.left - here.right) / 2, dy = (r.top + r.bottom - here.top - here.bottom) / 2;
+    return Math.abs(dx) >= Math.abs(dy) ? (dx > 0 ? ', on the right' : ', on the left') : (dy > 0 ? ', below' : ', above');
+  };
+  const label = s => s === conv && !convFloat ? 'Top bar'
+    : s.panels.slice(0, 3).map(name).join(' · ') + (s.panels.length > 3 ? ` +${s.panels.length - 3}` : '');
+  const others = isConv ? [] : stacks.filter(s => s !== st && !(tool && s === conv));
+  const keep = p => p === 'po-chat' || !d.can(p, 'close') || PdWorkspace.isPinned(PD_WS, p);
+  const shut = list => () => list.forEach(p => d.close(p));
+  const rest = st.panels.filter(p => p !== id && !keep(p));
+  const right = st.panels.slice(st.panels.indexOf(id) + 1).filter(p => !keep(p));
+  // Unsplit: the stack's tabs go to the conversation's stack (in the top bar,
+  // or its window), its tools back to their strip.
+  const noUnsplit = st === conv ? (convFloat ? `${name(id)} is already with the conversation` : `${name(id)} is already in the top bar`)
+    : !conv && st.panels.some(p => !PD_TOOLS.includes(p)) ? 'The conversation is not open' : '';
+  return [{ sep: true },
+    split('Split Right', 'right'), split('Split Left', 'left'), split('Split Down', 'bottom'), split('Split Up', 'top'),
+    { id: 'move-stack', label: 'Move to Other Stack', title: isConv || (others.length ? '' : 'There is no other stack'),
+      sub: others.map((s, i) => ({ id: 'to-' + i, label: label(s) + where(s),
+        run: () => { const to = pdLive(s); if (to) { d.moveTo(id, { kind: 'stack', stack: to }, 'center'); d.activate(id); } } })) },
+    { id: 'unsplit', label: 'Unsplit', disabled: !!noUnsplit, title: noUnsplit,
+      run: () => {
+        for (const p of [...(pdLive(st, id) || st).panels]) {
+          if (PD_TOOLS.includes(p)) { d.setViewMode(p, 'unpinned'); continue; }
+          const to = pdStacks().find(s => s.panels.includes('po-chat'));
+          if (to && to !== st) d.moveTo(p, { kind: 'stack', stack: to }, 'center');
+        }
+        d.activate(id);
+      } },
+    { sep: true },
+    { id: 'close-others', label: 'Close Other Tabs', disabled: !rest.length,
+      title: rest.length ? 'The conversation and pinned tabs stay' : 'No other tab here to close', run: shut(rest) },
+    { id: 'close-right', label: 'Close Tabs to the Right', disabled: !right.length,
+      title: right.length ? 'The conversation and pinned tabs stay' : 'No tab to its right to close', run: shut(right) }];
+}
 // A phone keeps Panels ▾ in the bar, so its ⋯ has no common tail.
-const pdWithCommon = hook => (id, ctx) => [...(hook ? hook(id, ctx) || [] : []), ...pdPinItem(id),
+const pdWithCommon = hook => (id, ctx) => [...(hook ? hook(id, ctx) || [] : []), ...pdSplitItems(id, ctx), ...pdPinItem(id),
   ...(PD.dock && PD.dock.narrow() ? [] : pdCommonItems(ctx))];
 // The open task's actions in the conversation panel's ⋯ menu (need 14, the
 // CEO's P109): the same model as a list row's (static/actions.js), asked each
@@ -17774,7 +17897,7 @@ function ibxHtml(d, scope, pid, now, phone, opts) {
     if (n) {
       acts = `<button type="button" class="ibx-btn" data-ibx-close="${esc(r.id)}" title="Close this question without an answer">Close</button>`
         + (n > 1 ? `<button type="button" class="ibx-btn ibx-earlier${conf === r.id ? ' on' : ''}" data-ibx-earlier="${esc(r.id)}"`
-          + ` aria-expanded="${conf === r.id}" title="Close this question and every question below it">Close this and earlier <span class="ibx-cn">${n}</span></button>` : '');
+          + ` aria-expanded="${conf === r.id}" title="Close this question and every question below it"><span class="ibx-lw">Close this and earlier</span><span class="ibx-ls" aria-hidden="true">Earlier</span> <span class="ibx-cn">${n}</span></button>` : '');
     } else if (r.kind === 'check' && cardN < 0) {
       acts = `<button type="button" class="ibx-btn" data-ibx-done="${esc(r.id)}" title="Checked: take it off the list">Done</button>`;
     } else if (ibxDealt(r)) {
@@ -17782,7 +17905,7 @@ function ibxHtml(d, scope, pid, now, phone, opts) {
       acts = `<button type="button" class="ibx-btn" data-ibx-done="${esc(r.id)}" title="Done: off the list until something new happens">Done</button>`;
     }
     if (listed && dismissible.has(r.roomId) && r.kind !== 'check' && !ibxDealt(r)) {
-      acts += `<button type="button" class="ibx-btn" data-room="${esc(r.roomId)}" data-ibx-dismiss title="Done with this: a new ask brings the row back">Done with this</button>`;
+      acts += `<button type="button" class="ibx-btn" data-room="${esc(r.roomId)}" data-ibx-dismiss title="Done with this: a new ask brings the row back"><span class="ibx-lw">Done with this</span><span class="ibx-ls" aria-hidden="true">Done</span></button>`;
     }
     const link = `<a class="ibx-link" href="${esc(href(r))}" data-room="${esc(r.roomId)}" data-mid="${esc(r.mid || '')}" data-part="${esc(r.part || '')}"`
       + ` title="${esc(r.mid ? 'Open it in its conversation' : 'Open the conversation')}">`
@@ -27954,6 +28077,13 @@ if ('serviceWorker' in navigator) {
   document.getElementById('pref-reader-tasks')?.addEventListener('click', (ev) => {
     const b = ev.target.closest('button[data-val]');
     if (b) setPref('readerForTasks', b.dataset.val === 'on');
+  });
+  document.getElementById('pref-po-team')?.addEventListener('click', (ev) => {
+    const b = ev.target.closest('button[data-val]');
+    if (!b) return;
+    // At once in every open PO chat, before the hub has saved it.
+    try { localStorage.setItem('cd-po-team', b.dataset.val); } catch (e) {}
+    setPref('poTeamActivity', b.dataset.val);
   });
   document.getElementById('pref-retention-keep')?.addEventListener('click', (ev) => {
     keepRetentionYear(ev.currentTarget);

@@ -264,6 +264,11 @@ class TabDrop(unittest.TestCase):
             mock.patch.object(dashboard.Handler, '_agent_peer', lambda h: ''),
             mock.patch.object(dashboard.Handler, 'log_message', lambda *a, **k: None),
             mock.patch.dict(os.environ, {'CODEX_HOME': str(base / 'codex')}),
+            # The hub's sessions list outlives a suite: the one before this in the same process
+            # would hand the page its own rooms.
+            mock.patch.object(dashboard, '_SESS_CACHE', {}),
+            mock.patch.object(dashboard, '_SLIM_MEMO', {}),
+            mock.patch.object(dashboard, 'SESSIONS_FEEDS', {}),
         ]
         for p in cls.patches:
             p.start(); cls.addClassCleanup(p.stop)
