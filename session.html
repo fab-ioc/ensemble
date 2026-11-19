@@ -7780,8 +7780,10 @@ function thrDraw(roomTs, d = THR_VIEW) {
     items.forEach(m => { if (m.from === 'user' && m.text) m.text = stripRefBlocks(m.text); });
     if (!THREAD_MODE) {
       // A question card in a thread is drawn there, not in the chat (#379).
+      // A channel drawn from its start: a card asked before its first
+      // message (a PO's first question) goes above it, not nowhere (P417).
       const inThread = (d && d.cardThreads) || {};
-      items = withHubRows(items, ROOM_OBJ, THR_HUB).filter(m => !inThread[m.id]);
+      items = withHubRows(items, ROOM_OBJ, THR_HUB, !THR_BEFORE).filter(m => !inThread[m.id]);
     } else if (THR_HUB.size) {
       // The thread's own cards (the hub's hubRows), among its balloons by
       // time; one older than its first, above it when the view starts there.
