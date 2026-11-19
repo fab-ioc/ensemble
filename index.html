@@ -4410,11 +4410,29 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
       .ibx-row:not(.ibx-confirming) > .ibx-acts > .ibx-btn .ibx-ls { display: inline; }
       .ibx-row:not(.ibx-confirming) > .ibx-acts > .ibx-earlier .ibx-cn { display: none; }
     }
-    /* P408 review 1: in the listed Inbox, a row with the could-not-open note under its meta line has its actions on their
-       own line at its foot, under the note's ways, always shown: they cover neither, and nothing moves on hover. */
+    /* P408 review 1: in the listed Inbox, a row with the could-not-open note under its meta line keeps its actions
+       on their own line at its foot when shown to the keyboard; they never cover the note's ways. */
     .ibx-listed .ibx-row:has(> .ibx-fail):not(.ibx-confirming) > .ibx-acts { display: flex; position: static; max-width: none;
       margin-top: var(--s-100); padding: 0; background: none; justify-content: flex-start; }
+    /* P410 (the CEO's B): with a mouse the listed Inbox's card keeps all its text in view: its actions open beside it,
+       in the side panel (.ibx-side). Keep the card's own buttons in the Tab order even while hidden: display:none
+       would drop focus between the link's blur and the next button's focus. Focus shows them in the card, as does
+       the Close this and earlier confirm; a press on one leaves the focus where it is (ibxSideWire). */
+    .ibx-listed .ibx-row:not(.ibx-confirming):not(:focus-within) > .ibx-acts { display: flex; opacity: 0; pointer-events: none; }
   }
+  /* P410: the side panel, in the body just right of the hovered card, over the edge of the chat: the card's actions
+     in full words, one a line; Close this and earlier's count at its end. Its buttons press the card's own. */
+  .ibx-side { position: fixed; z-index: 55; display: flex; flex-direction: column; gap: var(--s-100); min-width: 168px; max-width: 280px;
+    padding: var(--s-100); background: var(--surface-overlay); border: 1px solid var(--border); border-radius: var(--r-300); box-shadow: var(--e-200);
+    font-size: 12px; line-height: 1.4; }
+  .ibx-side-btn { display: flex; align-items: center; gap: var(--s-200); height: 28px; padding: 0 var(--s-200); border: 1px solid var(--border-strong);
+    border-radius: var(--r-200); background: var(--surface); color: var(--fg); font: inherit; font-weight: 500; text-align: left; white-space: nowrap; cursor: pointer; }
+  .ibx-side-btn:hover { background: var(--hover); }
+  .ibx-side-btn:active { background: var(--pressed); }
+  .ibx-side-btn .ibx-side-n { margin-left: auto; padding: 0 var(--s-100); border-radius: var(--r-100); background: var(--c-neutral-bg); color: var(--c-neutral-fg);
+    font-size: var(--fs-100); font-weight: 600; font-variant-numeric: tabular-nums; }
+  .ibx-side-btn.ibx-side-earlier:hover { background: var(--c-danger-bg); color: var(--c-danger-fg); border-color: var(--c-danger-bold); }
+  .ibx-side-btn.ibx-side-dismiss { font-weight: 600; }
   .ibx-row.ibx-mark.ibx-confirming .ibx-link, .ibx-row.ibx-mark.ibx-confirming .ibx-line, .ibx-row.ibx-mark:hover .ibx-line { color: var(--fg); }
   .ibx-conf { margin-top: var(--s-200); padding: var(--s-200) var(--s-300); background: var(--surface); border: 1px solid var(--border-strong);
     border-radius: var(--r-300); box-shadow: var(--e-200); }
@@ -13962,6 +13980,7 @@ function rowExpandShow(row, spec, focus = false) {
   const host = spec.host ? row.closest(spec.host) : null;
   if (host) rowExpandHostHold(host);
   else rowExpandHostLet();
+  if (host && spec.keep) rowExpandKeep(copy, host.querySelector(`:scope > ${spec.keep}`), win);
   ROW_EXPAND = { row, copy, spec, host, focus };
   if (win.MutationObserver) {
     // A menu opening, or the row redrawn away under the copy (Dock redraws its tabs), lets it go.
@@ -13973,6 +13992,44 @@ function rowExpandShow(row, spec, focus = false) {
   ROW_EXPAND_WIN = win;
   win.addEventListener('resize', rowExpandHide);
   ROW_EXPAND_LAST = Date.now();
+}
+// P414 (item 5): spec.keep (an Inbox card's Close / Earlier / Done): the card's own
+// buttons the copy grows over stay on top, where they are. The copy, in the body
+// above the Inbox, shows a picture of them at their place (the same computed
+// look; its text skips their line, so no word goes under them); a press there
+// goes to the real button under it (covered), and the pointer moving onto them
+// lets the copy go, so the real ones take over.
+function rowExpandKeep(copy, acts, win) {
+  if (!acts || win.getComputedStyle(acts).display === 'none') return;
+  const ar = acts.getBoundingClientRect(), cr = copy.getBoundingClientRect();
+  if (!ar.width || cr.bottom <= ar.top + 0.5 || cr.top >= ar.bottom - 0.5 || cr.right <= ar.left || cr.left >= ar.right) return;
+  const doc = copy.ownerDocument, cs = win.getComputedStyle(copy);
+  const top0 = cr.top + copy.clientTop + parseFloat(cs.paddingTop);
+  // Two floats keep the band the buttons take free of the copy's text, across its width (a word is never cut beside them).
+  const above = doc.createElement('span'), band = doc.createElement('span');
+  above.className = band.className = 'row-expand-keep-gap';
+  above.style.cssText = `float:right;width:0;height:${Math.max(0, ar.top - top0)}px`;
+  band.style.cssText = `float:right;clear:right;width:100%;height:${ar.height}px`;
+  copy.prepend(above);
+  above.after(band);
+  const pic = acts.cloneNode(true);
+  pic.classList.add('row-expand-keep');
+  pic.setAttribute('aria-hidden', 'true');
+  pic.querySelectorAll('[id]').forEach(el => el.removeAttribute('id'));
+  pic.querySelectorAll('button, [tabindex]').forEach(el => { el.tabIndex = -1; });
+  copy.appendChild(pic);
+  // Out of the Inbox the card's rules no longer reach the picture: what differs is set on it.
+  const look = (o, c) => {
+    const os = win.getComputedStyle(o), now = win.getComputedStyle(c), set = [];
+    for (let i = 0; i < os.length; i++) { const p = os[i]; if (now.getPropertyValue(p) !== os.getPropertyValue(p)) set.push([p, os.getPropertyValue(p)]); }
+    for (const [p, v] of set) c.style.setProperty(p, v);
+    for (let i = 0; i < o.children.length && i < c.children.length; i++) look(o.children[i], c.children[i]);
+  };
+  look(acts, pic);
+  const at = copy.getBoundingClientRect();
+  Object.assign(pic.style, { position: 'absolute', margin: '0', right: 'auto', bottom: 'auto', zIndex: '1',
+    left: `${ar.left - at.left - copy.clientLeft + copy.scrollLeft}px`, top: `${ar.top - at.top - copy.clientTop + copy.scrollTop}px`,
+    width: `${ar.width}px`, height: `${ar.height}px` });
 }
 function rowExpandSchedule(row, spec, immediate = false) {
   if (ROW_EXPAND && ROW_EXPAND.row === row) return;
@@ -19178,7 +19235,208 @@ rowExpandWire(document.getElementById('ld-projs'),
 rowExpandWire(document.getElementById('ld-ibx-body'),
   { row: '.ibx-head, a.ibx-link', name: '.ibx-title-listed, .ibx-line',
     covered: '.ibx-head, a.ibx-link, .ibx-meta, .ibx-acts, .ibx-btn, .ibx-more > summary, .ibx-gone',
-    host: '.ibx-row', copyClass: 'ldp-expanded', focusClass: 'ldp-expand-focus' });
+    host: '.ibx-row', keep: '.ibx-acts', copyClass: 'ldp-expanded', focusClass: 'ldp-expand-focus' });
+// P410 (the CEO's choice B): with a mouse, a listed Inbox card's Close / Close this and earlier / Done with this
+// open in a small panel just right of the card, outside the Inbox, in full words: the whole card stays in view.
+// The panel stays while the pointer goes from the card (or its hover copy) onto it, for a short grace off both,
+// and goes once the pointer has left both. Its buttons press the card's own, found again at the press (the
+// Inbox's handlers act); pointing at Close this and earlier marks what it would close, as on the card. A
+// repaint keeps it, on the same card. Touch screens keep the card's buttons (no hover: the CSS shows them).
+const IBX_SIDE_GRACE = 300;
+const IBX_SIDE_KEYS = ['ibxClose', 'ibxEarlier', 'ibxDone', 'ibxDismiss'];
+const IBX_SIDE = { box: null, el: null, id: '', sig: '', timer: 0, mark: null, doc: null, obs: null, raf: 0, pt: null, next: null, aim: 0 };
+function ibxSideKey(b) { return IBX_SIDE_KEYS.find(k => k in b.dataset) || ''; }
+function ibxSideRow(id) {
+  const box = IBX_SIDE.box;
+  return box && id ? box.querySelector(`li.ibx-row[data-ibx="${CSS.escape(id)}"]`) : null;
+}
+// The card's actions the panel shows: a listed card's, not while it asks to confirm or shows them to the keyboard.
+function ibxSideActs(li) {
+  if (!li || !li.isConnected || !li.closest('.ibx-listed') || li.classList.contains('ibx-confirming') || li.matches(':focus-within')) return null;
+  const acts = li.querySelector(':scope > .ibx-acts');
+  return acts && [...acts.querySelectorAll('.ibx-btn')].some(ibxSideKey) ? acts : null;
+}
+function ibxSideUnmark() {
+  const m = IBX_SIDE.mark;
+  IBX_SIDE.mark = null;
+  if (!m || IBX.confirm) return;
+  const li = ibxSideRow(m), b = li && li.querySelector(':scope > .ibx-acts [data-ibx-earlier]');
+  if (b) b.dispatchEvent(new MouseEvent('mouseout', { bubbles: true }));
+}
+function ibxSideHide() {
+  clearTimeout(IBX_SIDE.timer);
+  IBX_SIDE.timer = 0;
+  ibxSideUnaim();
+  cancelAnimationFrame(IBX_SIDE.raf);
+  ibxSideUnmark();
+  if (IBX_SIDE.obs) IBX_SIDE.obs.disconnect();
+  if (IBX_SIDE.doc) {
+    IBX_SIDE.doc.removeEventListener('pointermove', ibxSideTrack, true);
+    IBX_SIDE.doc.removeEventListener('mouseout', ibxSideOut, true);
+    IBX_SIDE.doc.removeEventListener('keydown', ibxSideKeyDown, true);
+    IBX_SIDE.doc.removeEventListener('scroll', ibxSideScroll, true);
+    if (IBX_SIDE.doc.defaultView) IBX_SIDE.doc.defaultView.removeEventListener('resize', ibxSideHide);
+  }
+  if (IBX_SIDE.el) IBX_SIDE.el.remove();
+  Object.assign(IBX_SIDE, { el: null, id: '', sig: '', doc: null, obs: null, pt: null });
+}
+function ibxSideStay() { clearTimeout(IBX_SIDE.timer); IBX_SIDE.timer = 0; }
+function ibxSideLater() { if (IBX_SIDE.el && !IBX_SIDE.timer) IBX_SIDE.timer = setTimeout(ibxSideHide, IBX_SIDE_GRACE); }
+function ibxSideButtons(acts) {
+  const el = IBX_SIDE.el, doc = el.ownerDocument;
+  el.textContent = '';
+  for (const b of acts.querySelectorAll('.ibx-btn')) {
+    const key = ibxSideKey(b);
+    if (!key) continue;
+    const s = doc.createElement('button');
+    s.type = 'button';
+    s.tabIndex = -1;
+    s.className = 'ibx-side-btn' + (key === 'ibxEarlier' ? ' ibx-side-earlier' : key === 'ibxDismiss' ? ' ibx-side-dismiss' : '');
+    s.dataset.sideKey = key;
+    if (b.title) s.title = b.title;
+    const lw = b.querySelector('.ibx-lw'), cn = b.querySelector('.ibx-cn');
+    const t = doc.createElement('span');
+    t.textContent = (lw ? lw.textContent : [...b.childNodes].filter(n => !(n.classList && n.classList.contains('ibx-cn'))).map(n => n.textContent).join('')).trim();
+    s.appendChild(t);
+    if (cn) { const n = doc.createElement('span'); n.className = 'ibx-side-n'; n.textContent = cn.textContent.trim(); s.appendChild(n); }
+    el.appendChild(s);
+  }
+}
+function ibxSideSig(acts) {
+  return [...acts.querySelectorAll('.ibx-btn')].map(b => ibxSideKey(b) + ':' + b.textContent.trim() + ':' + b.title).join('|');
+}
+// Beside the card's visible part, 8px off its right edge (its left one where the window has no room), in the window.
+function ibxSidePlace(li) {
+  const el = IBX_SIDE.el, win = el.ownerDocument.defaultView, r = li.getBoundingClientRect();
+  const sc = IBX_SIDE.box.closest('#ld-ibx-body') || IBX_SIDE.box, v = sc.getBoundingClientRect();
+  if (r.bottom <= v.top + 4 || r.top >= v.bottom - 4) { ibxSideHide(); return; }
+  const w = el.offsetWidth, h = el.offsetHeight, m = 8;
+  let x = r.right + m;
+  if (x + w > win.innerWidth - m && r.left - m - w >= m) x = r.left - m - w;
+  const y = Math.max(m, Math.min(Math.max(r.top, v.top), win.innerHeight - m - h));
+  el.style.left = `${Math.round(x)}px`;
+  el.style.top = `${Math.round(y)}px`;
+}
+function ibxSideSync() {
+  IBX_SIDE.raf = 0;
+  if (!IBX_SIDE.el) return;
+  const li = ibxSideRow(IBX_SIDE.id), acts = ibxSideActs(li);
+  if (!acts) { ibxSideHide(); return; }
+  const sig = ibxSideSig(acts);
+  if (sig !== IBX_SIDE.sig) { IBX_SIDE.sig = sig; ibxSideButtons(acts); }
+  ibxSidePlace(li);
+}
+function ibxSideOpen(li) {
+  const acts = ibxSideActs(li);
+  if (!acts) { ibxSideLater(); return; }
+  ibxSideStay();
+  if (IBX_SIDE.el && IBX_SIDE.id === li.dataset.ibx) return;
+  ibxSideHide();
+  const doc = li.ownerDocument, el = doc.createElement('div');
+  el.className = 'ibx-side';
+  // The card's own buttons are its keyboard's and its screen reader's way: the panel is the pointer's.
+  el.setAttribute('aria-hidden', 'true');
+  el.addEventListener('pointerenter', ev => { if (ev.target === el) ibxSideStay(); });
+  el.addEventListener('pointerover', ev => {
+    const s = ev.target.closest && ev.target.closest('.ibx-side-earlier');
+    if (!s || IBX.confirm) return;
+    const b = ibxSideRow(IBX_SIDE.id)?.querySelector(':scope > .ibx-acts [data-ibx-earlier]');
+    if (b) { IBX_SIDE.mark = IBX_SIDE.id; b.dispatchEvent(new MouseEvent('mouseover', { bubbles: true })); }
+  });
+  el.addEventListener('pointerout', ev => {
+    const s = ev.target.closest && ev.target.closest('.ibx-side-earlier');
+    if (s && !(ev.relatedTarget && s.contains(ev.relatedTarget))) ibxSideUnmark();
+  });
+  el.addEventListener('click', ev => {
+    const s = ev.target.closest && ev.target.closest('.ibx-side-btn');
+    if (!s) return;
+    ev.preventDefault();
+    const li2 = ibxSideRow(IBX_SIDE.id), acts2 = ibxSideActs(li2);
+    const b = acts2 && [...acts2.querySelectorAll('.ibx-btn')].find(x => ibxSideKey(x) === s.dataset.sideKey);
+    IBX_SIDE.mark = null;
+    ibxSideHide();
+    if (b) b.click();
+  });
+  Object.assign(IBX_SIDE, { el, id: li.dataset.ibx, sig: ibxSideSig(acts), doc });
+  ibxSideButtons(acts);
+  doc.body.appendChild(el);
+  ibxSidePlace(li);
+  if (!IBX_SIDE.el) return;
+  doc.addEventListener('pointermove', ibxSideTrack, true);
+  doc.addEventListener('mouseout', ibxSideOut, true);
+  doc.addEventListener('keydown', ibxSideKeyDown, true);
+  doc.addEventListener('scroll', ibxSideScroll, { capture: true, passive: true });
+  if (doc.defaultView) doc.defaultView.addEventListener('resize', ibxSideHide);
+  // A repaint draws the cards anew: the panel follows its card, or goes with it.
+  if (doc.defaultView && doc.defaultView.MutationObserver) {
+    IBX_SIDE.obs = new doc.defaultView.MutationObserver(() => { if (!IBX_SIDE.raf) IBX_SIDE.raf = requestAnimationFrame(ibxSideSync); });
+    IBX_SIDE.obs.observe(IBX_SIDE.box, { childList: true, subtree: true });
+  }
+}
+// The card under the pointer: the one it is on, or the one whose hover copy it is on.
+function ibxSideCard(t) {
+  const box = IBX_SIDE.box;
+  if (!t || !t.closest || !box) return null;
+  const li = t.closest('li.ibx-row[data-ibx]');
+  if (li && box.contains(li)) return li;
+  if (ROW_EXPAND && ROW_EXPAND.copy && ROW_EXPAND.copy.contains(t) && ROW_EXPAND.host && box.contains(ROW_EXPAND.host)) return ROW_EXPAND.host;
+  return null;
+}
+function ibxSideUnaim() { clearTimeout(IBX_SIDE.aim); IBX_SIDE.aim = 0; IBX_SIDE.next = null; }
+// The pointer, from a to b, heading for the panel: b inside the triangle from a to the panel's near edge (a little
+// taller), and moving its way. Crossing the next card on its way there keeps the panel on its card.
+function ibxSideAim(a, b) {
+  const el = IBX_SIDE.el;
+  if (!el || !a) return false;
+  const r = el.getBoundingClientRect(), right = r.left >= a.x, ex = right ? r.left : r.right;
+  if (right ? b.x <= a.x : b.x >= a.x) return false;
+  const c1 = { x: ex, y: r.top - 8 }, c2 = { x: ex, y: r.bottom + 8 };
+  const side = (p, q) => (q.x - p.x) * (b.y - p.y) - (q.y - p.y) * (b.x - p.x);
+  const d = [side(a, c1), side(c1, c2), side(c2, a)];
+  return !(d.some(v => v < 0) && d.some(v => v > 0));
+}
+function ibxSideTrack(ev) {
+  if (!IBX_SIDE.el) return;
+  const pt = { x: ev.clientX, y: ev.clientY }, prev = IBX_SIDE.pt;
+  IBX_SIDE.pt = pt;
+  if (IBX_SIDE.el.contains(ev.target)) { ibxSideUnaim(); ibxSideStay(); return; }
+  const li = ev.pointerType === 'mouse' ? ibxSideCard(ev.target) : null;
+  if (li && li.dataset.ibx === IBX_SIDE.id) { ibxSideUnaim(); ibxSideOpen(li); return; }
+  if (li && ibxSideAim(prev, pt)) {
+    // On its way to the panel over another card: that card's turn comes only if the pointer stays there.
+    ibxSideStay();
+    IBX_SIDE.next = li;
+    if (!IBX_SIDE.aim) IBX_SIDE.aim = setTimeout(() => { const n = IBX_SIDE.next; IBX_SIDE.aim = 0; IBX_SIDE.next = null; if (n && n.isConnected && IBX_SIDE.el) ibxSideOpen(n); }, IBX_SIDE_GRACE);
+    return;
+  }
+  ibxSideUnaim();
+  if (li) ibxSideOpen(li); else ibxSideLater();
+}
+function ibxSideOut(ev) { if (!ev.relatedTarget) ibxSideLater(); }
+function ibxSideKeyDown(ev) { if (ev.key === 'Escape') ibxSideHide(); }
+function ibxSideScroll() { if (!IBX_SIDE.raf) IBX_SIDE.raf = requestAnimationFrame(ibxSideSync); }
+function ibxSideWire(box) {
+  if (!box || box._ibxSide) return;
+  box._ibxSide = true;
+  IBX_SIDE.box = box;
+  const on = ev => {
+    if (ev.pointerType !== 'mouse') return;
+    const win = box.ownerDocument.defaultView;
+    if (!win || !win.matchMedia('(hover: hover)').matches) return;
+    // With the panel up, ibxSideTrack (on the document) decides.
+    if (IBX_SIDE.el) return;
+    const li = ibxSideCard(ev.target);
+    if (li) ibxSideOpen(li);
+  };
+  box.addEventListener('pointerover', on);
+  box.addEventListener('pointermove', on);
+  // A mouse press on a card's own buttons (shown to the keyboard) leaves the focus on the card: moving it would hide
+  // them under the press, and the click would be lost.
+  box.addEventListener('mousedown', ev => {
+    if (ev.button === 0 && ev.target.closest && ev.target.closest('.ibx-listed li.ibx-row > .ibx-acts .ibx-btn')) ev.preventDefault();
+  });
+}
+ibxSideWire(document.getElementById('ld-ibx-body'));
 (function () {
   const box = document.getElementById('ld-projs');
   if (!box) return;
