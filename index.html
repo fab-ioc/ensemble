@@ -4407,14 +4407,15 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
       .ibx-row:not(.ibx-confirming) > .ibx-acts > .ibx-btn .ibx-ls { display: inline; }
       .ibx-row:not(.ibx-confirming) > .ibx-acts > .ibx-earlier .ibx-cn { display: none; }
     }
-    /* P408 review 1: in the listed Inbox, a row with the could-not-open note under its meta line has its actions on their
-       own line at its foot, under the note's ways, always shown: they cover neither, and nothing moves on hover. */
+    /* P408 review 1: in the listed Inbox, a row with the could-not-open note under its meta line keeps its actions
+       on their own line at its foot when shown to the keyboard; they never cover the note's ways. */
     .ibx-listed .ibx-row:has(> .ibx-fail):not(.ibx-confirming) > .ibx-acts { display: flex; position: static; max-width: none;
       margin-top: var(--s-100); padding: 0; background: none; justify-content: flex-start; }
     /* P410 (the CEO's B): with a mouse the listed Inbox's card keeps all its text in view: its actions open beside it,
-       in the side panel (.ibx-side). In the card they show only to the keyboard (a focus ring in the card) and while
-       it asks to confirm Close this and earlier; a press on one of them leaves the focus where it is (ibxSideWire). */
-    .ibx-listed .ibx-row:not(.ibx-confirming):not(:has(:focus-visible)) > .ibx-acts { display: none; }
+       in the side panel (.ibx-side). Keep the card's own buttons in the Tab order even while hidden: display:none
+       would drop focus between the link's blur and the next button's focus. Focus shows them in the card, as does
+       the Close this and earlier confirm; a press on one leaves the focus where it is (ibxSideWire). */
+    .ibx-listed .ibx-row:not(.ibx-confirming):not(:focus-within) > .ibx-acts { display: flex; opacity: 0; pointer-events: none; }
   }
   /* P410: the side panel, in the body just right of the hovered card, over the edge of the chat: the card's actions
      in full words, one a line; Close this and earlier's count at its end. Its buttons press the card's own. */
@@ -19198,7 +19199,7 @@ function ibxSideRow(id) {
 }
 // The card's actions the panel shows: a listed card's, not while it asks to confirm or shows them to the keyboard.
 function ibxSideActs(li) {
-  if (!li || !li.isConnected || !li.closest('.ibx-listed') || li.classList.contains('ibx-confirming') || li.matches(':has(:focus-visible)')) return null;
+  if (!li || !li.isConnected || !li.closest('.ibx-listed') || li.classList.contains('ibx-confirming') || li.matches(':focus-within')) return null;
   const acts = li.querySelector(':scope > .ibx-acts');
   return acts && [...acts.querySelectorAll('.ibx-btn')].some(ibxSideKey) ? acts : null;
 }

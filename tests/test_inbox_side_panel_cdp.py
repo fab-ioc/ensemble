@@ -20,6 +20,8 @@ clicks:
   card asks to confirm, its buttons in it, the panel gone);
 * a repaint while the pointer is on the card or on the panel keeps the panel,
   on the same card;
+* real Tab and Shift+Tab move from a card link through Close, Earlier and Done
+  with this and back; Esc and Cancel return focus to Earlier after confirmation;
 * on a touch screen (no hover) the card shows its own buttons and no panel opens;
 * the page threw nothing.
 
@@ -52,6 +54,8 @@ async function main() {
   const click = async (x, y) => { await c.send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1 }, sessionId);
     await c.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1 }, sessionId); };
   const key = async k => { for (const type of ['rawKeyDown', 'keyUp']) await c.send('Input.dispatchKeyEvent', { type, key: k, code: k, windowsVirtualKeyCode: k === 'Escape' ? 27 : 0 }, sessionId); };
+  const tab = async (back = false) => { for (const type of ['rawKeyDown', 'keyUp']) await c.send('Input.dispatchKeyEvent',
+    { type, key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9, modifiers: back ? 8 : 0 }, sessionId); await frame(); };
   const shot = async (name, clip) => { if (!A.shots) return; const r = await c.send('Page.captureScreenshot', { format: 'png', ...(clip ? { clip: { ...clip, scale: 1 } } : {}) }, sessionId); fs.writeFileSync(path.join(A.shots, name + '.png'), Buffer.from(r.data, 'base64')); };
   const frame = () => evalIn('new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => r(0))))');
   await c.send('Page.addScriptToEvaluateOnNewDocument', { source: 'window.ensBootOpen = false; try { ["cd-tool-strip", "cd-tool-open", "cd-phone-tabs", "cd-inbox-scope"].forEach(k => localStorage.removeItem(k)); } catch (e) {}' }, sessionId);
@@ -72,7 +76,7 @@ async function main() {
     return { n: sd.length, id: s ? IBX_SIDE.id : null, gap: s && li ? Math.round(r.left - cr.right) : null, outInbox: !!s && r.left >= ib.right - 0.5,
       labels: s ? [...s.querySelectorAll('.ibx-side-btn')].map(b => [...b.children].map(e => e.textContent.trim()).join(' ')) : [],
       marked: ${D}.querySelectorAll('li.ibx-row.ibx-mark').length,
-      shown: [...${D}.querySelectorAll('.ibx-listed li.ibx-row[data-q] > .ibx-acts')].filter(a => getComputedStyle(a).display !== 'none').length }; })()`;
+      shown: [...${D}.querySelectorAll('.ibx-listed li.ibx-row[data-q] > .ibx-acts')].filter(a => getComputedStyle(a).display !== 'none' && +getComputedStyle(a).opacity > 0.5).length }; })()`;
   const textAt = async i => evalIn(`(() => { const li = ${row(i)}; li.scrollIntoView({ block: 'nearest' });
     const b = li.querySelector('.ibx-line').getBoundingClientRect(); return [Math.round(b.left + 30), Math.round(b.top + 6)]; })()`);
   const btnAt = k => evalIn(`(() => { const b = document.querySelectorAll('.ibx-side .ibx-side-btn')[${k}].getBoundingClientRect(); return [Math.round(b.left + b.width / 2), Math.round(b.top + b.height / 2)]; })()`);
@@ -193,6 +197,29 @@ async function main() {
     out.close = { want: id3, gone: await evalIn(`IBX.gone.has(${JSON.stringify(id3)})`), after: await evalIn(st) };
     await evalIn(`(() => { const u = ${D}.querySelector('[data-ibx-undo="' + CSS.escape(${JSON.stringify(id3)}) + '"]'); if (u) u.click(); return !!u; })()`).then(v => { out.close.undo = v; });
     await frame();
+    // Real keyboard navigation must reach the card's own buttons, even when the mouse-only panel is hidden.
+    await away();
+    const keyboard = `(() => { const li = ${D}.querySelector('li.ibx-row[data-ibx="' + CSS.escape(${JSON.stringify(id0)}) + '"]'), a = document.activeElement;
+      const key = a && (a.matches('a.ibx-link') ? 'link' : ['ibxClose', 'ibxEarlier', 'ibxDismiss', 'ibxGo', 'ibxCancel'].find(k => k in a.dataset) || a.tagName);
+      const acts = li.querySelector(':scope > .ibx-acts');
+      return { key, shown: +getComputedStyle(acts).opacity, display: getComputedStyle(acts).display, panel: document.querySelectorAll('.ibx-side').length }; })()`;
+    await evalIn(`(() => { const li = ${D}.querySelector('li.ibx-row[data-ibx="' + CSS.escape(${JSON.stringify(id0)}) + '"]'); li.scrollIntoView({ block: 'nearest' }); li.querySelector('a.ibx-link').focus(); return 0; })()`);
+    out.keyboard = { steps: [await evalIn(keyboard)] };
+    for (const back of [false, false, false, true, true, true]) { await tab(back); out.keyboard.steps.push(await evalIn(keyboard)); }
+    await tab(); await tab(); // Earlier, reached from the link again.
+    out.keyboard.beforeConfirm = await evalIn(keyboard);
+    await evalIn('document.activeElement.click(), 0'); await frame();
+    out.keyboard.confirm = await evalIn(`({ id: IBX.confirm, focus: document.activeElement.dataset.ibxGo !== undefined })`);
+    await key('Escape'); await frame();
+    out.keyboard.afterEscape = await evalIn(keyboard);
+    await evalIn('document.activeElement.click(), 0'); await frame();
+    out.keyboard.confirmAgain = await evalIn(`({ id: IBX.confirm, focus: document.activeElement.dataset.ibxGo !== undefined })`);
+    await evalIn(`${D}.querySelector('[data-ibx-cancel]').click(), 0`); await frame();
+    out.keyboard.afterCancel = await evalIn(keyboard);
+    await evalIn(`(() => { const li = ${D}.querySelector('li.ibx-row[data-ibx="' + CSS.escape(${JSON.stringify(id1)}) + '"]'); li.querySelector('a.ibx-link').focus(); return 0; })()`);
+    await tab();
+    out.keyboard.shortRow = await evalIn(`({ close: document.activeElement.dataset.ibxClose === ${JSON.stringify(id1)}, panel: document.querySelectorAll('.ibx-side').length })`);
+    await evalIn('document.activeElement.blur(), 0');
     // A touch screen: no hover. The card shows its buttons; neither a touch nor the mouse opens a panel.
     await away();
     await c.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 1 }, sessionId);
@@ -296,6 +323,18 @@ class SidePanelInChrome(close.CloseInChrome):
             self.assertTrue(g["inActs"], x)
             self.assertIn(g["key"], w if isinstance(w, tuple) else (w,), x)
             self.assertEqual(x["after"]["n"], 0, ("the panel goes with the press", x))
+
+    def test_real_tab_shift_tab_and_confirm_return_focus_to_the_card(self):
+        k = self.got["keyboard"]
+        self.assertEqual([x["key"] for x in k["steps"]],
+                         ["link", "ibxClose", "ibxEarlier", "ibxDismiss", "ibxEarlier", "ibxClose", "link"], k)
+        self.assertTrue(all(x["shown"] == 1 and x["display"] == "flex" and x["panel"] == 0 for x in k["steps"]), k)
+        self.assertEqual(k["beforeConfirm"]["key"], "ibxEarlier", k)
+        self.assertTrue(k["confirm"]["id"] and k["confirm"]["focus"], k)
+        self.assertEqual(k["afterEscape"], {"key": "ibxEarlier", "shown": 1, "display": "flex", "panel": 0}, k)
+        self.assertTrue(k["confirmAgain"]["id"] and k["confirmAgain"]["focus"], k)
+        self.assertEqual(k["afterCancel"], {"key": "ibxEarlier", "shown": 1, "display": "flex", "panel": 0}, k)
+        self.assertEqual(k["shortRow"], {"close": True, "panel": 0}, k)
 
     def test_the_real_close_this_and_earlier_asks_to_confirm_on_the_card(self):
         e = self.got["earlier"]

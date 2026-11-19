@@ -91,7 +91,7 @@ async function main() {
         const e = document.elementFromPoint(r.left + r.width * f, r.top + r.height / 2); return !!e && copy.contains(e) && !!e.closest('.ibx-line'); })); }
     // P414 item 5: the row's buttons are on top while the copy is up: the button itself, or the copy's picture of
     // it at its place (the same label); never the copy's text.
-    const keep = (acts && getComputedStyle(acts).display !== 'none' ? [...acts.querySelectorAll('.ibx-btn')] : []).map(b => {
+    const keep = (acts && getComputedStyle(acts).display !== 'none' && +getComputedStyle(acts).opacity > 0.5 ? [...acts.querySelectorAll('.ibx-btn')] : []).map(b => {
       const r = b.getBoundingClientRect(), e = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
       if (e && b.contains(e)) return 'orig';
       const pb = e && e.closest('.row-expand-keep .ibx-btn');
@@ -109,7 +109,7 @@ async function main() {
     return { id: li.dataset.ibx, text: line.textContent, pts, hid, bad, side,
       cut: line.scrollHeight > line.clientHeight + 1,
       copy: !!copy, keep, copyWhole: !!cl && cl.textContent === line.textContent && cl.scrollHeight <= cl.clientHeight + 1, copyShown,
-      acts: acts && getComputedStyle(acts).display !== 'none' ? { n: btns.length, h: Math.round(ab.height), oneLine: new Set(btns.map(b => Math.round(b.getBoundingClientRect().top))).size === 1,
+      acts: acts && getComputedStyle(acts).display !== 'none' && +getComputedStyle(acts).opacity > 0.5 ? { n: btns.length, h: Math.round(ab.height), oneLine: new Set(btns.map(b => Math.round(b.getBoundingClientRect().top))).size === 1,
         inCard: ab.left >= card.left - 0.5 && ab.right <= card.right + 0.5 && ab.bottom <= card.bottom + 0.5,
         belowText: ab.top >= lk.bottom - 0.5, labels: btns.map(b => { const sp = [...b.children].filter(e => { const cs = getComputedStyle(e); return cs.display !== 'none' && cs.clipPath === 'none'; });
           return (b.children.length ? sp.map(e => e.textContent.trim()).join(' ') : b.textContent.trim()); }),
@@ -193,7 +193,7 @@ async function main() {
       const nr = document.createRange(); nr.selectNodeContents(note);
       const cov = [...nr.getClientRects()].filter(r => r.width > 2).map(r => document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)).filter(e => !e || !note.contains(e));
       const noteHid = cov.length, noteByCopy = cov.every(e => !!e && !!e.closest('.row-expanded'));
-      return { h: Math.round(card.height), shown: getComputedStyle(acts).display !== 'none', below: ab.top >= fa.getBoundingClientRect().bottom - 0.5,
+      return { h: Math.round(card.height), shown: getComputedStyle(acts).display !== 'none' && +getComputedStyle(acts).opacity > 0.5, below: ab.top >= fa.getBoundingClientRect().bottom - 0.5,
         inCard: ab.left >= card.left - 0.5 && ab.right <= card.right + 0.5 && ab.bottom <= card.bottom + 0.5, ways, noteHid, noteByCopy, noteH: Math.round(nb.height),
         side: !!document.querySelector('.ibx-side') && IBX_SIDE.id === li.dataset.ibx };
     })()`;

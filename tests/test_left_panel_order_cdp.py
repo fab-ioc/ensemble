@@ -280,7 +280,8 @@ async function main() {
         o.cardKey = { focused: await p.evalIn(`({ copy: !!document.querySelector('.row-expanded'), host: document.querySelectorAll('.row-expand-host').length })`) };
         await p.evalIn(`(${LINK}.blur(), 0)`); await sleep(300);
         o.cardKey.blurred = await p.evalIn(`(() => { const b = document.querySelector('#ld-ibx-body .ibx-row[data-ibx="q337"] [data-ibx-close]'); const r = b ? b.getBoundingClientRect() : null;
-          return { copy: !!document.querySelector('.row-expanded'), host: document.querySelectorAll('.row-expand-host').length, held: !!ROW_EXPAND_HOST, focus: document.activeElement === document.body, closeShown: !!(r && r.width && r.height) }; })()`);
+          return { copy: !!document.querySelector('.row-expanded'), host: document.querySelectorAll('.row-expand-host').length, held: !!ROW_EXPAND_HOST, focus: document.activeElement === document.body,
+            closeShown: !!(r && r.width && r.height && +getComputedStyle(b.parentElement).opacity > 0.5) }; })()`);
       }
       await away(p);
       await p.evalIn(`(() => { IBX.data = window._ibx337b; IBX.busy = false; ibxRepaint(); return 0; })()`);
