@@ -130,7 +130,11 @@ async function main() {
         if (!wr) return null; const ico = wr.querySelector('.pd-tab-ico'), pin = wr.querySelector('.pd-pin');
         return { ico: !!ico, cur: !!ico && ico.classList.contains('pd-ico-cur'), shown: !!ico && getComputedStyle(ico).display !== 'none' && ico.getBoundingClientRect().width > 0,
                  pin: !!pin, on: !!pin && pin.classList.contains('on') }; };
-      return { pid: PD.pid, po: w('po-chat'), brakes: w('chat:${T.Brakes}'), brakesOpen: PD.rt.has('chat:${T.Brakes}') && PD.dock.isVisible('chat:${T.Brakes}'),
+      const gi = document.getElementById('proj-switch-ico'), gr = gi && gi.getBoundingClientRect();
+      const pt = document.querySelector('#po-dock .dk-tab[data-dk-tab="po-chat"]');
+      return { pid: PD.pid, po: w('po-chat'), poTab: !!pt && pt.getBoundingClientRect().width > 0,
+               grpIco: !!gi && !!gi.querySelector('.ldp-ico, svg, img, span') && gr.width > 0 && getComputedStyle(gi).display !== 'none',
+               brakes: w('chat:${T.Brakes}'), brakesOpen: PD.rt.has('chat:${T.Brakes}') && PD.dock.isVisible('chat:${T.Brakes}'),
                panels: !!document.querySelector('.pd-panels'), wipers: PD.dock.panels().some(p => p.id === 'chat:${T.Wipers}'),
                orphans: PD.dock.panels().filter(p => p.id.startsWith('chat:') && !PD.rt.has(p.id)).map(p => p.id) }; })()`;
     out.extras = await evalIn(EXTRAS);
@@ -155,7 +159,9 @@ async function main() {
     await evalIn(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); 0`);
     // The PO's live check against the drawing (P374): the bar's trail with the
     // PO in front, a pinned tab's icon in an Unassigned task, a float's place.
-    const TRAIL = `(() => ({ front: PD.dock.frontOf('po-chat'), trail: [...document.querySelectorAll('#bar-crumbs [data-crumb]')].map(e => [e.dataset.crumb, e.textContent]) }))()`;
+    const TRAIL = `(() => ({ front: PD.dock.frontOf('po-chat'), trail: [...document.querySelectorAll('#bar-crumbs [data-crumb]')].map(e => [e.dataset.crumb, e.textContent]),
+      barTabs: document.body.classList.contains('bar-tabs'), grpOn: document.getElementById('bar-grp').classList.contains('on'),
+      tabs: [...document.querySelectorAll('.dk-head.bt-head .dk-tab.on')].filter(e => e.getBoundingClientRect().width > 0).map(e => e.textContent.trim()) }))()`;
     const TABX = id => `(() => { const id = ${JSON.stringify(id)}, t = document.querySelector('#po-dock .dk-tab[data-dk-tab="' + id + '"]'), wr = t && t.closest('.dk-tab-wrap');
         if (!wr) return null; const ico = wr.querySelector('.pd-tab-ico');
         return { ico: !!ico, cur: !!ico && ico.classList.contains('pd-ico-cur'), shown: !!ico && getComputedStyle(ico).display !== 'none' && ico.getBoundingClientRect().width > 0 }; })()`;
@@ -391,7 +397,11 @@ class TaskTabs(unittest.TestCase):
         g = self.got
         x = g["extras"]
         self.assertEqual(x["pid"], self.ids["Motors"], x)
-        self.assertTrue(x["po"]["ico"] and x["po"]["shown"] and not x["po"]["pin"], f"the PO's tab: its project's icon, no pin: {x}")
+        # #393: the PO's own tab is not drawn on a computer; the bar's project group is
+        # it, with the project's icon (project ▾), and it has no pin.
+        self.assertFalse(x["poTab"], f"no PO tab in the bar: {x}")
+        self.assertTrue(x["grpIco"], f"the project group shows its project's icon: {x}")
+        self.assertFalse(x["po"]["pin"], f"the PO's tab has no pin: {x}")
         self.assertTrue(x["brakes"]["ico"] and x["brakes"]["cur"] and not x["brakes"]["shown"], f"this project's task tab: no icon in the page: {x}")
         self.assertTrue(x["brakes"]["pin"] and not x["brakes"]["on"], x)
         self.assertFalse(x["panels"], "no Panels ▾ on a computer")
@@ -424,14 +434,18 @@ class TaskTabs(unittest.TestCase):
         k = g["phonePick"]
         self.assertTrue(k["found"] and not k["menuOpen"] and k["prompted"] and k["prompted"][0].startswith("Label for this session"), k)
 
-    def test_with_the_po_in_front_the_bar_has_no_trail(self):
-        # The PO's live check (P374, row 1): a file open in a stack beside the PO's adds no trail;
-        # a file in front of the PO's own stack is where the person is.
+    def test_a_computers_bar_has_no_trail_the_tabs_name_it(self):
+        # The PO's live check (P374, row 1): a file open in a stack beside the PO's adds no trail.
+        # #393: on a computer the trail is the project alone; a file in front of the PO's own
+        # stack is named on its tab in the bar, the project's group no longer underlined.
         g = self.got
         self.assertTrue(g["notesId"] and g["planId"], g)
-        self.assertEqual(g["trailPo"], {"front": "po-chat", "trail": []}, g["trailPo"])
-        self.assertEqual(g["trailFile"]["front"], g["planId"])
-        self.assertEqual(g["trailFile"]["trail"], [["tool", "Files"], ["file", "PLAN.md"]])
+        po, f = g["trailPo"], g["trailFile"]
+        self.assertEqual((po["front"], po["trail"], po["barTabs"], po["grpOn"]), ("po-chat", [], True, True), po)
+        self.assertEqual(f["front"], g["planId"])
+        self.assertEqual(f["trail"], [], f)
+        self.assertFalse(f["grpOn"], f)
+        self.assertTrue(any("PLAN.md" in t for t in f["tabs"]), f)
 
     def test_a_pinned_tab_shows_its_projects_icon_in_an_unassigned_task(self):
         # Row 5: the Unassigned task keeps Motors' dock (PD.pid), yet Motors' pinned file is another's there.

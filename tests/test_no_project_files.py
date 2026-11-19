@@ -593,7 +593,9 @@ const FILES = `(() => {
     rootsOf: v ? v.roots.map(r => [r.label, r.kind]) : null,
     qFont: wsp ? parseFloat(getComputedStyle(wsp.querySelector('.wsf-q')).fontSize) : 0,
     small: [].concat(small('.wsp-tree .wse:not(.none)'), small('.wsf-mode button'), small('.wsf-q'), small('.wsp-bar button, .wsp-bar .wsp-own', fp || pane), small('.wsf-res .wsr')),
-    trail: [...document.querySelectorAll('#bar-crumbs [data-crumb]')].filter(vis).map(e => [e.dataset.crumb, e.textContent]) };
+    trail: [...document.querySelectorAll('#bar-crumbs [data-crumb]')].filter(vis).map(e => [e.dataset.crumb, e.textContent]),
+    top: (() => { const r = typeof barTopTask === 'function' ? barTopTask() : null; return r ? r.roomId : null; })(),
+    projName: document.getElementById('proj-switch-name').textContent };
 })()`;
 // The file showing, as its viewer drew it.
 const VIEWER = `(() => {
@@ -1082,7 +1084,10 @@ class ThePage(unittest.TestCase):
         self.assertIn("report.md", g["files"], "its one agent's folder is open too: that is where it writes")
         self.assertEqual(g["notes"], [], "no line saying there is nothing")
         self.assertEqual(g["placeholder"], "Go to file in this task")
-        self.assertEqual(g["trail"][-1], ["tool", "Files"])
+        # #393: on a computer the bar names no tool or file; a task in no project is
+        # the bar's top level (project ▾ names it).
+        self.assertEqual(g["trail"], [])
+        self.assertEqual(g["top"], self.loose, g["projName"])
         self.no_scroll(g, "Files at 1440")
         self.assertIn("deep.txt", self.got["folder"]["files"], "a folder opens in place")
 
@@ -1105,7 +1110,7 @@ class ThePage(unittest.TestCase):
         v = self.got["html"]["viewer"]
         self.assertEqual(v["page"], {"sandbox": "allow-same-origin", "srcdoc": True, "h1": "Brake chart", "ran": "before"},
                          "rendered, and its script did not run")
-        self.assertEqual(self.got["html"]["files"]["trail"][-1], ["file", "page.html"])
+        self.assertEqual(self.got["html"]["files"]["trail"], [], "#393: no file crumb on a computer")
         self.assertEqual(self.got["agentHtml"]["viewer"]["page"]["h1"], "Agent page")
         self.assertEqual(self.got["agentHtml"]["viewer"]["images"], 1)
         self.assertIn("agent-output.html", self.got["agentHtml"]["viewer"]["url"])

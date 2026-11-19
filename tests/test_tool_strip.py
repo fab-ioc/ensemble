@@ -652,7 +652,8 @@ class TheStrip(unittest.TestCase):
                 self.assertFalse(g["tabsShown"], "its tabs are gone")
                 self.assertEqual(g["fly"], "changes")
                 self.assertLessEqual(g["mid"]["r"], g["flyBox"]["x"])
-                self.assertEqual(g["trail"][-1][0], "tool")
+                self.assertEqual(g["trail"], [], "#393: a computer's bar names no tool; its strip button is on")
+                self.assertTrue([b for b in g["btns"] if b["id"] == "changes"][0]["on"], g["btns"])
                 self.no_scroll(g, f"task at {w}")
         p = self.got["taskPanes"]
         self.assertTrue(p["changes"] and p["workspace"] and p["spec"] and p["details"] and p["activity"], p)
@@ -663,7 +664,7 @@ class TheStrip(unittest.TestCase):
         self.assertEqual(p["slot"], "Spec", "a task in front: the slot is its Spec")
         self.assertEqual(self.got["taskSpec"]["fly"], "spec")
         self.assertEqual(self.got["taskFiles"]["fly"], "workspace")
-        self.assertEqual(self.got["taskFiles"]["trail"][-1][0], "file", "the file is a crumb")
+        self.assertEqual(self.got["taskFiles"]["trail"], [], "#393: no file crumb on a computer")
 
     def test_a_file_keeps_its_page_when_the_tool_closes(self):
         self.assertTrue(self.got["fileKept"])

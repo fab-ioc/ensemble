@@ -84,7 +84,8 @@ const OPEN = `[...document.querySelectorAll('body > .dcm, .dk-menu')].find(e => 
 // The left panel's row ⋯ that are wholly in its list's view.
 const VIS = `[...document.querySelectorAll('#ld-projs [data-ldp-menu]')].filter(b => { const r = b.getBoundingClientRect(), c = document.getElementById('ld-projs').getBoundingClientRect(); return r.width && r.top >= c.top && r.bottom <= c.bottom; })`;
 // The task's Dock ⋯: the one on screen in the middle (a phone has one).
-const TASKDOTS = `[...document.querySelectorAll('[data-dk-act="menu"]')].find(b => { const r = b.getBoundingClientRect(); return r.width && b.contains(document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)) && (innerWidth < 600 || r.left > 600); })`;
+// #393: on a computer the stack's title bar is drawn in the top bar (.bt-head), its ⋯ after the last tab.
+const TASKDOTS = `[...document.querySelectorAll('.dk-head.bt-head > .dk-ctl [data-dk-act="menu"], [data-dk-act="menu"]')].find(b => { const r = b.getBoundingClientRect(); return r.width && b.contains(document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)) && (innerWidth < 600 || r.left > 600 || !!b.closest('.bt-head')); })`;
 const MORE_LOOSE = `(() => { LDP.moreLoose = true; LDP.sig = ''; ldpPaint(); return 0; })()`;
 (async () => {
   const udd = chromeProfile(A);
@@ -150,10 +151,13 @@ const MORE_LOOSE = `(() => { LDP.moreLoose = true; LDP.sig = ''; ldpPaint(); ret
         out.menus[K + '-project-row'] = await measure(p, K + '-project-row', `document.querySelector('#ld-projs [data-ldp-pmenu]')`);
       }
       await p.evalIn(`(() => { openDetail(ALL_ROWS.find(r => r.roomId === ${JSON.stringify(A.task)}).sessionId); return 0; })()`);
-      await p.until(`[...document.querySelectorAll('.dk-tab[data-dk-tab="po-chat"]')].some(t => t.getBoundingClientRect().width) && document.body.classList.contains('detail-open')`, 15000);
+      // The task's tab: the PO's (the middle's title) on a phone, the task's own on a
+      // computer, where the PO's tab is not drawn (#393: the bar's project group is it).
+      const TASKTAB = `[...document.querySelectorAll('.dk-tab[data-dk-tab="po-chat"], .dk-tab[data-dk-tab="chat:' + ${JSON.stringify(A.task)} + '"]')].find(t => t.getBoundingClientRect().width)`;
+      await p.until(`!!${TASKTAB} && document.body.classList.contains('detail-open')`, 15000);
       await sleep(1200);
       if (w >= 600) out.menus[K + '-task-dots'] = await measure(p, K + '-task-dots', TASKDOTS);
-      out.menus[K + '-task-tab-right-click'] = await measure(p, K + '-task-tab-right-click', `[...document.querySelectorAll('.dk-tab[data-dk-tab="po-chat"]')].find(t => t.getBoundingClientRect().width)`, true);
+      out.menus[K + '-task-tab-right-click'] = await measure(p, K + '-task-tab-right-click', TASKTAB, true);
       await p.close();
     }
     // A window too short for the row menu: it fits the window and scrolls its list under the head.

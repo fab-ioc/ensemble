@@ -93,6 +93,9 @@ async function main() {
   };
   const key = async (k, code, vk) => { for (const type of ['rawKeyDown', 'keyUp']) await c.send('Input.dispatchKeyEvent', { type, key: k, code, windowsVirtualKeyCode: vk }, sessionId); };
   const tab = id => `#po-dock .dk-tab[data-dk-tab="${id}"]`;
+  // #393: on a computer the PO's own tab is not drawn: the project's group in
+  // the bar (#bar-grp; here its "/" between project ▾ and thread ▾) is it.
+  const PO_TAB = '#bar-grp .bar-thr-sep';
   // A step: the state settled, then the To: line and the room a message really goes to.
   const step = async (name, act, ms = 1200) => { await act(); await sleep(ms); const s = await evalIn(ST); s.sent = await evalIn(PROBE(name)); out.steps[name] = s; await shot(name); };
   try {
@@ -104,9 +107,9 @@ async function main() {
     await step('start', async () => {}, 300);
     // A task opened from the list: its tab, in front, has the box.
     await step('openBrakes', () => evalIn(`openDetail(${sid(T.Brakes)}); 0`));
-    await step('poTab', () => clickAt(tab('po-chat')));
+    await step('poTab', () => clickAt(PO_TAB));
     await step('brakesTab', () => clickAt(tab('chat:' + T.Brakes)));
-    await step('poTab2', () => clickAt(tab('po-chat')));
+    await step('poTab2', () => clickAt(PO_TAB));
     // A press elsewhere on the page (the project switcher), then the page itself brings Brakes's
     // tab to the front (PD.opening, as a project switch's fronts put back): not the person's pick (review 1).
     await step('autoAfterPress', async () => {
@@ -114,7 +117,7 @@ async function main() {
       await evalIn(`(() => { closeProjMenu(); PD.opening = true; try { PD.dock.activate('chat:' + ${JSON.stringify(T.Brakes)}); } finally { PD.opening = false; } return 0; })()`);
     });
     out.autoFront = await evalIn(`PD.dock.frontOf('po-chat')`);
-    await clickAt(tab('po-chat')); await sleep(1200);
+    await clickAt(PO_TAB); await sleep(1200);
     await step('openWipers', () => evalIn(`openDetail(${sid(T.Wipers)}); 0`));
     await step('brakesFromWipers', () => clickAt(tab('chat:' + T.Brakes)));
     await step('wipersTab', () => clickAt(tab('chat:' + T.Wipers)));
@@ -122,10 +125,11 @@ async function main() {
     await evalIn(`document.querySelector(${JSON.stringify(tab('chat:' + T.Wipers))}).focus(); 0`);
     await step('keyLeft', () => key('ArrowLeft', 'ArrowLeft', 37));
     await step('keyLeft2', () => key('ArrowLeft', 'ArrowLeft', 37));
+    out.focusOnGroup = await evalIn(`document.activeElement && document.activeElement.id`);
     await step('keyRight', () => key('ArrowRight', 'ArrowRight', 39));
     // Drafts: each target keeps its own through the switches.
     await evalIn(`(() => { const f = document.getElementById('workspace-compose-frame'), i = f.contentDocument.getElementById('input'); i.value = 'draft brakes'; i.dispatchEvent(new Event('input', { bubbles: true })); f.contentWindow.edStoreNow(); return 0; })()`);
-    await clickAt(tab('po-chat')); await sleep(1500);
+    await clickAt(PO_TAB); await sleep(1500);
     out.draftPo = await evalIn(`document.getElementById('workspace-compose-frame').contentDocument.getElementById('input').value`);
     await clickAt(tab('chat:' + T.Brakes)); await sleep(1500);
     out.draftBrakes = await evalIn(`document.getElementById('workspace-compose-frame').contentDocument.getElementById('input').value`);
@@ -144,7 +148,7 @@ async function main() {
     await step('motors', () => pick(P.Motors), 2500);
     // Focus left in the PO's chat (a click in it), then the task's tab: the window losing and
     // regaining focus (another app, a browser window) gives focus back inside the PO's frame.
-    await clickAt(tab('po-chat')); await sleep(1500);
+    await clickAt(PO_TAB); await sleep(1500);
     const PO_MSGS = `(() => { const f = PO_PANEL.querySelector('iframe.po-session:not([hidden])'); const b = f.getBoundingClientRect(); return [b.x + b.width / 2, b.y + b.height / 3]; })()`;
     const at = await evalIn(PO_MSGS);
     for (const type of ['mousePressed', 'mouseReleased']) await c.send('Input.dispatchMouseEvent', { type, x: at[0], y: at[1], button: 'left', clickCount: 1 }, sessionId);
@@ -167,19 +171,19 @@ async function main() {
     out.split = await evalIn(`(() => { const L = PD.dock.layout(); return JSON.stringify(L.root).slice(0, 400); })()`);
     await step('splitPoBody', async () => clickXY(await evalIn(chatAt(`PO_PANEL.querySelector('iframe.po-session:not([hidden])')`))));
     await step('splitBrakesTab', () => clickAt(tab('chat:' + T.Brakes)));
-    await step('splitPoTab', () => clickAt(tab('po-chat')));
+    await step('splitPoTab', () => clickAt(PO_TAB));
     await step('splitBrakesBody', async () => clickXY(await evalIn(chatAt(`document.querySelector('iframe.dp-session[data-room="${T.Brakes}"]')`))));
-    await step('splitPoTab2', () => clickAt(tab('po-chat')));
+    await step('splitPoTab2', () => clickAt(PO_TAB));
     // An Unassigned task's chat as a tab of the PO's stack (Open in new panel).
     await step('loosePanel', () => evalIn(`pdChatOpen(${JSON.stringify(T.Loose)}); 0`), 1500);
-    await step('loosePo', () => clickAt(tab('po-chat')));
+    await step('loosePo', () => clickAt(PO_TAB));
     await step('looseTab', () => clickAt(tab('chat:' + T.Loose)));
     // A chat that comes by itself (a panel brought back, no press of the person's) never takes the box (#271).
     await sleep(1600);
     await step('byItself', () => evalIn(`pdChatOpen(${JSON.stringify(T.Idle)}, { restore: true }); 0`), 1500);
     out.idleShown = await evalIn(`PD.rt.has('chat:${T.Idle}') && PD.dock.isShown('chat:${T.Idle}')`);
     // A task opened with a real click on its row in the task list (its panel brought on screen first).
-    await clickAt(tab('po-chat')); await sleep(1200);
+    await clickAt(PO_TAB); await sleep(1200);
     await evalIn(`PD.dock.reveal('board'); 0`); await sleep(1200);
     await step('rowWipers', () => clickAt(`tr.row.headless[data-room="${T.Wipers}"]`));
     // The row of the task already open clicked again, its tab in a stack beside the PO's and the box
@@ -201,7 +205,7 @@ async function main() {
         const po = st.find(x => x.panels.includes('po-chat')), lone = st.find(x => x !== po && x.panels.length === 1 && x.panels[0] !== 'chat:${T.Brakes}');
         if (lone && po.panels.length < 3) PD.dock.moveTo(lone.panels[0], { kind: 'stack', stack: po }, 'center'); return 0; })()`); await sleep(1000);
     }
-    await clickAt(tab('po-chat')); await sleep(1200);
+    await clickAt(PO_TAB); await sleep(1200);
     out.removed = await evalIn(`(() => { const all = [], walk = n => { if (!n) return; if (n.t === 'stack') all.push(n.panels); else (n.kids || []).forEach(walk); }; walk(PD.dock.layout().root);
       for (const ps of all) { const k = ps.findIndex((id, n) => n > 0 && id.startsWith('chat:') && ps[n - 1].startsWith('chat:')); if (k > 0) return { id: ps[k], left: ps[k - 1] }; }
       return JSON.stringify(all); })()`);
@@ -348,8 +352,13 @@ class TabAimsBox(unittest.TestCase):
         self.at_task("wipersTab", "Wipers")
 
     def test_the_arrow_keys_on_the_tabs_aim_the_box(self):
+        # #393: ArrowLeft from Brakes brings the PO's conversation (its tab is not drawn
+        # on a computer: the bar's project group is it, and has the focus); ArrowRight then goes back to
+        # Brakes, the tab right after the group. (test_each_target_keeps_its_own_draft
+        # types its draft with the box where keyRight left it.)
         self.at_task("keyLeft", "Brakes")
         self.at_po("keyLeft2")
+        self.assertEqual(self.got["focusOnGroup"], "proj-switch", "the focus goes to the group, not a hidden tab")
         self.at_task("keyRight", "Brakes")
 
     def test_each_target_keeps_its_own_draft(self):

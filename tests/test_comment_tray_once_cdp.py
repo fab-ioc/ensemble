@@ -10,8 +10,8 @@ it (the selection bar's 💬 Comment, Add, Submit, Clear pressed where the top
 page hits, through the frames), with the box
 
   a. on the PO's main chat,
-  b. on a thread (its panel open beside the chat, To: <thread> with ×),
-  c. on the PO again, the thread closed.
+  b. on a thread (shown in place over the chat, #393; To: <thread> with ×),
+  c. on the PO again, the thread closed (thread ▾'s Main).
 
 Each time: exactly one tray on screen across the top page and all its frames,
 in the box's frame; Submit hands the hub exactly one "## Review comments (1)"
@@ -115,7 +115,7 @@ async function main() {
   const shot = async name => { if (!A.shots) return; const r = await send('Page.captureScreenshot', { format: 'png' }, s); fs.writeFileSync(path.join(A.shots, name + '.png'), Buffer.from(r.data, 'base64')); };
 
   const PO = `PD.els['po-chat'].querySelector('iframe.po-session:not([hidden])')`;
-  const THR = `PD.rt.get('thread:po')?.el.querySelector('iframe')`;
+  const THR = `PD.thrIn?.el.querySelector('iframe')`;
   const WCF = `document.getElementById('workspace-compose-frame')`;
   // Every #cmt-tray on screen: in the top page and every same-origin frame,
   // recursively, through frames that are themselves on screen. Each by the
@@ -269,13 +269,13 @@ async function main() {
       await sleep(1000);
       return runCase('thread', THR, A.threadWords, { shot: 'thread-tray', lands: true });
     });
-    // c. The thread closed: the box is the PO's again.
+    // c. The thread closed (thread ▾'s Main: the thread in place goes): the box is the PO's again.
     await step('closed', async () => {
-      await ev(`PD.dock.removePanel('thread:po'); 0`);
+      await ev(`pdThreadInClose(false); 0`);
       await until(`WC.target?.kind === 'po' && !${WCF}.contentWindow.liveTailBoxThread?.() && ${boxReady}`, 'box back on the PO');
       await sleep(1000);
       const r = await runCase('closed', PO, A.poWords);
-      r.panel = await ev(`PD.rt.has('thread:po')`);
+      r.panel = await ev(`!!PD.thrIn`);
       return r;
     });
     // d. A long tray: eight comments. It stays capped, its list scrolls, the box stays whole.

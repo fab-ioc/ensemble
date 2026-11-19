@@ -15,7 +15,9 @@
 //     here: [<panel id>],                          // opened on cur's screen though another's
 //     seen: { <panel id>: <ms> },                  // last shown, for CAP
 //     ctxs: { <context key>: { at: <ms>, items: [<item>] } } }
-// An item is what brings a panel back: { id, kind: 'chat', room } or
+// An item is what brings a panel back: { id, kind: 'chat', room },
+// { id, kind: 'thread', room, tid, mid, title } (a thread's tab: tid, or the
+// balloon mid it starts on) or
 // { id, kind: 'file', path, ctx } (ctx: the Workspace's, wsCtxKey's input),
 // with out: true when it was in a window of its own, front: true when it was
 // the front tab of its stack (one brought back behind stays behind), float:
@@ -28,9 +30,13 @@
   const empty = () => ({ v: 1, cur: '', pins: [], here: [], seen: {}, ctxs: {} });
   const isItem = x => !!x && typeof x === 'object' && typeof x.id === 'string' && !!x.id
     && ((x.kind === 'chat' && typeof x.room === 'string' && !!x.room)
-      || (x.kind === 'file' && typeof x.path === 'string' && !!x.path && !!x.ctx && typeof x.ctx === 'object'));
+      || (x.kind === 'file' && typeof x.path === 'string' && !!x.path && !!x.ctx && typeof x.ctx === 'object')
+      || (x.kind === 'thread' && typeof x.room === 'string' && !!x.room
+        && ((typeof x.tid === 'string' && !!x.tid) || (typeof x.mid === 'string' && !!x.mid))));
   const clean = x => {
-    const o = x.kind === 'chat' ? { id: x.id, kind: 'chat', room: x.room } : { id: x.id, kind: 'file', path: x.path, ctx: x.ctx };
+    const o = x.kind === 'chat' ? { id: x.id, kind: 'chat', room: x.room }
+      : x.kind === 'thread' ? { id: x.id, kind: 'thread', room: x.room, tid: x.tid || '', mid: x.tid ? '' : x.mid || '', title: typeof x.title === 'string' ? x.title : '' }
+      : { id: x.id, kind: 'file', path: x.path, ctx: x.ctx };
     if (x.out) o.out = true;
     if (x.front) o.front = true;
     if (x.float) o.float = true;

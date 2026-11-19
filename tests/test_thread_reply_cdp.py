@@ -31,7 +31,7 @@ from tests import chrome_profile  # noqa: E402
 from tests.test_page_update import CHROME  # noqa: E402
 from tests.test_thread_panel_cdp import CDP_JS as PANEL_JS, NODE  # noqa: E402
 
-# The panel test's Chrome and CDP helpers, with this test's steps.
+# The thread panel test's Chrome and CDP helpers (THR: the thread in place), with this test's steps.
 CDP_JS = PANEL_JS[:PANEL_JS.index('  const out={};')] + r"""
   const WATCH = doc => `(() => { const w=${doc}.defaultView; w.__seen = w.__seen || {};
     if (!w.__watch) w.__watch = setInterval(() => { const m=w.document.querySelector('#msgs'); if (!m) return;
@@ -50,7 +50,7 @@ CDP_JS = PANEL_JS[:PANEL_JS.index('  const out={};')] + r"""
     await ev(`SELECTED_PROJECT=${JSON.stringify(A.proj)}; PROJECT_TAB='tasks'; renderRows(); 0`);
     await until(`!!PD.dock && !!${PO}?.contentDocument?.querySelector('#msgs .thr-open[data-thr]')`, 'PO chat');
     await ev(`${PO}.contentDocument.querySelector('#msgs .thr-open[data-thr]').click(); 0`);
-    await until(`!!${THR}?.contentDocument?.querySelector('#msgs .msg[data-mid]') && !${THR}.contentDocument.getElementById('thr-also-l').hidden`, 'thread panel');
+    await until(`!!${THR}?.contentDocument?.querySelector('#msgs .msg[data-mid]') && !${THR}.contentDocument.getElementById('thr-also-l').hidden`, 'thread in place');
     await sleep(500);
     const CH = `${PO}.contentDocument`, TD = `${THR}.contentDocument`;
     await ev(WATCH(CH)); await ev(WATCH(TD));
@@ -72,7 +72,8 @@ CDP_JS = PANEL_JS[:PANEL_JS.index('  const out={};')] + r"""
     out.ticked = await ev(`({sent:${sentB}, chat:${PO}.contentWindow.__seen.TOKB||0, thread:${THR}.contentWindow.__seen.TOKB||0,
       chatStill:${HAS(CH, 'TOKB')}})`);
     // A phone: the thread inside the chat (#ts-frame), the same.
-    await ev(`PD.dock.removePanel('thread:po'); 0`);
+    // The thread in place goes (its Back), so the phone's chat opens its own.
+    await ev(`pdThreadInClose(false); 0`);
     await size(390,844,true); await send('Emulation.setTouchEmulationEnabled',{enabled:true,maxTouchPoints:5},s);
     await until(`PD.dock.narrow() && !!${PO}?.contentDocument?.querySelector('#msgs .thr-open[data-thr]')`, 'phone chat');
     await sleep(600);

@@ -339,16 +339,16 @@ async function main() {
       await hub('/__test/report', {});
       await hub('/__test/release-channel', {});
       // #379: each answer stays in its thread, never copied into the chat. In
-      // the Dock a thread opens in the dashboard's own panel (#236); the pane
-      // here was restored there before (not opened by a reply), so it stays,
-      // and the answers' threads show as their cards in the chat.
+      // the dashboard a thread shows in place over the chat (#393, PD.thrIn);
+      // the one here was restored there before (not opened by a reply), so it
+      // stays, and the answers' threads show as their cards in the chat.
       const dockWin = `document.querySelector('iframe.po-session')?.contentWindow`;
       const dockClean = `!${dockWin}?.document?.querySelector('#msgs')?.textContent.includes('Here it is, answer DOCKA.') &&
         !${dockWin}?.document?.querySelector('#msgs')?.textContent.includes('Here it is, answer DOCKB.')`;
       const dockThreads = `${dockWin}.eval(\`(THR_VIEW?.watchedReplies || []).filter(r => [...document.querySelectorAll('#msgs .msg[data-mid]')]
         .some(e => e.dataset.mid === r.send && /DOCK[AB] (First|Second) pending dock reply/.test(e.textContent))).map(r => r.thread)\`)`;
       const dockCards = `${dockWin}.eval(\`[...document.querySelectorAll('#msgs [data-thr]')].map(e => e.dataset.thr)\`)`;
-      const dockPanelTid = `(PD.rt.get('thread:po')?.tid || '')`;
+      const dockPanelTid = `(PD.thrIn?.tid || '')`;
       const dockPanelBefore = await evalIn(dockPanelTid);
       out.dockBatchBoth = await until(`(() => { const t = ${dockThreads}, c = ${dockCards};
         return t.length === 2 && ${dockPanelTid} === ${JSON.stringify(dockPanelBefore)} && t.every(x => c.includes(x)); })()`, 8000)

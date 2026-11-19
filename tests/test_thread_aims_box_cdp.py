@@ -1,4 +1,9 @@
-"""Opening a thread aims the message box at it, without a click into its panel (#363)."""
+"""Opening a thread aims the message box at it, without a click into it (#363).
+
+#393: in the dashboard a thread of the PO's conversation shows in place, over
+the conversation in the project's tab (PD.thrIn), or as a tab of its own
+(pdThreadTab, a Ctrl/⌘-click); the box follows the thread in place.
+"""
 from __future__ import annotations
 
 import json
@@ -46,7 +51,8 @@ async function main() {
     if(r.exceptionDetails) throw Error(expression.slice(0,120)+' '+JSON.stringify(r.exceptionDetails)); return r.result.value; };
   const until=async (expression,label) => { for(let i=0;i<120;i++){try{if(await ev(expression))return;}catch(e){} await sleep(150);} throw Error('timeout '+label); };
   const PO = `PD.els['po-chat'].querySelector('iframe.po-session:not([hidden])')`;
-  const THR = `PD.rt.get('thread:po')?.el.querySelector('iframe')`;
+  // #393: the thread shown in place over the PO chat (the old 'thread:po' panel is gone).
+  const THR = `PD.thrIn?.el.querySelector('iframe')`;
   const snap = async name => { if (!A.shots) return; const r=await send('Page.captureScreenshot',{format:'png',captureBeyondViewport:false},s);
     require('fs').writeFileSync(A.shots+'/'+name+'.png',Buffer.from(r.data,'base64')); };
   const count = `(() => { const main=${PO}, thread=${THR}, m=main?.contentDocument, t=thread?.contentDocument;
@@ -61,11 +67,11 @@ async function main() {
   const W = `document.getElementById('workspace-compose-frame')`;
   const out={};
   // A real press and release at an element inside a frame of the page.
-  const clickAt = async (frameExpr, selector) => {
+  const clickAt = async (frameExpr, selector, modifiers = 0) => {
     const p = await ev(`(()=>{const f=${frameExpr},r=f.getBoundingClientRect(),e=f.contentDocument.querySelector(${JSON.stringify(selector)});
       e.scrollIntoView({block:'center'});const q=e.getBoundingClientRect();return {x:r.x+q.x+q.width/2,y:r.y+q.y+q.height/2}})()`);
     for (const type of ['mouseMoved','mousePressed','mouseReleased'])
-      await send('Input.dispatchMouseEvent',{type,x:p.x,y:p.y,button:'left',buttons:type==='mousePressed'?1:0,clickCount:1},s);
+      await send('Input.dispatchMouseEvent',{type,x:p.x,y:p.y,button:'left',buttons:type==='mousePressed'?1:0,clickCount:1,modifiers},s);
   };
   const boxRoute = async () => ev(`(async()=>{const w=${W}.contentWindow,old=w.postOk;let body;
     w.postOk=async(_path,b)=>{body=b;return {}};try{await w.sendResuming('probe','', 'probe-key',[]);return {room:body.roomId,thread:body.thread||''};}
@@ -75,7 +81,9 @@ async function main() {
     i.dispatchEvent(new Event('input',{bubbles:true}));f.contentWindow.edStoreNow();return 0})()`);
   const boxDraft = `${W}.contentDocument.getElementById('input').value`;
   const boxFocused = `document.activeElement===${W} && ${W}.contentDocument.activeElement===${W}.contentDocument.getElementById('input')`;
-  const threads = `[...${PO}.contentDocument.querySelectorAll('#msgs .thr-open[data-thr]')].map(b=>b.dataset.thr)`;
+  // The first two: the threads with replies (the third topic, a new thread
+  // with none yet, has a line of its own too).
+  const threads = `[...${PO}.contentDocument.querySelectorAll('#msgs .thr-open[data-thr]')].map(b=>b.dataset.thr).slice(0,2)`;
   try {
     await size(1728,1117);
     await send('Page.navigate',{url:A.base+'/'},s);
@@ -105,8 +113,9 @@ async function main() {
     await typeBox('PO draft kept');
     // 1. A click on a thread's link: the box is that thread's at once, caret in it.
     await clickAt(PO, `#msgs .thr-open[data-thr="${ta}"]`);
-    await until(`!!${THR}`,'thread panel');
-    out.first = await ev(`({target:WC.target, link:document.getElementById('workspace-compose-link').textContent, title:PD.rt.get('thread:po').title})`);
+    await until(`!!${THR} && pdThreadInShown()`,'thread in place');
+    out.first = await ev(`({target:WC.target, link:document.getElementById('workspace-compose-link').textContent, title:PD.thrIn.title,
+      inPlace:pdThreadFind({room:${JSON.stringify(A.po)},thread:${JSON.stringify(ta)}})?.[0]||'', panels:PD.dock.panels().map(p=>p.id).filter(id=>/^thread:/.test(id))})`);
     await until(`WC.target?.thread===${JSON.stringify(ta)} && ${W}.contentWindow.liveTailBoxThread?.()===${JSON.stringify(ta)} && ${boxReady}`,'box on thread A');
     await sleep(300);
     out.firstStill = await ev(`WC.target`);
@@ -127,7 +136,7 @@ async function main() {
     await send('Runtime.evaluate',{expression:`${PO}.contentWindow.openThread(${JSON.stringify(ta)},'');0`,userGesture:true,returnByValue:true},s);
     out.typing = await ev(`({target:WC.target?.thread, active:document.activeElement.id})`);
     try { await until(`${W}.contentWindow.liveTailBoxThread?.()===${JSON.stringify(ta)} && ${boxReady}`,'box back on thread A'); }
-    catch (e) { throw Error(e.message+' '+JSON.stringify(await ev(`({t:WC.target,box:${W}.contentWindow.liveTailBoxThread?.(),send:${W}.contentDocument.getElementById('send')?.disabled,url:${W}.contentDocument.URL,e:PD.rt.get('thread:po')&&{tid:PD.rt.get('thread:po').tid,mid:PD.rt.get('thread:po').mid},typing:${JSON.stringify(out.typing)}})`))); }
+    catch (e) { throw Error(e.message+' '+JSON.stringify(await ev(`({t:WC.target,box:${W}.contentWindow.liveTailBoxThread?.(),send:${W}.contentDocument.getElementById('send')?.disabled,url:${W}.contentDocument.URL,e:PD.thrIn&&{tid:PD.thrIn.tid,mid:PD.thrIn.mid},typing:${JSON.stringify(out.typing)}})`))); }
     out.backDraft = await ev(boxDraft);
     await ev(`document.getElementById('probe-field').remove();0`);
     // 3. Back to the PO by a click in its chat: its draft is there.
@@ -136,14 +145,15 @@ async function main() {
     out.poDraft = await ev(boxDraft);
     // 4. Reply catch-up opening a thread is not the person's: the box stays.
     await ev(`${PO}.contentWindow.sideOpen({tid:${JSON.stringify(tb)},auto:true});0`);
-    await until(`PD.rt.get('thread:po')?.tid===${JSON.stringify(tb)}`,'auto thread');
+    await until(`PD.thrIn?.tid===${JSON.stringify(tb)}`,'auto thread');
     await sleep(500);
     out.auto = await ev(`WC.target`);
-    // 5. A reload with the thread kept: the remembered target (the PO) stays.
+    // 5. A reload with the thread kept: it is back in place over the PO chat,
+    // so the box on the PO (now under it) is the thread's (#393).
     await send('Page.reload',{},s);
     await until(`typeof PD!=='undefined' && !!${THR}?.contentDocument?.getElementById('thread-reply') && ${boxReady}`,'reload');
     await sleep(1500);
-    out.reloadPo = await ev(`({target:WC.target, thread:PD.rt.get('thread:po')?.tid})`);
+    out.reloadPo = await ev(`({target:WC.target, thread:PD.thrIn?.tid, shown:pdThreadInShown()})`);
     // ... and a remembered thread target stays the thread.
     await ev(`${THR}.contentDocument.getElementById('msgs').dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}));0`);
     await until(`WC.target?.kind==='thread'`,'thread picked');
@@ -151,23 +161,24 @@ async function main() {
     await until(`typeof PD!=='undefined' && !!${THR}?.contentDocument?.getElementById('thread-reply') && ${boxReady}`,'reload 2');
     await sleep(1500);
     out.reloadThread = await ev(`WC.target`);
-    // 6. Another PO's chat shown and this one again: its thread comes back quietly.
+    // 6. Another PO's chat shown and this one again: its thread comes back in
+    // place, and the box with it (#393: the project shown again).
     await ev(`${PO}.contentDocument.getElementById('msgpane').dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}));0`);
     await until(`WC.target?.kind==='po'`,'PO before follow');
     await ev(`PD.thrRoom='other-room';pdThreadFollow(${JSON.stringify(A.po)},${PO});0`);
     await sleep(1200);
-    out.follow = await ev(`({target:WC.target, thread:PD.rt.get('thread:po')?.tid||''})`);
-    // 7. Closing the thread gives the box back to the PO.
+    out.follow = await ev(`({target:WC.target, thread:PD.thrIn?.tid||''})`);
+    // 7. Closing the thread in place (Main) gives the box back to the PO.
     await ev(`${THR}.contentDocument.getElementById('msgs').dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}));0`);
     await until(`WC.target?.kind==='thread'`,'thread before close');
-    await ev(`PD.dock.removePanel('thread:po');0`);
+    await ev(`pdThreadInClose(false);0`);
     out.closed = await ev(`WC.target`);
     // 8. A thread started on a balloon (no id yet): the box takes it by its
     // balloon, then by the id its page finds.
     out.balloon = await ev(`(()=>{pdThreadPanel(${PO},{room:${JSON.stringify(A.po)},tid:'',mid:${JSON.stringify(A.balloon)},title:'Thread'});return WC.target})()`);
-    await until(`!!PD.rt.get('thread:po')?.tid && WC.target?.thread===PD.rt.get('thread:po').tid`,'promoted target');
-    await until(`${W}.contentWindow.liveTailBoxThread?.()===PD.rt.get('thread:po').tid && ${boxReady}`,'promoted editor');
-    out.promoted = await ev(`({target:WC.target, tid:PD.rt.get('thread:po').tid})`);
+    await until(`!!PD.thrIn?.tid && WC.target?.thread===PD.thrIn.tid`,'promoted target');
+    await until(`${W}.contentWindow.liveTailBoxThread?.()===PD.thrIn.tid && ${boxReady}`,'promoted editor');
+    out.promoted = await ev(`({target:WC.target, tid:PD.thrIn.tid})`);
     out.promotedRoute = await boxRoute();
     // The PO chat is the workspace's guest: the workspace's editor moves the
     // draft; the chat's promotion moves its target only.
@@ -182,8 +193,14 @@ async function main() {
         placeholder:${W}.contentDocument.getElementById('input').placeholder, box:${W}.contentDocument.getElementById('input').value,
         draft:JSON.parse(sessionStorage.getItem('cd-draft:'+${JSON.stringify(A.po)}+':thread:'+${JSON.stringify(ta)})||'{}').head||''}})()`;
     const onPo = `WC.target?.kind==='po' && !${W}.contentWindow.liveTailBoxThread?.() && ${boxReady}`;
-    const openA = async (label, wait = 800) => {
-      await clickAt(PO, `#msgs .thr-open[data-thr="${ta}"]`);
+    // A thread over the PO chat covers its links: back on Main first (thread ▾'s Main).
+    const toMain = async () => { if (await ev(`!!PD.thrIn`)) { await ev(`pdThreadInClose(false);0`); await until(onPo,'P340 Main'); } };
+    // Thread A in place (a plain click on its line), or as a tab of its own (a Ctrl-click, #393).
+    const TAB = `pdThreadTabId(${JSON.stringify(A.po)},${JSON.stringify(ta)},'')`;
+    const openA = async (label, wait = 800, tab = false) => {
+      await toMain();
+      await clickAt(PO, `#msgs .thr-open[data-thr="${ta}"]`, tab ? 2 : 0);
+      if (tab) await until(`PD.rt.has(${TAB}) && PD.dock.frontOf('po-chat')===${TAB}`,'P340 thread tab '+label);
       await until(`WC.target?.thread===${JSON.stringify(ta)} && ${W}.contentWindow.liveTailBoxThread?.()===${JSON.stringify(ta)} && ${boxReady}`,'P340 thread '+label);
       await sleep(wait);
     };
@@ -192,40 +209,44 @@ async function main() {
       for (const type of ['mouseMoved','mousePressed','mouseReleased'])
         await send('Input.dispatchMouseEvent',{type,x:p.x,y:p.y,button:'left',buttons:type==='mousePressed'?1:0,clickCount:1},s);
     };
+    // The project's tab in the bar (#393: the PO chat's own tab is not drawn):
+    // a press on it away from project ▾ / thread ▾.
+    const GRP = '#bar-grp .bar-thr-sep';
     out.p340 = {};
     // Step 9 reads thread A's draft back: it is put back after this step.
     const aDraftKey = JSON.stringify('cd-draft:'+A.po+':thread:'+ta);
     const aDraft = await ev(`sessionStorage.getItem(${aDraftKey})`);
-    await openA('beside');
+    await openA('in place');
     out.p340.thread = await ev(toLine);
     await typeBox('P340 thread draft');
     await snap('p340-thread');
-    // (a) The PO chat's tab, the thread beside it.
-    await clickTop('.dk-tab[data-dk-tab="po-chat"]');
-    await until(onPo,'P340 tab beside');
-    out.p340.tabBeside = await ev(toLine);
+    // (a) The project's tab, the thread in place in it: the box stays the
+    // thread's (the project's tab shows that thread).
+    await clickTop(GRP);
+    await sleep(700);
+    out.p340.grpInPlace = {...await ev(toLine), front: await ev(`PD.dock.frontOf('po-chat')`), shown: await ev(`pdThreadInShown()`)};
+    await snap('p340-grp-in-place');
+    // (a') The project's tab, thread A a tab of its own in front of it: the
+    // conversation comes forward, the box is the PO's.
+    await openA('tab', 800, true);
+    out.p340.stacked = await ev(`PD.dock.frontOf('po-chat')===${TAB} && !PD.dock.isShown('po-chat') && !PD.thrIn`);
+    await clickTop(GRP);
+    await until(onPo,'P340 project tab');
+    out.p340.tabStacked = {...await ev(toLine), front: await ev(`PD.dock.frontOf('po-chat')`)};
     await snap('p340-po');
-    // (a') The PO chat's tab, the thread a tab of its stack in front of it.
-    await ev(`PD.dock.removePanel('thread:po');PD.dock.forget('thread:po');window.__fits=pdFits;pdFits=()=>false;0`);
-    await openA('stacked');
-    out.p340.stacked = await ev(`PD.dock.frontOf('po-chat')==='thread:po' && !PD.dock.isShown('po-chat')`);
-    await ev(`pdFits=window.__fits;0`);
-    await clickTop('.dk-tab[data-dk-tab="po-chat"]');
-    await until(onPo,'P340 tab stacked');
-    out.p340.tabStacked = await ev(toLine);
-    // (a'') The PO chat's tab clicked at once after the thread opened: a click of its own.
-    await openA('quick', 0);
+    // (a'') The project's tab clicked at once after the thread's tab came: a click of its own.
+    await clickAt(PO, `#msgs .thr-open[data-thr="${ta}"]`, 2);
+    await until(`WC.target?.thread===${JSON.stringify(ta)} && PD.dock.frontOf('po-chat')===${TAB}`,'P340 thread tab quick');
     out.p340.quickAt = await ev(`Date.now()-WC.aimAt`);
-    await clickTop('.dk-tab[data-dk-tab="po-chat"]');
+    await clickTop(GRP);
     await sleep(100);
     out.p340.tabQuick = await ev(toLine);
     await until(onPo,'P340 tab quick');
-    // (a''') A key on the tabs at once after the thread opened, stacked in
-    // front of the PO chat: Dock brings the PO chat forward, the box follows.
-    await ev(`PD.dock.removePanel('thread:po');PD.dock.forget('thread:po');pdFits=()=>false;0`);
-    await openA('key', 0);
-    await ev(`pdFits=window.__fits;0`);
-    const key = await ev(`(()=>{const t=document.querySelector('.dk-tab[data-dk-tab="thread:po"]');t.focus();
+    // (a''') A key on the tabs at once after the thread's tab came: Dock
+    // brings the conversation forward, the box follows.
+    await clickAt(PO, `#msgs .thr-open[data-thr="${ta}"]`, 2);
+    await until(`WC.target?.thread===${JSON.stringify(ta)} && PD.dock.frontOf('po-chat')===${TAB}`,'P340 thread tab key');
+    const key = await ev(`(()=>{const t=document.querySelector('.dk-tab[data-dk-tab="'+${TAB}+'"]');t.focus();
       const l=[...t.closest('.dk-tabs').querySelectorAll('[data-dk-tab]')].map(x=>x.dataset.dkTab);
       return l.indexOf('po-chat')===0?'Home':'End'})()`);
     out.p340.keyAt = await ev(`Date.now()-WC.aimAt`);
@@ -234,25 +255,25 @@ async function main() {
     await sleep(100);
     out.p340.keyQuick = {...await ev(toLine), front: await ev(`PD.dock.isShown('po-chat')`)};
     await until(onPo,'P340 key quick');
-    // (b) The To line's ×.
+    // (b) The To line's ×, the thread in place.
     await openA('x');
     await clickTop('#workspace-compose-back');
     await until(onPo,'P340 x');
     out.p340.x = {...await ev(toLine), focus: await ev(boxFocused)};
     // (c) The thread's tab closed by its own ×.
-    await openA('close');
-    await ev(`PD.dock.reveal('thread:po');0`);
-    await clickTop('.dk-tab-x[data-dk-close="thread:po"]');
+    await openA('close', 800, true);
+    await clickTop(`.dk-tab-x[data-dk-close="${await ev(TAB)}"]`);
     await until(onPo,'P340 close');
-    out.p340.close = {...await ev(toLine), panel: await ev(`PD.rt.has('thread:po')`)};
-    // (d) A reload with the box on a thread whose panel is gone.
+    out.p340.close = {...await ev(toLine), panel: await ev(`PD.rt.has(${TAB})`)};
+    // (d) A reload with the box on a thread shown nowhere (none in place, no tab).
+    await toMain();
     await ev(`sessionStorage.setItem('cd-workspace-compose-target',JSON.stringify({kind:'thread',room:${JSON.stringify(A.po)},thread:${JSON.stringify(ta)},mid:''}));0`);
     await send('Page.reload',{},s);
     await until(`typeof WC!=='undefined' && typeof PD!=='undefined' && !!PD.dock`,'P340 reload');
     const t0 = Date.now();
     await until(onPo,'P340 reload on PO');
     out.p340.reloadMs = Date.now() - t0;
-    out.p340.reload = {...await ev(toLine), panel: await ev(`PD.rt.has('thread:po')`)};
+    out.p340.reload = {...await ev(toLine), panel: await ev(`!!PD.thrIn || PD.rt.has(${TAB})`)};
     // (e) A phone: the thread in the chat, its Back one tap from the PO.
     await size(390,844);
     await until(`PD.dock.narrow() && !!document.querySelector('iframe.po-session:not([hidden])')?.contentDocument?.querySelector('#msgs .thr-open[data-thr]')`,'P340 phone');
@@ -275,7 +296,7 @@ async function main() {
     await ev(`sessionStorage.setItem(${aDraftKey},${JSON.stringify(aDraft)});0`);
     // 9. The chat in a window of its own: its box follows the thread it opens beside it.
     await send('Page.navigate',{url:A.base+'/session?id='+encodeURIComponent(A.po)},s);
-    await until(`document.querySelectorAll('#msgs .thr-open[data-thr]').length===2 && document.getElementById('send')?.disabled===false`,'own window chat');
+    await until(`document.querySelectorAll('#msgs .thr-open[data-thr]').length>=2 && document.getElementById('send')?.disabled===false`,'own window chat');
     const route = `(async()=>{const old=postOk;let body;postOk=async(_path,b)=>{body=b;return {}};
       try{await sendResuming('probe','', 'probe-key',[]);return body.thread||'';}finally{postOk=old}})()`;
     const paired = t => `document.getElementById('ts-frame').contentWindow?.sharedPairedNow?.() && document.getElementById('ts-frame').contentWindow.sharedThreadTarget().thread===${JSON.stringify(t)}`;
@@ -432,6 +453,8 @@ class ThreadAimsBox(unittest.TestCase):
         self.assertNotEqual(ta, tb)
         self.assertEqual(g['first']['target'], {'kind':'thread','room':self.po,'thread':ta,'mid':''})
         self.assertEqual(g['first']['link'], g['first']['title'])
+        self.assertEqual(g['first']['inPlace'], 'po-chat', 'a plain click shows the thread in place (#393)')
+        self.assertEqual(g['first']['panels'], [], 'no thread panel or tab of its own')
         self.assertEqual(g['firstStill']['thread'], ta, 'the press on the PO chat does not take it back')
         self.assertTrue(g['firstFocus'], 'a click puts the caret in the box')
         self.assertEqual(g['firstRoute'], {'room':self.po,'thread':ta})
@@ -457,13 +480,16 @@ class ThreadAimsBox(unittest.TestCase):
         self.assertEqual(g['backDraft'], 'Thread A draft')
         self.assertEqual(g['poDraft'], 'PO draft kept')
 
-    def test_not_on_restore_or_catch_up(self):
-        g = self.got
-        self.assertEqual(g['auto']['kind'], 'po')
-        self.assertEqual(g['reloadPo']['target']['kind'], 'po', g['reloadPo'])
-        self.assertTrue(g['reloadPo']['thread'])
+    def test_not_on_catch_up_but_on_its_place_again(self):
+        g, tb = self.got, self.got['tb']
+        self.assertEqual(g['auto']['kind'], 'po', 'reply catch-up opening a thread is not the person\'s')
+        # #393: a reload, or the project shown again, puts the thread back in
+        # place over the PO chat: a box on the PO, now under it, is the thread's.
+        self.assertEqual((g['reloadPo']['thread'], g['reloadPo']['shown']), (tb, True), g['reloadPo'])
+        self.assertEqual(g['reloadPo']['target'], {'kind':'thread','room':self.po,'thread':tb,'mid':''}, g['reloadPo'])
         self.assertEqual(g['reloadThread']['kind'], 'thread')
-        self.assertEqual(g['follow']['target']['kind'], 'po', g['follow'])
+        self.assertEqual(g['follow']['thread'], tb, g['follow'])
+        self.assertEqual(g['follow']['target'], {'kind':'thread','room':self.po,'thread':tb,'mid':''}, g['follow'])
 
     def test_close_gives_the_po_back(self):
         self.assertEqual(self.got['closed']['kind'], 'po')
@@ -497,12 +523,18 @@ class ThreadAimsBox(unittest.TestCase):
                          "the id's own draft is shown and kept")
 
     def test_p340_back_to_the_po(self):
-        p, title = self.got['p340'], 'Motors PO'
+        p, title, ta = self.got['p340'], 'Motors PO', self.got['ta']
         self.assertEqual(p['thread']['kind'], 'thread')
         self.assertTrue(p['thread']['back'], 'the To line offers the way back')
         self.assertEqual(p['thread']['placeholder'], 'Reply in thread…')
-        self.assertTrue(p['stacked'], 'the thread was a tab in front of the PO chat')
-        for case in ('tabBeside', 'tabStacked', 'x', 'close', 'reload'):
+        # #393: the project's tab shows the thread in place: a press on it keeps the box there.
+        g = p['grpInPlace']
+        self.assertEqual((g['kind'], g['front'], g['shown']), ('thread', 'po-chat', True), g)
+        self.assertEqual((g['to'], g['back'], g['placeholder']), (p['thread']['to'], True, 'Reply in thread…'), g)
+        self.assertEqual(g['box'], 'P340 thread draft', g)
+        self.assertTrue(p['stacked'], "the thread was a tab of its own in front of the project's conversation")
+        self.assertEqual(p['tabStacked']['front'], 'po-chat', 'the project\'s tab brings its conversation forward')
+        for case in ('tabStacked', 'x', 'close', 'reload'):
             with self.subTest(case):
                 got = p[case]
                 self.assertEqual((got['kind'], got['to'], got['back']), ('po', title, False), got)
@@ -515,11 +547,11 @@ class ThreadAimsBox(unittest.TestCase):
         self.assertLess(p['quickAt'], 600, 'the quick click came within the 600 ms hold')
         self.assertLess(p['keyAt'], 600, 'the key came within the 600 ms hold')
         k = p['keyQuick']
-        self.assertTrue(k['front'], 'the key brought the PO chat forward')
+        self.assertTrue(k['front'], "the key brought the project's conversation forward")
         self.assertEqual((k['kind'], k['placeholder']), ('po', 'Message the PO…'),
-                         'a key on the tabs at once after a thread opened takes the box')
+                         "a key on the tabs at once after a thread's tab came takes the box")
         self.assertEqual((p['tabQuick']['kind'], p['tabQuick']['placeholder']), ('po', 'Message the PO…'),
-                         'a click on the PO tab right after a thread opened takes the box')
+                         "a click on the project's tab right after a thread's tab came takes the box")
         self.assertLess(p['reloadMs'], 4000, 'no wait for a thread that is not coming back')
 
     def test_p340_phone(self):

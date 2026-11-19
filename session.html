@@ -8208,9 +8208,32 @@ function edClicked() {
   try { while (el?.tagName === 'IFRAME' && el.contentDocument?.activeElement) el = el.contentDocument.activeElement; } catch (e) {}
   return !(el && el.id !== 'input' && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)));
 }
+// The last press here, for a Ctrl/⌘-click on a thread's link (#393): the
+// dashboard opens that thread as a tab of its own, the chat stays as it is.
+let SIDE_CLICK = { mod: false, at: 0 };
+for (const ev of ['click', 'auxclick']) document.addEventListener(ev, e => {
+  if (e.isTrusted) SIDE_CLICK = { mod: e.ctrlKey || e.metaKey || e.button === 1, at: Date.now() };
+}, true);
+function sideTabAsked(o) {
+  if (o.tab) return true;
+  return !o.restore && !o.auto && SIDE_CLICK.mod && Date.now() - SIDE_CLICK.at < 1000;
+}
+// The page that frames this chat, when it can show a thread as a tab.
+function sideTab(o) {
+  const host = dashboardHost();
+  if (!host || !window.frameElement || typeof host.pdThreadTab !== 'function' || !host.pdPanelsOn?.()) return false;
+  const tid = o.tid || '', mid = tid ? '' : o.mid || '';
+  const title = (tid && THR_META[tid] && THR_META[tid].title) || 'Thread';
+  try { return !!host.pdThreadTab({ room: ROOM, tid, mid, msg: o.msg || '', part: o.part || '', title }); } catch (e) { return false; }
+}
+// The thread this chat shows beside it (thread ▾ in the dashboard's bar).
+function sideNow() {
+  return TS ? { tid: TS.tid, mid: TS.mid, title: (TS.tid && THR_META[TS.tid] && THR_META[TS.tid].title) || 'Thread' } : null;
+}
 function sideOpen(o) {
   const side = $('#thr-side'), f = $('#ts-frame');
   if (!side || !f || (!o.tid && !o.mid)) return;
+  if (sideTabAsked(o) && sideTab(o)) { SIDE_CLICK.mod = false; return; }
   // The same thread open already, by its id or by the balloon it starts on.
   const same = !!TS && (o.tid ? TS.tid === o.tid : !TS.tid && !!o.mid && TS.mid === o.mid);
   TS = { tid: o.tid || '', mid: o.tid ? '' : o.mid };
@@ -8220,14 +8243,14 @@ function sideOpen(o) {
     + (TS.tid ? '&thread=' + encodeURIComponent(TS.tid) : '&thread=&tmid=' + encodeURIComponent(TS.mid))
     + (o.msg ? '&msg=' + encodeURIComponent(o.msg) : '') + (o.part ? '&part=' + encodeURIComponent(o.part) : '');
   const title = (TS.tid && THR_META[TS.tid] && THR_META[TS.tid].title) || 'Thread';
-  // In the dashboard's Dock the thread is a panel of its own beside this chat
-  // (#236); else (a phone, a window of its own, a popped-out chat) it is here.
+  // In the dashboard the thread shows in place over this chat (#393); else
+  // (a phone, a window of its own, a popped-out chat) it is here.
   // The reader opened it (#363): the box beside it sends to it, at once if
   // its page is paired with this channel already, else once it is.
   SIDE_AIM = o.restore || o.auto ? null : { thread: TS.tid || 'm:' + TS.mid, mid: TS.tid ? '' : TS.mid, focus: edClicked() };
   if (sidePanel(o, title)) {
     let dock = null;
-    try { dock = dashboardHost()?.PD?.rt?.get('thread:po')?.el.querySelector('iframe.po-thread')?.contentWindow; } catch (e) {}
+    try { dock = dashboardHost()?.pdThreadWin?.(ROOM) || null; } catch (e) {}
     sideAimNow(dock);
     if (!side.hidden) { side.hidden = true; f.setAttribute('src', 'about:blank'); }
     sideMark();
@@ -8235,7 +8258,7 @@ function sideOpen(o) {
   }
   setText($('#ts-title'), title);
   tsPenPaint();
-  // (The same thread shown in a Dock panel until now is loaded here.)
+  // (The same thread shown in place in the dashboard until now is loaded here.)
   const shown = !side.hidden;
   side.hidden = false;
   tsLayout();
@@ -8249,9 +8272,9 @@ function sideOpen(o) {
   }
   sideMark();
 }
-// The page framing this chat shows the thread as a Dock panel when it can
+// The page framing this chat shows the thread in place over it when it can
 // (index.html's pdThreadPanel, synchronous): true when it did. A chat in a
-// Dock window asks the page that opened it, which then takes its panel away.
+// Dock window asks the page that opened it, which then takes its own away.
 function sidePanel(o, title) {
   const host = dashboardHost();
   if (!host || !window.frameElement) return false;
@@ -8983,16 +9006,15 @@ function liveTailTakes(main) {
   return sharedMainFrame() === main && frameShown(window) && liveTailHere();
 }
 function liveTailBoxThread() { return SHARED_THREAD?.thread || ''; }
-// The channel's thread page: beside it in this page, or the Dock's thread
-// panel in the same window.
+// The channel's thread page: beside it in this page, or the dashboard's
+// (in place over this chat, or the tab of the thread the box serves).
 function liveTailThreadFrame() {
   if (THREAD_MODE) return null;
   try {
     const side = $('#thr-side');
     if (side && !side.hidden) return $('#ts-frame').contentWindow;
-    const host = dashboardHost(), f = host?.PD?.rt?.get('thread:po')?.el?.querySelector('iframe.po-thread');
-    const w = f?.contentWindow;
-    return w && w.top === window.top && f.dataset.room === ROOM ? w : null;
+    const w = dashboardHost()?.pdThreadWin?.(ROOM) || null;
+    return w && w.top === window.top ? w : null;
   } catch (e) { return null; }
 }
 function liveTailOwn() {
@@ -10905,7 +10927,7 @@ window.addEventListener('message', (e) => {
     else gotoMsg(d.msg, d.part || '');
     try { window.parent.postMessage({ type: 'goto-taken', roomId: ROOM }, location.origin); } catch (err) {}
   }
-  // The thread's Dock panel (#236): closed there, so none is open here; this
+  // The thread in place in the dashboard (#393): closed there, so none is open here; this
   // chat shown again, its thread comes back; a thread started on a balloon
   // has its id now.
   else if (d.ensemble === 'thread-closed' && e.source === window.parent && !THREAD_MODE) {

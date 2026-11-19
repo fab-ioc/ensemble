@@ -76,8 +76,9 @@ async function main() {
     setInterval(() => walk(document, location.href), 50); return 0; })()`;
   const FILEVIEW = `[...document.querySelectorAll('iframe')].some(f => /fileview/.test(f.src))`;
   const PO = `document.querySelector('iframe.po-session:not([hidden])')`;
-  // The PO's replies are in threads (#234): the links are in the thread's Dock panel beside the chat (#236).
-  const SIDE = `PD.rt.get('thread:po')?.el.querySelector('iframe')`;
+  // The PO's replies are in threads (#234): the links are in the thread, shown in
+  // place over the chat in the project's tab (#393).
+  const SIDE = `PD.thrIn?.el.querySelector('iframe')`;
   const ROOT = A.sid + ':29';     // the thread the links' balloon is in
   // A link inside a frame (inside a frame): its place on the page, on its
   // first line (a link wrapped over two lines has a box wider than either).
@@ -131,7 +132,7 @@ async function main() {
         await sleep(1000);
         out[key] = { link: a, created: created.length, open: (await pages(targetId)).map(t => t.url), landed: await ev('window.__landed'),
           top: await ev('location.href'), fileview: await ev(FILEVIEW),
-          panel: await ev(`!!${SIDE}`), inChat: await ev(`!${PO}.contentDocument.getElementById('thr-side').hidden`) };
+          panel: await ev(`!!${SIDE} && pdThreadInShown()`), inChat: await ev(`!${PO}.contentDocument.getElementById('thr-side').hidden`) };
       });
     }
     // Ctrl-click: one tab, at this page's own address.
@@ -278,7 +279,7 @@ class MessageLinksInPlace(unittest.TestCase):
         self.assert_in_place(o)
         self.assertTrue(o['top'].startswith(f'http://localhost:{self.port}/'), o)
         self.assertTrue(any(k.endswith(f' {self.sid}:1') for k in o['landed']), o)
-        # In the thread's Dock panel beside the chat (#236), not in the chat.
+        # In the thread shown in place in the project's tab (#393), not in the chat's own side.
         self.assertTrue(o['panel'], o)
         self.assertFalse(o['inChat'], o)
 
