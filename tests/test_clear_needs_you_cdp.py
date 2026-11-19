@@ -3,9 +3,9 @@
 In headless Chrome over CDP (every launch through tests/chrome_profile.py),
 at 1440x900 and 390x844 (a touch phone), against a hub in a thread with
 throwaway state: a project with three team tasks (an engineer and a reviewer) whose engineer asked the person a
-question (an ``Ask:`` card) and a fourth whose question the person wrote past.
+question (an ``Ask:`` card) and a fourth whose question the person marked done.
 
-* the written-past task is not on Needs you; the other three are;
+* the dealt-with task is not on Needs you; the other three are;
 * Done with this on the row itself (shown on focus; beside the row on a
   touch screen) takes that row off;
 * Clear all in Needs you's head asks in place ("Clear 2 rows?"), clears every
@@ -169,6 +169,9 @@ class ClearNeedsYou(unittest.TestCase):
             if i == 3:
                 time.sleep(0.02)
                 chatroom.post_message(t["id"], "user", "Never mind the tyres, go on with the rest.")
+                # #394: a typed line does not settle an open card. This fixture's
+                # fourth question was dealt with through Done with this.
+                chatroom.record_dealt(t["id"])
                 cls.past = t["id"]
             else:
                 cls.rooms.append(t["id"])
@@ -202,7 +205,7 @@ class ClearNeedsYou(unittest.TestCase):
     def each(self):
         return [(self.got[w], mob, w) for w, _h, mob in SIZES]
 
-    def test_written_past_is_absent(self):
+    def test_dealt_with_is_absent(self):
         for o, _mob, w in self.each():
             with self.subTest(width=w):
                 self.assertEqual(sorted(o["before"]), sorted(self.rooms), o["before"])

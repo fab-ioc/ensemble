@@ -14099,7 +14099,7 @@ const CH_ROW_EXPAND = { row: '.chf:not(.none)', name: '.nm', copyClass: 'ch-expa
 // over its neighbours. Its clicks, ×, right click and drag go to the tab under
 // it (spec.forward); its right edge stays fixed so the × does not move.
 const TAB_ROW_EXPAND = {
-  row: '.dk-stack:not(.dk-min) .dk-tab-wrap:not(.row-expanded), .wst-tab:not(.row-expanded)',
+  row: '.dk-stack:not(.dk-min) .dk-tab-wrap:not(.row-expanded), .dk-head.bt-head .dk-tab-wrap:not(.row-expanded), .wst-tab:not(.row-expanded)',
   name: '.dk-tab:not(.dk-tab-iconic), .wst-nm', untitle: '.dk-tab, .wst-tab',
   copyClass: 'tab-expanded', focusClass: 'tab-expand-focus', forward: true, anchorClose: true,
 };
@@ -26779,6 +26779,9 @@ function sendGotoMsg(rid) {
     try { fs = [...d.querySelectorAll('iframe.dp-session, iframe.po-session')]; } catch (e) {}
     fs.forEach(f => {
       if (f.dataset.room !== rid || !f.contentWindow) return;
+      // A phone can retain the same chat in an off-screen Dock panel and in
+      // the task pane. Only the shown frame should take this landing and focus.
+      if (phoneNow() && f.closest && f.closest('.dk-off')) return;
       try { f.contentWindow.postMessage({ ensemble: 'goto-msg', msg: g.msg, part: g.part || '', thread: g.thread || '', tmid: g.tmid || '', hl: inboxHlSec() }, location.origin); } catch (e) {}
     });
   }

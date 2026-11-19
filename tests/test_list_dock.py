@@ -698,10 +698,10 @@ class TheListDock(unittest.TestCase):
         for side in ("top", "bottom"):
             g = self.got["short_" + side]
             self.assertEqual((g["side"], g["mode"], g["fly"]), (side, "unpinned", "list"), side)
-            f, m = g["flyBox"], g["dockHost"]
+            f, m = g["flyBox"], g["main"]
             gap = m["y"] - f["b"] if side == "top" else f["y"] - m["b"]
             self.assertTrue(-1 <= gap <= 1, f"{side}: the middle meets the list ({gap}px)")
-            self.assertGreaterEqual(m["h"], 199, f"{side}: the middle keeps its 200px")
+            self.assertGreaterEqual(g["main"]["h"], 199, f"{side}: the middle keeps its 200px")
 
     def test_width_and_mode_survive_a_reload(self):
         self.assertEqual(self.got["wider"]["list"]["w"], 332, "two presses of → on its splitter")
@@ -712,7 +712,7 @@ class TheListDock(unittest.TestCase):
 
     def test_a_phone_keeps_the_list_home(self):
         g = self.got["phone"]
-        self.assertTrue(g["home"] and g["shown"], g)
+        self.assertTrue(g["home"] and not g["shown"], g)  # #307: shown only in the phone's Task list pane
         self.assertFalse(g["dock"])
         t = self.got["toPhone"]
         self.assertFalse(t["dock"])

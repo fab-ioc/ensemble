@@ -102,9 +102,9 @@ const ROWS = `[...document.querySelectorAll('#ld-projs .ldp-row')].map(b => { co
 const EXP = `(() => { const c = document.querySelector('.row-expanded'); if (!c) return null; const r = c.getBoundingClientRect();
   const cs = getComputedStyle(c);
   return { solid: cs.backgroundImage !== 'none' || !(cs.backgroundColor.startsWith('rgba(') || cs.backgroundColor.includes(' / ') || cs.backgroundColor === 'transparent'), w: Math.round(r.width), h: Math.round(r.height), x: Math.round(r.left), right: Math.round(r.right), text: c.textContent.trim(),
-    titles: [c, ...c.querySelectorAll('[title]')].filter(e => e.hasAttribute('title') && !e.matches('.dk-tab-x, .fd-tab-drag, .wst-x, .wst-win')).length, ids: c.querySelectorAll('[id]').length,
+    titles: [c, ...c.querySelectorAll('[title]')].filter(e => e.hasAttribute('title') && !e.matches('.dk-tab-x, .fd-tab-drag, .pd-pin, .wst-x, .wst-win')).length, ids: c.querySelectorAll('[id]').length,
     titled: [c, ...c.querySelectorAll('[title]')].filter(e => e.hasAttribute('title')).map(e => e.className + '=' + e.getAttribute('title')) }; })()`;
-const TAB = id => `(() => { const t = document.querySelector('#po-dock .dk-tab[data-dk-tab="${id}"]'); if (!t) return null; const r = t.getBoundingClientRect();
+const TAB = id => `(() => { const t = document.querySelector('#po-dock .dk-tab[data-dk-tab="${id}"]'); if (!t) return null; t.scrollIntoView({ inline: 'nearest', block: 'nearest' }); const r = t.getBoundingClientRect();
   const w = t.closest('.dk-tab-wrap').getBoundingClientRect();
   return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2), sw: t.scrollWidth, cw: t.clientWidth, on: t.classList.contains('on'),
     title: t.getAttribute('title'), h: Math.round(w.height), sib: [...t.closest('.dk-tabs').querySelectorAll('.dk-tab')].map(x => x.dataset.dkTab) }; })()`;
@@ -291,6 +291,9 @@ async function main() {
       await sleep(1500);
       let pt = await p.evalIn(TAB('po-chat'));
       o.poTab = { tab: pt, ...(await hover(p, pt.x, pt.y)) };
+      o.poTab.group = await p.evalIn(`(() => { const g = document.getElementById('bar-grp'), b = document.getElementById('proj-switch');
+        return { on: document.body.classList.contains('bar-tabs'), visible: !!b && b.getBoundingClientRect().width > 0,
+          name: b?.textContent.trim() || '', selected: g?.classList.contains('on') }; })()`);
       o.poTab.titleWhileOn = await p.evalIn(`document.querySelector('#po-dock .dk-tab[data-dk-tab="po-chat"]').getAttribute('title')`);
       await p.shot('hover-po-tab');
       await away(p);
@@ -312,16 +315,17 @@ async function main() {
       o.chatTab.x = await p.evalIn(`(() => { const x = document.querySelector('.row-expanded .dk-tab-x'); if (!x) return null; const r = x.getBoundingClientRect(); return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }; })()`);
       // a drag from the raised copy is Dock's: the tab goes after the other one
       {
-        const t2 = await p.evalIn(TAB(c2));
         await hover(p, ct.x, ct.y);
         const raised = await p.evalIn(EXP);
+        const tx = await p.evalIn(`(() => { const t = document.querySelector('#po-dock .dk-tab[data-dk-tab=${JSON.stringify(c2)}]');
+          const r = t.getBoundingClientRect(), v = t.closest('.dk-tabs').getBoundingClientRect();
+          return Math.round((Math.max(r.left, v.left) + Math.min(r.right, v.right)) / 2); })()`);
         const send = (type, x, y, b) => c.send('Input.dispatchMouseEvent', { type, x, y, button: 'left', buttons: b, clickCount: 1 }, p.sessionId);
-        const tx = t2.x + 40;
         await send('mousePressed', ct.x, ct.y, 1);
         for (let i = 1; i <= 10; i++) await send('mouseMoved', ct.x + (tx - ct.x) * i / 10, ct.y, 1);
         await send('mouseReleased', tx, ct.y, 0);
         await sleep(800);
-        o.chatTab.drag = { raised: !!raised, before: t2.sib, after: (await p.evalIn(TAB(c1))).sib, copy: await p.evalIn(EXP) };
+        o.chatTab.drag = { raised: !!raised, before: ct.sib, after: (await p.evalIn(TAB(c1))).sib, copy: await p.evalIn(EXP) };
         ct = await p.evalIn(TAB(c1));
         await hover(p, ct.x, ct.y);
         o.chatTab.x = await p.evalIn(`(() => { const x = document.querySelector('.row-expanded .dk-tab-x'); if (!x) return null; const r = x.getBoundingClientRect(); return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }; })()`);
@@ -346,9 +350,10 @@ async function main() {
           siblings: [...t.closest('.dk-tabs').querySelectorAll('.dk-tab')].map(t => t.dataset.dkTab), cut: t.scrollWidth > t.clientWidth + 1 }; })()`;
       const closeFromHover = async (id, stem, fromNeighbour) => {
         await away(p); await p.evalIn(`document.querySelector('#po-dock .dk-tab[data-dk-tab=${JSON.stringify(id)}]').scrollIntoView({inline:'nearest', block:'nearest'}), 0`);
+        if (fromNeighbour) { const n = await p.evalIn(TAB(c3)); await p.move(n.x, n.y); await sleep(80); }
+        await p.evalIn(`document.querySelector('#po-dock .dk-tab[data-dk-tab=${JSON.stringify(id)}]').scrollIntoView({inline:'nearest', block:'nearest'}), 0`);
         const before = await p.evalIn(closePoint(id));
         await p.shot(stem + '-before');
-        if (fromNeighbour) { const n = await p.evalIn(TAB(c3)); await p.move(n.x, n.y); await sleep(80); }
         await p.move(before.nx, before.ny); await sleep(500);
         const raised = await p.evalIn(`(() => { const c = document.querySelector('.tab-expanded'); const x = c && c.querySelector('.dk-tab-x');
           if (!x) return null; const r = x.getBoundingClientRect(), cr = c.getBoundingClientRect();
@@ -361,8 +366,8 @@ async function main() {
       };
       o.fixedClose = { fromName: await closeFromHover(c2, 'task-close-from-name', false),
         fromNeighbour: await closeFromHover(c1, 'task-close-from-neighbour', true) };
-      // Hover the tab to the target's right until its left-growing copy covers
-      // the target ×; walking straight to that × must still close the target.
+      // #393's narrower side stack scrolls its tabs; the target × must still
+      // close its own tab after that tab is brought fully into view.
       await p.evalIn(`(() => { pdChatOpen(${JSON.stringify(A.loose[0])}); pdChatOpen(${JSON.stringify(A.loose[1])});
         const find = n => !n ? null : n.t === 'stack' ? (n.panels.includes(${JSON.stringify(c3)}) ? n : null) : (n.kids || []).map(find).find(Boolean);
         const s = find(PD.dock.layout().root);
@@ -371,17 +376,15 @@ async function main() {
       await sleep(600);
       const pair = await p.evalIn(`(() => { const t = document.querySelector('#po-dock .dk-tab[data-dk-tab=${JSON.stringify(c3)}]');
         return [...t.closest('.dk-tabs').querySelectorAll('.dk-tab')].map(t => t.dataset.dkTab).slice(0, 3); })()`);
-      const left = await p.evalIn(closePoint(pair[0]));
       const right = await p.evalIn(closePoint(pair[1]));
+      await p.evalIn(`document.querySelector('#po-dock .dk-tab[data-dk-tab=${JSON.stringify(pair[0])}]').scrollIntoView({inline:'nearest', block:'nearest'}); 0`);
+      const left = await p.evalIn(closePoint(pair[0]));
       await p.shot('neighbour-close-before');
-      await hover(p, right.nx, right.ny);
-      const copyOver = await p.evalIn(`(() => { const c = document.querySelector('.tab-expanded');
-        const t = document.elementFromPoint(${left.x}, ${left.y}); return { shown: !!c, over: !!(c && t && c.contains(t)) }; })()`);
-      await p.shot('neighbour-close-hover');
-      for (let i = 1; i <= 15; i++) await p.move(right.nx + (left.x - right.nx) * i / 15, left.y);
+      const visible = await p.evalIn(`(() => { const t = document.querySelector('#po-dock .dk-tab[data-dk-tab=${JSON.stringify(pair[0])}]');
+        const r = t.closest('.dk-tabs').getBoundingClientRect(); return ${left.x} >= r.left && ${left.x} <= r.right; })()`);
       await p.clickAt(left.x, left.y); await sleep(500);
       const remaining = await p.evalIn(`(() => [...document.querySelectorAll('#po-dock .dk-tab')].map(t => t.dataset.dkTab))()`);
-      o.neighbourClose = { target: pair[0], others: pair.slice(1), before: pair, left, right, copyOver,
+      o.neighbourClose = { target: pair[0], others: pair.slice(1), before: pair, left, right, visible,
         after: remaining.filter(id => pair.includes(id)) };
 
       // ---- a file tab: its tip stays off while it is raised, even when it is drawn again
@@ -672,11 +675,11 @@ class LeftPanelOrderInChrome(unittest.TestCase):
                 self.assertEqual(o["raised"]["h"], o["before"]["h"], "the name that fits stays on one line")
                 self.assertEqual(o["after"], [id for id in o["before"]["siblings"] if id != o["target"]])
 
-    def test_a_neighbours_raised_name_does_not_cover_this_tabs_x(self):
+    def test_an_overflowed_neighbours_x_still_closes_its_tab(self):
         o = self.w()["neighbourClose"]
         self.assertEqual(len(o["before"]), 3)
         self.assertTrue(o["left"]["cut"] and o["right"]["cut"])
-        self.assertTrue(o["copyOver"]["shown"] and o["copyOver"]["over"], "the right tab's name covers the target ×")
+        self.assertTrue(o["visible"], "the target × is inside the scrolled tab row")
         self.assertEqual(o["after"], o["others"], "one click closed the target and kept both neighbours")
 
     def test_a_cut_workspace_file_tab_closes_at_its_original_x(self):
@@ -711,10 +714,9 @@ class LeftPanelOrderInChrome(unittest.TestCase):
 
     def test_a_cut_po_tab_shows_whole(self):
         o = self.w()["poTab"]
-        self.assertGreater(o["tab"]["sw"], o["tab"]["cw"] + 1, "cut")
-        self.assertWhole(o, o["tab"]["sw"])
-        self.assertEqual(o["at450"]["h"], o["tab"]["h"], "the tab's height")
-        self.assertIsNone(o["titleWhileOn"], "its own tooltip dropped")
+        self.assertEqual(o["tab"]["cw"], 0, "#393: the PO tab is the project group in the bar")
+        self.assertTrue(o["group"]["on"] and o["group"]["visible"] and o["group"]["selected"])
+        self.assertIn(DELTA, o["group"]["name"])
 
     def test_a_cut_chat_tab_behind_another_shows_whole_click_and_x_work(self):
         o = self.w()["chatTab"]

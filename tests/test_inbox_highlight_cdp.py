@@ -70,7 +70,7 @@ class Cdp {
   send(method, params = {}, sessionId) { const id = ++this.id; return new Promise((res, rej) => { this.waits.set(id, { res, rej }); this.ws.send(JSON.stringify({ id, method, params, sessionId })); }); }
 }
 // The chat document holding balloon `mid` (a frame of the dashboard, or the page itself).
-const DOC = mid => `[...document.querySelectorAll('iframe')].map(f => { try { return f.getBoundingClientRect().width > 0 && f.contentDocument; } catch (e) { return null; } })
+const DOC = mid => `[...document.querySelectorAll('iframe')].sort((a, b) => Number(!!a.closest('.dk-off')) - Number(!!b.closest('.dk-off'))).map(f => { try { return f.getBoundingClientRect().width > 0 && f.contentDocument; } catch (e) { return null; } })
   .concat([document]).find(d => d && d.getElementById('msgs') && [...d.querySelectorAll('.msg[data-mid]')].some(e => e.dataset.mid === ${JSON.stringify(mid)}))`;
 // Where balloon `mid` is and how it is marked.
 const MEASURE = mid => `(() => {

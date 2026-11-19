@@ -113,7 +113,9 @@ async function main() {
     const D = 'LD_INBOX';
     out.before = await p.evalIn(state(D));
     out.apiBefore = await p.evalIn(api);
-    out.restHidden = out.before.acts;
+    out.hoverMedia = await p.evalIn(`matchMedia('(hover: hover)').matches`);
+    out.restHidden = await p.evalIn(`[...${D}.querySelectorAll('li.ibx-row[data-q] > .ibx-acts')].map(a => {
+      const s = getComputedStyle(a); return s.display === 'none' || (s.opacity === '0' && s.pointerEvents === 'none'); })`);
     const k = 2, target = out.before.qs[k];
     const sel = `${D}.querySelector('li.ibx-row[data-ibx="${target}"]')`;
     await p.hover(sel);
@@ -277,7 +279,8 @@ class CloseInChrome(unittest.TestCase):
         self.assertTrue(all(b["close"]), b)
         self.assertEqual(b["earlier"], [8, 7, 6, 5, 4, 3, 2, 0], "N counts itself and every one below; the last has none")
         self.assertTrue(all(m.startswith("PO") for m in b["meta"]), b["meta"])
-        self.assertTrue(all(a == "none" for a in self.got["restHidden"]), "on a computer the actions wait for hover")
+        self.assertTrue(all(a == self.got["hoverMedia"] for a in self.got["restHidden"]),
+                        "the action buttons follow the browser's hover capability")
 
     def test_hover_marks_this_and_every_question_below(self):
         b, h = self.got["before"], self.got["hovered"]
