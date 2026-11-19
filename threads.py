@@ -1089,7 +1089,10 @@ def _reply_label(r: dict) -> dict:
         return {"cls": "person", "text": "you"}
     if who == "task":
         role = "reviewer" if str(turn.get("reportKind") or "").lower().startswith("review") else "engineer"
-        return {"cls": role, "text": role}
+        label = {"cls": role, "text": role}
+        if turn.get("taskNo"):
+            label["taskNo"] = turn.get("taskNo")  # #401: its task's colour in Chat as a log
+        return label
     return {"cls": "hub", "text": "Hub"}
 
 
@@ -1290,7 +1293,8 @@ def build(room_id: str, room: dict | None = None, *, show_progress: bool = True,
         last_po = max(po_replies, key=lambda r: r["ts"]) if po_replies else None
         lastr = replies[-1] if replies else None
         open_questions = sum(1 for m in th["members"] + (th.get("cards") or []) if m in open_mids)
-        labels = list({(label["cls"], label["text"], label.get("projectId"), label.get("projectName")): label
+        labels = list({(label["cls"], label["text"], label.get("projectId"), label.get("projectName"),
+                        label.get("taskNo")): label
                        for label in (_reply_label(r) for r in replies)}.values())
         th.update({
             "replies": len(replies),
