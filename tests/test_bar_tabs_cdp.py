@@ -69,7 +69,8 @@ async function main() {
     require('fs').writeFileSync(A.shots+'/'+name+'.png',Buffer.from(r.data,'base64')); };
   const PO = `PD.els['po-chat'].querySelector('iframe.po-session:not([hidden])')`;
   const W = `document.getElementById('workspace-compose-frame')`;
-  const boxReady = `${W}?.contentDocument?.getElementById('send')?.disabled===false`;
+  // The box's page is the one for its target (WC.base), loaded, its Send on.
+  const boxReady = `(${W}?.contentDocument?.readyState==='complete' && !!WC.base && ${W}.contentDocument.URL.includes(WC.base) && typeof ${W}.contentWindow.sendResuming==='function' && ${W}.contentDocument.getElementById('send')?.disabled===false)`;
   // The bar as one sees it: its rows, the group, the tabs drawn in it.
   const BAR = `(() => {
     const vis = e => !!e && e.getBoundingClientRect().width > 0 && getComputedStyle(e).display !== 'none' && getComputedStyle(e).visibility !== 'hidden';
@@ -279,24 +280,35 @@ async function main() {
     out.keys.route = await boxRoute();
     await ev(`PD.dock.activate('po-chat'); 0`);
     await sleep(500);
-    // 8d. The conversation out of the page's dock (review 1): floated, then
-    // minimised, it has no row in the bar; Dock's own row shows its tab.
+    // 8d. The conversation out of the page's dock (reviews 1, 2): floated, the
+    // tabs of the stack it left stay in the bar, one row, the group not
+    // underlined; minimised, the stack's tabs stay there, none underlined, and
+    // one pressed opens the stack again.
+    // No other title bar shows a task's tab: the bar's row is the only one.
+    const OTHER_ROWS = `[...PD_ROOT.querySelectorAll('.dk-head:not(.bt-head) [data-dk-tab]')].filter(t => t.getBoundingClientRect().width > 0 && /^(chat|thread):/.test(t.dataset.dkTab)).map(t => t.dataset.dkTab)`;
+    out.beforeOut = await ev(BAR);
     await ev(`PD.dock.float('po-chat'); 0`);
     await sleep(600);
     out.floated = await ev(BAR);
-    out.floated.poTabShown = await ev(`[...PD_ROOT.querySelectorAll('[data-dk-tab="po-chat"]')].some(t => t.getBoundingClientRect().width > 0 && getComputedStyle(t.closest('.dk-tab-wrap')||t).display !== 'none')`);
-    out.floated.grpShown = await ev(`getComputedStyle(document.getElementById('bar-grp')).display !== 'none' && getComputedStyle(document.getElementById('bar-tabs')).display !== 'none'`);
+    out.floated.otherRows = await ev(OTHER_ROWS);
+    out.floated.poFloat = await ev(`!!PD_ROOT.querySelector('.dk-float [data-dk-tab="po-chat"]')`);
     await ev(`PD.dock.dockBack('po-chat'); 0`);
-    await until(`document.body.classList.contains('bar-tabs')`, 'docked back');
+    await until(`!PD_ROOT.querySelector('.dk-float [data-dk-tab="po-chat"]') && document.body.classList.contains('bar-tabs')`, 'docked back');
     await sleep(500);
     out.dockedBack = await ev(BAR);
     await ev(`PD.dock.toggleMin('po-chat'); 0`);
     await sleep(600);
     out.minimised = await ev(BAR);
-    await ev(`PD.dock.toggleMin('po-chat'); 0`);
-    await until(`document.body.classList.contains('bar-tabs')`, 'shown again');
+    out.minimised.otherRows = await ev(OTHER_ROWS);
+    out.minimised.min = await ev(`!!PD_ROOT.querySelector('.dk-stack.dk-min > .dk-head.bt-head')`);
+    out.minimised.underlined = await ev(`[...document.querySelectorAll('.dk-head.bt-head .dk-tab')].map(t => [t.dataset.dkTab, t.classList.contains('on'), getComputedStyle(t).boxShadow, getComputedStyle(t).borderBottomColor]).filter(x => x[2].includes('inset') || x[3] !== 'rgba(0, 0, 0, 0)')`);
+    const lastTab = out.minimised.tabs[out.minimised.tabs.length - 1];
+    await clickAt(null, `.dk-head.bt-head .dk-tab[data-dk-tab="${lastTab}"]`);
+    await until(`!PD_ROOT.querySelector('.dk-stack.dk-min') && PD.dock.frontOf('po-chat')===${JSON.stringify(lastTab)}`, 'a bar tab opens the minimised stack');
     await sleep(500);
     out.unminimised = await ev(BAR);
+    await ev(`PD.dock.activate('po-chat'); 0`);
+    await sleep(400);
     // 9. Many tabs: "+N".
     await size(1100, 900);
     for (const r of A.many) await ev(`pdChatOpen(${JSON.stringify(r)}); 0`);
@@ -590,17 +602,25 @@ class BarTabs(unittest.TestCase):
         self.assertEqual(k['target'], {'kind': 'task', 'room': k['first'][5:]}, 'the box goes with it, not left on the thread')
         self.assertEqual(k['route'], {'room': k['first'][5:], 'thread': ''})
 
-    def test_the_conversation_out_of_the_dock_has_no_row_in_the_bar(self):
+    def test_the_conversation_out_of_the_dock_keeps_the_tabs_in_the_bar(self):
+        tabs = self.got['beforeOut']['tabs']
+        self.assertTrue(tabs, 'a task tab is open before the conversation leaves the dock')
         for key in ('floated', 'minimised'):
             with self.subTest(key=key):
                 g = self.got[key]
-                self.assertFalse(g['on'], 'no tabs in the bar')
-                self.assertEqual(g['tabs'], [])
-        self.assertTrue(self.got['floated']['poTabShown'], "Dock's own row shows the conversation's tab")
-        self.assertFalse(self.got['floated']['grpShown'], 'no group, no empty row in the bar')
+                self.one_row(g, key)
+                self.assertEqual(g['tabs'], tabs, f'{key}: the same tabs, in the bar')
+                self.assertEqual(g['otherRows'], [], f"{key}: no second row of tabs (Dock's own)")
+                self.assertFalse(g['grpOn'], f'{key}: the group is not underlined: the conversation is not shown in place')
+        self.assertTrue(self.got['floated']['poFloat'], 'the conversation is in its float')
+        self.assertTrue(self.got['minimised']['min'], "the bar's title bar is the minimised stack's")
+        self.assertEqual(self.got['minimised']['underlined'], [], 'minimised: no tab underlined')
         for key in ('dockedBack', 'unminimised'):
             with self.subTest(key=key):
                 self.one_row(self.got[key], key)
+        u = self.got['unminimised']
+        self.assertEqual(u['front'], tabs[-1], 'the tab pressed in the bar is in front, the stack open again')
+        self.assertTrue(u['tabs'][-1] == tabs[-1] and not u['grpOn'])
 
     def test_a_phone_keeps_its_own_bar(self):
         g = self.got['phone']

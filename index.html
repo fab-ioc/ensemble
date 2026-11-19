@@ -683,7 +683,9 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
      #bar-tabs (--bt-*), so a tab drags, closes and has its menu and the ⋯
      follows the last tab. Its own tab (the conversation's) is not drawn:
      the group is it. Names shrink first; then the rest scroll and Dock's ▾
-     says how many are out of view ("+N ▾"). */
+     says how many are out of view ("+N ▾"). The stack minimised, its tabs
+     stay here (a tab pressed opens it again); the conversation floated or in
+     a window, the tabs of the stack it left stay here (barTabsHead). */
   .bar-grp { display: contents; }
   .bar-thr-sep, #thr-switch, .bar-vr, #bar-tabs { display: none; }
   body.bar-tabs .bar-grp {
@@ -721,6 +723,8 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   body.bar-tabs .dk-head.bt-head .dk-tab-wrap:has(> [data-dk-tab="po-chat"]) { display: none; }
   body.bar-tabs .dk-head.bt-head .dk-tab { height: 100%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; background: transparent; font-size: var(--fs-200); }
   body.bar-tabs .dk-head.bt-head .dk-tab:not(.on) { color: var(--fg-subtle); }
+  /* The stack minimised: no tab is shown, none is underlined (a tab pressed opens it again). */
+  body.bar-tabs .dk-stack.dk-min > .dk-head.bt-head .dk-tab.on { color: var(--fg-subtle); background: transparent; border-bottom-color: transparent; box-shadow: none; }
   body.bar-tabs .dk-head.bt-head > .dk-ctl { align-self: center; margin-left: 0; }
   body.bar-tabs .dk-head.bt-head > .dk-ctl > .dk-btn:not([data-dk-act="menu"]) { display: none; }
   body.bar-tabs .dk-head.bt-head > .dk-tabs-btn { align-self: center; width: auto; padding: 0 6px; gap: 2px; display: inline-flex; align-items: center; }
@@ -24653,22 +24657,28 @@ function barTabsOn() {
   const d = PD.dock, b = document.body.classList;
   return !!d && !PD.failed && !d.narrow() && b.contains('mid') && b.contains('po-dock');
 }
-// The title bar of the stack the conversation is in, while that stack is in
-// the page's dock (not a window, a float or minimised).
+// The title bar drawn in the bar: the one of the stack the conversation is
+// in, in the page's dock (minimised too: a tab pressed in the bar opens the
+// stack again). The conversation out of the page's dock (a window, a float):
+// the title bar of the stack its tasks and threads stayed in, so they stay in
+// the bar, one row; with none, no tabs there and the bar shows its trail.
 function barTabsHead() {
-  const t = PD.dock && PD_ROOT.querySelector('.dk-main .dk-stack:not(.dk-min) > .dk-head [data-dk-tab="po-chat"]');
+  const main = PD.dock && PD_ROOT.querySelector('.dk-main');
+  if (!main) return null;
+  const tabs = [...main.querySelectorAll('.dk-stack > .dk-head > .dk-tabs [data-dk-tab]')];
+  const t = tabs.find(x => x.dataset.dkTab === 'po-chat') || tabs.find(x => /^(chat|thread):/.test(x.dataset.dkTab));
   return t ? t.closest('.dk-head') : null;
 }
-// The conversation out of the page's dock (a window, a float, minimised):
-// no title bar to draw in the bar, so no tabs there; Dock's own rows show
-// every tab (the conversation's too) and the bar its trail, as on a page
-// without the dock.
+// Whether the bar's title bar holds the conversation's own tab (the group is it).
+function barTabsHasConv(head) {
+  return !!head && !!head.querySelector(':scope > .dk-tabs [data-dk-tab="po-chat"]');
+}
 function barTabsSync() {
   const body = document.body, head = barTabsOn() ? barTabsHead() : null, on = !!head;
   body.classList.toggle('bar-tabs', on);
   for (const h of PD_ROOT ? PD_ROOT.querySelectorAll('.dk-head.bt-head') : []) if (h !== head) h.classList.remove('bt-head');
   const grp = document.getElementById('bar-grp');
-  const front = !!head && PD.dock.frontOf('po-chat') === 'po-chat';
+  const front = barTabsHasConv(head) && !head.closest('.dk-min') && PD.dock.frontOf('po-chat') === 'po-chat';
   if (grp) grp.classList.toggle('on', front);
   body.classList.toggle('bt-thr', on && !!thrBarRoom());
   pdThreadInSync();
@@ -24724,7 +24734,7 @@ document.addEventListener('keydown', (e) => {
   if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return;
   const t = e.target;
   if (barTabKey === e) {
-    if (PD.dock.frontOf('po-chat') === 'po-chat') $('#proj-switch').focus();
+    if (barTabsHasConv(barTabsHead()) && PD.dock.frontOf('po-chat') === 'po-chat') $('#proj-switch').focus();
     return;
   }
   if (!t.closest?.('#proj-switch, #thr-switch') || !$('#proj-menu').hidden || !$('#thr-menu').hidden) return;
