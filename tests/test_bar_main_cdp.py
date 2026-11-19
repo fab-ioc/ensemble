@@ -6,6 +6,9 @@ it while a thread is shown shows the main conversation. thread ▾ → Main
 conversation goes back too, in every way a thread is shown: picked in thread ▾,
 a thread line clicked in the chat, an Inbox link (the chat's sideOpen), a task
 in no project (pdMid). thread ▾ names the thread shown, never Main while one is.
+The name and its ▾ are two hit areas (#396): the ▾ is always the menu; on Main
+with the conversation in front the name opens the menu as before; another tab
+in front, the name brings the conversation to the front; Enter is the name.
 
 In headless Chrome over CDP, against a hub in a thread: Motors (a PO whose
 conversation has two threads) and a task in no project. ``ENSEMBLE_SHOTS``
@@ -89,15 +92,38 @@ async function main() {
       await send('Input.dispatchMouseEvent',{type,x:p.x,y:p.y,button:'left',buttons:type==='mousePressed'?1:0,clickCount:type==='mouseMoved'?0:1,modifiers},s);
   };
   const closeMenus = `closeProjMenu(); closeThrMenu(); 0`;
+  const key = async (k, code, vk, text) => {
+    await send('Input.dispatchKeyEvent',{type:'keyDown',key:k,code,windowsVirtualKeyCode:vk,nativeVirtualKeyCode:vk,...(text?{text}:{})},s);
+    await send('Input.dispatchKeyEvent',{type:'keyUp',key:k,code,windowsVirtualKeyCode:vk,nativeVirtualKeyCode:vk},s);
+  };
+  // The pointer over a part of the project's crumb: which parts are lit.
+  const lit = `(() => { const bg = e => getComputedStyle(e).backgroundColor, clear = c => c === 'rgba(0, 0, 0, 0)' || c === 'transparent';
+    return { name: !clear(bg(document.querySelector('#proj-switch .pj-nm'))), caret: !clear(bg(document.querySelector('#proj-switch .caret'))),
+      button: !clear(bg(document.getElementById('proj-switch'))) }; })()`;
+  const moveTo = async sel => {
+    const p = await ev(`(()=>{const q=document.querySelector(${JSON.stringify(sel)}).getBoundingClientRect();return {x:q.x+q.width/2,y:q.y+q.height/2}})()`);
+    await send('Input.dispatchMouseEvent',{type:'mouseMoved',x:p.x,y:p.y},s);
+    await sleep(150);
+  };
+  const tip = `({ name: document.querySelector('#proj-switch .pj-nm').getAttribute('title'), button: document.getElementById('proj-switch').title,
+    desc: document.getElementById('proj-switch').getAttribute('aria-description') })`;
   const thrMenuOpen = async () => {
     await clickAt(null, '#thr-switch');
     await until(`!document.getElementById('thr-menu').hidden && !document.querySelector('#thr-menu .pm-none:not(:only-of-type)') && document.querySelectorAll('#thr-menu [data-thr-pick]').length >= 1 && !/Reading/.test(document.getElementById('thr-menu').textContent)`, 'thread menu');
   };
   // thread ▾ → Main conversation: what the bar and the chat say after.
+  const onMain = `!PD.thrIn && !thrBarFrame()?.contentWindow?.sideNow?.() && document.getElementById('thr-switch-name').textContent==='Main'`;
   const viaMenuMain = async label => {
     await thrMenuOpen();
     await clickAt(null, '#thr-menu [data-thr-pick=""]');
-    await until(`!PD.thrIn && !thrBarFrame()?.contentWindow?.sideNow?.() && document.getElementById('thr-switch-name').textContent==='Main'`, label + ': Main');
+    await until(onMain, label + ': Main');
+    await sleep(300);
+    return ev(BAR);
+  };
+  // The project's name clicked (#396): back to Main, no menu.
+  const viaName = async label => {
+    await clickAt(null, '#proj-switch-name');
+    await until(onMain, label + ': the name, Main');
     await sleep(300);
     return ev(BAR);
   };
@@ -126,14 +152,25 @@ async function main() {
     await sleep(400);
     out.menuIn = await ev(BAR);
     await snap('main-thread-in-place');
-    await clickAt(null, '#proj-switch-name');
-    await sleep(500);
-    out.nameClick = await ev(BAR);
-    await snap('main-name-click');
+    out.tipIn = await ev(tip);
+    await moveTo('#proj-switch .pj-nm');
+    out.litName = await ev(lit);
+    await snap('main-hover-name');
+    await moveTo('#proj-switch .caret');
+    out.litCaret = await ev(lit);
+    await snap('main-hover-caret');
+    // The ▾ in a thread: the menu, the thread stays.
+    await clickAt(null, '#proj-switch .caret');
+    await sleep(400);
+    out.caretIn = await ev(BAR);
     await ev(closeMenus);
     await sleep(200);
+    // 1. The name in a thread: Main.
+    out.nameMain = await viaName('thread ▾ then the name');
+    out.tipMain = await ev(tip);
+    await snap('main-name-click');
     // 2a. thread ▾ → Main, the thread picked in thread ▾.
-    if (!out.nameClick.thrIn) { await thrMenuOpen(); await clickAt(null, `#thr-menu [data-thr-pick="${ta}"]`); await until(inPlace(ta), 'again in place'); await sleep(300); }
+    await thrMenuOpen(); await clickAt(null, `#thr-menu [data-thr-pick="${ta}"]`); await until(inPlace(ta), 'again in place'); await sleep(300);
     out.menuMain = await viaMenuMain('thread ▾');
     // 2b. The chat's own thread line clicked (its sideOpen).
     await clickAt(PO, `#msgs .thr-open[data-thr="${tb}"]`);
@@ -141,18 +178,56 @@ async function main() {
     await sleep(400);
     out.lineIn = await ev(BAR);
     out.lineMain = await viaMenuMain('thread line');
+    await clickAt(PO, `#msgs .thr-open[data-thr="${tb}"]`);
+    await until(inPlace(tb), 'thread in place from its line, again');
+    await sleep(400);
+    out.lineName = await viaName('thread line then the name');
     // 2c. An Inbox link to the thread (pdThreadOpen → goto-msg → the chat's gotoThread → sideOpen).
     await ev(`pdThreadOpen(${JSON.stringify(A.po)}, ${JSON.stringify(ta)}, '', null, 'inbox'); 0`);
     await until(inPlace(ta), 'thread in place from an Inbox link');
     await sleep(400);
     out.inboxIn = await ev(BAR);
     out.inboxMain = await viaMenuMain('Inbox link');
+    // The keyboard: the button focused, Enter is the name.
+    await ev(`pdThreadOpen(${JSON.stringify(A.po)}, ${JSON.stringify(ta)}, '', null, 'inbox'); 0`);
+    await until(inPlace(ta), 'thread in place from an Inbox link, again');
+    await sleep(400);
+    await ev(`document.getElementById('proj-switch').focus(); 0`);
+    await key('Enter', 'Enter', 13, '\r');
+    await until(onMain, 'Inbox link then Enter: Main');
+    await sleep(300);
+    out.inboxKey = await ev(BAR);
     // 2d. The chat reloaded after Main: no thread comes back.
     await ev(`${PO}.contentWindow.location.reload(); 0`);
     await sleep(800);
     await until(`${PO}?.contentDocument?.readyState==='complete' && ${threadsIn}.length===2`, 'chat reloaded');
     await sleep(800);
     out.afterReload = await ev(BAR);
+    // On Main, the conversation in front: the name opens the menu, as before.
+    await clickAt(null, '#proj-switch-name');
+    await sleep(400);
+    out.mainName = await ev(BAR);
+    await clickAt(null, '#proj-switch-name');
+    await sleep(300);
+    out.mainNameAgain = await ev(BAR);
+    // ArrowDown on the button: the menu.
+    await ev(`document.getElementById('proj-switch').focus(); 0`);
+    await key('ArrowDown', 'ArrowDown', 40);
+    await sleep(300);
+    out.mainArrow = await ev(BAR);
+    await ev(closeMenus);
+    // Ctrl/⌘-click in thread ▾: a tab of its own, in front; then the name
+    // brings the conversation to the front (no menu).
+    await thrMenuOpen();
+    await clickAt(null, `#thr-menu [data-thr-pick="${ta}"]`, 2);
+    await until(`[...PD.rt].some(([, e]) => e.kind === 'thread') && !document.getElementById('bar-grp').classList.contains('on')`, 'a thread tab in front');
+    await sleep(400);
+    out.ctrlTab = await ev(BAR);
+    out.tipTab = await ev(tip);
+    await clickAt(null, '#proj-switch-name');
+    await until(`document.getElementById('bar-grp').classList.contains('on')`, 'the name: the conversation in front');
+    await sleep(300);
+    out.nameFront = await ev(BAR);
 
     // 3. A task in no project (pdMid): thread ▾ → Main conversation.
     await ev(`openDetail(${sid(A.loose)}); 0`);
@@ -167,6 +242,12 @@ async function main() {
     await clickAt(null, '#proj-switch-name');
     await sleep(400);
     out.topName = await ev(BAR);
+    out.tipTop = await ev(tip);
+    await ev(closeMenus);
+    await sleep(200);
+    await clickAt(null, '#proj-switch .caret');
+    await sleep(400);
+    out.topCaret = await ev(BAR);
     await ev(closeMenus);
     out.errors = errors;
     console.log(JSON.stringify(out));
@@ -273,9 +354,45 @@ class BarMain(unittest.TestCase):
         self.assertEqual(g['topMenu'], [''], 'a task\'s chat: Main alone')
         self.assertEqual((g['topMain']['thr'], g['topMain']['top']), ('Main', self.loose))
 
-    def test_reported_case(self):
-        print('\nname click in a thread:', json.dumps(self.got['nameClick']))
-        print('task name click:', json.dumps(self.got['topName']))
+    def test_the_name_in_a_thread_goes_back_to_main(self):
+        g = self.got
+        for k in ('nameMain', 'lineName', 'inboxKey'):
+            self.back_on_main(g[k], k)
+            self.assertFalse(g[k]['projMenu'], f'{k}: no menu')
+
+    def test_the_caret_is_always_the_menu(self):
+        g = self.got
+        self.assertTrue(g['caretIn']['projMenu'], g['caretIn'])
+        self.assertEqual(g['caretIn']['thrIn'], {'tid': g['ta'], 'mid': '', 'shown': True}, 'the ▾: the thread stays')
+        self.assertTrue(g['topCaret']['projMenu'], g['topCaret'])
+
+    def test_two_hit_areas_lit_on_their_own(self):
+        g = self.got
+        self.assertEqual(g['litName'], {'name': True, 'caret': False, 'button': False})
+        self.assertEqual(g['litCaret'], {'name': False, 'caret': True, 'button': False})
+
+    def test_the_names_tooltip(self):
+        g = self.got
+        self.assertEqual(g['tipIn']['name'], 'Back to the main conversation')
+        self.assertIn('Arrow down', g['tipIn']['desc'])
+        self.assertIn('switch', g['tipIn']['button'])
+        self.assertIsNone(g['tipMain']['name'], 'on Main in front: the switcher\'s own tooltip')
+        self.assertIsNone(g['tipMain']['desc'])
+        self.assertEqual(g['tipTab']['name'], 'Show the conversation')
+        self.assertIsNone(g['tipTop']['name'])
+
+    def test_on_main_the_name_is_as_before(self):
+        g = self.got
+        self.assertTrue(g['mainName']['projMenu'], 'in front on Main: the name opens project ▾')
+        self.assertFalse(g['mainNameAgain']['projMenu'], 'and closes it')
+        self.assertTrue(g['mainArrow']['projMenu'], 'ArrowDown: the menu')
+        self.assertTrue(g['topName']['projMenu'], 'a task in no project, in front on Main: the menu')
+
+    def test_ctrl_click_a_thread_then_the_name(self):
+        g = self.got
+        self.assertEqual(len(g['ctrlTab']['threadTabs']), 1, f"Ctrl-click in thread ▾: a tab {g['ctrlTab']}")
+        self.assertFalse(g['ctrlTab']['grpOn'])
+        self.assertEqual((g['nameFront']['front'], g['nameFront']['grpOn'], g['nameFront']['projMenu']), ('po-chat', True, False))
 
     def test_no_errors(self):
         self.assertEqual(self.got['errors'], [])

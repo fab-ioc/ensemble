@@ -1708,6 +1708,17 @@ you can go*, §4) · content (*what you are looking at*) · the issue view as an
      group is underlined as a selected tab (`.bar-grp.on`, an inset 2px `--accent` line); a click
      on it (not on a ▾) brings the conversation to the front with the Send box on it (its thread in
      place, if one is shown: `wcFront('po-chat', true)`).
+   - **The project's crumb is a breadcrumb's** (#396, P403; the drawing `Documents/P403 Back to
+     Main/drawing.html`; `projSwitchName`, `thrMain`, tested in `tests/test_bar_main_cdp.py`): its
+     name (icon + name, `.pj-nm`) and its ▾ are **two hit areas** of one button, each lit on its own
+     on hover (the button itself has no hover). The **name**: a thread shown in place → back to the
+     main conversation (tooltip "Back to the main conversation"; the same as thread ▾ → Main
+     conversation); another tab in front → the conversation to the front ("Show the
+     conversation"); on Main with the conversation in front → project ▾, as before (the
+     switcher's own tooltip). The **▾** is always project ▾. **One focus stop**: Enter does what
+     the name does, ArrowDown opens the menu (`aria-description` says so when they differ). The
+     task crumb of a task in no project is split the same way. A phone, and the breadcrumb of a
+     project without a PO, keep the whole button as the menu.
    - **The tabs** are Dock's own title bar of the conversation's stack, fixed over `#bar-tabs`
      (`.bt-head`, placed by `--bt-l/-w/-t/-h`), so a tab drags, closes, has its pin and menu as
      anywhere in the dock; the ⋯ follows the last tab. Inactive tabs are `--fg-subtle`, the one in
