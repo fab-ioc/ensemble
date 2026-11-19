@@ -16366,6 +16366,13 @@ function pdThreadInLeave(room, frameEl) {
   pdThreadInClose(false);
   return true;
 }
+// P414 (#396): the PO chat framed by frameEl is under the thread in place
+// (a landing there is not seen).
+function pdChatCovered(frameEl) {
+  const e = PD.thrIn;
+  return !!e && !!frameEl && !frameEl.hidden && frameEl.classList.contains('po-session')
+    && PO_PANEL.contains(frameEl) && !e.el.hidden && pdThreadInShown();
+}
 function pdThreadPanel(frameEl, o) {
   const d = PD.dock;
   if (!d || !pdPanelsOn() || !o || !o.room || (!o.tid && !o.mid)) return false;
