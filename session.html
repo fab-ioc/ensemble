@@ -5829,11 +5829,14 @@ let OLDER_BUSY = null;
 // (&after=) until the two meet; Latest leaves it.
 let ROOM_WIN = null, ROOM_DOWN = null;
 function roomHasOlder() { const w = ROOM_WIN || (ROOM_OBJ && ROOM_OBJ.window); return !!(w && w.before > 0); }
+// #394: the last loadOlder could not read the page (a fetch that failed), not "there is none".
+let OLDER_ERR = false;
 function loadOlder(upto = '') {
   if (OLDER_BUSY) return OLDER_BUSY;
   const shown = ROOM_WIN || ROOM_OBJ, first = shown && (shown.messages || [])[0];
   if (!roomHasOlder() || !first) return Promise.resolve(false);
   OLDER_BUSY = (async () => {
+    OLDER_ERR = false;
     try {
       const d = await fetch('/api/room?id=' + encodeURIComponent(ROOM) + '&n=100&before=' + encodeURIComponent(first.id)
         + (upto ? '&upto=' + encodeURIComponent(upto) : '')).then(r => r.json());
@@ -5875,7 +5878,7 @@ function loadOlder(upto = '') {
         box.scrollTop = row ? row.offsetTop - place.off : t0 + box.scrollHeight - h0;
       }
       return true;
-    } catch (e) { return false; }
+    } catch (e) { OLDER_ERR = true; return false; }
     finally { OLDER_BUSY = null; }
   })();
   return OLDER_BUSY;
@@ -6161,7 +6164,7 @@ function landPending() {
         if (roomHasOlder() && !(ROOM_OBJ.messages || []).some(m => m.id === mid)) {
           loadOlder(mid).then(ok => {
             if (ok) { landPending(); return; }
-            if (GOTO === mid) { GOTO = ''; GOTO_PART = ''; gotoFail(mid, 'The linked message is not shown in this chat.'); }
+            if (GOTO === mid) { GOTO = ''; GOTO_PART = ''; gotoFail(mid, OLDER_ERR ? GOTO_UNLOADED : 'The linked message is not shown in this chat.'); }
           });
           return;
         }
@@ -6197,7 +6200,7 @@ function landPending() {
           if (ok) return landPending();
           if (GOTO !== mid) return;
           GOTO = '';
-          gotoFail(mid, 'The linked message was not found in this conversation.');
+          gotoFail(mid, OLDER_ERR ? GOTO_UNLOADED : 'The linked message was not found in this conversation.');
         });
         return;
       }
@@ -6284,6 +6287,7 @@ function landKeepPut() {
 // #394: the dashboard is told a link's balloon has landed, or why it cannot:
 // it keeps asking until then (a chat reloaded meanwhile is asked again), and
 // says plainly what could not be opened.
+const GOTO_UNLOADED = 'The linked message could not be loaded. Reload the page to try again.';
 function gotoFail(mid, text) { showGotoNote(text); gotoDone(mid, false, text); }
 function gotoDone(mid, ok, why) {
   const h = embedHost();

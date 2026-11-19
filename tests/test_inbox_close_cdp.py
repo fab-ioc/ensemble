@@ -3,9 +3,10 @@ against a hub in a thread serving the pages (the endpoints are
 tests/test_ask_close_many.py).
 
 A PO chat with eight open questions: two still waiting (Needs your answer)
-and six the person wrote past (Older questions). Checked:
+and six the person wrote past, all eight in Needs your answer (#394, P396:
+no Older questions group). Checked:
 
-* at 1440x900: Needs your answer, then Older questions, every question with
+* at 1440x900: Needs your answer, newest first, every question with
   Close and the last without "Close this and earlier"; pointing at the third
   question's "Close this and earlier N" marks it and every question below,
   N of them; a click asks in the row ("Close this and the N-1 earlier
@@ -84,7 +85,7 @@ async function main() {
     return { evalIn, until, hover, click, key, shot, close: () => c.send('Target.closeTarget', { targetId }) };
   };
   const toPo = p => p.evalIn(`(() => { VIEW_MODE = 'board'; SELECTED_PROJECT = ${JSON.stringify(A.proj)}; PROJECT_TAB = 'tasks'; renderRows(); return 0; })()`);
-  const api = `(async () => { const d = await (await fetch('/api/inbox', { cache: 'no-store' })).json(); return d.rows.concat(d.older || []).filter(r => Number.isInteger(r.n)).map(r => r.id); })()`;
+  const api = `(async () => { const d = await (await fetch('/api/inbox', { cache: 'no-store' })).json(); return d.rows.filter(r => Number.isInteger(r.n)).map(r => r.id); })()`;
   const fits = box => `(() => { const W = document.documentElement.clientWidth;
     const wide = [...document.querySelectorAll('${box} *')].filter(e => { const b = e.getBoundingClientRect(); return b.width > 0 && b.right > W + 1; }).map(e => e.className || e.tagName);
     return { W, scroll: document.documentElement.scrollWidth, wide: wide.slice(0, 5) }; })()`;
@@ -265,12 +266,12 @@ class CloseInChrome(unittest.TestCase):
         cls.server.server_close()
         cls.tmp.cleanup()
 
-    def test_questions_newest_first_then_older_each_with_close(self):
+    def test_questions_newest_first_each_with_close(self):
         b = self.got["before"]
         self.assertEqual(self.cards, 8)
         # #322 (P287 drawing): cards in one flat list under the project list, no group headings; the stage is on each card
         self.assertEqual(b["heads"], [], b["heads"])
-        self.assertEqual(b["stages"], ["answer"] * 2 + ["older"] * 6, b["stages"])
+        self.assertEqual(b["stages"], ["answer"] * 8, b["stages"])
         self.assertEqual(len(b["qs"]), 8)
         self.assertEqual(b["qs"], self.got["apiBefore"], "the hub's questions, in its order")
         self.assertTrue(all(b["close"]), b)

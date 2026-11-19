@@ -804,58 +804,38 @@ def answered(room_id: str) -> dict:
     return _d.points.load(room_id).get("asks") or {}
 
 
-def person_wrote_at(led: dict, summary: dict | None = None) -> float:
-    """When the person last wrote words of their own in the chat (#279): a
-    message that went through (``asksSettledAt``, set by
-    ``points.settle_asks``) or their last own chat message (``personAt``,
-    ``attention._moved_past``). Not a card's quick answer, which answers
-    that card and not the questions beside it, nor a send that was refused,
-    nor a command: so not the ledger's points or ``lastPersonAt``."""
-    try:
-        return max(float(led.get("asksSettledAt") or 0), float(_past_marks(summary).get("personAt") or 0))
-    except (TypeError, ValueError):
+def answered_by_message(summary: dict) -> float:
+    """In a task's chat with no PO: when the person last submitted a message
+    to an agent after its ask (``answeredAt``): the asks from before are
+    answered. 0 in a chat with a PO, whose cards are answered on the card."""
+    if bool(summary["po"]) if "po" in summary else bool(_d.room_po_id(summary)):
         return 0.0
-
-
-def _past_marks(summary: dict | None) -> dict:
-    """``personAt`` and ``askClosedAt``: an attention summary carries them; a
-    full room (the chat's own Needs you view) has its messages to read them
-    from."""
-    summary = summary or {}
-    if "personAt" in summary or not summary.get("messages"):
-        return summary
-    return _d.attention._moved_past(summary, summary["messages"])
-
-
-def moved_past(summary: dict, led: dict) -> float:
-    """Up to when the conversation has moved past what was put to the person
-    (#279): they wrote in the chat since (a message, a point, a comment), or
-    an agent reported its work completed or its asks over. An ask from before
-    leaves Needs you; its card stays open in the chat. 0 when neither."""
-    return max(person_wrote_at(led, summary), float(_past_marks(summary).get("askClosedAt") or 0))
+    return max([0.0] + [float(p.get("answeredAt") or 0)
+                        for p in summary.get("participants", []) if p.get("kind") == "agent"])
 
 
 def open_in(summary: dict, now: float | None = None) -> list[dict]:
-    """Asks still calling for attention, oldest first. A read or set-aside
-    ask can leave Needs you while its card remains open in :func:`open_cards`."""
-    now = time.time() if now is None else now
+    """Asks still calling for attention, oldest first. An ask stays until it
+    is dealt with (P395, P396): answered on its card, or by a message to the
+    agent after it (``answeredAt``), closed, or set aside (Done with this).
+    Reading the chat, or writing past the card, leaves it where it is."""
     rid = summary.get("id", "")
     marked = _room_asks(summary)
     if not marked:
         return []
     led = _d.points.load(rid, shared=True) if _d.points.exists(rid) else {}
     done, approved = led.get("asks") or {}, led.get("approvals") or {}
-    settled = float(led.get("asksSettledAt") or 0)
-    if not (bool(summary["po"]) if "po" in summary else bool(_d.room_po_id(summary))):
-        settled = max(settled, *(float(p.get("answeredAt") or 0)
-                                  for p in summary.get("participants", []) if p.get("kind") == "agent"))
-    past = moved_past(summary, led)
+    answered_at = answered_by_message(summary)
+    try:
+        cleared = float(led.get("decisionsClearedAt") or 0)    # Clear all closed them (P396)
+    except (TypeError, ValueError):
+        cleared = 0.0
     reps = _reps(summary)
     out = []
     for mid, ts, qs, who in marked:
-        if ts and ts < max(settled, past):
+        if ts and (ts < answered_at or ts <= cleared):
             continue
-        if _d.attention.read_and_old(summary, ts, now) or _d.attention.set_aside(summary, ts):
+        if _d.attention.set_aside(summary, ts):
             continue
         if mid in reps:
             qs = reps[mid]["qs"]
@@ -1177,54 +1157,24 @@ def _same_ask(a: str, b: str) -> bool:
     return bool(wa and wb) and len(wa & wb) / len(wa | wb) >= _SAME_WORDS
 
 
-@functools.lru_cache(maxsize=64)
-def _repeats(questions: tuple) -> frozenset:
-    """The positions in ``questions`` (newest first) asked again by an earlier
-    one kept (:func:`_same_ask`). Remembered per list: the OTE PO chat's
-    ~100 open asks made ~4.9k comparisons on every poll, more than
-    :func:`_same_ask`'s own memory holds, so each one ran its regexes again
-    (~125 ms of a 130 ms poll, #265)."""
-    kept: list[str] = []
-    out = set()
-    for i, q in enumerate(questions):
-        if any(_same_ask(q, k) for k in kept):
-            out.add(i)
-        else:
-            kept.append(q)
-    return frozenset(out)
-
-
-def decisions(summary: dict, led: dict | None = None, now: float | None = None) -> tuple[list, list]:
-    """Needs you's Decisions, split: ``(waiting, older)``. Of the open asks
-    (:func:`open_cards`, newest first) one asked again later (:func:`_same_ask`)
-    keeps only its newest card (``repeat``); one the person has written past
-    since it was put (they moved on without answering it, #279) is an older
-    question (``past``), and so is one from before the person's Clear all
-    (``cleared``, the ledger's ``decisionsClearedAt``): listed under the
-    Older fold, its card still open in the chat. Measured on the trading PO
-    chat (#279): 130 open asks, all but one written past."""
-    now = time.time() if now is None else now
+def decisions(summary: dict, led: dict | None = None) -> list[dict]:
+    """Needs you's Decisions: every open ask card (:func:`open_cards`, newest
+    first) until the person answers or closes it (P396: "Each card needs an
+    answer, and explicit close is a valid answer. Writing past a card doesn't
+    mean anything."). A card asked again later is still a card of its own.
+    The person's Clear all (the ledger's ``decisionsClearedAt``, #279) closed
+    those from before it, and Done with this (the room's ``dealtAt``) set
+    them aside: they are not listed, as :func:`open_in` leaves them out of
+    the badges, so the Inbox and the counts agree."""
     if led is None:
         rid = (summary or {}).get("id", "")
         led = _d.points.load(rid, shared=True) if rid and _d.points.exists(rid) else {}
-    last = person_wrote_at(led, summary)
     try:
         cleared = float(led.get("decisionsClearedAt") or 0)
     except (TypeError, ValueError):
         cleared = 0.0
-    waiting, older = [], []
-    cards = open_cards(summary, led)
-    repeats = _repeats(tuple(c["question"] for c in cards))
-    for i, c in enumerate(cards):
-        if i in repeats:
-            older.append({**c, "why": "repeat"})
-        elif c["ts"] < last:
-            older.append({**c, "why": "past"})
-        elif c["ts"] <= cleared:
-            older.append({**c, "why": "cleared"})
-        else:
-            waiting.append(c)
-    return waiting, older
+    return [c for c in open_cards(summary, led)
+            if c["ts"] > cleared and not _d.attention.set_aside(summary, c["ts"])]
 
 
 # ---------------------------------------------------------------------------
@@ -1437,10 +1387,9 @@ ASK_AGAIN_RULE = ("These are still open in the Inbox; do not ask them again: not
 
 def _own_open(room: dict, identity: str = "") -> list[dict]:
     """The open cards of ``room`` its seat ``identity`` put (all when none),
-    newest first, one asked again before the rule listed once."""
-    cards = [c for c in open_cards(room) if not identity or not c.get("who") or c.get("who") == identity]
-    reps = _repeats(tuple(c["question"] for c in cards)) if cards else frozenset()
-    return [c for i, c in enumerate(cards) if i not in reps]
+    newest first: every one, a card asked again included, as the Inbox lists
+    them (P396)."""
+    return [c for c in open_cards(room) if not identity or not c.get("who") or c.get("who") == identity]
 
 
 def _age(ts: float, now: float) -> str:

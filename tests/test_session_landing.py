@@ -214,7 +214,8 @@ class RoomMessageNotDrawn(unittest.TestCase):
         branch = body[body.index("Not drawn in the channel after all"):]
         branch = branch[:branch.index("return;\n    }") + 6]
         guard = branch.index("if (!String(mid).includes(':'))")
-        self.assertIn("showGotoNote('The linked message is not shown in this chat.')", branch[guard:])
+        # #394: the note goes up and the dashboard is told the link failed (gotoFail).
+        self.assertIn("gotoFail(mid, 'The linked message is not shown in this chat.')", branch[guard:])
         self.assertLess(guard, branch.index("openThread('', mid, passage)"))
 
     @unittest.skipUnless(NODE, "node is not installed")

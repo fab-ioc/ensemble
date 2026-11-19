@@ -131,7 +131,7 @@ async function main() {
       await p.until('typeof ALL_ROWS !== "undefined" && ALL_ROWS.some(r => r.roomId === ' + JSON.stringify(A.po) + ') && window.ensBooted === true', 30000);
       await p.evalIn(`(() => { VIEW_MODE = 'board'; SELECTED_PROJECT = ${JSON.stringify(A.proj)}; PROJECT_TAB = 'tasks'; renderRows(); return 0; })()`);
       await chatReady(p, A.po);
-      const inbox = async () => { if (mobile) { await p.evalIn('ibxOpen(); 0'); await sleep(400); } await p.until(`!!(${link(A.answer)})`, 20000); };
+      const inbox = async () => { if (mobile) { await p.evalIn('ibxOpen(); 0'); await sleep(400); } await p.until(`!!(${link(A.answer)}) && !!(${link(A.ask)})`, 20000); };
       await inbox();
       o.hrefs = await p.evalIn(`[${link(A.answer)}, ${link(A.ask)}].map(a => a && a.getAttribute('href'))`);
       // A Dock pop-out's document is kept in PD_POP_DOCS. Exercise the same

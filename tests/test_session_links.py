@@ -74,6 +74,8 @@ function ibxUnmark() {}
 const setTimeout = (f, ms, ...a) => { if (f === renderSolo) setImmediate(() => f(...a)); return 0; };
 const clearTimeout = () => {};
 function showGotoNote(t) { if (t) out.notes.push(t); }
+function gotoFail(mid, t) { showGotoNote(t); }   // and tells the dashboard (#394)
+function gotoDone() {}
 function nearEnd() { return false; }
 function showLatest() {}
 function withHubRows(items) { return items; } const roomLatestTs = () => 0; let DRAWN_ROOM_TS = 0;

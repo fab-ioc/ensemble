@@ -1007,7 +1007,6 @@ def take(room: dict, text: str, to: str = "", key: str = "", now: float | None =
                 p.setdefault("follows", []).append({"text": words, "at": now, "key": key})
                 u["stateAt2"] = p.get("stateAt")
                 p["undo"] = (p.get("undo") if isinstance(p.get("undo"), list) else [])[-(_UNDO_KEEP - 1):] + [u]
-            _close_seen(led, now, key)
             led["lastPersonAt"] = now
             _save(rid, led)
             return _deliverable(text, follow), follow
@@ -1018,7 +1017,6 @@ def take(room: dict, text: str, to: str = "", key: str = "", now: float | None =
                                                      for a in p["answers"]):
                     _set_state(p, "acked", now)
                     p["ackedBy"] = "reply"
-            _close_seen(led, now, key)
             led["lastPersonAt"] = now
             _save(rid, led)
             return text, []
@@ -1036,9 +1034,9 @@ def take(room: dict, text: str, to: str = "", key: str = "", now: float | None =
         # A comment on an answer, or a message linking or quoting one, follows
         # up the point it answered: that point is handled, no thumbs up owed.
         _follow_new(led, made, rid, now)
-        # Needs you (#209): what they saw closes now they write again, and an
-        # answer about a task this message names is superseded by it.
-        _close_seen(led, now, key)
+        # Needs you (#209): an answer about a task this message names is
+        # superseded by it. What they saw stays until they are done with it
+        # (P395: writing again deals with nothing).
         try:
             _supersede(led, made, rid, now, key)
         except Exception as e:  # noqa: BLE001 — the point is made anyway
@@ -1684,8 +1682,8 @@ def _auto_close(p: dict, reason: str, now: float, key: str = "", by: str = "") -
 
 def clear_decisions(room_id: str, now: float | None = None) -> float:
     """Clear all on Needs you's Decisions (#279): every question card put
-    before now goes to the Older fold (``decisionsClearedAt``), answered or
-    not: nothing is answered and no agent is told. A card put later waits as
+    before now is closed (``decisionsClearedAt``, P396), answered or not:
+    nothing is answered and no agent is told. A card put later waits as
     any other. Returns the mark before, for Undo."""
     now = time.time() if now is None else now
     with _LOCK:
@@ -1744,16 +1742,6 @@ def mark_seen(room_id: str, mids=(), ids=(), how: str = "screen", now: float | N
         if out:
             _save(room_id, led)
         return out
-
-
-def _close_seen(led: dict, now: float, key: str) -> list[dict]:
-    """The person writes again: every answer they have seen closes."""
-    out = []
-    for p in led["points"]:
-        if p["state"] == "delivered" and is_seen(p) and float(p.get("seenAt") or 0) <= now:
-            _auto_close(p, "seen", now, key)
-            out.append(p)
-    return out
 
 
 # "#241", "ED-241" in a point's own words (not in what it quotes).
@@ -1929,15 +1917,17 @@ def asks_action(text: str) -> bool:
     return bool(_TRY_START.search(t) or _TRY_ASK.search(t))
 
 
-def needs_you(p: dict) -> str:
+def needs_you(p: dict, seen_counts: bool = True) -> str:
     """Where an answered point stands in Needs you: "try" (its answer asks
-    them to try something), "new" (an answer not seen yet), or ""."""
+    them to try something), "new" (an answer not seen yet), or "". The
+    Inbox asks with ``seen_counts=False``: an answer it lists stays there,
+    seen or not, until the person is done with it (P395)."""
     if p.get("state") != "delivered":
         return ""
     a = last_answer(p)
     if a and asks_action(a.get("said") or a.get("summary") or ""):
         return "try"
-    return "" if is_seen(p) else "new"
+    return "" if seen_counts and is_seen(p) else "new"
 
 
 # ---------------------------------------------------------------------------
@@ -2011,7 +2001,7 @@ def counts(room_id: str) -> dict | None:
         c = dict(parts["counts"])
         # Needs you (#209): what the counter shows. Decisions as the chat's last
         # view worked them out (reading cards here would cost a listing seconds).
-        c.update(decisions=len((_LAST_DECISIONS.get(room_id) or ([], []))[0]),
+        c.update(decisions=len(_LAST_DECISIONS.get(room_id) or []),
                  totry=parts["totry"], news=parts["news"])
         return c if any(c.values()) else None
 
@@ -2211,22 +2201,22 @@ def _needs_view(room_id: str, room: dict | None, led: dict) -> dict:
             # rotated session): read in the background, show the last list,
             # which may be out of date until the read ends (pending).
             _d.asks.warm_cards(room)
-            decisions, older = _LAST_DECISIONS.get(room_id) or ([], [])
+            decisions = list(_LAST_DECISIONS.get(room_id) or [])
             pending = True
         else:
-            decisions, older = _d.asks.decisions(room, led) if room else ([], [])
-            _LAST_DECISIONS[room_id] = (decisions, older)
+            decisions = _d.asks.decisions(room, led) if room else []
+            _LAST_DECISIONS[room_id] = decisions
     except Exception as e:      # noqa: BLE001 — the answers still show
         _log(f"{room_id}: open cards not read: {e!r}")
-        decisions, older = [], []
+        decisions = []
     parts = _parts(room_id, led)
-    return {"decisions": decisions, "older": older[:CLOSED_MAX], "olderCount": len(older),
+    return {"decisions": decisions,
             **({"pending": True} if pending else {}),
             "news": parts["news"], "totry": parts["totry"],
             "closed": [dict(c) for c in parts["closed"]], "closedCount": parts["closedCount"]}
 
 
-_LAST_DECISIONS: dict[str, tuple] = {}   # room id → the last (decisions, older) worked out
+_LAST_DECISIONS: dict[str, list] = {}   # room id → the last Decisions worked out
 
 
 def open_points(room_id: str, identity: str = "", skip=()) -> list[dict]:

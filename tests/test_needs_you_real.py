@@ -9,13 +9,14 @@ chat; and asks marked in a message (asks.py) counted for seven days whether
 read or not. The rules, each a fixture below:
 
 * a ``completed`` report is never Needs you: it is ``reported`` (Ready for
-  your check) until the person reads that chat past it, writes in it, or the
-  task is Done or stopped;
+  your check) until the person says Done, writes in it, or the task is Done
+  or stopped; reading the chat past it is not enough (P395);
 * a ``question`` / ``blocked`` stays until it is answered, whatever the agent
   does (ROADMAP item 32), and unread it stays however old it is;
 * what the person has read (``seenAt``, the page's read point kept on the
-  room) leaves once it is a day old: a report's ask, a message to them, a room
-  waiting on them, an ask marked in a message;
+  room) stays, however old (P395): only Done with this (``dealtAt``) or an
+  answer takes a report's ask, a message to them, a room waiting on them or
+  an ask marked in a message out;
 * a PO is Needs you only for what it asks (marked asks, reports, a prompt),
   never for a plain message or its room waiting on the person by that alone;
 * a project's needs count goes by attention alone for its tasks.
@@ -75,11 +76,12 @@ class AFinishedReport(_Needs):
         rep = self.reported()
         self.assertEqual((rep["line"], rep["agent"]), ("Advised the operator; nothing left to do.", "claude"))
 
-    def test_leaves_when_the_chat_is_read_past_it(self):
+    def test_read_past_it_stays_until_done(self):
+        # P395: reading the chat past the report is not being done with it.
         done = self.report("completed", "Done.")
-        self.seen(done["ts"] - 1)
-        self.assertIsNotNone(self.reported())          # read up to before it: still new
-        self.seen(done["ts"])
+        self.seen(done["ts"] + 1)
+        self.assertIsNotNone(self.reported())
+        chatroom.record_dealt(self.rid)
         self.assertIsNone(self.reported())
         self.assertIsNone(self.item())
 
@@ -117,40 +119,41 @@ class AnAsk(_Needs):
         self.busy()                                     # ROADMAP 32: busy hides nothing
         self.assertEqual(self.item()["state"], "waiting_for_you")
 
-    def test_read_it_stays_for_a_day(self):
+    def test_read_it_stays(self):
         asked = self.report("question", "Which price?")
         self.seen(asked["ts"])
         self.assertEqual(self.item()["askKind"], "question")
 
-    def test_read_and_a_day_old_it_leaves(self):
+    def test_read_and_a_day_old_it_stays_until_done(self):
+        # P395: read and old is still for the person to deal with.
         self.report("blocked", "The login is gone.")
         ts = self.age_last(DAY + 60)
-        self.assertEqual(self.item()["state"], "blocked")      # old, never read
-        self.seen(ts - 1)
-        self.assertEqual(self.item()["state"], "blocked")      # read only up to before it
         self.seen(ts)
+        self.assertEqual(self.item()["state"], "blocked")
+        chatroom.record_dealt(self.rid)
         self.assertIsNone(self.item())
 
-    def test_read_and_old_is_not_stalled(self):
+    def test_read_and_old_is_waiting_not_stalled(self):
         self.report("question", "Which price?")
         self.seen(self.age_last(3 * DAY))
         with mock.patch.object(attention, "_stall_seconds", return_value=60):
-            self.assertIsNone(self.item())
+            self.assertEqual(self.item()["state"], "waiting_for_you")
 
-    def test_a_newer_ask_after_the_read_point_is_back(self):
+    def test_a_newer_ask_after_done_is_back(self):
         self.report("question", "Which price?")
-        self.seen(self.age_last(2 * DAY))
+        self.age_last(2 * DAY)
+        chatroom.record_dealt(self.rid)
         self.assertIsNone(self.item())
         self.report("question", "And which colour?")
         self.assertEqual(self.item()["quote"], "And which colour?")
 
-    def test_a_message_to_the_person_read_a_day_ago_leaves(self):
+    def test_a_message_to_the_person_read_a_day_ago_stays(self):
         chatroom.post_message(self.rid, "claude", "Shall I renew it?", to="user")
         self.assertEqual(self.item()["askKind"], "message")
         self.seen(self.age_last(DAY + 60))
-        self.assertIsNone(self.item())
+        self.assertEqual(self.item()["askKind"], "message")
 
-    def test_a_marked_ask_read_a_day_ago_leaves(self):
+    def test_a_marked_ask_read_a_day_ago_stays_until_done(self):
         full = chatroom.get_room(self.rid, public=False)
         full["mode"] = "collab"
         chatroom.update_room(full)
@@ -158,9 +161,11 @@ class AnAsk(_Needs):
         it = self.item()
         self.assertEqual(it["state"], "waiting_for_you")
         ts = self.age_last(2 * DAY)
-        asks.forget()
-        self.assertTrue(asks.open_by_room(attention._room_summaries()).get(self.rid))
         self.seen(ts)
+        asks.forget()
+        self.assertTrue(asks.open_by_room(attention._room_summaries()).get(self.rid), "read: still open (P395)")
+        self.assertEqual(self.item()["state"], "waiting_for_you")
+        chatroom.record_dealt(self.rid)
         asks.forget()
         self.assertFalse(asks.open_by_room(attention._room_summaries()).get(self.rid))
         self.assertIsNone(self.item())
@@ -199,7 +204,7 @@ class APO(_Needs):
         ts = self.age_last(9 * DAY)
         self.assertEqual(self.item()["askKind"], "asks")
         self.seen(ts)
-        self.assertIsNone(self.item())
+        self.assertEqual(self.item()["askKind"], "asks", "read: still waiting (P395)")
 
 
 class TheReadPoint(_Needs):

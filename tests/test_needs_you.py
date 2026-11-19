@@ -1,10 +1,10 @@
-"""Needs you (#209): an answered point closes by itself once its answer was
-seen and the person wrote again (``seen``), when a later point names its task
-(``superseded``), or once at the hub's start when it is old (``migrated``);
-what a send closed comes back if the send is taken back, and a closed one
-reopens. The Decisions are the question cards still waiting on the person:
-one asked again keeps its newest card, an old one written past is an older
-question, and a chat's cards are read in the background."""
+"""Needs you (#209): an answered point closes when the person is done with it
+(Done, ``ack``), when a later point names its task (``superseded``), or once
+at the hub's start when it is old (``migrated``); seeing it and writing again
+closes nothing (P395). What a send closed comes back if the send is taken
+back, and a closed one reopens. The Decisions are every question card still
+open (P396: one asked again and one written past included, none from before
+Clear all), and a chat's cards are read in the background."""
 from __future__ import annotations
 
 import json
@@ -43,7 +43,10 @@ class Closing(_World):
         points.sync(rid, force=True)
         return ids[0], f"sid-1:{n + 1}"
 
-    def test_seen_then_written_again_closes_and_unseen_stays(self):
+    def test_seen_and_written_again_stays_until_done(self):
+        # P395: seeing an answer and writing again closes nothing: the Inbox
+        # keeps it (seen_counts=False) until Done acks it. The chat's own
+        # Needs you view still counts only the unseen ones as news.
         rid = self.solo_room()
         p1, m1 = self.answered(rid, "One?", "one", at=self.t0)
         p2, _m2 = self.answered(rid, "Two?", "two", at=self.t0 + 10)
@@ -51,14 +54,13 @@ class Closing(_World):
         self.assertEqual(points.mark_seen(rid, mids=[m1], now=self.t0 + 15), [p1])
         self.assertEqual(points.mark_seen(rid, mids=[m1], now=self.t0 + 16), [], "seen once")
         self.assertEqual(points.needs_you(self.point(rid, p1)), "")
-        self.assertEqual(self.state(rid), {p1: "delivered", p2: "delivered"}, "seen alone closes nothing")
+        self.assertEqual(points.needs_you(self.point(rid, p1), seen_counts=False), "new")
         self.send(rid, "Something else now", at=self.t0 + 20)
-        self.assertEqual(self.point(rid, p1)["state"], "acked")
-        self.assertEqual(self.point(rid, p1)["ackedBy"], "seen")
-        self.assertEqual(self.point(rid, p2)["state"], "delivered", "never seen: never closed")
-        v = points.view(rid)
-        self.assertEqual(v["needs"]["news"], 1)
-        self.assertEqual([c["id"] for c in v["needs"]["closed"]], [p1])
+        st = self.state(rid)
+        self.assertEqual((st[p1], st[p2]), ("delivered", "delivered"), "seen and written past closes nothing")
+        self.assertEqual(points.view(rid)["needs"]["news"], 1)
+        self.assertEqual(points.act(rid, p1, "ack")["state"], "acked")
+        self.assertEqual(points.needs_you(self.point(rid, p1), seen_counts=False), "")
 
     def test_a_newer_answer_is_unseen_again(self):
         rid = self.solo_room()
@@ -163,10 +165,14 @@ class Closing(_World):
             self.assertEqual(self.point(rid, ids1[0])["ackedBy"], "superseded")
 
     def test_reopen_an_auto_closed_point(self):
+        # A point a ledger closed by itself (seen and written past, before P395).
         rid = self.solo_room()
         p1, m1 = self.answered(rid, "One?", "one")
         points.mark_seen(rid, mids=[m1], now=self.t0 + 15)
-        self.send(rid, "next", at=self.t0 + 20)
+        led = points.load(rid)
+        q = next(x for x in led["points"] if x["id"] == p1)
+        q.update(state="acked", ackedBy="seen", stateAt=self.t0 + 20)
+        points._save(rid, led)
         p = points.act(rid, p1, "reopen")
         self.assertEqual(p["state"], "delivered")
         self.assertFalse(points.is_seen(self.point(rid, p1)), "back on the list as new")
@@ -247,7 +253,9 @@ class Decisions(point_cards.Resolver):
         self.say('c3', now - 30, 'Ask: Ship it?\n- Yes\n- No')     # the room changed
         self.assertEqual([c['mid'] for c in asks.open_cards(self.summary())], ['c3', 'c2'])
 
-    def test_repeat_and_old_go_to_older(self):
+    def test_asked_again_and_written_past_are_both_decisions(self):
+        # P396: "Writing past a card doesn't mean anything": a card asked
+        # again later and one the person wrote past both wait, newest first.
         now = time.time()
         self.say('a', now - 9 * 86400, 'Ask: Shall I set it up?\n- Yes\n- No')
         self.say('b', now - 3600, 'Ask: Still waiting on you: P131. Should tasks get your tools?\n- Yes\n- No')
@@ -255,57 +263,38 @@ class Decisions(point_cards.Resolver):
         led = points.load(self.rid)
         led['asksSettledAt'] = now - 1000     # the person wrote after b, before c
         points._save(self.rid, led)
-        waiting, older = asks.decisions(self.summary(), now=now)
-        self.assertEqual([c['mid'] for c in waiting], ['c'])
-        self.assertEqual([(c['mid'], c['why']) for c in older], [('b', 'repeat'), ('a', 'past')])
-        # Not written past: an old question still waits.
-        led['asksSettledAt'] = 0
-        points._save(self.rid, led)
-        self.assertIn('a', [c['mid'] for c in asks.decisions(self.summary(), now=now)[0]])
+        self.assertEqual([c['mid'] for c in asks.decisions({**self.summary(), 'personAt': now - 30})], ['c', 'b', 'a'])
+        # Answered on its card or closed: that one leaves, the others stay.
+        self.answer('b')
+        self.assertEqual([c['mid'] for c in asks.decisions(self.summary())], ['c', 'a'])
 
-    def test_written_past_leaves_at_once_and_untouched_stays(self):
-        # #279: the Planning PO's cards the person wrote past, minutes old
-        # (no longer after 3 days); Biking's card put after their last write.
-        now = time.time()
-        self.say('old', now - 300, 'Ask: Which one?\n- A\n- B')
-        self.say('new', now - 60, 'Ask: How heavy is the child?\n- Light\n- Heavy')
-        led = points.load(self.rid)
-        led['asksSettledAt'] = now - 120
-        points._save(self.rid, led)
-        waiting, older = asks.decisions(self.summary(), now=now)
-        self.assertEqual([c['mid'] for c in waiting], ['new'])
-        self.assertEqual([(c['mid'], c['why']) for c in older], [('old', 'past')])
-        # The person's own chat message counts the same (personAt).
-        led['asksSettledAt'] = 0
-        points._save(self.rid, led)
-        waiting, _ = asks.decisions({**self.summary(), 'personAt': now - 30}, now=now)
-        self.assertEqual(waiting, [])
-
-    def test_clear_all_and_undo(self):
+    def test_clear_all_closes_those_before_and_undo(self):
         now = time.time()
         self.say('a', now - 300, 'Ask: Which one?\n- A\n- B')
         self.say('b', now - 200, 'Ask: What colour?\n- Red\n- Blue')
         before = points.clear_decisions(self.rid, now=now - 100)
         self.assertEqual(before, 0)
-        waiting, older = asks.decisions(self.summary(), now=now)
-        self.assertEqual((waiting, [(c['mid'], c['why']) for c in older]), ([], [('b', 'cleared'), ('a', 'cleared')]))
+        self.assertEqual(asks.decisions(self.summary()), [], 'Clear all closed them')
         self.assertEqual(asks.open_cards(self.summary())[0]['mid'], 'b', 'nothing is answered')
         self.say('c', now - 50, 'Ask: Ship it?\n- Yes\n- No')
-        self.assertEqual([c['mid'] for c in asks.decisions(self.summary(), now=now)[0]], ['c'], 'a later card waits')
+        self.assertEqual([c['mid'] for c in asks.decisions(self.summary())], ['c'], 'a later card waits')
         self.assertFalse(points.unclear_decisions(self.rid, now), 'Undo only moves the mark back')
         self.assertTrue(points.unclear_decisions(self.rid, before))
         self.assertNotIn('decisionsClearedAt', points.load(self.rid))
-        self.assertEqual([c['mid'] for c in asks.decisions(self.summary(), now=now)[0]], ['c', 'b', 'a'])
+        self.assertEqual([c['mid'] for c in asks.decisions(self.summary())], ['c', 'b', 'a'])
 
-    def test_repeats_are_worked_out_once_per_list(self):
-        # #265: ~100 open asks made ~4.9k comparisons on every poll.
-        qs = tuple(f'w{i}a w{i}b w{i}c?' for i in range(120)) + ('w3a w3b w3c?',)
-        asks._repeats.cache_clear()
-        with mock.patch.object(asks, '_same_ask', wraps=asks._same_ask) as same:
-            self.assertEqual(asks._repeats(qs), frozenset({120}))
-            first = same.call_count
-            self.assertEqual(asks._repeats(qs), frozenset({120}))
-            self.assertEqual(same.call_count, first, 'an unchanged list compares nothing again')
+    def test_done_with_this_sets_the_cards_aside_in_decisions_and_badges_alike(self):
+        # #394: Done with this (dealtAt) takes the cards from before it off the
+        # Decisions too, so the Inbox and the Needs you counts agree.
+        now = time.time()
+        self.say('a', now - 300, 'Ask: Which one?\n- A\n- B')
+        self.say('b', now - 200, 'Ask: What colour?\n- Red\n- Blue')
+        with mock.patch.object(chatroom, '_now', return_value=now - 100):
+            chatroom.record_dealt(self.rid)
+        self.assertEqual(asks.decisions(self.summary()), [])
+        self.assertEqual([c['mid'] for c in asks.open_cards(self.summary())], ['b', 'a'], 'the cards stay open in the chat')
+        self.say('c', now - 50, 'Ask: Ship it?\n- Yes\n- No')
+        self.assertEqual([c['mid'] for c in asks.decisions(self.summary())], ['c'])
 
     def test_same_ask(self):
         self.assertTrue(asks._same_ask('Item 9: cancel the old comeback call hedge when a new dyna-zero put episode starts?',

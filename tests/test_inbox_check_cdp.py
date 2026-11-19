@@ -107,6 +107,8 @@ async function main() {
   const run = async (p, B, po, pre, open) => {
     const cardSel = `${B}.querySelector('li.ibx-row[data-kind="check"]')`;
     await p.until(`!!${cardSel}`, 30000);
+    // #394: a PO chat's question is a row once its Decisions are read (the list says more may come till then).
+    await p.until(`!IBX.data.pending && !!${B}.querySelector('li.ibx-row[data-q]')`, 30000).catch(() => null);
     await p.away(); await sleep(200);
     out[pre + 'Before'] = await p.evalIn(state(B));
     await p.shot(pre + '-before');

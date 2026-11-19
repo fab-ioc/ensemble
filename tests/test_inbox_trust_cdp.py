@@ -20,6 +20,9 @@ messages near its start and a recent answer to check in the Inbox. Checked at
 * in a real PO chat (threaded, 300 turns after its card), the four rows of
   one card of four questions opened in turn, and the first again, the chat
   back on its newest page between: every open lands on the card;
+* a message the PO filed in a thread (its reply to the person's new thread):
+  opened from the Inbox, the thread's panel opens beside the chat and marks
+  it "From the Inbox"; the chat says nothing is missing;
 * the pages threw nothing.
 
 Screenshots go to $ENSEMBLE_SHOTS when it is set. Skipped without Node or Chrome.
@@ -183,6 +186,24 @@ async function main() {
       await sleep(400);
     }
     } catch (e) { out.threadedErr = String(e).slice(0, 300); }
+    // (8) a row whose message is filed in a thread: the thread's panel opens
+    // beside the chat and marks it as opened from the Inbox
+    try {
+    const SIDE = `PD.rt.get('thread:po')?.el.querySelector('iframe')`;
+    await latest(A.tpo, [A.card]);
+    const done = evalIn(`new Promise(res => { const on = ev => { const d = ev.data || {}; if (d.type === 'goto-done' && d.roomId === ${JSON.stringify(A.tpo)}) { window.removeEventListener('message', on); res({ ok: d.ok, why: d.why }); } };
+      window.addEventListener('message', on); setTimeout(() => res(null), 20000); })`);
+    await evalIn(`openMsgLink(${JSON.stringify(A.tpo)}, ${JSON.stringify(A.tmid)}, 'inbox'); 0`);
+    const mark = `(() => { const f = ${SIDE}; const d = f && f.contentDocument; const m = d && [...d.querySelectorAll('.msg[data-mid]')].find(e => e.dataset.mid === ${JSON.stringify(A.tmid)});
+      if (!m) return null; const b = d.getElementById('msgs').getBoundingClientRect(), r = m.getBoundingClientRect();
+      return { landed: m.classList.contains('ibx-landed'), label: ((m.querySelector('.lz-inbox') || {}).textContent || '').trim(), inside: r.bottom > b.top + 1 && r.top < b.bottom - 1 }; })()`;
+    out.thread = { m: await until(`(() => { const v = ${mark}; return v && v.landed ? v : null; })()`, 20000).catch(() => null) };
+    out.thread.last = await evalIn(mark);
+    out.thread.done = await done;
+    out.thread.inChannel = await evalIn(inF(`[...document.querySelectorAll('#msgs .msg[data-mid]')].some(e => e.dataset.mid === ${JSON.stringify(A.tmid)} && e.offsetParent)`, A.tpo));
+    out.thread.note = await evalIn(note(A.tpo));
+    await shot('thread-landed');
+    } catch (e) { out.threadErr = String(e).slice(0, 300); }
   } finally {
     try { ch.kill(); } catch (e) {}
   }
@@ -301,10 +322,13 @@ class InboxTrustInChrome(unittest.TestCase):
         tdir = base / "transcripts" / "C--po"
         tdir.mkdir(parents=True, exist_ok=True)
         (tdir / f"{sid}.jsonl").write_text("".join(json.dumps(x) + "\n" for x in lines), encoding="utf-8")
+        # The person sent "Brake turn 2." as a new thread: the PO's reply to it
+        # (turn 3) is filed in that thread, not in the channel (#367).
+        threads.note_send(rid, "", "send:brk", [], False, "Brake turn 2.", now=t0 + 40, new=True)
         points.sync(rid, force=True)
         threads._ensure_since(rid, t0 - 60)
         threads.build(rid, show_progress=False)
-        return {"tproj": proj["id"], "tpo": rid, "card": card}
+        return {"tproj": proj["id"], "tpo": rid, "card": card, "tmid": f"{sid}:3"}
 
     @classmethod
     def tearDownClass(cls):
@@ -372,6 +396,16 @@ class InboxTrustInChrome(unittest.TestCase):
                 self.assertTrue(r["partShown"], "its question is on screen (the card is taller than the chat)")
                 self.assertEqual(r["note"], "", r)
                 self.assertFalse(r["pending"], r)
+
+    def test_a_message_filed_in_a_thread_lands_in_its_panel_marked(self):
+        self.assertNotIn("threadErr", self.got)
+        t = self.got["thread"]
+        self.assertIsNotNone(t["m"], t)
+        self.assertTrue(t["m"]["inside"], t)
+        self.assertEqual(t["m"]["label"].lower(), "from the inbox", t)
+        self.assertFalse(t["inChannel"], "filed in the thread, not drawn in the channel")
+        self.assertEqual(t["note"], "", t)
+        self.assertTrue(t["done"] and t["done"]["ok"], t)
 
     def test_no_section_failed(self):
         for k in ("keepErr", "reloadErr", "pressErr"):

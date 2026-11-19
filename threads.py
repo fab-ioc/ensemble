@@ -1271,7 +1271,7 @@ def build(room_id: str, room: dict | None = None, *, show_progress: bool = True,
     _apply_names(out, side.get("names") or {})
     out["namesSig"] = names_sig
     try:
-        waiting, _older = points._LAST_DECISIONS.get(room_id) or ([], [])
+        waiting = list(points._LAST_DECISIONS.get(room_id) or [])
     except Exception:       # noqa: BLE001
         waiting = []
     open_mids = {c.get("mid") for c in waiting}
