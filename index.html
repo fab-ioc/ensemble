@@ -13589,6 +13589,8 @@ function rowExpandHide() {
     else rowExpandHostLet();
   }
   ROW_EXPAND = null;
+  // #394: an Inbox repaint held for the copy is drawn now.
+  try { ibxHoldEnd(); } catch (e) {}
 }
 // The card under a copy that just went (spec.host): the browser marks it :hover
 // only at the pointer's next move, so a press at once would miss its Close/Done.
@@ -17114,7 +17116,7 @@ function pdTabShown(room, front = false) {
 // says what came meanwhile, and polls now (session.html's `shown`). Not when
 // a link is taking it to one of its messages: that lands it (goto-msg).
 function pdWakeChat(f) {
-  if (!f || !f.contentWindow || GOTO_MSG.has(String(f.dataset.room || ''))) return;
+  if (!f || !f.contentWindow || gotoPending(String(f.dataset.room || ''))) return;
   try { f.contentWindow.postMessage({ ensemble: 'shown' }, location.origin); } catch (e) {}
 }
 // Brings a panel on screen: shown if hidden, in front of its stack, slid out
@@ -17654,12 +17656,17 @@ function ibxPaintIn(el, pid, key, phone, opts) {
     if (SW_CLEAR && SW_CLEAR.phase === 'confirm' && !SW_CLEAR_KEYS.length) SW_CLEAR = null;
     opts = { ...opts, clearHtml: swClearHtml(SW_CLEAR_KEYS), dismissible: SW_CLEAR_KEYS.needs || SW_CLEAR_KEYS };
   }
+  ibxPressWire(el.ownerDocument);
   const html = ibxHtml(IBX.data, IBX.scope, pid, Date.now() / 1000, phone === undefined ? key === 'phSig' : !!phone, opts);
   const sig = html.replace(/(<span class="(?:pdp-age|ibx-tm)"[^>]*>)[^<]*/g, '$1');
   if (sig === IBX[key]) {
     el.querySelectorAll('.pdp-age[data-at]').forEach(s => { const t = pdPtAge(+s.dataset.at); if (s.textContent !== t) s.textContent = t; });
     return;
   }
+  // #394: a poll's news is not drawn under a press on the list, nor under a
+  // row's hover copy: the press would land on rows that are gone. Drawn once
+  // it is over. (A repaint the person's own press asks for is drawn now.)
+  if (IBX.polled && ibxHeld(el)) { IBX.held = true; return; }
   // A repaint keeps the focus on the control it was on (Close, Undo…), where it still is.
   const f = document.activeElement && el.contains(document.activeElement) ? document.activeElement : null;
   const fk = f ? ['data-ibx-close', 'data-ibx-earlier', 'data-ibx-done', 'data-ibx-undo', 'data-ibx-go', 'data-ibx-cancel', 'data-ibx-bulk-undo', 'data-ibx-dismiss', 'data-clear']
@@ -17670,6 +17677,31 @@ function ibxPaintIn(el, pid, key, phone, opts) {
   if (fk) { const g = el.querySelector(fk); if (g) g.focus({ preventScroll: true }); }
 }
 function ibxRepaint() { IBX.sig = IBX.phSig = IBX.ldSig = ''; ibxPaint(); }
+// #394: a press on an Inbox list (its rows, or a row's hover copy over them),
+// from pointerdown until the click it makes has run; a press older than 10 s
+// (its pointerup missed) holds nothing.
+const IBX_PRESS = { el: null, at: 0 };
+function ibxHeld(el) {
+  if (IBX_PRESS.el && Date.now() - IBX_PRESS.at < 10000 && (el.contains(IBX_PRESS.el) || (ROW_EXPAND && ROW_EXPAND.copy && ROW_EXPAND.copy.contains(IBX_PRESS.el) && el.contains(ROW_EXPAND.row)))) return true;
+  return !!(ROW_EXPAND && ROW_EXPAND.row && ROW_EXPAND.row.isConnected && el.contains(ROW_EXPAND.row));
+}
+// The hold over: what came meanwhile is drawn (after the click's own work).
+function ibxHoldEnd() {
+  if (!IBX.held) return;
+  setTimeout(() => { if (IBX.held) { IBX.held = false; ibxPolledPaint(); } }, 0);
+}
+function ibxPolledPaint() {
+  IBX.polled = true;
+  try { ibxPaint(); } finally { IBX.polled = false; }
+}
+function ibxPressWire(doc) {
+  if (!doc || doc._ibxPress) return;
+  doc._ibxPress = true;
+  doc.addEventListener('pointerdown', e => { IBX_PRESS.el = e.target; IBX_PRESS.at = Date.now(); }, true);
+  const up = () => setTimeout(() => { IBX_PRESS.el = null; ibxHoldEnd(); }, 0);
+  doc.addEventListener('pointerup', up, true);
+  doc.addEventListener('pointercancel', up, true);
+}
 // #390: a computer's Inbox panel and its parts, by reference: out of the page's
 // document while a switch lays the docks out again, or popped out (in its
 // window's document), getElementById finds none of them (ibxPaint threw), and
@@ -17762,7 +17794,7 @@ function ibxPoll() {
       const t = Date.now();
       for (const [id, at] of IBX.hide) if (!have.has(id) || t - at > IBX_HIDE_S * 1000) IBX.hide.delete(id);
       IBX.data = d;
-      ibxPaint();
+      ibxPolledPaint();
     })
     .catch(() => {}).finally(() => {
       IBX.busy = false;
@@ -25574,7 +25606,8 @@ window.addEventListener('message', (ev) => {
     poColourBroadcast(ev.source);
     sendGotoMsg(String(d.roomId));
   }
-  if (d && d.type === 'goto-taken' && d.roomId && ev.origin === location.origin) GOTO_MSG.delete(String(d.roomId));
+  if (d && d.type === 'goto-taken' && d.roomId && ev.origin === location.origin) gotoTaken(String(d.roomId));
+  if (d && d.type === 'goto-done' && d.roomId && ev.origin === location.origin) gotoDoneHere(String(d.roomId), String(d.msg || ''), !!d.ok, String(d.why || ''));
   // #311: a PO chat's phone strip, Inbox ›.
   if (d && d.type === 'inbox-open' && ev.origin === location.origin) ibxOpen();
   if (d && d.type === 'chat-clicked' && ev.origin === location.origin) pdChatClicked(ev.source, !!d.menu);
@@ -25607,6 +25640,25 @@ window.addEventListener('message', (ev) => {
 // balloon to land on; a chat still loading is told when it starts
 // (chat-ready). A conversation that is neither here opens in a tab of its own.
 const GOTO_MSG = new Map();   // roomId → { msg, part }: message id and passage, until that chat has landed
+// #394: a balloon's link (at: when it was asked) is kept until its chat says
+// it landed or cannot (goto-done), so a chat page that starts again meanwhile
+// is asked again (chat-ready); given up after GOTO_MSG_MS. A thread's, or one
+// without at, is the chat's once it has taken it (goto-taken).
+const GOTO_MSG_MS = 30000;
+function gotoPending(rid) {
+  const g = GOTO_MSG.get(rid);
+  if (g && g.at && Date.now() - g.at > GOTO_MSG_MS) { GOTO_MSG.delete(rid); return null; }
+  return g || null;
+}
+function gotoTaken(rid) {
+  const g = GOTO_MSG.get(rid);
+  if (g && !(g.at && g.msg && !g.thread && !g.tmid)) GOTO_MSG.delete(rid);
+}
+function gotoDoneHere(rid, msg, ok, why) {
+  const g = GOTO_MSG.get(rid);
+  if (g && g.msg === msg) GOTO_MSG.delete(rid);
+  if (typeof ibxLanded === 'function') ibxLanded(rid, msg, ok, why);
+}
 function openMsgLink(rid, msg, part) {
   const pj = registeredProjects().find(p => p.poRoomId === rid && poRowOf(p));
   const row = ALL_ROWS.find(r => r.roomId === rid || r.sessionId === rid);
@@ -25614,7 +25666,7 @@ function openMsgLink(rid, msg, part) {
     window.open('/session?room=' + encodeURIComponent(rid) + '&msg=' + encodeURIComponent(msg) + (part ? '&part=' + encodeURIComponent(part) : ''), '_blank', 'noopener');
     return;
   }
-  GOTO_MSG.set(rid, { msg, part: part || '' });
+  GOTO_MSG.set(rid, { msg, part: part || '', at: Date.now() });
   if (pj) {
     openPoOf(pj);
   } else {
@@ -25625,7 +25677,7 @@ function openMsgLink(rid, msg, part) {
 // The chats framed here and in the Dock's pop-out windows (#343: a chat
 // popped out is told as well); hl: the Inbox highlight's length now.
 function sendGotoMsg(rid) {
-  const g = GOTO_MSG.get(rid);
+  const g = gotoPending(rid);
   if (!g) return;
   for (const d of [document, ...PD_POP_DOCS.keys()]) {
     let fs = [];
