@@ -156,6 +156,8 @@
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (s) {
         if (!s) return;
+        // The page's own settings read from this answer (session.html's Chat as a log, #401).
+        try { window.dispatchEvent(new CustomEvent('cd-settings', { detail: s })); } catch (e) {}
         // The hub's word for a board (static/noun.js): kept for the next load,
         // and the page told when it is not the word it painted with.
         if (s.projectNoun && window.setNoun && window.setNoun(s.projectNoun)) {
@@ -199,6 +201,27 @@
   sync();
 })();
 </script>
+<script>
+// #401 (P412): Settings › Preferences › Chat › Chat as a log, the hub's
+// chatLog, as data-chat-log="on" | "off" on the root (the CSS after Layout A
+// draws the log, on a computer only). localStorage['cd-chat-log'] is its
+// first-paint cache: Settings writes it, and the storage event that makes
+// reaches every open chat (frames, threads, popped-out windows) at once.
+(function () {
+  function set(v) { document.documentElement.dataset.chatLog = v === 'on' ? 'on' : 'off'; }
+  try { set(localStorage.getItem('cd-chat-log')); } catch (e) { set('off'); }
+  window.addEventListener('storage', function (ev) {
+    if (ev.key === 'cd-chat-log' || ev.key === null) { try { set(localStorage.getItem('cd-chat-log')); } catch (e) {} }
+  });
+  // The hub's choice, which another device may have changed (cdTheme.sync).
+  window.addEventListener('cd-settings', function (ev) {
+    var v = ev.detail && ev.detail.chatLog;
+    if (v !== 'on' && v !== 'off') return;
+    try { localStorage.setItem('cd-chat-log', v); } catch (e) {}
+    set(v);
+  });
+})();
+</script>
 <style>
   /* Design system tokens — see skills/ensemble-design/SKILL.md. Values are
      copied from index.html, the source of truth; one file per page means this
@@ -207,6 +230,11 @@
      it keep their own dark terminal theme, which is correct for a terminal. */
   :root {
     color-scheme: light;
+    /* #401: a task's colour, for its agents' labels in Chat as a log (SKILL.md
+       §2 Task identity). One set for every theme: white text on each is over
+       5:1, and none is a colour that means something (amber, the greens of
+       Send and done, red, the progress blue, the discovery violet). */
+    --c-task-1:#B34981; --c-task-2:#047B85; --c-task-3:#647612; --c-task-4:#9D6044; --c-task-5:#8A5A9C;
     --fs-100: 11px;
     --fs-400: 16px;
     --touch-min: 44px;   /* the smallest thing a finger taps, on a phone */
@@ -1619,6 +1647,45 @@
     .msg.claude .from, .msg.codex .from { color:var(--fg-muted); }
     .msg.user.has-under:not(.hub) { border:0; background:transparent; }
     .msg.user.has-under > .bal { border:1px solid transparent; }
+  }
+  /* ---- Chat as a log (#401: issues 58, 63, 62; P412) ---------------------
+     Settings › Preferences › Chat › Chat as a log (data-chat-log="on" on the
+     root). A computer only: a phone keeps its chat. Every item on the left,
+     the person's own with its tint; exactly one thin line between any two
+     items, in the middle of a 21px gap (no DOM separators: each item but the
+     first draws the line above it, across the column, 100cqw of #msgs); the
+     points' bar ("answers Pn · Ack · Comment") the last line of its message.
+     A thread's line stays with the message above it. Labels by author: the
+     person in their accent, the PO as before (its project's colour), a task's
+     agents in the task's colour (data-tc on the label, from its number). */
+  @media not all and (pointer: coarse) {
+    :root[data-chat-log="on"] #msgs { gap:21px; container-type:inline-size; }
+    /* The items: balloons, folded and group rows, the catch-up note, checkpoint and
+       rotation lines, "Show more" notes, a thread's work log. A thread's line is part
+       of its balloon: .thr-line and .thr-in.after close the one above;
+       a channel's .thr-in starts the one below. */
+    :root[data-chat-log="on"] #msgs > :is(.msg, .msg-fold, .catchup, .cp-line, .rot-line, .fold-note, .thr-work, .thr-in) { position:relative; margin-block:0; }
+    :root[data-chat-log="on"] #msgs > :is(.msg, .msg-fold, .catchup, .cp-line, .rot-line, .fold-note, .thr-work, .thr-in):not(:first-child)::before { content:''; position:absolute; left:0; top:-11px;
+      width:100cqw; height:1px; background:var(--border); pointer-events:none; }
+    :root[data-chat-log="on"] #msgs > :is(.cp-line, .rot-line)::before { flex:none; margin:0; border-top:0; }
+    :root[data-chat-log="on"] #msgs > .cp-line:first-child::before, :root[data-chat-log="on"] #msgs > .rot-line::after { content:none; }
+    :root[data-chat-log="on"] #msgs > .rot-line { justify-content:flex-start; }
+    :root[data-chat-log="on"] #msgs > .msg-fold.hub { border:0; }
+    :root[data-chat-log="on"] .msg.user:not(.hub), :root[data-chat-log="on"] .thr-line.mine, :root[data-chat-log="on"] .thr-in.mine { align-self:flex-start; }
+    :root[data-chat-log="on"] .msg.user.has-under { align-items:flex-start; }
+    :root[data-chat-log="on"] .msg .pt-under .pt-bar, :root[data-chat-log="on"] .pt-now { justify-content:flex-start; }
+    :root[data-chat-log="on"] .msg :not(.pt-under) > .pt-bar { border-top:0; padding-top:0; margin-top:var(--s-100); }
+    :root[data-chat-log="on"] #msgs > .thr-line { margin:calc(var(--s-050) - 21px) 0 0; }
+    :root[data-chat-log="on"] #msgs > :is(.msg, .msg-fold) + .thr-in.after { margin-top:calc(var(--s-050) - 21px); }
+    :root[data-chat-log="on"] #msgs > .thr-in.after::before { content:none; }
+    :root[data-chat-log="on"] #msgs > .thr-in:not(.after) + :is(.msg, .msg-fold) { margin-top:calc(var(--s-050) - 21px); }
+    :root[data-chat-log="on"] #msgs > .thr-in:not(.after) + :is(.msg, .msg-fold)::before { content:none; }
+    :root[data-chat-log="on"] .rl.person { background:var(--accent); color:var(--accent-fg); box-shadow:none; }
+    :root[data-chat-log="on"] .rl[data-tc="1"] { background:var(--c-task-1); color:#FFFFFF; }
+    :root[data-chat-log="on"] .rl[data-tc="2"] { background:var(--c-task-2); color:#FFFFFF; }
+    :root[data-chat-log="on"] .rl[data-tc="3"] { background:var(--c-task-3); color:#FFFFFF; }
+    :root[data-chat-log="on"] .rl[data-tc="4"] { background:var(--c-task-4); color:#FFFFFF; }
+    :root[data-chat-log="on"] .rl[data-tc="5"] { background:var(--c-task-5); color:#FFFFFF; }
   }
   /* ---- Phone (SKILL.md §8) ---------------------------------------------
      Keyed on a touch screen, not on width: on a desktop this page sits in the
@@ -3397,7 +3464,7 @@ const foldShort = t => { t = String(t || '').trim(); return t.length > 40 ? t.sl
 // its room id.
 // pointOpen: whether an ask (P12) of the person's still waits on them or on
 // the agent: open, in progress, or answered and not yet acknowledged.
-const CHAT_NAMES = { operator: 'you', po: '', taskNo: () => null,
+const CHAT_NAMES = { operator: 'you', po: '', taskNo: () => null, selfNo: 0,
   pointOpen: id => { const p = POINTS.byId.get(id); return !!p && ['open', 'planned', 'delivered'].includes(p.state); } };
 const TASK_ADDR_RE = /^([^@\s]+)@(room-[\w-]+)$/;
 // A seat's own identity (claude, codex-2): in a PO's room every one is the PO (#232).
@@ -3481,6 +3548,10 @@ function seatRole(id) {
   return p ? roleWord(p.role) : '';
 }
 // { cls, text, note }: the label a message's sender takes.
+// #401: a task's colour (1..5, --c-task-N) for its agents' labels, from its number; 0 for none.
+// The PO, the person, the hub and an outside sender never take one.
+const taskTc = (cls, no) => no > 0 && (cls === 'engineer' || cls === 'reviewer' || cls === 'other') ? no % 5 + 1 : 0;
+const tcAttr = (cls, no) => { const c = taskTc(cls, no); return c ? ` data-tc="${c}"` : ''; };
 function roleLabel(m, N = CHAT_NAMES) {
   const st = m.senderType || '';
   // A line from outside (POST /api/room/notify) carries noticeKind 'external'; a PO view's copy, senderType.
@@ -3492,14 +3563,18 @@ function roleLabel(m, N = CHAT_NAMES) {
   if (isPoMsg(m) || st === 'po') return { cls: 'po', text: senderName(m, N) };
   const t = taskReport(m);
   // A report: its sender's role in the label; the task and the review round beside it, quiet.
-  if (t) { const rev = reportBase(m) === 'review', r = rev ? reviewRound(m) : 0;
-    return { cls: rev ? 'reviewer' : 'engineer', text: rev ? 'reviewer' : 'engineer', note: taskName(t, N) + (r ? ' · review ' + r : '') }; }
+  if (t) { const rev = reportBase(m) === 'review', r = rev ? reviewRound(m) : 0, name = taskName(t, N);
+    return { cls: rev ? 'reviewer' : 'engineer', text: rev ? 'reviewer' : 'engineer', note: name + (r ? ' · review ' + r : ''),
+             tno: +m.taskNo || titleNo(m.taskTitle) || titleNo(name) || 0 }; }
   if (m.from === 'ensemble' || isHubInput(m)) return { cls: 'hub', text: senderName(m, N) };
   if (m.from === 'user') return { cls: 'person', text: N.operator };
   if (N.po && (m.from === N.po || SEAT_ID_RE.test(String(m.from || '')))) return { cls: 'po', text: 'PO' };
   const role = roleWord(m.seat && m.seat.role) || seatRole(m.from);
-  if (TASK_ADDR_RE.test(String(m.from || ''))) return { cls: role ? roleCls(role) : 'other', text: whoName(m.from, N) };
-  return role ? { cls: roleCls(role), text: role } : { cls: 'other', text: whoName(m.from, N) };
+  const addr = String(m.from || '').match(TASK_ADDR_RE);
+  if (addr) return { cls: role ? roleCls(role) : 'other', text: whoName(m.from, N), tno: +N.taskNo(addr[2]) || 0 };
+  // A task's own agents: the task's number (none in a PO's room, where every seat is the PO).
+  const tno = N.po ? 0 : +N.selfNo || 0;
+  return role ? { cls: roleCls(role), text: role, tno } : { cls: 'other', text: whoName(m.from, N), tno };
 }
 // The recipient's word in a task chat ("you", "reviewer"); none in a PO's room,
 // where every message is between the person and the PO.
@@ -3549,7 +3624,7 @@ function whoHtml(m, N = CHAT_NAMES, o = {}) {
   const otherPo = isPoMsg(m) || (r.cls === 'po' && r.note === 'outside line');
   const poOrigin = r.cls === 'po' && (m.fromProjectId ? ` data-po-project="${esc(m.fromProjectId)}"`
     : poName || otherPo ? ` data-po-name="${esc(poName)}"` : '');
-  return `<span class="who rl ${r.cls}${r.cls === 'hub' ? ' hub-who' : ''}"${poOrigin || ''}${pop ? ' tabindex="0"' : ''}>${esc(r.text)}${pop}</span>`
+  return `<span class="who rl ${r.cls}${r.cls === 'hub' ? ' hub-who' : ''}"${poOrigin || ''}${tcAttr(r.cls, r.tno)}${pop ? ' tabindex="0"' : ''}>${esc(r.text)}${pop}</span>`
     + (r.note ? `<span class="rl-note">${esc(r.note)}</span>` : '')
     + (to ? ` <span class="to">→ <b>${esc(to)}</b></span>` : '');
 }
@@ -6797,6 +6872,9 @@ function chatNamesFor(room, solo) {
     po = solo ? ((agents[0] && agents[0].identity) || 'claude') : rep ? rep.to : (agents[0] && agents[0].identity) || '';
   }
   if (po !== CHAT_NAMES.po) { CHAT_NAMES.po = po; refChanged(); }
+  // #401: a task's own number, for its agents' colour in Chat as a log.
+  const selfNo = !po && room && +room.no || 0;
+  if (selfNo !== CHAT_NAMES.selfNo) { CHAT_NAMES.selfNo = selfNo; refChanged(); }
   composePlaceholder(!!po, solo);
 }
 // The box's one hint, short: who it goes to, how to direct it, and the keys.
@@ -8337,7 +8415,7 @@ function threadLineHtml(tid, mine) {
   const on = TS && TS.tid === tid;
   return `<div class="thr-line${unread ? ' unread' : ''}${mine ? ' mine' : ''}${on ? ' on' : ''}" data-thr-line="${esc(tid)}" data-last-mid="${esc(t.lastMid || '')}" data-key="thr:${esc(tid)}:${n}:${work}:${unread}:${esc(t.state || '')}:${+t.lastAt || 0}:${on ? 1 : 0}:${hide ? 1 : 0}">`
     + `<button type="button" class="thr-open" data-thr="${esc(tid)}" title="Open the thread beside the chat" aria-label="${esc(label + (unread ? ', ' + unread + ' new' : '') + '. Open the thread “' + (t.title || '') + '”')}">`
-    + (who.length ? `<span class="thr-who" aria-hidden="true">${who.map(w => `<span class="rl ${esc(w.cls)}"${w.cls === 'po' && w.projectId ? ` data-po-project="${esc(w.projectId)}"` : w.cls === 'po' && (w.projectName || w.otherProject) ? ` data-po-name="${esc(w.projectName || '')}"` : ''}>${esc(w.cls === 'person' ? OPERATOR || 'you' : w.text)}</span>`).join('')}</span>` : '')
+    + (who.length ? `<span class="thr-who" aria-hidden="true">${who.map(w => `<span class="rl ${esc(w.cls)}"${tcAttr(w.cls, +w.taskNo || (CHAT_NAMES.po ? 0 : +CHAT_NAMES.selfNo || 0))}${w.cls === 'po' && w.projectId ? ` data-po-project="${esc(w.projectId)}"` : w.cls === 'po' && (w.projectName || w.otherProject) ? ` data-po-name="${esc(w.projectName || '')}"` : ''}>${esc(w.cls === 'person' ? OPERATOR || 'you' : w.text)}</span>`).join('')}</span>` : '')
     + `<span class="thr-count">${label}</span>`
     + `<span class="thr-ago" data-ts="${+t.lastAt || 0}"${n ? '' : ' data-started="1"'}>${n ? 'Last reply' : 'Started'} ${esc(thrAgo(t.lastAt))}</span>`
     + (unread ? `<span class="thr-dot" role="img" aria-label="New replies" title="${unread} new repl${unread === 1 ? 'y' : 'ies'}"></span>` : '')
@@ -8349,7 +8427,7 @@ function threadLineHtml(tid, mine) {
 function threadMarkHtml(m) {
   if (THREAD_MODE) {
     const also = (m.alsoIn || []).filter(t => THR_META[t] || t);
-    return also.length ? `<div class="thr-in${m.from === 'user' ? ' mine' : ''}" data-key="thr-in:${esc(m.id)}:${esc(also.join(','))}">Also in ${also.map(t => `<button type="button" class="thr-open" data-thr="${esc(t)}">${esc(/^P\d/.test(t) ? t : 'another thread')}</button>`).join(', ')}</div>` : '';
+    return also.length ? `<div class="thr-in after${m.from === 'user' ? ' mine' : ''}" data-key="thr-in:${esc(m.id)}:${esc(also.join(','))}">Also in ${also.map(t => `<button type="button" class="thr-open" data-thr="${esc(t)}">${esc(/^P\d/.test(t) ? t : 'another thread')}</button>`).join(', ')}</div>` : '';
   }
   if (!m.inThr) return '';
   // A reply that is in the chat too (Slack's "Also send to #channel", #234):

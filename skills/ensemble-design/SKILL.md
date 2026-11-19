@@ -206,6 +206,19 @@ rendering the *identical* fill as the `In review` lozenge in the same row.
 bold, below the large-text threshold, so there is no exemption. Note that `claude` and `codex` both
 begin with **C** — colour is load-bearing in that circle, not decorative.
 
+### Task identity (#401)
+
+`--c-task-1` … `--c-task-5` (raspberry `#B34981`, teal `#047B85`, olive `#647612`, clay `#9D6044`,
+plum `#8A5A9C`), on `:root` of `session.html`, one set for every theme. Used only in **Chat as a
+log** (Settings › Preferences › Chat, the hub's `chatLog`; `<html data-chat-log="on">`, a computer
+only): a task's agents' labels (engineer, reviewer, another seat) take task number % 5 + 1
+(`data-tc`), the same colour in its own chat and in its PO's chat, white text. The person's label is
+`--accent`; the PO's keeps its project colour; the hub and an outside sender stay neutral.
+
+They say **which task**, never **what**: each clears 5:1 with white, and each sits ≥ 0.07 OKLab from
+every success / warning / danger / progress / discovery / neutral fg and bold token of all themes and
+from the default accent, and ≥ 0.086 from each other. A sixth needs the same measurement.
+
 ### Tool identity
 
 `--tool-points` (Needs you, amber) · `--tool-changes` (green) · `--tool-workspace` (Files, blue) ·

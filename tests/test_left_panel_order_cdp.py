@@ -259,12 +259,13 @@ async function main() {
         return { sh: n.scrollHeight, ch: n.clientHeight, w: Math.round(r.width), cx: Math.round(r.left + 30), cy: Math.round(r.top + 8) }; })()`);
       o.card = card ? { row: card, ...(await hover(p, card.cx, card.cy)) } : null;
       await p.shot('hover-inbox-card');
-      // the card's Close sits under the copy: shown, and the first click there closes the card (no focus before)
+      // The raised card keeps its hover panel beside it; its first Close click reaches the card (no focus before).
       if (card) {
-        o.cardClose = await p.evalIn(`(() => { const b = document.querySelector('#ld-ibx-body .ibx-row[data-ibx="q337"] [data-ibx-close]'); if (!b) return null; const r = b.getBoundingClientRect();
+        o.cardClose = await p.evalIn(`(() => { const b = document.querySelector('.ibx-side [data-side-key="ibxClose"]'); if (!b) return null; const r = b.getBoundingClientRect(), card = document.querySelector('#ld-ibx-body .ibx-row[data-ibx="q337"]').getBoundingClientRect();
           const x = Math.round(r.left + r.width / 2), y = Math.round(r.top + r.height / 2), top = document.elementFromPoint(x, y);
           window._acts337 = []; window._act337 = ibxRowAct; ibxRowAct = (...a) => { window._acts337.push(a.slice(0, 2)); };
-          return { w: Math.round(r.width), h: Math.round(r.height), x, y, underCopy: !!(top && top.closest('.row-expanded')), raised: !!document.querySelector('.row-expanded'), focus: document.activeElement === document.body }; })()`);
+          return { w: Math.round(r.width), h: Math.round(r.height), x, y, beside: r.left >= card.right + 7,
+            hit: !!(top && top.closest('.ibx-side [data-side-key="ibxClose"]')), raised: !!document.querySelector('.row-expanded'), focus: document.activeElement === document.body }; })()`);
         if (o.cardClose) {
           await p.clickAt(o.cardClose.x, o.cardClose.y); await sleep(300);
           o.cardClose.acts = await p.evalIn('(() => { const a = window._acts337; ibxRowAct = window._act337; return a; })()');
@@ -279,7 +280,8 @@ async function main() {
         o.cardKey = { focused: await p.evalIn(`({ copy: !!document.querySelector('.row-expanded'), host: document.querySelectorAll('.row-expand-host').length })`) };
         await p.evalIn(`(${LINK}.blur(), 0)`); await sleep(300);
         o.cardKey.blurred = await p.evalIn(`(() => { const b = document.querySelector('#ld-ibx-body .ibx-row[data-ibx="q337"] [data-ibx-close]'); const r = b ? b.getBoundingClientRect() : null;
-          return { copy: !!document.querySelector('.row-expanded'), host: document.querySelectorAll('.row-expand-host').length, held: !!ROW_EXPAND_HOST, focus: document.activeElement === document.body, closeShown: !!(r && r.width && r.height) }; })()`);
+          return { copy: !!document.querySelector('.row-expanded'), host: document.querySelectorAll('.row-expand-host').length, held: !!ROW_EXPAND_HOST, focus: document.activeElement === document.body,
+            closeShown: !!(r && r.width && r.height && +getComputedStyle(b.parentElement).opacity > 0.5) }; })()`);
       }
       await away(p);
       await p.evalIn(`(() => { IBX.data = window._ibx337b; IBX.busy = false; ibxRepaint(); return 0; })()`);
@@ -626,8 +628,8 @@ class LeftPanelOrderInChrome(unittest.TestCase):
 
     def test_a_raised_card_s_close_takes_the_first_click(self):
         c = self.w()["cardClose"]
-        self.assertIsNotNone(c, "the card has Close")
-        self.assertTrue(c["raised"] and c["underCopy"], "Close sits under the raised copy")
+        self.assertIsNotNone(c, "the raised card has Close in its side panel")
+        self.assertTrue(c["raised"] and c["beside"] and c["hit"], "Close is beside the raised copy and can be hit")
         self.assertTrue(c["focus"], "nothing focused before")
         self.assertGreater(c["w"] * c["h"], 0, "Close stays shown while the copy is up")
         self.assertEqual(c["acts"], [["q337", "Closed"]], "the first click closed the card")

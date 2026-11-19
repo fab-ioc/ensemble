@@ -145,6 +145,8 @@
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (s) {
         if (!s) return;
+        // The page's own settings read from this answer (session.html's Chat as a log, #401).
+        try { window.dispatchEvent(new CustomEvent('cd-settings', { detail: s })); } catch (e) {}
         // The hub's word for a board (static/noun.js): kept for the next load,
         // and the page told when it is not the word it painted with.
         if (s.projectNoun && window.setNoun && window.setNoun(s.projectNoun)) {
