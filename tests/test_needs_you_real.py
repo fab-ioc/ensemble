@@ -94,10 +94,17 @@ class AFinishedReport(_Needs):
         chatroom.record_dealt(self.rid)
         self.assertIsNone(self.reported())
 
-    def test_the_agents_next_report_takes_its_place(self):
+    def test_an_update_after_it_leaves_it_to_check(self):
+        # #394 review 2 (P395): only Done is being done with it, not the agent's update.
         self.report("completed", "Done.")
         self.report("update", "Working on the follow-up.")
+        self.assertEqual(self.reported()["line"], "Done.")
+        chatroom.record_dealt(self.rid)
         self.assertIsNone(self.reported())
+
+    def test_the_agents_next_finished_report_takes_its_place(self):
+        self.report("completed", "Done.")
+        self.report("update", "Working on the follow-up.")
         self.report("completed", "Follow-up done.")
         self.assertEqual(self.reported()["line"], "Follow-up done.")
 

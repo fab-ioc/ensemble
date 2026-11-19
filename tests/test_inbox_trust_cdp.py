@@ -222,6 +222,22 @@ async function main() {
     out.threadFail.failed = await evalIn(`IBX.failed.has(${JSON.stringify(out.threadFail.row)})`);
     await shot('thread-fail');
     } catch (e) { out.threadFailErr = String(e).slice(0, 300); }
+    // (10) #394 review 2: a link no chat answers (its goto-done never reaches the
+    // dashboard): after GOTO_MSG_MS the row pressed says it could not be loaded.
+    try {
+    await evalIn(`(() => { GOTO_MSG_MS = 1500; IBX.failed.clear(); const r = IBX.data.rows.find(x => x.roomId === ${JSON.stringify(A.tpo)}); IBX.pressed = { id: r.id, rid: r.roomId, mid: ${JSON.stringify(A.tmid)}, at: Date.now() };
+      window.__ibxRow = r.id; window.__g0 = gotoDoneHere; gotoDoneHere = (rid, msg, ...r) => msg === ${JSON.stringify(A.tmid)} ? undefined : window.__g0(rid, msg, ...r); return 0; })()`);
+    out.silent = { row: await evalIn('window.__ibxRow') };
+    await evalIn(`openMsgLink(${JSON.stringify(A.tpo)}, ${JSON.stringify(A.tmid)}, 'inbox'); 0`);
+    out.silent.pendingSoon = await evalIn(`GOTO_MSG.has(${JSON.stringify(A.tpo)})`);
+    await sleep(2500);
+    out.silent.pendingAfter = await evalIn(`GOTO_MSG.has(${JSON.stringify(A.tpo)})`);
+    out.silent.failed = await evalIn(`IBX.failed.has(window.__ibxRow)`);
+    out.silent.rowNote = await evalIn(`(() => { const li = LD_INBOX.querySelector('li.ibx-row[data-ibx="' + CSS.escape(window.__ibxRow) + '"]'); const n = li && li.querySelector('.ibx-fail'); return n ? n.textContent : ''; })()`);
+    out.silent.stillPressed = await evalIn('!!IBX.pressed');
+    await evalIn("GOTO_MSG_MS = 30000; gotoDoneHere = window.__g0; 0");
+    await shot('silent');
+    } catch (e) { out.silentErr = String(e).slice(0, 300); }
   } finally {
     try { ch.kill(); } catch (e) {}
   }
@@ -435,6 +451,16 @@ class InboxTrustInChrome(unittest.TestCase):
         self.assertTrue(f["chatNote"].startswith("The linked message was not found in this conversation."), f)
         self.assertTrue(f["failed"], f)
         self.assertTrue(f["rowNote"].startswith("Could not open this message"), f)
+
+    def test_a_link_no_chat_answers_says_so_on_its_row(self):
+        self.assertNotIn("silentErr", self.got)
+        f = self.got["silent"]
+        self.assertTrue(f["pendingSoon"], f)
+        self.assertFalse(f["pendingAfter"], f)
+        self.assertTrue(f["failed"], f)
+        self.assertIn("could not be loaded", f["rowNote"], f)
+        # Kept pressed: a real result that still comes puts the note right.
+        self.assertTrue(f["stillPressed"], f)
 
     def test_no_section_failed(self):
         for k in ("keepErr", "reloadErr", "pressErr"):

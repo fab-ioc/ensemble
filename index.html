@@ -17612,6 +17612,7 @@ function ibxPaint() {
     ldSplitApply();
   }
   ibxStrip();
+  ibxCountsOut();
   if (!el) return;
   // #311: on a phone the dock's Inbox is a full tab, drawn with the phone's touch sizes.
   const phone = !!(PD.dock && PD.dock.narrow());
@@ -17663,6 +17664,26 @@ function ibxPaintIn(el, pid, key, phone, opts) {
   el.innerHTML = html;
   if (fk) { const g = el.querySelector(fk); if (g) g.focus({ preventScroll: true }); }
 }
+// #394: the counts drawn elsewhere while open (the project switcher's, a
+// project settings' sample row) follow the Inbox's, in place.
+function ibxCountsOut() {
+  const m = document.getElementById('proj-menu');
+  if (m && !m.hidden) m.querySelectorAll('.pm-item[data-proj]:not(.pm-set)').forEach(b => {
+    const n = projInboxN(b.dataset.proj);
+    let c = b.querySelector('.pm-needs');
+    if (!n) { if (c) c.remove(); return; }
+    if (!c) { c = document.createElement('span'); c.className = 'pm-needs'; b.appendChild(c); }
+    if (c.textContent !== String(n)) c.textContent = String(n);
+    c.title = `${n} in your Inbox`;
+  });
+  document.querySelectorAll('.ps-sample .ps-srow[data-ps-pid]').forEach(r => {
+    const n = IBX.data ? ibxLiveN(ibxRows(IBX.data, 'project', r.dataset.psPid)) : 0;
+    let c = r.querySelector('.ldp-n');
+    if (!n) { if (c) c.remove(); return; }
+    if (!c) { c = document.createElement('span'); c.className = 'ldp-n'; r.appendChild(c); }
+    if (c.textContent !== String(n)) c.textContent = String(n);
+  });
+}
 function ibxRepaint() { IBX.sig = IBX.phSig = IBX.ldSig = ''; ibxPaint(); }
 // #394 (P394 drawing, part 2 option 1): the row's note when its message could
 // not be opened. Its chat says why (gotoFail); a message it could not load
@@ -17679,10 +17700,11 @@ function ibxFailHtml(r, why) {
 // (goto-done): the row pressed for it says so when it could not. Only the
 // row pressed: four rows of one message share the landing, not the note.
 const IBX_PRESSED_MS = 60000;
-function ibxLanded(rid, msg, ok, why) {
+// late: no chat said in time; the press stays, so a result that still comes counts.
+function ibxLanded(rid, msg, ok, why, late) {
   const p = IBX.pressed;
   if (!p || p.rid !== rid || p.mid !== msg || Date.now() - p.at > IBX_PRESSED_MS) return;
-  IBX.pressed = null;
+  if (!late) IBX.pressed = null;
   const had = IBX.failed.has(p.id);
   if (ok) IBX.failed.delete(p.id); else IBX.failed.set(p.id, why || '');
   if (!ok || had) ibxRepaint();
@@ -19951,7 +19973,7 @@ function psDialogHtml(pj, d, phone) {
   const small = sq ? ldpTile(pj.id, psName(d.name) || pj.name)
     : (src ? `<span class="ldp-ico ldp-pic"><img src="${esc(src)}" alt=""></span>` : '<span class="ldp-ico"></span>');
   let n = 0;
-  try { n = IBX.data ? ibxRows(IBX.data, 'project', pj.id).length : 0; } catch (e) {}
+  try { n = IBX.data ? ibxLiveN(ibxRows(IBX.data, 'project', pj.id)) : 0; } catch (e) {}
   const save = psCanSave(pj, d);
   return `<h3 class="ps-h">${ldpSwatch(pj.id)}<span class="ps-title">${esc(nounText('{Project} settings'))}</span>`
     + `<button type="button" class="ps-x" id="ps-x" aria-label="Close" title="Close">✕</button></h3>`
@@ -19974,7 +19996,7 @@ function psDialogHtml(pj, d, phone) {
     + (d.iconErr ? `<p class="ps-err" role="alert">${esc(d.iconErr)}</p>` : '')
     + `<p class="ps-hint">${phone ? 'PNG, JPEG, SVG or WebP, up to 1 MB, or Generate. Cropped to a square.'
         : "PNG, JPEG, SVG or WebP, up to 1 MB, or Generate. A picture that is not square is cropped to its middle. It shows in place of the square at the square's size:"}</p>`
-    + (phone ? '' : `<div class="ps-sample"><span class="ldp-row ps-srow" aria-current="true">${small}<span class="ldp-name">${esc(psName(d.name) || pj.name)}</span>${n ? `<span class="ldp-n">${n}</span>` : ''}</span></div>`)
+    + (phone ? '' : `<div class="ps-sample"><span class="ldp-row ps-srow" aria-current="true" data-ps-pid="${esc(pj.id)}">${small}<span class="ldp-name">${esc(psName(d.name) || pj.name)}</span>${n ? `<span class="ldp-n">${n}</span>` : ''}</span></div>`)
     // P366: the hint under the sample (the hint above ends on it with a colon).
     + `<p class="ps-hint ps-chint">${esc(nounText("An uploaded picture's main colour becomes the {project}'s colour."))}</p>`
     + '</div>'
@@ -24641,8 +24663,9 @@ function projMatches(projects, q) {
   return (projects || []).filter(p => p && (!t || String(p.name || '').toLowerCase().includes(t) || String(p.key || '').toLowerCase().includes(t)))
     .sort((a, b) => ((a.id === UNASSIGNED_ID) - (b.id === UNASSIGNED_ID)) || String(a.name).localeCompare(String(b.name)));
 }
+// #394: what waits in that project, counted as the Inbox counts it (a row waiting on its Undo is not).
 function projInboxN(pid) {
-  return IBX.data ? (IBX.data.rows || []).filter(r => r.projectId === pid).length : 0;
+  return IBX.data ? ibxLiveN((IBX.data.rows || []).filter(r => r.projectId === pid)) : 0;
 }
 function projItemHtml(pj, here, cls) {
   const n = projInboxN(pj.id);
@@ -25649,7 +25672,7 @@ const GOTO_MSG = new Map();   // roomId → { msg, part }: message id and passag
 // it landed or cannot (goto-done), so a chat page that starts again meanwhile
 // is asked again (chat-ready); given up after GOTO_MSG_MS. A thread's, or one
 // without at, is the chat's once it has taken it (goto-taken).
-const GOTO_MSG_MS = 30000;
+let GOTO_MSG_MS = 30000;     // (let: a test shortens it)
 function gotoPending(rid) {
   const g = GOTO_MSG.get(rid);
   if (g && g.at && Date.now() - g.at > GOTO_MSG_MS) { GOTO_MSG.delete(rid); return null; }
@@ -25671,7 +25694,16 @@ function openMsgLink(rid, msg, part) {
     window.open('/session?room=' + encodeURIComponent(rid) + '&msg=' + encodeURIComponent(msg) + (part ? '&part=' + encodeURIComponent(part) : ''), '_blank', 'noopener');
     return;
   }
-  GOTO_MSG.set(rid, { msg, part: part || '', at: Date.now() });
+  const g = { msg, part: part || '', at: Date.now() };
+  GOTO_MSG.set(rid, g);
+  // #394 review 2: no chat said (a thread's page that never loaded, a chat
+  // that never started): the row pressed says it could not be loaded; a
+  // result that still comes puts it right.
+  setTimeout(() => {
+    if (GOTO_MSG.get(rid) !== g) return;
+    GOTO_MSG.delete(rid);
+    if (typeof ibxLanded === 'function') ibxLanded(rid, msg, false, 'The linked message could not be loaded. Reload the page to try again.', true);
+  }, GOTO_MSG_MS);
   if (pj) {
     openPoOf(pj);
   } else {

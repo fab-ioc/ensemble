@@ -135,7 +135,16 @@ async function main() {
       out.closing = await geo(p); await p.shot(A.scene + '-closing');
       // The PO chat's phone strip counts agree (ibxStripCounts writes them on its frame).
       out.closingStrip = await p.evalIn(`ibxStripCounts(${JSON.stringify(A.ids.opTen)}).q + ibxStripCounts(${JSON.stringify(A.ids.Motors)}).q`);
-      await p.click(`document.querySelector('#ld-ibx-body [data-ibx-undo]')`); await sleep(300);
+      // #394 review 2: the project switcher, open meanwhile, counts as the Inbox does, while open.
+      const pmN = `[...document.querySelectorAll('#proj-menu .pm-item:not(.pm-set)[data-proj="${A.ids.opTen}"]')].map(b => (b.querySelector('.pm-needs') || {}).textContent || '')`;
+      await p.evalIn('openProjMenu(), 0'); await sleep(200);
+      out.menuClosing = await p.evalIn(pmN);
+      // (Undo pressed by hand closes the switcher, as any press outside it; called here, as a count that changes while it is open.)
+      await p.evalIn(`(() => { const b = document.querySelector('#ld-ibx-body [data-ibx-undo]'); ibxRowUndo(b.dataset.ibxUndo, document.getElementById('ld-ibx-body')); return 0; })()`); await sleep(300);
+      out.menuUndone = await p.evalIn(pmN);
+      out.menuSetBare = await p.evalIn(`document.querySelectorAll('#proj-menu .pm-set .pm-needs').length === 0`);
+      out.menuOpen = await p.evalIn(`!document.getElementById('proj-menu').hidden`);
+      await p.evalIn('closeProjMenu(), 0'); await sleep(200);
       out.undone = await geo(p);
       out.undoneStrip = await p.evalIn(`ibxStripCounts(${JSON.stringify(A.ids.opTen)}).q + ibxStripCounts(${JSON.stringify(A.ids.Motors)}).q`);
     }
@@ -286,6 +295,10 @@ class EveryOpenCardIsARowInChrome(unittest.TestCase):
         self.assertRegex(c["title"], r"·\s*13$", c["title"])
         self.assertRegex(u["title"], r"·\s*14$", u["title"])
         self.assertEqual((g["closingStrip"], g["undoneStrip"]), (13, 14), "the PO chats' strip counts")
+        self.assertTrue(g["menuClosing"] and set(g["menuClosing"]) == {"9"}, g["menuClosing"])
+        self.assertTrue(set(g["menuUndone"]) == {"10"}, g["menuUndone"])
+        self.assertTrue(g["menuOpen"], "counted again while it stays open")
+        self.assertTrue(g["menuSetBare"], "its settings items get no count")
 
     def test_mixed_asked_again_counts_both_and_cleared_none(self):
         a = self.got["mixed"]["all"]

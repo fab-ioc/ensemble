@@ -866,15 +866,19 @@ def _report_to_check(room: dict, msgs: list, po: str | None = None) -> dict | No
     ``{from, ts, id, line}``, or None. Unlike :func:`_open_to_human`, the
     person writing in the chat (here or in a terminal) does not settle it:
     only Done (``set_aside``, read by :func:`_reported`) does, or the agent's
-    own later report (an update, a question, a newer completed). A report to
-    the PO (it has one and the task still does) is the PO's to check."""
+    own newer completed report, which takes its place. An update, a
+    question or a blocked report after it leaves it to check (#394 review 2:
+    only Done is being done with it). A newest completed report to the PO
+    (it has one and the task still does) is the PO's to check."""
     agents = {p.get("identity") for p in room.get("participants", [])
               if p.get("kind") == "agent"}
     reports = [r for r in (room.get("lastReport"), room.get("lastRealReport")) if isinstance(r, dict)]
     for m in reversed(msgs):
         if m.get("kind") != "report" or m.get("from", "") not in agents:
             continue
-        if m.get("reportKind", "") != "completed" or (m.get("reportTo") and po):
+        if m.get("reportKind", "") != "completed":
+            continue
+        if m.get("reportTo") and po:
             return None
         text = next((r.get("text", "") for r in reports if r.get("messageId") == m.get("id")), None)
         if text is None:
@@ -1725,7 +1729,8 @@ def _reported(room: dict, live_agents: list[str]) -> dict | None:
     """A finished report the person has not checked: ``{since, line,
     agent}`` for the list's "Ready for your check", or None. It is never
     Needs you (GitHub issue 11), and it leaves when the person is done with it
-    (Done, ``set_aside``), when the agent reports again, or when the task is
+    (Done, ``set_aside``), when the agent's newer finished report takes its
+    place (an update or a question after it does not), or when the task is
     Done or stopped (no agent running). Reading the chat past it or writing in
     it is not being done with it (#394, P395: :func:`_report_to_check`)."""
     put = room.get("reportToCheck")
