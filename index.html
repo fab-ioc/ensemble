@@ -4302,6 +4302,9 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     color: var(--c-warning-fg); font-size: var(--fs-100); line-height: var(--lh-100); overflow-wrap: anywhere; }
   .ibx-fail b { font-weight: 600; }
   .ibx-fail-acts { display: flex; flex-wrap: wrap; gap: var(--s-100); margin-top: var(--s-100); }
+  /* Its ways on sit side by side at the default Inbox width (PO, live vs drawing): the note's own 11px type;
+     they wrap only in a narrower panel. */
+  .ibx-fail-acts .ibx-btn { font-size: var(--fs-100); white-space: nowrap; }
   @media (hover: none) { .ibx-fail-acts .ibx-btn { height: var(--touch-min); } }
   /* #322 P287 drawing: under the project list the rows are cards (.row: 7px 8px, 1px border, radius 6, 5px apart,
      12px, bold title, small muted line), a 3px left bar: amber asks/waits, green checks. */
@@ -7172,7 +7175,7 @@ function costChipHtml(r, cls) {
 }
 // What waits on the person in a task's or a PO's chat (points.py; the row's
 // points: {open, planned, delivered, decisions, totry, news}), as quiet words:
-// "1 decision · 2 new". Only what the chat's Needs you lists (#209): what
+// "1 decision · 2 to check" (#394: an answer counts, seen or not, until its Done). Only what the chat's Needs you lists (#209): what
 // waits on the PO is not counted. It is information for them, like the cost:
 // never a lozenge. A hub from before Needs you sends no `news`: its answered
 // ones count as new (and "answered" before the stages, for delivered).
@@ -7185,14 +7188,14 @@ function pointsCountText(p) {
   const n = pointsNeeds(p), bits = [];
   if (n.decisions) bits.push(`${n.decisions} decision${n.decisions === 1 ? '' : 's'}`);
   if (n.totry) bits.push(`${n.totry} to try`);
-  if (n.news) bits.push(`${n.news} new`);
+  if (n.news) bits.push(`${n.news} to check`);
   return bits.join(' · ');
 }
 function pointsCountTip(p) {
   const n = pointsNeeds(p), bits = [];
   if (n.decisions) bits.push(`${n.decisions} question${n.decisions === 1 ? '' : 's'} for you to decide`);
   if (n.totry) bits.push(`${n.totry} answer${n.totry === 1 ? '' : 's'} for you to try`);
-  if (n.news) bits.push(`${n.news} new answer${n.news === 1 ? '' : 's'}`);
+  if (n.news) bits.push(`${n.news} answer${n.news === 1 ? '' : 's'} to check`);
   return bits.length ? 'Needs you: ' + bits.join(' · ') + '. Open the chat to see them.' : '';
 }
 function pointsCountHtml(p, cls) {
@@ -17694,7 +17697,8 @@ function ibxFailHtml(r, why) {
     : 'it was not found in its conversation (deleted, or no longer shown there).';
   return `<div class="ibx-fail" role="status"><b>Could not open this message:</b> ${esc(t)}</div>`
     + `<div class="ibx-fail-acts"><button type="button" class="ibx-btn" data-ibx-fail-room="${esc(r.roomId)}">Open the conversation</button>`
-    + `<button type="button" class="ibx-btn" data-ibx-fail-done="${esc(r.id)}" title="Take this note away">Done</button></div>`;
+    // A row to check has a Done of its own: the note gives no second one (PO, live vs drawing).
+    + (r.kind === 'check' ? '' : `<button type="button" class="ibx-btn" data-ibx-fail-done="${esc(r.id)}" title="Take this note away">Done</button>`) + '</div>';
 }
 // A chat said whether the message last opened from the Inbox landed
 // (goto-done): the row pressed for it says so when it could not. Only the

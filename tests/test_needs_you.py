@@ -45,8 +45,8 @@ class Closing(_World):
 
     def test_seen_and_written_again_stays_until_done(self):
         # P395: seeing an answer and writing again closes nothing: the Inbox
-        # keeps it (seen_counts=False) until Done acks it. The chat's own
-        # Needs you view still counts only the unseen ones as news.
+        # keeps it (seen_counts=False) until Done acks it, and the chat's
+        # counts (its view, the badge) count it the same way (#394, PO).
         rid = self.solo_room()
         p1, m1 = self.answered(rid, "One?", "one", at=self.t0)
         p2, _m2 = self.answered(rid, "Two?", "two", at=self.t0 + 10)
@@ -58,9 +58,35 @@ class Closing(_World):
         self.send(rid, "Something else now", at=self.t0 + 20)
         st = self.state(rid)
         self.assertEqual((st[p1], st[p2]), ("delivered", "delivered"), "seen and written past closes nothing")
-        self.assertEqual(points.view(rid)["needs"]["news"], 1)
+        self.assertEqual(points.view(rid)["needs"]["news"], 2, "seen or not, both to check")
+        self.assertEqual(points.counts(rid)["news"], 2, "the badge counts them too")
         self.assertEqual(points.act(rid, p1, "ack")["state"], "acked")
         self.assertEqual(points.needs_you(self.point(rid, p1), seen_counts=False), "")
+        self.assertEqual(points.view(rid)["needs"]["news"], 1)
+        self.assertEqual(points.counts(rid)["news"], 1)
+
+    def test_the_counts_and_threads_count_the_inbox_rows(self):
+        # #394 (PO): one answer to two points is one answer to check; one
+        # whose message is an open card is that card's row (a decision), not
+        # counted again; a thread holding an answer to check, seen or not,
+        # needs the person (as its Inbox row does).
+        parts = {"checks": [{"mid": "m1", "points": ["P1", "P2"], "try": False},
+                            {"mid": "m2", "points": ["P3"], "try": True},
+                            {"mid": "m3", "points": ["P4"], "try": False},
+                            {"mid": "", "points": ["P5"], "try": False}]}
+        self.assertEqual(points._to_check(parts, []), {"totry": 1, "news": 3})
+        self.assertEqual(points._to_check(parts, [{"mid": "m3"}, {"mid": "x", "points": ["P5"]}]),
+                         {"totry": 1, "news": 1})
+        import threads
+        rid = self.solo_room()
+        p1, m1 = self.answered(rid, "One?", "one")
+        points.mark_seen(rid, mids=[m1])
+        pts = {p["id"]: p for p in points.load(rid)["points"]}
+        th = {"points": [p1], "members": [], "task": ""}
+        self.assertEqual(threads._state_of(th, pts, set(), None), "needs", "seen, not Done")
+        points.act(rid, p1, "ack")
+        pts = {p["id"]: p for p in points.load(rid)["points"]}
+        self.assertEqual(threads._state_of(th, pts, set(), None), "done")
 
     def test_a_newer_answer_is_unseen_again(self):
         rid = self.solo_room()

@@ -1036,23 +1036,21 @@ def _led_sig(room_id: str) -> tuple:
 
 def _state_of(th: dict, pts: dict, open_mids: set, task_of) -> str:
     """Where a thread stands: needs (a question of it waits on the person, or
-    an answer asks them to try something), po (a point waits on the PO), task
-    (a task works on it), answered (an answer not acknowledged), done."""
+    an answer waits for their check: Done, or one to try, #394), po (a point
+    waits on the PO), task (a task works on it), done."""
     ps = [pts[i] for i in th["points"] if i in pts]
     if any(m in open_mids for m in th["members"]):
         return "needs"      # an open card in it wins, even over points all done (#367)
     if ps and all(p.get("state") in ("acked", "dropped", "followed", "split") for p in ps):
         return "done"       # its points are all done: never "needs you" (#367)
-    if any(points.needs_you(p) == "try" for p in ps):
-        return "needs"
+    if any(points.needs_you(p, seen_counts=False) for p in ps):
+        return "needs"      # an answer to check, seen or not, as the Inbox lists it (#394, P395)
     if any(p.get("state") == "open" for p in ps):
         return "po"
     task = th.get("task") or ""
     info = task_of(task) if task and task_of else None
     if any(p.get("state") == "planned" for p in ps):
         return "done" if info and info.get("done") else "task"
-    if any(p.get("state") == "delivered" for p in ps):
-        return "answered"
     if not ps and info is not None:
         return "done" if info.get("done") else "task"
     return "done"

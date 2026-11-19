@@ -14,8 +14,8 @@ sources and folds them into rows, each with a ``kind``:
     report put to them.
 ``check``
     something done, waiting for their look: a finished report not read
-    (``attention`` ``reported``), or a PO chat point whose answer is new or
-    asks them to try something (``points.needs_you``).
+    (``attention`` ``reported``), or a PO chat point whose answer waits for
+    their Done, seen or not, or asks them to try something (``points.needs_you``).
 ``waiting``
     any other Needs you item (``attention.snapshot`` items): a task or PO
     waiting on them, blocked, stalled, gone.
@@ -25,7 +25,7 @@ message and ask number; Needs you's row for the same card, the point the card
 belongs to (the card's ``points``, or a point whose answer is the card's
 message) and the thread holding either are added to that row as sources,
 never rows of their own. A thread mark never makes a row: threads.py marks a
-thread "needs" only for an open card or a point to try, both rows already.
+thread "needs" only for an open card or an answer to check, both rows already.
 
 **Leaving.** A row leaves only when it is dealt with (P395, P396): a question
 when its card is answered or closed (Close all closed those from before it), a
@@ -453,7 +453,7 @@ def _build_all(debug: bool = False, now: float | None = None) -> dict:
                 it = {"mid": amid or p.get("mid") or "", "answer": str(a.get("mid") or a.get("key") or ""),
                       "points": [p["id"]], "try": k == "try",
                       "line": _line(f"{p['id']}: {asked}" if asked else p["id"]),
-                      "reason": _line(("The answer asks you to try something" if k == "try" else "A new answer to read")
+                      "reason": _line(("The answer asks you to try something" if k == "try" else "An answer to check")
                                       + (f": {said}" if said else ""), 240),
                       "since": float(a.get("at") or p.get("stateAt") or p.get("createdAt") or 0),
                       "source": src}

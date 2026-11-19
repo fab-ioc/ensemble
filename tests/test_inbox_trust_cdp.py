@@ -241,6 +241,18 @@ async function main() {
     await evalIn(`window.__g0(${T}, ${M}, true, ''), 0`); await sleep(200);
     out.silent.lateResult = await evalIn(look);
     await shot('silent');
+    // An answer row's note (PO, live vs drawing): Open the conversation and Done side
+    // by side on one row at the default Inbox width; its Done takes the note, not the row.
+    out.silent.ways = await evalIn(`(() => { const li = LD_INBOX.querySelector('li.ibx-row[data-ibx="' + CSS.escape(window.__ibxRow) + '"]');
+      const r = IBX.data.rows.find(x => x.id === window.__ibxRow); const bs = li ? [...li.querySelectorAll('.ibx-fail-acts .ibx-btn')] : [];
+      return { kind: r ? r.kind : '', acts: bs.map(x => x.textContent.trim()), tops: bs.map(x => Math.round(x.getBoundingClientRect().top)),
+        inside: bs.every(x => { const q = x.getBoundingClientRect(), k = li.getBoundingClientRect(); return q.width > 0 && q.left >= k.left - 0.5 && q.right <= k.right + 0.5; }),
+        boxW: Math.round(LD_INBOX.getBoundingClientRect().width) }; })()`);
+    await shot('silent-ways');
+    await evalIn(`(() => { const b = LD_INBOX.querySelector('li.ibx-row[data-ibx="' + CSS.escape(window.__ibxRow) + '"] [data-ibx-fail-done]'); if (b) b.click(); return 0; })()`);
+    await sleep(300);
+    out.silent.noteDone = await evalIn(`(() => { const li = LD_INBOX.querySelector('li.ibx-row[data-ibx="' + CSS.escape(window.__ibxRow) + '"]'); const a = document.activeElement;
+      return { row: !!li, notes: li ? li.querySelectorAll('.ibx-fail').length : -1, failed: IBX.failed.has(window.__ibxRow), focus: !!a && !!li && li.contains(a) && a.matches('a.ibx-link') }; })()`);
     // Found expired first (a chat asking for it, sendGotoMsg) before its timer: the same note, once.
     await evalIn(press);
     await evalIn(`(() => { window.__lands = 0; const l0 = ibxLanded; window.__l0 = l0; ibxLanded = (...a) => { window.__lands++; return l0(...a); }; openMsgLink(${T}, ${M}, 'inbox'); GOTO_MSG_MS = -1; sendGotoMsg(${T}); GOTO_MSG_MS = 1500; return 0; })()`);
@@ -480,6 +492,16 @@ class InboxTrustInChrome(unittest.TestCase):
         self.assertIn("could not be loaded", a["note"], f)
         # Given up on: a result that still comes leaves the note, the press over.
         self.assertEqual(f["lateResult"], a, f)
+
+    def test_an_answer_rows_note_has_both_ways_on_one_row_and_its_done_keeps_the_row(self):
+        self.assertNotIn("silentErr", self.got)
+        w = self.got["silent"]["ways"]
+        self.assertNotEqual(w["kind"], "check", w)
+        self.assertEqual(w["acts"], ["Open the conversation", "Done"], w)
+        self.assertEqual(len(set(w["tops"])), 1, "side by side, one row: %r" % w)
+        self.assertTrue(w["inside"], w)
+        d = self.got["silent"]["noteDone"]
+        self.assertEqual(d, {"row": True, "notes": 0, "failed": False, "focus": True}, d)
 
     def test_a_link_found_expired_first_says_so_once(self):
         self.assertNotIn("silentErr", self.got)

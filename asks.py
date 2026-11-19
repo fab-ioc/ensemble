@@ -1380,16 +1380,22 @@ NOTE_PREFIX = "[asks] "     # dashboard.HUB_INPUT_KINDS
 NOTE_MAX = 900              # a typed line (points._WAKE_MAX)
 ASK_AGAIN_RULE = ("These are still open in the Inbox; do not ask them again: not after a "
                   "rotation or a restart, and not when you answer a related point. A card stays "
-                  "there until the person answers or closes it. To point at one, link it by name as the line "
+                  "there until the person answers it, closes it (Close, or Clear all for every card "
+                  "before it) or sets it aside (Done with this); those are not listed here. To point at one, link it by name as the line "
                   "below gives it, [its question](its link); never show the link bare. To change one, "
                   "have it closed first, then ask the new question.")
 
 
 def _own_open(room: dict, identity: str = "") -> list[dict]:
     """The open cards of ``room`` its seat ``identity`` put (all when none),
-    newest first: every one, a card asked again included, as the Inbox lists
-    them (P396)."""
-    return [c for c in open_cards(room) if not identity or not c.get("who") or c.get("who") == identity]
+    newest first, exactly as the Inbox lists them (P396, #394): a card asked
+    again included; not one closed by Clear all, set aside with Done with
+    this (:func:`decisions`), or, in a chat with no PO, answered by a message
+    to the agent after it (:func:`answered_by_message`)."""
+    answered_at = answered_by_message(room)
+    return [c for c in decisions(room)
+            if (not identity or not c.get("who") or c.get("who") == identity)
+            and not (c.get("ts") and c["ts"] < answered_at)]
 
 
 def _age(ts: float, now: float) -> str:

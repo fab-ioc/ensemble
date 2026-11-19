@@ -70,6 +70,9 @@ async function main() {
     return { id: li ? li.dataset.ibx : '', notes: notes.length, inRow: !!f, text: f ? f.textContent.trim() : '',
       bg: f ? getComputedStyle(f).backgroundColor : '', warnBg: (() => { const e = document.createElement('i'); e.style.color = 'var(--c-warning-bg)'; document.body.appendChild(e); const v = getComputedStyle(e).color; e.remove(); return v; })(),
       acts: acts.map(x => [x.textContent.trim(), getComputedStyle(x).display !== 'none' && x.getBoundingClientRect().width > 0]),
+      tops: acts.map(x => Math.round(x.getBoundingClientRect().top)), widths: acts.map(x => Math.round(x.getBoundingClientRect().width)),
+      actsW: (() => { const k = li && li.querySelector('.ibx-fail-acts'); return k ? Math.round(k.getBoundingClientRect().width) : 0; })(),
+      ownDone: !!li && [...li.querySelectorAll('[data-ibx-done], [data-ibx-check]')].some(x => x.textContent.trim() === 'Done' && x.getBoundingClientRect().width > 0),
       inside: !r || acts.every(x => { const q = x.getBoundingClientRect(); return q.left >= r.left - 0.5 && q.right <= r.right + 0.5; }),
       failed: [...IBX.failed.keys()], pressed: !!IBX.pressed,
       W: document.documentElement.clientWidth, scrollW: document.documentElement.scrollWidth, boxW: Math.round(br.width), boxSW: b.scrollWidth }; })()`);
@@ -108,11 +111,11 @@ async function main() {
     await sleep(600);
     out.opened = { project: await evalIn('SELECTED_PROJECT'), frame: await evalIn(`(() => { const f = ${FRAME(A.po)}; return !!f && f.getBoundingClientRect().width > 0; })()`) };
     out.afterOpen = await view();
-    // (4) Done: the note goes, the row stays, its link has the focus
-    await click(`[...LD_INBOX.querySelectorAll('[data-ibx-fail-done]')].find(b => b.getBoundingClientRect().width > 0)`);
-    await sleep(300);
-    out.done = await view();
-    out.done.focus = await evalIn(`(() => { const a = document.activeElement; return !!a && a.matches('a.ibx-link') && !!a.closest('li.ibx-row') && a.closest('li.ibx-row').dataset.ibx === ${JSON.stringify(out.failed.id)}; })()`);
+    // (4) a row to check gives no second Done in its note (its own Done serves;
+    // the note's Done is tested on an answer row in test_inbox_trust_cdp): clear it here
+    await evalIn('(IBX.failed.clear(), ibxRepaint(), 0)');
+    await sleep(200);
+    out.cleared = await view();
     // (5) fails again, then its real message: lands, the note goes
     await pressGone('m-not-there-2');
     await until(`IBX.failed.size > 0 && !!LD_INBOX.querySelector('.ibx-fail')`, 40000);
@@ -241,7 +244,8 @@ class InboxFailNoteInChrome(unittest.TestCase):
         self.assertIn("Could not open this message:", f["text"])
         self.assertIn("not found in its conversation", f["text"])
         self.assertEqual(f["bg"], f["warnBg"], "amber")
-        self.assertEqual(f["acts"], [["Open the conversation", True], ["Done", True]], "shown without hover")
+        self.assertEqual(f["acts"], [["Open the conversation", True]], "shown without hover; no second Done on a row to check")
+        self.assertTrue(f["ownDone"], "the row's own Done is there")
         self.assertTrue(f["inside"], f)
         self.assertTrue(self.got["chatNote"], "its chat says so too")
 
@@ -257,14 +261,8 @@ class InboxFailNoteInChrome(unittest.TestCase):
         self.assertTrue(self.got["opened"]["frame"], self.got["opened"])
         self.assertTrue(self.got["afterOpen"]["inRow"], "opening the conversation does not take the note away")
 
-    def test_done_takes_the_note_away_not_the_row(self):
-        d = self.got["done"]
-        self.assertEqual(d["notes"], 0, d)
-        self.assertEqual(d["id"], self.got["failed"]["id"], "the row stays")
-        self.assertEqual(d["failed"], [], d)
-        self.assertTrue(d["focus"], "the focus is on the row's link")
-
     def test_a_later_open_that_lands_clears_it(self):
+        self.assertEqual(self.got["cleared"]["notes"], 0, self.got["cleared"])
         self.assertEqual(self.got["again"]["notes"], 1, self.got["again"])
         self.assertTrue(self.got["landed"])
         a = self.got["afterLanded"]

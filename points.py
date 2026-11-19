@@ -2001,9 +2001,21 @@ def counts(room_id: str) -> dict | None:
         c = dict(parts["counts"])
         # Needs you (#209): what the counter shows. Decisions as the chat's last
         # view worked them out (reading cards here would cost a listing seconds).
-        c.update(decisions=len(_LAST_DECISIONS.get(room_id) or []),
-                 totry=parts["totry"], news=parts["news"])
+        dec = _LAST_DECISIONS.get(room_id) or []
+        c.update(decisions=len(dec), **_to_check(parts, dec))
         return c if any(c.values()) else None
+
+
+def _to_check(parts: dict, decisions: list) -> dict:
+    """``{totry, news}``: the answers to check as the Inbox counts them
+    (#394): every answer not yet Done, seen or not, one per answer message;
+    one whose message is an open card (or that answers a card's point) is
+    that card's row, counted with the decisions, not again here."""
+    mids = {d.get("mid") for d in decisions if d.get("mid")}
+    pids = {pid for d in decisions for pid in d.get("points") or []}
+    rest = [c for c in parts["checks"] if c["mid"] not in mids and not pids.intersection(c["points"])]
+    tries = sum(1 for c in rest if c["try"])
+    return {"totry": tries, "news": len(rest) - tries}
 
 
 def _project_of(room_id: str, room: dict | None, projects: list[dict]) -> str:
@@ -2165,11 +2177,22 @@ def _parts(room_id: str, led: dict) -> dict:
     live = [p for p in pts if p["id"] in keep]
     shut = [p for p in pts if p["id"] not in keep][:max(0, VIEW_MAX - len(live))]
     shown = sorted(live + shut, key=order, reverse=True)
-    kinds = [needs_you(p) for p in led["points"]]
+    # The answers to check, as the Inbox lists them (#394, P395): seen or not,
+    # until Done; one answer to several points is one answer (its message).
+    checks: dict[str, dict] = {}
+    for p in led["points"]:
+        k = needs_you(p, seen_counts=False)
+        if not k:
+            continue
+        a = last_answer(p) or {}
+        amid = a.get("mid") or (answer_balloon(p) or {}).get("mid") or ""
+        c = checks.setdefault(amid or "pt:" + p["id"], {"mid": amid, "points": [], "try": False})
+        c["points"].append(p["id"])
+        c["try"] = c["try"] or k == "try"
     closed = sorted((p for p in led["points"] if p["state"] == "acked" and p.get("ackedBy") in AUTO),
                     key=lambda p: (p.get("stateAt") or 0, p["createdAt"], p["id"]), reverse=True)
     parts = {"shown": shown, "items": [None if _uses_task(p) else _item(p) for p in shown],
-             "counts": _counts(led), "news": kinds.count("new"), "totry": kinds.count("try"),
+             "counts": _counts(led), "checks": list(checks.values()),
              "closed": [_closed_item(p) for p in closed[:CLOSED_MAX]], "closedCount": len(closed)}
     with _LOCK:
         cached = _CACHE.get(room_id)
@@ -2212,7 +2235,7 @@ def _needs_view(room_id: str, room: dict | None, led: dict) -> dict:
     parts = _parts(room_id, led)
     return {"decisions": decisions,
             **({"pending": True} if pending else {}),
-            "news": parts["news"], "totry": parts["totry"],
+            **_to_check(parts, decisions),
             "closed": [dict(c) for c in parts["closed"]], "closedCount": parts["closedCount"]}
 
 
