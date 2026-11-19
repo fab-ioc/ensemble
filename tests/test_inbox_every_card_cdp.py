@@ -127,11 +127,11 @@ async function main() {
       const row = `document.querySelector('#ld-ibx-body .ibx-row[data-stage="answer"]')`;
       await p.hover(row); await sleep(150);
       // Done with this comes with the Needs you items (attention), which may be a poll behind the rows.
-      await p.until(`${row}.querySelectorAll('.ibx-acts .ibx-btn').length === 3`, 10000).catch(() => null);
-      // Its actions stay inside the card in this narrow column (P408: on one line, their labels shortened).
-      out.acts = await p.evalIn(`(() => { const r = ${row}, c = r.getBoundingClientRect();
-        return [...r.querySelectorAll('.ibx-acts .ibx-btn')].map(b => { const x = b.getBoundingClientRect(); return x.left >= c.left && x.right <= c.right && x.top >= c.top && x.bottom <= c.bottom; }); })()`);
-      await p.click(`${row}.querySelector('[data-ibx-close]')`); await sleep(300);
+      await p.until(`${row}.querySelectorAll('.ibx-acts .ibx-btn').length === 3 && document.querySelectorAll('.ibx-side .ibx-side-btn').length === 3`, 10000).catch(() => null);
+      // With a mouse its actions are in the side panel just right of the card, out of the Inbox (P410).
+      out.acts = await p.evalIn(`(() => { const c = ${row}.getBoundingClientRect(), ib = document.getElementById('ld-ibx-body').getBoundingClientRect();
+        return [...document.querySelectorAll('.ibx-side .ibx-side-btn')].map(b => { const x = b.getBoundingClientRect(); return x.left > c.right && x.left >= ib.right - 0.5 && x.top >= c.top - 0.5; }); })()`);
+      await p.click(`document.querySelector('.ibx-side [data-side-key="ibxClose"]')`); await sleep(300);
       out.closing = await geo(p); await p.shot(A.scene + '-closing');
       // The PO chat's phone strip counts agree (ibxStripCounts writes them on its frame).
       out.closingStrip = await p.evalIn(`ibxStripCounts(${JSON.stringify(A.ids.opTen)}).q + ibxStripCounts(${JSON.stringify(A.ids.Motors)}).q`);
@@ -296,7 +296,7 @@ class EveryOpenCardIsARowInChrome(unittest.TestCase):
 
     def test_a_closed_card_waiting_on_undo_is_not_counted(self):
         g = self.got["past"]
-        self.assertEqual(g["acts"], [True] * 3, "Close, Close this and earlier and Done with this, all inside the card")
+        self.assertEqual(g["acts"], [True] * 3, "Close, Close this and earlier and Done with this, in the side panel right of the card")
         c, u = g["closing"], g["undone"]
         self.assertEqual(self.chips(c), {"All": ("13", False), "opTen": ("9", False), "Motors": ("4", False)})
         self.assertEqual(self.chips(u), self.chips(g["all"]))

@@ -15,16 +15,20 @@ on every row's text in turn; checked on each:
 * every point of the question's text, at each of its lines, shows the question
   (the row's own text, or its hover copy's): nothing is drawn over it;
 * a cut question shows whole in its hover copy; one that fits shows none;
-* the actions are one line, inside the card, below the question;
-* while a cut question's copy is up, the row's buttons stay on top at their
-  place (P414 item 5), the copy's text wrapped around them, and a real click on
-  each reaches that very button;
+* P410 (B): with a mouse the card shows no buttons: they are in one side panel
+  8px right of the card, out of the Inbox, at the card's top, in full words
+  (Close, Close this and earlier N, Done with this) at both widths; it is gone
+  once the pointer has left;
+* with the keyboard (the card's link focused), a cut question's copy is up and
+  the card's buttons stay on top at their place (P414 item 5), the copy's text
+  wrapped around them; a real click on each reaches that very button, and the
+  focus stays on the link;
 * the same after a repaint arriving while the pointer is on the row (held
   under a hover copy, drawn at once without one), and after the pointer leaves;
 * a row whose message could not be opened, at both widths: its note and its
-  ways (Open the conversation, Done) are never covered by its actions, which
-  sit on their own line under them, always shown; the row's height never
-  changes. Outside the listed Inbox such a row is as it was.
+  ways (Open the conversation, Done) are never covered: with a mouse its
+  actions are in the side panel; the row's height never changes. Outside the
+  listed Inbox such a row is as it was.
 
 Set ENSEMBLE_SHOTS=<dir> for a screenshot of a hovered row at each width.
 """
@@ -94,8 +98,15 @@ async function main() {
       return pb && copy && copy.contains(pb) && pb.textContent === b.textContent ? 'pic' : (e ? e.tagName + '.' + e.className : 'none');
     });
     const ab = acts && acts.getBoundingClientRect(), lk = li.querySelector('a.ibx-link').getBoundingClientRect();
+    // P410 (B): the side panel, with a mouse: beside the card, out of the Inbox, its actions in full words.
+    const sd = document.querySelector('.ibx-side'), ib = ${D}.getBoundingClientRect(), sr = sd && sd.getBoundingClientRect();
+    const side = sd ? { n: document.querySelectorAll('.ibx-side').length, mine: IBX_SIDE.id === li.dataset.ibx,
+      gap: Math.round(sr.left - card.right), outInbox: sr.left >= ib.right - 0.5, top: Math.round(sr.top - card.top),
+      inWin: sr.left >= 0 && sr.right <= innerWidth && sr.top >= 0 && sr.bottom <= innerHeight, w: Math.round(sr.width),
+      labels: [...sd.querySelectorAll('.ibx-side-btn')].map(b => [...b.children].map(e => e.textContent.trim()).join(' ')),
+      oneLineEach: [...sd.querySelectorAll('.ibx-side-btn')].every(b => b.getBoundingClientRect().height <= 30) } : null;
     const btns = acts ? [...acts.querySelectorAll('.ibx-btn')] : [];
-    return { id: li.dataset.ibx, text: line.textContent, pts, hid, bad,
+    return { id: li.dataset.ibx, text: line.textContent, pts, hid, bad, side,
       cut: line.scrollHeight > line.clientHeight + 1,
       copy: !!copy, keep, copyWhole: !!cl && cl.textContent === line.textContent && cl.scrollHeight <= cl.clientHeight + 1, copyShown,
       acts: acts && getComputedStyle(acts).display !== 'none' ? { n: btns.length, h: Math.round(ab.height), oneLine: new Set(btns.map(b => Math.round(b.getBoundingClientRect().top))).size === 1,
@@ -130,35 +141,46 @@ async function main() {
         const during = await evalIn(look(i));
         await move(x + 1, y); await frame();
         const after = await evalIn(look(i));
-        await move(5, 5); await sleep(50); await frame();
+        await move(5, 5); await sleep(450); await frame();
         const left = await evalIn(look(i));
         o.rows.push({ i, before, hover, rp, during, after, left });
       }
       if (w) await evalIn(`(() => { ${D}.style.width = ''; ${D}.style.maxWidth = ''; return 0; })()`);
     }
-    // P414 item 5: with a cut question's copy up, a real click on each of its buttons reaches that very button.
+    // P414 item 5, with the keyboard (P410: with a mouse the card's buttons are in the side panel): a cut question's
+    // link given the focus, as Tab gives it (a focus ring): its copy is up and the card's buttons on top of it; a
+    // real click on each reaches that very button, and the focus stays on the link.
     {
       const i = out.default.rows.find(r => r.hover.cut).i;
+      await c.send('Emulation.setFocusEmulationEnabled', { enabled: true }, sessionId);
+      const tabTo = async () => {
+        await move(5, 5); await sleep(450); await frame();
+        await evalIn(`(() => { const li = ${D}.querySelectorAll('li.ibx-row[data-q]')[${i}]; li.scrollIntoView({ block: 'nearest' }); if (document.activeElement) document.activeElement.blur(); li.querySelector('a.ibx-link').focus(); return 0; })()`);
+        await sleep(450); await frame();
+        return evalIn(`(() => { const a = document.activeElement; const l = ${D}.querySelectorAll('li.ibx-row[data-q]')[${i}].querySelector('a.ibx-link'); return a === l && a.matches(':focus-visible'); })()`);
+      };
       await evalIn(`(() => { window.__p414 = []; window.__p414f = ev => { const b = ev.target.closest && ev.target.closest('.ibx-btn'); if (!b || !${D}.contains(b)) return;
         window.__p414.push({ inInbox: ${D}.contains(b), act: Object.keys(b.dataset).join(','), t: b.textContent.trim() }); ev.preventDefault(); ev.stopImmediatePropagation(); };
         window.addEventListener('click', window.__p414f, true); return 0; })()`);
       const clicks = [];
       const nb = await evalIn(`${D}.querySelectorAll('li.ibx-row[data-q]')[${i}].querySelectorAll('.ibx-acts .ibx-btn').length`);
       for (let k = 0; k < nb; k++) {
-        await move(5, 5); await frame();
-        const [x, y] = await at(i);
-        await move(x, y); await sleep(450); await frame();
+        const kb = await tabTo();
         const st = await evalIn(look(i));
+        if (k === 0) await shot('p414-keyboard-copy', await evalIn(`(() => { const b = ${D}.querySelectorAll('li.ibx-row[data-q]')[${i}].getBoundingClientRect(), cp = document.querySelector('.row-expanded');
+          const bot = Math.max(b.bottom, cp ? cp.getBoundingClientRect().bottom : 0); return { x: Math.max(0, b.left - 8), y: Math.max(0, b.top - 8), width: b.width + 16, height: bot - b.top + 16 }; })()`));
         const [bx, by] = await evalIn(`(() => { const b = ${D}.querySelectorAll('li.ibx-row[data-q]')[${i}].querySelectorAll('.ibx-acts .ibx-btn')[${k}].getBoundingClientRect();
           return [Math.round(b.left + b.width / 2), Math.round(b.top + b.height / 2)]; })()`);
+        await move(bx, by); await sleep(120); await frame();
+        const onBtn = await evalIn(look(i));
         await c.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: bx, y: by, button: 'left', clickCount: 1 }, sessionId);
         await c.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: bx, y: by, button: 'left', clickCount: 1 }, sessionId);
         await sleep(80); await frame();
         const want = await evalIn(`(() => { const b = ${D}.querySelectorAll('li.ibx-row[data-q]')[${i}].querySelectorAll('.ibx-acts .ibx-btn')[${k}]; return Object.keys(b.dataset).join(','); })()`);
-        clicks.push({ k, copy: st.copy, keep: st.keep, got: await evalIn(`window.__p414.splice(0)`), want });
+        clicks.push({ k, kb, stays: await evalIn(`document.activeElement === ${D}.querySelectorAll('li.ibx-row[data-q]')[${i}].querySelector('a.ibx-link')`), copy: st.copy, keep: st.keep, side: st.side, sideOnBtn: onBtn.side, got: await evalIn(`window.__p414.splice(0)`), want });
       }
-      await evalIn(`(() => { window.removeEventListener('click', window.__p414f, true); return 0; })()`);
-      await move(5, 5); await frame();
+      await evalIn(`(() => { window.removeEventListener('click', window.__p414f, true); document.activeElement && document.activeElement.blur(); return 0; })()`);
+      await move(5, 5); await sleep(450); await frame();
       out.keepClicks = clicks;
     }
     // Review 1: a row whose message could not be opened (its note and its ways under the meta line), a cut
@@ -172,7 +194,8 @@ async function main() {
       const cov = [...nr.getClientRects()].filter(r => r.width > 2).map(r => document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)).filter(e => !e || !note.contains(e));
       const noteHid = cov.length, noteByCopy = cov.every(e => !!e && !!e.closest('.row-expanded'));
       return { h: Math.round(card.height), shown: getComputedStyle(acts).display !== 'none', below: ab.top >= fa.getBoundingClientRect().bottom - 0.5,
-        inCard: ab.left >= card.left - 0.5 && ab.right <= card.right + 0.5 && ab.bottom <= card.bottom + 0.5, ways, noteHid, noteByCopy, noteH: Math.round(nb.height) };
+        inCard: ab.left >= card.left - 0.5 && ab.right <= card.right + 0.5 && ab.bottom <= card.bottom + 0.5, ways, noteHid, noteByCopy, noteH: Math.round(nb.height),
+        side: !!document.querySelector('.ibx-side') && IBX_SIDE.id === li.dataset.ibx };
     })()`;
     out.failed = [];
     for (const [name, w] of [['default', 0], ['narrow', 240]]) {
@@ -265,25 +288,32 @@ class HoverTextInChrome(close.CloseInChrome):
                     self.assertFalse(s["copy"], (k, r["i"], phase, s))
             self.assertFalse(r["left"]["copy"], (k, r["i"]))
 
-    def test_the_actions_are_one_line_below_the_question_inside_the_card(self):
+    def test_with_a_mouse_the_actions_are_in_a_side_panel_beside_the_card(self):
+        # P410 (B): the card shows no buttons; one panel, 8px right of the card, out of the Inbox, at its top.
         for k, r in self._rows():
-            for phase in ("hover", "after"):
-                a = r[phase]["acts"]
-                self.assertIsNotNone(a, (k, r["i"], phase))
-                self.assertTrue(a["oneLine"], (k, r["i"], a))
-                self.assertLessEqual(a["h"], 20, (k, r["i"], a))
-                self.assertTrue(a["inCard"] and a["allIn"], (k, r["i"], a))
-                self.assertTrue(a["belowText"], (k, r["i"], a))
+            for phase in ("hover", "during", "after"):
+                s, sd = r[phase], r[phase]["side"]
+                self.assertIsNone(s["acts"], (k, r["i"], phase))
+                self.assertIsNotNone(sd, (k, r["i"], phase))
+                self.assertEqual(sd["n"], 1, (k, r["i"], phase, sd))
+                self.assertTrue(sd["mine"], (k, r["i"], phase, "the hovered card's"))
+                self.assertEqual(sd["gap"], 8, (k, r["i"], phase, sd))
+                self.assertTrue(sd["outInbox"] and sd["inWin"] and sd["oneLineEach"], (k, r["i"], phase, sd))
+                self.assertLessEqual(abs(sd["top"]), 1, (k, r["i"], phase, sd))
+            self.assertIsNone(r["before"]["side"], (k, r["i"]))
+            self.assertIsNone(r["left"]["side"], (k, r["i"], "gone once the pointer has left"))
             self.assertIsNone(r["left"]["acts"], (k, r["i"]))
 
-    def test_labels_shorten_with_the_width(self):
-        d = [r["hover"]["acts"]["labels"] for r in self.got["default"]["rows"]]
-        nr = [r["hover"]["acts"]["labels"] for r in self.got["narrow"]["rows"]]
+    def test_the_side_panel_has_full_labels_at_both_widths(self):
+        d = [r["hover"]["side"]["labels"] for r in self.got["default"]["rows"]]
+        nr = [r["hover"]["side"]["labels"] for r in self.got["narrow"]["rows"]]
+        self.assertEqual(d, nr, "the Inbox's width changes nothing")
         self.assertTrue(any(len(x) == 3 for x in d), d)
-        self.assertRegex(d[0][1], r"^Earlier \d+$")
-        self.assertIn("Done with this", d[0])
-        self.assertEqual(nr[0][1:], ["Earlier", "Done"])
-        self.assertEqual(d[0][0], "Close")
+        for x in d:
+            self.assertEqual(x[0], "Close", x)
+            self.assertEqual(x[-1], "Done with this", x)
+            if len(x) == 3:
+                self.assertRegex(x[1], r"^Close this and earlier \d+$")
 
     def test_a_cut_question_s_copy_is_painted(self):
         for k, r in self._rows():
@@ -292,24 +322,23 @@ class HoverTextInChrome(close.CloseInChrome):
                     self.assertTrue(r[phase]["copyShown"], (k, r["i"], phase, r[phase]))
 
     def test_the_buttons_stay_on_top_of_a_cut_question_s_copy(self):
-        # P414 item 5: while a cut question's copy is up, its row's buttons show at their place, over the copy.
-        seen = 0
-        for k, r in self._rows():
-            for phase in ("hover", "after"):
-                s = r[phase]
-                self.assertTrue(all(x in ("orig", "pic") for x in s["keep"]), (k, r["i"], phase, s["keep"]))
-                seen += s["copy"] and "pic" in s["keep"]
-        self.assertGreater(seen, 0, "some copy reaches over its row's buttons")
+        # P414 item 5, with the keyboard: a cut question's copy is up and its card's buttons show over it, at their place.
+        cl = self.got["keepClicks"]
+        self.assertEqual(len(cl), 3, cl)
+        for x in cl:
+            self.assertTrue(x["kb"] and x["copy"], x)
+            self.assertEqual(len(x["keep"]), 3, x)
+            self.assertTrue(all(k in ("orig", "pic") for k in x["keep"]), x)
+            self.assertIn("pic", x["keep"], x)
+            self.assertIsNone(x["side"], (x, "no side panel while the card shows its buttons"))
 
     def test_a_click_on_a_button_under_the_copy_reaches_it(self):
-        cl = self.got["keepClicks"]
-        self.assertGreaterEqual(len(cl), 2, cl)
-        for x in cl:
-            self.assertTrue(x["copy"], x)
-            self.assertIn("pic", x["keep"], x)
+        for x in self.got["keepClicks"]:
             self.assertEqual(len(x["got"]), 1, x)
             self.assertTrue(x["got"][0]["inInbox"], x)
             self.assertEqual(x["got"][0]["act"], x["want"], x)
+            self.assertTrue(x["stays"], (x, "the focus stays on the card's link"))
+            self.assertIsNone(x["sideOnBtn"], x)
 
     def test_a_row_that_could_not_open_keeps_its_note_and_ways_usable(self):
         f = self.got["failed"]
@@ -321,8 +350,9 @@ class HoverTextInChrome(close.CloseInChrome):
             self.assertEqual(x["text"]["hid"], 0, x["text"])
             states = [x["before"], x["onText"]] + x["onWays"]
             self.assertGreaterEqual(len(x["onWays"]), 2, x)
+            self.assertTrue(x["onText"]["side"], (x["i"], "its actions are in the side panel"))
             for s in states:
-                self.assertTrue(s["shown"] and s["below"] and s["inCard"], (x["i"], s))
+                self.assertFalse(s["shown"], (x["i"], "with a mouse the card shows no buttons", s))
                 self.assertEqual(s["h"], x["before"]["h"], (x["i"], "nothing moves", s))
                 if s is x["onText"] and x["text"]["cut"]:
                     # The pointer on a cut question: its hover copy (#337) is raised over what is under it; nothing else.
