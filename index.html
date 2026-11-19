@@ -16984,8 +16984,69 @@ function pdPinItem(id) {
   return [{ sep: true }, { id: 'pin', label: 'Pin: keep it in every project', checked: PdWorkspace.isPinned(PD_WS, id),
             run: () => pdWsPin(id, !PdWorkspace.isPinned(PD_WS, id)) }];
 }
+// IntelliJ's tab items (issue 66, drawing A): a docked tab splits off its
+// stack to one side, joins another stack, or its stack goes back to the top
+// bar (Unsplit); Close Other Tabs and Close Tabs to the Right close the
+// stack's other tabs but the conversation and pinned ones. A split moves the
+// tab (a chat opens once). Tools stay out of the conversation's stack
+// (pdKeepMiddle): their Unsplit puts them back on their strip.
+function pdStacks() {
+  const out = [], walk = n => { if (!n) return; if (n.t === 'stack') out.push(n); else (n.kids || []).forEach(walk); };
+  walk(PD.dock.layout().root);
+  return out;
+}
+function pdStackEl(st) {
+  const id = st.panels.find(p => PD_ROOT.querySelector(`[data-dk-tab="${CSS.escape(p)}"]`));
+  return id ? PD_ROOT.querySelector(`[data-dk-tab="${CSS.escape(id)}"]`).closest('.dk-stack') : null;
+}
+function pdSplitItems(id, ctx) {
+  const d = PD.dock;
+  if (!d || d.narrow() || !ctx || ctx.where !== 'dock') return [];
+  const stacks = pdStacks(), st = stacks.find(s => s.panels.includes(id));
+  if (!st) return [];
+  const conv = stacks.find(s => s.panels.includes('po-chat'));
+  const tool = PD_TOOLS.includes(id), name = p => d.title(p) || p;
+  const alone = id === 'po-chat' ? 'The conversation stays in the top bar'
+    : st.panels.length < 2 ? 'It is the only tab here: Move to Other Stack, or drag it' : '';
+  const split = (label, side) => ({ id: 'split-' + side, label, disabled: !!alone, title: alone,
+    run: () => { d.moveTo(id, { kind: 'stack', stack: st }, side); d.activate(id); } });
+  // The other stacks, named by their tabs and where they are from this one.
+  const here = pdStackEl(st)?.getBoundingClientRect();
+  const where = s => {
+    const r = pdStackEl(s)?.getBoundingClientRect();
+    if (!here || !r) return '';
+    const dx = (r.left + r.right - here.left - here.right) / 2, dy = (r.top + r.bottom - here.top - here.bottom) / 2;
+    return Math.abs(dx) >= Math.abs(dy) ? (dx > 0 ? ', on the right' : ', on the left') : (dy > 0 ? ', below' : ', above');
+  };
+  const label = s => s === conv ? 'Top bar'
+    : s.panels.slice(0, 3).map(name).join(' · ') + (s.panels.length > 3 ? ` +${s.panels.length - 3}` : '');
+  const others = id === 'po-chat' ? [] : stacks.filter(s => s !== st && !(tool && s === conv));
+  const keep = p => p === 'po-chat' || !d.can(p, 'close') || PdWorkspace.isPinned(PD_WS, p);
+  const shut = list => () => list.forEach(p => d.close(p));
+  const rest = st.panels.filter(p => p !== id && !keep(p));
+  const right = st.panels.slice(st.panels.indexOf(id) + 1).filter(p => !keep(p));
+  const inBar = st === conv;
+  return [{ sep: true },
+    split('Split Right', 'right'), split('Split Left', 'left'), split('Split Down', 'bottom'), split('Split Up', 'top'),
+    { id: 'move-stack', label: 'Move to Other Stack', title: others.length ? '' : 'There is no other stack',
+      sub: others.map((s, i) => ({ id: 'to-' + i, label: label(s) + where(s),
+        run: () => { d.moveTo(id, { kind: 'stack', stack: s }, 'center'); d.activate(id); } })) },
+    { id: 'unsplit', label: 'Unsplit', disabled: inBar, title: inBar ? `${name(id)} is already in the top bar` : '',
+      run: () => {
+        for (const p of [...st.panels]) {
+          if (PD_TOOLS.includes(p)) d.setViewMode(p, 'unpinned');
+          else if (conv) d.moveTo(p, { kind: 'stack', stack: pdStacks().find(s => s.panels.includes('po-chat')) }, 'center');
+        }
+        d.activate(id);
+      } },
+    { sep: true },
+    { id: 'close-others', label: 'Close Other Tabs', disabled: !rest.length,
+      title: rest.length ? 'The conversation and pinned tabs stay' : 'No other tab here to close', run: shut(rest) },
+    { id: 'close-right', label: 'Close Tabs to the Right', disabled: !right.length,
+      title: right.length ? 'The conversation and pinned tabs stay' : 'No tab to its right to close', run: shut(right) }];
+}
 // A phone keeps Panels ▾ in the bar, so its ⋯ has no common tail.
-const pdWithCommon = hook => (id, ctx) => [...(hook ? hook(id, ctx) || [] : []), ...pdPinItem(id),
+const pdWithCommon = hook => (id, ctx) => [...(hook ? hook(id, ctx) || [] : []), ...pdSplitItems(id, ctx), ...pdPinItem(id),
   ...(PD.dock && PD.dock.narrow() ? [] : pdCommonItems(ctx))];
 // The open task's actions in the conversation panel's ⋯ menu (need 14, the
 // CEO's P109): the same model as a list row's (static/actions.js), asked each
