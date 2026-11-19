@@ -644,6 +644,38 @@ class AssignTest(unittest.TestCase):
         self.assertNotIn("unreadThreads", down, "a page below carries its entries only")
         self.assertEqual(mids(poll), mids(linked), "a window's poll keeps to the window")
 
+    def test_a_replys_steps_ride_on_it_and_a_link_to_a_step_lands_on_its_reply(self):
+        # #402 (issue 61): the PO's mid-turn lines are the steps of the reply
+        # that ends the turn; a link to one lands on that reply and says
+        # which step (uptoStep); the current session's unfinished turn is
+        # open (the page's live line).
+        def step(mid, ts, text):
+            r = po(mid, ts, text)
+            r["turn"]["interim"] = True
+            return r
+        recs = [human("s:0", 0, "merge #395"), step("s:1", 10, "Merging #395 now."),
+                step("s:2", 20, "Checking the hub log."), po("s:3", 30, "I merged #395."),
+                human("s:4", 40, "and #397?"), step("s:5", 50, "Merging #397 now."),
+                step("s:6", 60, "Checking the Inbox rows.")]
+        import turn_steps
+        recs, step_of, open_mid = turn_steps.fold(recs, "s")
+        self.assertEqual(step_of, {"s:1": "s:3", "s:2": "s:3", "s:5": "s:6"})
+        out = self.run_(recs, [], side())
+        idx = {**out, "recs": recs, "by_mid": {r["mid"]: r for r in recs}, "sig": 1,
+               "channel": threads._channel({**out, "recs": recs}), "stepOf": step_of, "openMid": open_mid}
+        with mock.patch.object(threads, "ready", return_value=idx):
+            plain = threads.channel_view("r", {})
+            linked = threads.channel_view("r", {}, 3, upto="s:2")
+        by = {t["mid"]: t for t in plain["items"]}
+        self.assertEqual(list(by), ["s:0", "s:3", "s:4", "s:6"], "the steps are no entries")
+        self.assertEqual([x["text"] for x in by["s:3"]["steps"]], ["Merging #395 now.", "Checking the hub log."])
+        self.assertNotIn("open", by["s:3"], "a finished turn")
+        self.assertTrue(by["s:6"].get("open"), "the running turn's last line is open")
+        self.assertEqual([x["text"] for x in by["s:6"]["steps"]], ["Merging #397 now."])
+        self.assertIn("s:3", [t["mid"] for t in linked["items"]])
+        self.assertEqual(linked["uptoStep"], {"mid": "s:2", "owner": "s:3"})
+        self.assertNotIn("uptoStep", plain)
+
     def test_the_threads_filter_shows_only_balloons_of_a_thread_and_counts_the_whole_chat(self):
         # #304: the chat's Threads filter (&threads=1) keeps a thread's
         # balloons; the counts on the filter are the whole chat's, either way.
