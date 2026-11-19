@@ -731,6 +731,22 @@
   /* Who writes to whom reads as names ("#26 claude → PO"), not as a shouted label. */
   .msg .from .who, .msg .from .to, .msg-fold .from .who, .msg-fold .from .to { text-transform:none; letter-spacing:0; }
   /* When it was written: quiet, after the names, digits of equal width. */
+  /* #402: a PO reply's steps (what it wrote on the way), "4 steps ▸" by its time, opened in place. */
+  .msg .from .steps-btn { margin-left:var(--s-200); padding:0 var(--s-100); border:none; border-radius:var(--r-100); background:transparent;
+    color:var(--fg-muted); font:inherit; font-weight:400; text-transform:none; letter-spacing:0; cursor:pointer; }
+  .msg .from .steps-btn:hover { background:var(--hover); color:var(--fg); }
+  .msg .from .steps-btn:focus-visible { outline:none; box-shadow:0 0 0 2px var(--focus-ring); }
+  .msg .steps-list { list-style:none; margin:0 0 var(--s-200); padding:var(--s-100) 0 var(--s-100) var(--s-200);
+    border-left:2px solid var(--border); color:var(--fg-muted); }
+  .msg .steps-list li { display:flex; gap:var(--s-200); align-items:baseline; border-radius:var(--r-100); }
+  .msg .steps-list .at { flex:0 0 auto; font-size:var(--fs-200); font-variant-numeric:tabular-nums; }
+  .msg .steps-list .step-text { min-width:0; overflow-wrap:anywhere; }
+  .msg .steps-list .step-text > :first-child { margin-top:0; }
+  .msg .steps-list .step-text > :last-child { margin-bottom:0; }
+  /* #402: a link opened a message the Hidden setting hides. */
+  .team-shown-note { display:flex; align-items:baseline; gap:var(--s-200); flex-wrap:wrap; color:var(--fg-muted); font-size:var(--fs-200); line-height:16px; }
+  .team-shown-note .team-hide-btn { margin-left:auto; padding:0; border:none; background:transparent; color:var(--link); font:inherit; text-decoration:underline; cursor:pointer; }
+  .team-shown-note .team-hide-btn:focus-visible { outline:none; box-shadow:0 0 0 2px var(--focus-ring); }
   .msg .from .at, .msg-fold .from .at { margin-left:var(--s-200); font-weight:400; text-transform:none; letter-spacing:0;
     color:var(--fg-muted); font-variant-numeric:tabular-nums; }
   /* A task's folded messages: one row, its summary and the kinds in order. */
@@ -747,7 +763,7 @@
   .msg.user.hub { border-left-width:1px; background:var(--surface-sunken); }
   .hub-who { color:var(--fg-muted); }
   .answers, .no-answer, .hub-kind { margin-left:var(--s-200); font-size:var(--fs-100); font-weight:400;
-    text-transform:none; letter-spacing:0; color:var(--fg-muted); }
+    text-transform:none; letter-spacing:0; color:var(--fg-muted); white-space:nowrap; }
   .msg-fold .chips > :first-child { margin-left:0; }
   .no-answer { font-weight:600; }
   .lz { display:inline-block; height:16px; line-height:16px; padding:0 6px; margin-left:var(--s-200); border-radius:var(--r-100);
@@ -1303,6 +1319,13 @@
   #livetail .lt-head .act-dot { width:6px; height:6px; border-radius:50%; background:var(--run-working);
     flex:0 0 auto; animation:actpulse 1.1s ease-in-out infinite; }
   #livetail .lt-who { color:var(--c-progress-fg); font-weight:700; }
+  /* #402: in a PO chat, one line: the PO's words of the turn still running. */
+  #livetail .po-live { display:flex; align-items:baseline; gap:6px; font-size:var(--fs-200); line-height:16px; }
+  #livetail .po-live .act-dot { width:6px; height:6px; border-radius:50%; background:var(--run-working);
+    flex:0 0 auto; align-self:center; animation:actpulse 1.1s ease-in-out infinite; }
+  #livetail .po-live .lt-text { flex:1 1 auto; min-width:0; color:var(--fg); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  #livetail .po-live .lt-text.idle { color:var(--fg-muted); }
+  #livetail .po-live .at { flex:0 0 auto; color:var(--fg-muted); font-variant-numeric:tabular-nums; }
   #livetail .lt-more { background:none; border:none; color:var(--dim); font-size:10px;
     cursor:pointer; padding:0 2px; letter-spacing:.04em; }
   #livetail .lt-more:hover { color:var(--fg); }
@@ -1966,6 +1989,7 @@ fetch('/api/settings').then(r => r.json()).then(s => {
   OPERATOR = s.operatorName || s.operatorNickname || 'you';
   if (CHAT_NAMES.operator !== OPERATOR) { CHAT_NAMES.operator = OPERATOR; refChanged(); }
   ibxHlSet(s.inboxHighlightSec);
+  if (s.poTeamActivity) poTeamSet(s.poTeamActivity);
 }).catch(() => {}).finally(() => {
   // An Inbox landing waited for the highlight's length (#343).
   if (!IBX_HL_READ) { IBX_HL_READ = true; if (GOTO && typeof landPending === 'function') landPending(); }
@@ -4506,7 +4530,8 @@ function foldBalloonHtml(m, i, how, o) {
   const key = esc(foldKey(m, i));
   const hub = isHubInput(m);
   const cls = (m.from === 'user' ? 'user' : esc(agentClass(m.from))) + (hub ? ' hub' : '');
-  const who = whoHtml(m, CHAT_NAMES, { pop: how !== 'row' }) + stampHtml(m.ts) + (hub ? '' : sendHowHtml(m));
+  const steps = how !== 'row' && Array.isArray(m.steps) && m.steps.length ? m.steps : null;
+  const who = whoHtml(m, CHAT_NAMES, { pop: how !== 'row' }) + stampHtml(m.ts) + (steps ? stepsBtnHtml(m, steps) : '') + (hub ? '' : sendHowHtml(m));
   if (how === 'row') {
     const chips = foldChips(m, o.un, o.idle, o.superseded);
     // o.plain: the line's words as the reader sees them (a balloon link as its chip's words).
@@ -4530,7 +4555,8 @@ function foldBalloonHtml(m, i, how, o) {
   const body = items ? (rs ? rs.html : '') + items.html
     : (!mine && typeof own === 'string' && own) || `${rs ? rs.html : ''}<div class="text md">${o.md(rs ? rs.text : m.text)}</div>${!mine && o.pts ? o.pts(m) : ''}`;
   // o.reacts: the person's quick reactions to it (reactRowHtml).
-  const inner = `<div class="from${fb ? ' fold-head" title="Fold this message again' : ''}">${fb}${o.act ? o.act(m) : ''}${who}${chips}</div>${body}${o.reacts ? o.reacts(m) : ''}`;
+  const stepList = steps && STEPS_OPEN.has(m.id) ? stepsListHtml(steps, o.md) : '';
+  const inner = `<div class="from${fb ? ' fold-head" title="Fold this message again' : ''}">${fb}${o.act ? o.act(m) : ''}${who}${chips}</div>${stepList}${body}${o.reacts ? o.reacts(m) : ''}`;
   const attrs = `data-mid="${esc(m.id || '')}" data-key="${key}" data-from="${esc(m.from || '')}"`;
   return under ? `<div class="msg ${cls} has-under" ${attrs}><div class="bal">${inner}</div><div class="pt-under">${under}</div></div>`
     : `<div class="msg ${cls}" ${attrs}>${inner}</div>`;
@@ -4540,6 +4566,18 @@ function foldBalloonHtml(m, i, how, o) {
 // “…” ↑", and go on without it. null until the hub has resolved the link.
 const REPLY_QUOTE_HEAD_RE = /^\s*re\s+(?:P\d+[a-z]?(?:\s*\([^)]*\))?|https?:\/\/[^\s<>]+?)\s*:\s*/i;
 const REPLY_HEAD_RE = /^\s*re\s+(https?:\/\/[^\s<>]+?):(?=\s|$)\s*/i;
+// #402: "4 steps ▸" by a PO reply's time: what it wrote on the way there,
+// opened in place above its text, each with its time.
+function stepsBtnHtml(m, steps) {
+  const open = STEPS_OPEN.has(m.id), n = steps.length;
+  return `<button type="button" class="steps-btn" data-steps="${esc(m.id || '')}" aria-expanded="${open}" title="${open ? 'Hide' : 'Show'} the steps before this message">${n} step${n === 1 ? '' : 's'} ${open ? '▾' : '▸'}</button>`;
+}
+function stepsListHtml(steps, md) {
+  return `<ol class="steps-list">${steps.map(s => {
+    const ts = s.timestamp ? Date.parse(s.timestamp) / 1000 : 0;
+    return `<li data-step="${esc(s.mid || '')}"><span class="at">${esc(ts ? hhmm(ts) : '')}</span><div class="step-text md">${md(s.text || '')}</div></li>`;
+  }).join('')}</ol>`;
+}
 function replyStrip(m) {
   const t = String(m.text || ''), x = t.match(REPLY_HEAD_RE);
   const ref = x && refOfUrl(x[1]);
@@ -5002,20 +5040,23 @@ function pointBarHtml(m, P, href, pick) {
   if (!m || !m.id || !P) return '';
   const bits = [];
   // Each says what became of it, linked down to its answer, plan or follow-up (ptStateHtml).
-  for (const p of (P.byMid.get(m.id) || []).filter(p => !pick || pick(p))) bits.push(ptStateHtml(p, P, href));
+  // Hide team activity (#402): no state line, no "answers / plans Pn"; an Ack and its Comment stay.
+  const quiet = poTeamHidden();
+  if (!quiet) for (const p of (P.byMid.get(m.id) || []).filter(p => !pick || pick(p))) bits.push(ptStateHtml(p, P, href));
   for (const p of P.byAnswer.get(m.id) || []) {
     // A plan: "plans P12", never an Ack (the work is not live yet).
     const here = (p.answers || []).filter(x => x.mid === m.id);
     const plans = here.length && here.every(isPlan);
     const verb = plans ? 'plans ' : 'answers ';
-    bits.push(`<span class="pt-chip">${p.mid && p.mid !== m.id ? ptLink(p.mid, verb + p.id + ' ↑', href, 'Go to your message', 'pt:' + p.id) : esc(verb + p.id)}</span>`);
+    if (!quiet) bits.push(`<span class="pt-chip">${p.mid && p.mid !== m.id ? ptLink(p.mid, verb + p.id + ' ↑', href, 'Go to your message', 'pt:' + p.id) : esc(verb + p.id)}</span>`);
     const a = curAnswer(p);
-    if (plans) { if (p.state === 'planned' && ptTaskWords(p)) bits.push(`<span class="pt-chip">${esc(ptTaskWords(p))}</span>`); }
+    if (plans) { if (!quiet && p.state === 'planned' && ptTaskWords(p)) bits.push(`<span class="pt-chip">${esc(ptTaskWords(p))}</span>`); }
     // An "on it" answer still being worked on takes no Ack yet (Q2).
     else if (p.state === 'delivered' && a && a.mid === m.id) { if (!ptStillWorking(p, P)) bits.push(ackBtn(p.id) + commentBtn(p.id)); }
-    else if (p.state === 'followed') bits.push(ptThreadHtml({ followedBy: p.followedBy }, P, href) || '<span class="pt-chip">followed up</span>');
+    else if (!quiet && p.state === 'followed') bits.push(ptThreadHtml({ followedBy: p.followedBy }, P, href) || '<span class="pt-chip">followed up</span>');
   }
-  if (P.approvals.has(m.id)) bits.push('<span class="pt-chip">approved: go ahead</span>');
+  if (quiet) { /* the state chips are team activity too */ }
+  else if (P.approvals.has(m.id)) bits.push('<span class="pt-chip">approved: go ahead</span>');
   else if (P.dones.has(m.id)) bits.push('<span class="pt-chip">done</span>');
   return bits.length ? `<div class="pt-bar">${bits.join('')}</div>` : '';
 }
@@ -5097,6 +5138,32 @@ let SOLO_IDLE = false;     // the solo agent is not working: its silence is an a
 // reads only what is theirs, the rest one line per gap (forCeo, gapsOf). Per
 // browser. (It replaced "Just us", which folded each hub message to a row of
 // its own: ~600 rows between ~105 balloons over three days.)
+// #402 (issue 61): a PO turn's mid-turn lines are its reply's steps (the hub
+// folds them, turn_steps.py), behind "N steps ▸". STEPS_OPEN: the replies
+// whose steps are open; STEP_ASKED: a reply → the step a link asked for, so
+// the dashboard hears the landing under the id it asked for.
+const STEPS_OPEN = new Set();
+const STEP_ASKED = new Map();
+// The PO's words of a turn still running ({ mid, text, ts } or null): while
+// it works they are the live line above the box (renderLiveTail), not a message.
+let PO_LIVE = null;
+// Hide team activity (#402, issue 60): a PO chat's channel shows only the
+// person and the PO. Per person on the hub (poTeamActivity); localStorage is
+// the first paint's copy, and its storage event applies a change at once in
+// every open chat. TEAM_SHOWN_FOR: a link's message it was shown to open.
+let PO_TEAM = 'shown', TEAM_SHOWN_FOR = '';
+try { PO_TEAM = localStorage.getItem('cd-po-team') === 'hidden' ? 'hidden' : 'shown'; } catch (e) {}
+function poTeamOn() { try { return THREADED && !THREAD_MODE && PO_TEAM === 'hidden'; } catch (e) { return false; } }
+function poTeamHidden() { return poTeamOn() && !TEAM_SHOWN_FOR; }
+function poTeamSet(v) {
+  v = v === 'hidden' ? 'hidden' : 'shown';
+  try { if (localStorage.getItem('cd-po-team') !== v) localStorage.setItem('cd-po-team', v); } catch (e) {}
+  if (v === PO_TEAM) return;
+  PO_TEAM = v;
+  TEAM_SHOWN_FOR = '';
+  if (LAST_ITEMS) renderBubbles(LAST_ITEMS, { force: true });
+}
+window.addEventListener('storage', e => { if (e.key === 'cd-po-team') poTeamSet(e.newValue); });
 let TEAM_ALL = false;
 try { TEAM_ALL = localStorage.getItem('cd-chat-team') === '1'; } catch (e) {}
 // A thread (#210) shows all its messages: it is one topic, nothing to fold away.
@@ -5149,6 +5216,19 @@ function renderBubbles(items, opt = {}) {
   const box = $('#msgs');
   LAST_ITEMS = items;
   pmIndex(items, ROOM_OBJ);
+  // #402: while the PO works, its words of the turn still running (the
+  // hub's open turn) are the live line above the box, not a message yet.
+  PO_LIVE = null;
+  let working = [];
+  try { working = TAIL_WORKING; } catch (e) {}
+  if (typeof threadedView === 'function' && threadedView() && !THREAD_MODE && working.length) {
+    let live = null;
+    for (let j = items.length - 1; j >= 0 && !live; j--) if (items[j] && items[j].open && items[j].from !== 'user') live = items[j];
+    if (live && live.id !== GOTO && working.some(a => a.identity === live.from)) {
+      PO_LIVE = { mid: live.id || '', text: live.text || '', ts: live.ts || 0 };
+      items = items.filter(m => m !== live);
+    }
+  }
   // Don't blow away the DOM while the user is mid-comment (it would drop their
   // selection / the open composer). Highlights are re-applied after each render.
   const holdDraw = () => {
@@ -5205,7 +5285,9 @@ function renderBubbles(items, opt = {}) {
   // The person's view (#146): over a transcript the hub types into, and
   // unless Team activity is on, each run of what is not theirs is one gap
   // row; opened, its messages draw as the full view draws them.
-  const clean = !THREAD_MODE && !TEAM_ALL && items.some(m => isHubInput(m) || (m.from !== 'user' && m.answers));
+  // Hide team activity (#402): the person's view, its gaps and task rows not drawn.
+  const hideTeam = poTeamHidden();
+  const clean = !THREAD_MODE && (hideTeam || !TEAM_ALL) && items.some(m => isHubInput(m) || (m.from !== 'user' && m.answers));
   const gaps = clean ? gapsOf(items, held) : [];
   const gapAt = new Map(), inGap = new Set();
   GAP_OF_MID = new Map();
@@ -5213,7 +5295,7 @@ function renderBubbles(items, opt = {}) {
   GAP_N = gaps.length; GAP_MSGS = 0;
   for (const g of gaps) {
     gapAt.set(g.first, g);
-    if (FOLD.groups.has(g.key)) { GAP_N--; continue; }   // opened: its messages are in view
+    if (!hideTeam && FOLD.groups.has(g.key)) { GAP_N--; continue; }   // opened: its messages are in view
     GAP_MSGS += g.idx.length;
     g.idx.forEach(i => { inGap.add(i); if (items[i].id) {
       GAP_OF_MID.set(items[i].id, g.key);
@@ -5289,6 +5371,9 @@ function renderBubbles(items, opt = {}) {
   const body = m => { if (m.from !== 'user') return askBodyHtml(m, POINTS, md, ptBar); const it = m.id ? pointItems(m.text) : null; return it ? pointItemsHtml(m, it, POINTS, href, md) : null; };
   const rows = [];
   const workItems = THREAD_MODE ? items.filter(m => m.workLog) : [];
+  // #402: above a message the Hidden setting hides, opened by a link: the way to hide it again.
+  const shownNote = m => { if (TEAM_SHOWN_FOR && m && m.id === TEAM_SHOWN_FOR && poTeamOn()) rows.push(
+    '<div class="team-shown-note" data-key="team-shown"><span>Team activity shown to open this message.</span><button type="button" class="team-hide-btn">Hide it again</button></div>'); };
   const workLast = workItems.length ? workItems[workItems.length - 1] : null;
   let workLineShown = false;
   // The catch-up line goes above what is drawn first for the first message after the read point.
@@ -5325,20 +5410,20 @@ function renderBubbles(items, opt = {}) {
     const gp = gapAt.get(i);
     const g = groupAt.get(i);
     if (cuHtml && i >= cu.first && (gp || g || !hiddenIn.has(i))) { rows.push(cuHtml); cuHtml = ''; }
-    if (gp) {
+    if (gp && !hideTeam) {
       // Team activity: one row for the run; opened, the run draws under it.
       const open = FOLD.groups.has(gp.key);
       keys.push(gp.key + '|' + gp.seen);
       rows.push(gapRowHtml(gp, items, open));
     }
     if (inGap.has(i)) return;
-    if (g) {
+    if (g && !hideTeam) {
       // Its row, and when opened the group in order under it: "Latest ↓" counts
       // the row, not what is folded in it.
       const open = FOLD.groups.has(g.key);
       keys.push(groupSeen(g));
       rows.push(groupRowHtml(g, items, open));
-      if (open) g.hidden.forEach(j => rows.push(balloon(items[j], j)));
+      if (open) g.hidden.forEach(j => { shownNote(items[j]); rows.push(balloon(items[j], j)); });
     }
     if (hiddenIn.has(i)) { if (quiet(m, i)) quietRows++; return; }
     if (plan[i] === 'line') {
@@ -5357,6 +5442,7 @@ function renderBubbles(items, opt = {}) {
     // A thread's root in the chat has one row under it, its thread's (#367):
     // the thread row carries the state, the points' own row is in the thread.
     const lines = thr && !THREAD_MODE ? (m.thr || []).map(t => threadLineHtml(t, m.from === 'user')).filter(Boolean) : [];
+    shownNote(m);
     rows.push(balloon(m, i, lines.length > 0));
     if (thr) {
       if (mark && THREAD_MODE) rows.push(mark);
@@ -5663,6 +5749,7 @@ function showChatBar(items, quietRows) {
   if (!bar || !btn) return;
   const phoneFilter = document.querySelector('[data-phone-action="team-all"]');
   if (phoneFilter) {
+    phoneFilter.hidden = poTeamOn();
     phoneFilter.setAttribute('aria-pressed', String(TEAM_ALL));
     phoneFilter.textContent = TEAM_ALL ? 'Team activity: shown' : 'Team activity: folded';
     phoneFilter.title = chatBarNote(TEAM_ALL, quietRows, GAP_N, GAP_MSGS);
@@ -5800,6 +5887,11 @@ function groupToggle(el) {
 // A message folded in a group, or behind a gap's line: it opens, drawn
 // around its row (a gap first, then the group inside it).
 function openGroupOf(box, mid) {
+  // Hidden (#402): a link to a message it hides shows the team activity, with a note above it.
+  if (poTeamHidden() && LAST_ITEMS && (GAP_OF_MID.has(mid) || GROUP_OF_MID.has(mid))) {
+    TEAM_SHOWN_FOR = mid;
+    renderBubbles(LAST_ITEMS, { force: true });
+  }
   for (const key of [GAP_OF_MID.get(mid), GROUP_OF_MID.get(mid)]) {
     if (!key || FOLD.groups.has(key) || !LAST_ITEMS) continue;
     FOLD.groups.add(key);
@@ -6063,9 +6155,11 @@ function gotoMsg(mid, part) {
 // the item of a numbered message holding P12's chip; "q:<text>" the quoted
 // words, wrapped in a mark of their own (unwrapped when the mark fades).
 function partOf(el, part) {
-  const m = barePart(part).match(/^(re|pt|q|ask):([\s\S]+)$/);
+  const m = barePart(part).match(/^(re|pt|q|ask|step):([\s\S]+)$/);
   if (!m || !el) return null;
   // "ask:0": that ask's card, its question and quick answers (#206: a point chip lands on it).
+  // "step:<mid>": a step of a PO reply, its steps open (#402).
+  if (m[1] === 'step') return [...el.querySelectorAll('.steps-list li[data-step]')].find(x => x.dataset.step === m[2]) || null;
   if (m[1] === 'ask') return [...el.querySelectorAll('.qa[data-ask]')].find(x => x.dataset.ask === el.dataset.mid + ':' + m[2]) || null;
   const text = el.querySelector('.text.md');
   if (m[1] === 'pt') {
@@ -6290,6 +6384,8 @@ function landKeepPut() {
 const GOTO_UNLOADED = 'The linked message could not be loaded. Reload the page to try again.';
 function gotoFail(mid, text) { showGotoNote(text); gotoDone(mid, false, text); }
 function gotoDone(mid, ok, why) {
+  // A step's link (#402) landed on its reply: told under the step's id, the one asked for.
+  if (STEP_ASKED.has(mid)) { const s = STEP_ASKED.get(mid); STEP_ASKED.delete(mid); mid = s; }
   const h = embedHost();
   if (h) try { h.postMessage({ type: 'goto-done', roomId: ROOM, msg: mid, ok: !!ok, why: why || '' }, location.origin); } catch (e) {}
 }
@@ -7748,6 +7844,14 @@ async function renderThreaded(force) {
     THR_BEFORE = Math.max(0, (d.before || 0) - THR_OLDER.length);
     THR_AFTER = d.after || 0;
     thrKeepHub(d.hubRows);
+    // #402: a link to a step lands on the reply holding it, its steps open, the step marked.
+    const st = d.uptoStep;
+    if (st && st.mid && st.owner && GOTO === st.mid) {
+      GOTO = st.owner; THR_ASKED = st.owner;
+      if (!barePart(GOTO_PART)) GOTO_PART = (GOTO_PART ? 'inbox,' : '') + 'step:' + st.mid;
+      STEPS_OPEN.add(st.owner);
+      STEP_ASKED.set(st.owner, st.mid);
+    }
     thrDraw(roomTs, d);
     thrWatch(d.latestMid);
     thrAnyWatch(d);
@@ -7767,7 +7871,7 @@ function thrDraw(roomTs, d = THR_VIEW) {
   {
     let items = THR_OLDER.concat((d && d.items) || []).map(t => Object.assign(soloItems([t], 's', SOLO_AGENT, 1)[0], { id: t.mid },
       t.thr ? { thr: t.thr } : {}, t.inThr ? { inThr: t.inThr } : {}, t.alsoIn ? { alsoIn: t.alsoIn } : {},
-      t.workLog ? { workLog: true } : {}));
+      t.workLog ? { workLog: true } : {}, t.steps ? { steps: t.steps } : {}, t.open ? { open: true } : {}));
     items.forEach(m => { if (m.from === 'user' && m.text) m.text = stripRefBlocks(m.text); });
     if (!THREAD_MODE) {
       // A question card in a thread is drawn there, not in the chat (#379).
@@ -9111,6 +9215,21 @@ function renderLiveTail() {
   }
   // While the prompt card is up it already shows the screen — don't double it.
   const show = own && ROOM_LIVE && TAIL_WORKING.length && (!pc || pc.hidden);
+  // A PO chat (#402): one line, the PO's words of the turn still running, in
+  // place of the terminal's lines; "working…" until it has written any.
+  if (show && threadedView() && !THREAD_MODE) {
+    const po = PO_LIVE, text = po ? foldLine(po.text) : '';
+    const key = 'po\u0001' + (po ? po.mid + '\u0001' + po.text + '\u0001' + po.ts : '');
+    if (box.dataset.key !== key) {
+      box.dataset.key = key;
+      box.innerHTML = `<div class="lt po-live" role="status"><span class="act-dot"></span><span class="lt-who">PO</span>`
+        + `<span class="lt-text${text ? '' : ' idle'}"${po ? ` title="${esc(po.text)}"` : ''}>${esc(text || 'working…')}</span>`
+        + (po && po.ts ? `<span class="at">${esc(hhmm(po.ts))}</span>` : '') + '</div>';
+    }
+    box.hidden = false;
+    if (TAIL_POP_PTY) closeTailPop();
+    return;
+  }
   if (!show) {
     if (!box.hidden) { box.hidden = true; box.innerHTML = ''; box.dataset.key = ''; }
     if (TAIL_POP_PTY) closeTailPop();
@@ -11782,6 +11901,23 @@ $('#msgs').addEventListener('compositionend', e => {
   ASK_AFTER_COMPOSE.delete(key);
   setTimeout(() => { askSyncDraft(key); askSend(key, option, postOk); }, 0);
 });
+// #402: "N steps ▸" opens a reply's steps in place; "Hide it again" hides the
+// team activity a link showed. Caught first: the balloon's head folds it.
+$('#msgs').addEventListener('click', e => {
+  const sb = e.target.closest && e.target.closest('.steps-btn');
+  if (sb) {
+    e.stopPropagation(); e.preventDefault();
+    const mid = sb.dataset.steps;
+    if (STEPS_OPEN.has(mid)) STEPS_OPEN.delete(mid); else STEPS_OPEN.add(mid);
+    if (LAST_ITEMS) renderBubbles(LAST_ITEMS, { force: true, anchor: sb.closest('.msg') });
+    return;
+  }
+  if (e.target.closest && e.target.closest('.team-hide-btn')) {
+    e.stopPropagation(); e.preventDefault();
+    TEAM_SHOWN_FOR = '';
+    if (LAST_ITEMS) renderBubbles(LAST_ITEMS, { force: true });
+  }
+}, true);
 $('#msgs').addEventListener('click', e => {
   const undo = e.target.closest && e.target.closest('.qa-undo');
   if (undo) { if (undo.classList.contains('qa-reopen')) askReopen(undo.dataset.ask); else askUndo(undo); return; }
