@@ -85,11 +85,21 @@ class AFinishedReport(_Needs):
         self.assertIsNone(self.reported())
         self.assertIsNone(self.item())
 
-    def test_leaves_when_the_person_writes_in_it(self):
+    def test_stays_when_the_person_writes_in_it_until_done(self):
+        # #394 (P395): writing in the chat is not being done with it; Done is.
         self.report("completed", "Done.")
         chatroom.post_message(self.rid, "user", "Thanks.")
-        self.assertIsNone(self.reported())
+        self.assertEqual(self.reported()["line"], "Done.")
         self.assertIsNone(self.item())
+        chatroom.record_dealt(self.rid)
+        self.assertIsNone(self.reported())
+
+    def test_the_agents_next_report_takes_its_place(self):
+        self.report("completed", "Done.")
+        self.report("update", "Working on the follow-up.")
+        self.assertIsNone(self.reported())
+        self.report("completed", "Follow-up done.")
+        self.assertEqual(self.reported()["line"], "Follow-up done.")
 
     def test_leaves_when_the_task_is_done_or_stopped(self):
         self.report("completed", "Done.")

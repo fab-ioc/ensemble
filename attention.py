@@ -861,6 +861,29 @@ def _open_to_human(room: dict, msgs: list, po: str | None = None,
     return message
 
 
+def _report_to_check(room: dict, msgs: list, po: str | None = None) -> dict | None:
+    """The newest finished report to the person still to check (#394, P395):
+    ``{from, ts, id, line}``, or None. Unlike :func:`_open_to_human`, the
+    person writing in the chat (here or in a terminal) does not settle it:
+    only Done (``set_aside``, read by :func:`_reported`) does, or the agent's
+    own later report (an update, a question, a newer completed). A report to
+    the PO (it has one and the task still does) is the PO's to check."""
+    agents = {p.get("identity") for p in room.get("participants", [])
+              if p.get("kind") == "agent"}
+    reports = [r for r in (room.get("lastReport"), room.get("lastRealReport")) if isinstance(r, dict)]
+    for m in reversed(msgs):
+        if m.get("kind") != "report" or m.get("from", "") not in agents:
+            continue
+        if m.get("reportKind", "") != "completed" or (m.get("reportTo") and po):
+            return None
+        text = next((r.get("text", "") for r in reports if r.get("messageId") == m.get("id")), None)
+        if text is None:
+            text = _REPORT_HEADING.sub("", m.get("text", "") or "")
+        return {"from": m.get("from", ""), "ts": m.get("ts", 0), "id": m.get("id", ""),
+                "line": _first_line(text)}
+    return None
+
+
 def _first_line(text) -> str:
     """The first line of an ask that says something, without Markdown marks."""
     for ln in (text or "").splitlines():
@@ -947,6 +970,7 @@ def _summarize(room: dict, po: str | None = None, is_po: bool | None = None) -> 
         "seenAt": seen_at(room),
         "dealtAt": dealt_at(room),
         "openToHuman": _open_to_human(room, msgs, po, is_po),
+        "reportToCheck": _report_to_check(room, msgs, po),
     }
 
 
@@ -1698,14 +1722,14 @@ def waiting_on_po() -> dict[str, dict]:
 
 
 def _reported(room: dict, live_agents: list[str]) -> dict | None:
-    """A finished report the person has not looked at: ``{since, line,
+    """A finished report the person has not checked: ``{since, line,
     agent}`` for the list's "Ready for your check", or None. It is never
     Needs you (GitHub issue 11), and it leaves when the person is done with it
-    (Done, ``set_aside``), writes in it (the report is no longer open, see
-    ``_open_to_human``), or the task is Done or stopped (no agent running).
-    Reading the chat past it is not being done with it (P395)."""
-    put = room.get("openToHuman")
-    if not put or put.get("kind") != "completed" or put.get("to") != "user" or not live_agents:
+    (Done, ``set_aside``), when the agent reports again, or when the task is
+    Done or stopped (no agent running). Reading the chat past it or writing in
+    it is not being done with it (#394, P395: :func:`_report_to_check`)."""
+    put = room.get("reportToCheck")
+    if not put or not live_agents:
         return None
     if _d is not None and _d.normalize_workflow(room.get("workflow")) == "done":
         return None

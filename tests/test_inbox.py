@@ -178,7 +178,7 @@ class InboxTest(unittest.TestCase):
         self.assertEqual((r["kind"], r["mid"]), ("check", "m-a"))
         self.assertIn("try", r["reason"])
 
-    def test_ready_for_check_appears_and_leaves_when_read(self):
+    def test_ready_for_check_appears_and_leaves_when_attention_drops_it(self):
         self.w.snap = {"items": [], "reported": {TASK: {"since": NOW - 60, "line": "Done: the fix", "agent": "claude",
                                                          "mid": "m-rep"}}}
         out = self.build()
@@ -186,7 +186,9 @@ class InboxTest(unittest.TestCase):
         r = out["rows"][0]
         self.assertEqual((r["kind"], r["roomId"], r["mid"], r["ref"], r["project"]),
                          ("check", TASK, "m-rep", "#7", "Alpha"))
-        # Read: attention no longer reports it (its seenAt rule), and it leaves.
+        # Done (or a later report, or the task done/stopped): attention no longer
+        # reports it, and it leaves. Reading or writing in it does not (#394,
+        # P395: test_needs_you_real.AFinishedReport).
         self.w.snap = {"items": [], "reported": {}}
         self.assertEqual(self.build()["count"], 0)
 

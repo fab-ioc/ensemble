@@ -126,13 +126,18 @@ async function main() {
       // Close the first card; while its Undo shows it is not counted, then Undo.
       const row = `document.querySelector('#ld-ibx-body .ibx-row[data-stage="answer"]')`;
       await p.hover(row); await sleep(150);
+      // Done with this comes with the Needs you items (attention), which may be a poll behind the rows.
+      await p.until(`${row}.querySelectorAll('.ibx-acts .ibx-btn').length === 3`, 10000).catch(() => null);
       // Its actions stay inside the card in this narrow column (#394: three of them wrap).
       out.acts = await p.evalIn(`(() => { const r = ${row}, c = r.getBoundingClientRect();
         return [...r.querySelectorAll('.ibx-acts .ibx-btn')].map(b => { const x = b.getBoundingClientRect(); return x.left >= c.left && x.right <= c.right && x.top >= c.top && x.bottom <= c.bottom; }); })()`);
       await p.click(`${row}.querySelector('[data-ibx-close]')`); await sleep(300);
       out.closing = await geo(p); await p.shot(A.scene + '-closing');
+      // The PO chat's phone strip counts agree (ibxStripCounts writes them on its frame).
+      out.closingStrip = await p.evalIn(`ibxStripCounts(${JSON.stringify(A.ids.opTen)}).q + ibxStripCounts(${JSON.stringify(A.ids.Motors)}).q`);
       await p.click(`document.querySelector('#ld-ibx-body [data-ibx-undo]')`); await sleep(300);
       out.undone = await geo(p);
+      out.undoneStrip = await p.evalIn(`ibxStripCounts(${JSON.stringify(A.ids.opTen)}).q + ibxStripCounts(${JSON.stringify(A.ids.Motors)}).q`);
     }
     await p.click(HIDE); await sleep(600);
     out.min = await geo(p); await p.shot(A.scene + '-min');
@@ -278,6 +283,9 @@ class EveryOpenCardIsARowInChrome(unittest.TestCase):
         c, u = g["closing"], g["undone"]
         self.assertEqual(self.chips(c), {"All": ("13", False), "opTen": ("9", False), "Motors": ("4", False)})
         self.assertEqual(self.chips(u), self.chips(g["all"]))
+        self.assertRegex(c["title"], r"·\s*13$", c["title"])
+        self.assertRegex(u["title"], r"·\s*14$", u["title"])
+        self.assertEqual((g["closingStrip"], g["undoneStrip"]), (13, 14), "the PO chats' strip counts")
 
     def test_mixed_asked_again_counts_both_and_cleared_none(self):
         a = self.got["mixed"]["all"]

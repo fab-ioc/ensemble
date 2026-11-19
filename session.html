@@ -6173,8 +6173,7 @@ function landPending() {
         return;
       }
       GOTO = ''; GOTO_PART = '';
-      openThread('', mid, passage);
-      gotoDone(mid, true, 'thread');
+      if (!openThread('', mid, passage)) gotoDone(mid, true, 'thread');
       return;
     }
     if (!el) {
@@ -7808,9 +7807,9 @@ function thrNotShown(d) {
     chatFilterSet({ kind: 'all' });
     return;
   }
-  if (at === 'balloon' || (at === undefined && !room)) { openThread('', target, part); gotoDone(target, true, 'thread'); return; }
+  if (at === 'balloon' || (at === undefined && !room)) { if (!openThread('', target, part)) gotoDone(target, true, 'thread'); return; }
   const cardTid = at === 'thread' && ((d && d.cardThreads) || {})[target];
-  if (cardTid) { openThread(cardTid, target, part); gotoDone(target, true, 'thread'); return; }
+  if (cardTid) { if (!openThread(cardTid, target, part)) gotoDone(target, true, 'thread'); return; }
   gotoFail(target, at === 'room' || (at == null && room) ? 'The linked message is not shown in this chat.'
     : 'The linked message was not found in this conversation.');
 }
@@ -8221,9 +8220,11 @@ function gotoThread(w) {
   else if (THREAD_MODE) openThread('', w.tmid, w.part || '');
   else sideOpen({ tid: '', mid: w.tmid, msg: w.msg || w.tmid, part: w.part || '' });
 }
+// #394: true when a thread frame (the Dock's panel or the side frame) took
+// the balloon: that page says whether it landed (goto-done), not this one.
 function openThread(tid, mid, part = '') {
   if (!tid && !mid) return;
-  if (!THREAD_MODE) { sideOpen({ tid: tid || '', mid: tid ? '' : (mid || ''), msg: mid || '', part }); return; }
+  if (!THREAD_MODE) return sideOpen({ tid: tid || '', mid: tid ? '' : (mid || ''), msg: mid || '', part });
   const host = embedHost();
   if (host) { host.postMessage({ type: 'open-thread', roomId: ROOM, thread: tid || '', mid: mid || '', part }, location.origin); return; }
   const u = '/session?id=' + encodeURIComponent(ROOM) + (tid ? '&thread=' + encodeURIComponent(tid) : '&thread=&tmid=' + encodeURIComponent(mid)) + (mid ? '&msg=' + encodeURIComponent(mid) : '') + (part ? '&part=' + encodeURIComponent(part) : '');
@@ -8273,7 +8274,7 @@ function edClicked() {
 }
 function sideOpen(o) {
   const side = $('#thr-side'), f = $('#ts-frame');
-  if (!side || !f || (!o.tid && !o.mid)) return;
+  if (!side || !f || (!o.tid && !o.mid)) return false;
   // The same thread open already, by its id or by the balloon it starts on.
   const same = !!TS && (o.tid ? TS.tid === o.tid : !TS.tid && !!o.mid && TS.mid === o.mid);
   TS = { tid: o.tid || '', mid: o.tid ? '' : o.mid };
@@ -8294,7 +8295,7 @@ function sideOpen(o) {
     sideAimNow(dock);
     if (!side.hidden) { side.hidden = true; f.setAttribute('src', 'about:blank'); }
     sideMark();
-    return;
+    return true;
   }
   setText($('#ts-title'), title);
   tsPenPaint();
@@ -8311,6 +8312,7 @@ function sideOpen(o) {
     f.setAttribute('src', u);
   }
   sideMark();
+  return true;
 }
 // The page framing this chat shows the thread as a Dock panel when it can
 // (index.html's pdThreadPanel, synchronous): true when it did. A chat in a

@@ -186,17 +186,21 @@ async function main() {
       await sleep(400);
     }
     } catch (e) { out.threadedErr = String(e).slice(0, 300); }
+    let SIDE, mark, doneOf;
     // (8) a row whose message is filed in a thread: the thread's panel opens
     // beside the chat and marks it as opened from the Inbox
     try {
-    const SIDE = `PD.rt.get('thread:po')?.el.querySelector('iframe')`;
+    SIDE = `PD.rt.get('thread:po')?.el.querySelector('iframe')`;
     await latest(A.tpo, [A.card]);
-    const done = evalIn(`new Promise(res => { const on = ev => { const d = ev.data || {}; if (d.type === 'goto-done' && d.roomId === ${JSON.stringify(A.tpo)}) { window.removeEventListener('message', on); res({ ok: d.ok, why: d.why }); } };
-      window.addEventListener('message', on); setTimeout(() => res(null), 20000); })`);
-    await evalIn(`openMsgLink(${JSON.stringify(A.tpo)}, ${JSON.stringify(A.tmid)}, 'inbox'); 0`);
-    const mark = `(() => { const f = ${SIDE}; const d = f && f.contentDocument; const m = d && [...d.querySelectorAll('.msg[data-mid]')].find(e => e.dataset.mid === ${JSON.stringify(A.tmid)});
+    mark = `(() => { const f = ${SIDE}; const d = f && f.contentDocument; const m = d && [...d.querySelectorAll('.msg[data-mid]')].find(e => e.dataset.mid === ${JSON.stringify(A.tmid)});
       if (!m) return null; const b = d.getElementById('msgs').getBoundingClientRect(), r = m.getBoundingClientRect();
       return { landed: m.classList.contains('ibx-landed'), label: ((m.querySelector('.lz-inbox') || {}).textContent || '').trim(), inside: r.bottom > b.top + 1 && r.top < b.bottom - 1 }; })()`;
+    // #394 review 1: the thread's page says whether it landed, once it has (not the channel, as it opens the thread).
+    doneOf = mid => evalIn(`new Promise(res => { const on = ev => { const d = ev.data || {}; if (d.type === 'goto-done' && d.roomId === ${JSON.stringify(A.tpo)} && d.msg === ${JSON.stringify(mid)}) { window.removeEventListener('message', on);
+        const f = ${SIDE}; res({ ok: d.ok, why: d.why, fromThread: !!f && ev.source === f.contentWindow, markedThen: ${mid === A.tmid ? mark : 'null'} }); } };
+      window.addEventListener('message', on); setTimeout(() => res(null), 20000); })`);
+    const done = doneOf(A.tmid);
+    await evalIn(`openMsgLink(${JSON.stringify(A.tpo)}, ${JSON.stringify(A.tmid)}, 'inbox'); 0`);
     out.thread = { m: await until(`(() => { const v = ${mark}; return v && v.landed ? v : null; })()`, 20000).catch(() => null) };
     out.thread.last = await evalIn(mark);
     out.thread.done = await done;
@@ -204,6 +208,20 @@ async function main() {
     out.thread.note = await evalIn(note(A.tpo));
     await shot('thread-landed');
     } catch (e) { out.threadErr = String(e).slice(0, 300); }
+    // (9) the thread's panel, open on that thread, told to land on a balloon it
+    // cannot show (as pdThreadPanel tells a thread open already): the row pressed says so.
+    try {
+    const gone = A.tmid.replace(/:\d+$/, ':99999');
+    const done = doneOf(gone);
+    out.threadFail = { row: await evalIn(`(() => { const r = IBX.data.rows.find(x => x.roomId === ${JSON.stringify(A.tpo)}); IBX.pressed = { id: r.id, rid: r.roomId, mid: ${JSON.stringify(gone)}, at: Date.now() }; return r.id; })()`) };
+    await evalIn(`(() => { ${SIDE}.contentWindow.postMessage({ ensemble: 'goto-msg', msg: ${JSON.stringify(gone)}, part: '', hl: inboxHlSec() }, location.origin); return 0; })()`);
+    out.threadFail.done = await done;
+    out.threadFail.chatNote = await evalIn(note(A.tpo));
+    await sleep(300);
+    out.threadFail.rowNote = await evalIn(`(() => { const li = LD_INBOX.querySelector('li.ibx-row[data-ibx="' + CSS.escape(${JSON.stringify(out.threadFail.row)}) + '"]'); const n = li && li.querySelector('.ibx-fail'); return n ? n.textContent : ''; })()`);
+    out.threadFail.failed = await evalIn(`IBX.failed.has(${JSON.stringify(out.threadFail.row)})`);
+    await shot('thread-fail');
+    } catch (e) { out.threadFailErr = String(e).slice(0, 300); }
   } finally {
     try { ch.kill(); } catch (e) {}
   }
@@ -406,6 +424,17 @@ class InboxTrustInChrome(unittest.TestCase):
         self.assertFalse(t["inChannel"], "filed in the thread, not drawn in the channel")
         self.assertEqual(t["note"], "", t)
         self.assertTrue(t["done"] and t["done"]["ok"], t)
+        self.assertTrue(t["done"]["fromThread"], "the thread's page says it landed, not the channel")
+        self.assertTrue(t["done"]["markedThen"] and t["done"]["markedThen"]["landed"], "said once it had landed")
+
+    def test_a_message_its_thread_cannot_show_says_so_on_its_row(self):
+        self.assertNotIn("threadFailErr", self.got)
+        f = self.got["threadFail"]
+        # Not in that thread: the thread's page hands it to the chat, which says it cannot show it.
+        self.assertTrue(f["done"] and f["done"]["ok"] is False, f)
+        self.assertTrue(f["chatNote"].startswith("The linked message was not found in this conversation."), f)
+        self.assertTrue(f["failed"], f)
+        self.assertTrue(f["rowNote"].startswith("Could not open this message"), f)
 
     def test_no_section_failed(self):
         for k in ("keepErr", "reloadErr", "pressErr"):
