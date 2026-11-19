@@ -1513,6 +1513,9 @@
   @keyframes mic-pulse { 0%,100% { opacity:1; transform:scale(1); } 50% { opacity:.45; transform:scale(.86); } }
   @media (prefers-reduced-motion: reduce) { #mic[aria-pressed="true"] .mic-ico { animation:none; } }
   #mic:focus-visible { outline:none; box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  /* P387: where dictation cannot work here (no engine, or not a secure page) the mic is drawn inactive; pressed, it says why. */
+  #mic[aria-disabled="true"], #mic[aria-disabled="true"]:hover { background:transparent; color:var(--fg-disabled); cursor:not-allowed; }
+  .phone-tools-menu button[aria-disabled="true"], .phone-tools-menu button[aria-disabled="true"]:hover { background:var(--surface); color:var(--fg-disabled); cursor:not-allowed; }
   /* The words still being heard are selected, so typing replaces them; drawn grey, not highlighted. */
   #input.mic-live::selection { color:var(--fg-muted); background:transparent; }
   #add-point, #attach { height:32px; padding:0 var(--s-200); background:transparent; border:1px solid transparent; color:var(--fg-subtle); font-size:var(--fs-200); }
@@ -1890,7 +1893,7 @@
         <details class="phone-compose-tools"><summary aria-label="Attach, add an ask, or chat filter">+</summary><div class="phone-tools-menu">
           <button type="button" data-phone-action="attach">Attach a file</button>
           <button type="button" data-phone-action="add-point">Add an ask</button>
-          <button type="button" data-phone-action="mic" hidden>Dictate</button>
+          <button type="button" data-phone-action="mic">Dictate</button>
           <button type="button" data-phone-action="team-all">Team activity</button>
           <button type="button" data-phone-action="threads-view" hidden>Threads</button>
           <button type="button" data-phone-action="earlier-threads" hidden>Earlier messages</button>
@@ -1906,7 +1909,7 @@
         <div id="stop-wrap" hidden><button type="button" id="stop-agent" title="Stop the working agent (Esc)">Stop</button><div id="stop-choices" role="group" aria-label="Choose agent to stop" hidden></div></div>
         <!-- P367: dictation. Shown only where the browser has speech recognition
              in a secure context; words land at the caret, it never sends. -->
-        <button type="button" id="mic" aria-pressed="false" aria-label="Dictate" title="Dictate: press and talk (press again or Esc to stop)" hidden><svg class="mic-ico" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="5.5" y="1.5" width="5" height="8" rx="2.5"/><path d="M3 7.5a5 5 0 0 0 10 0M8 12.5v2"/></svg></button>
+        <button type="button" id="mic" aria-pressed="false" aria-label="Dictate" title="Dictate: press and talk (press again or Esc to stop)"><svg class="mic-ico" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="5.5" y="1.5" width="5" height="8" rx="2.5"/><path d="M3 7.5a5 5 0 0 0 10 0M8 12.5v2"/></svg></button>
         <div id="send-split"><button id="send" disabled>Send</button><button type="button" id="send-more" aria-haspopup="menu" aria-expanded="false" aria-controls="send-menu" aria-label="More ways to send" title="More ways to send" hidden>&#9662;</button><div id="send-menu" role="menu" aria-label="Send" hidden><button type="button" role="menuitem" id="send-now"><span class="sm-name">Send now</span><span class="sm-sub"></span></button></div></div>
       </div>
       <label id="thr-also-l" hidden title="Show this reply in the chat too, not only in its thread"><input type="checkbox" id="thr-also"> Also send to chat</label>
@@ -10148,14 +10151,20 @@ $('#send').onclick = () => sendNow();
 // them replaces them), the heard ones are plain text. Press again, Esc, or a
 // few seconds of silence stops it; it never sends. Where the browser has no
 // recognition, or the page is not a secure context (plain http to another
-// machine), the button is not shown. The audio goes to the browser's speech
-// service (Safari: Apple; Chrome: Google).
+// machine), the button is drawn inactive and pressing it says why (P387). The
+// audio goes to the browser's speech service (Safari: Apple; Chrome: Google).
 var MIC_NOTE = '';            // one line in the box's hint: a refused microphone, no speech heard
 var MIC = null;               // the session listening: {rec, start, text, sel, stopping, timer}
 const MIC_SILENCE_MS = 4000;  // after the last words heard
 const MIC_FIRST_MS = 8000;    // before the first word
 const MIC_ENGINE = () => window.SpeechRecognition || window.webkitSpeechRecognition || null;
-function micAvailable() { return !!MIC_ENGINE() && window.isSecureContext !== false; }
+// Why dictation cannot work on this page, or '' when it can.
+function micUnavailable() {
+  if (!MIC_ENGINE()) return 'Dictation isn’t available in this browser: use Safari or Chrome.';
+  if (window.isSecureContext === false) return 'Dictation needs a secure page: open the hub at its https address.';
+  return '';
+}
+function micAvailable() { return !micUnavailable(); }
 function micNote(text) {
   const was = MIC_NOTE;
   MIC_NOTE = text || '';
@@ -10164,13 +10173,14 @@ function micNote(text) {
 function micButton() {
   const b = $('#mic');
   if (!b) return;
-  b.hidden = !micAvailable();
+  const why = micUnavailable();
   const item = document.querySelector('[data-phone-action="mic"]');
-  if (item) item.hidden = b.hidden;
+  for (const el of [b, item]) if (el) { if (why) el.setAttribute('aria-disabled', 'true'); else el.removeAttribute('aria-disabled'); }
+  if (item) item.title = why;
   const on = !!MIC && !MIC.stopping;
   b.setAttribute('aria-pressed', on ? 'true' : 'false');
-  b.setAttribute('aria-label', on ? 'Listening, press to stop' : 'Dictate');
-  b.title = on ? 'Listening, press to stop' : 'Dictate: press and talk (press again or Esc to stop)';
+  b.setAttribute('aria-label', why ? 'Dictate: ' + why : on ? 'Listening, press to stop' : 'Dictate');
+  b.title = why || (on ? 'Listening, press to stop' : 'Dictate: press and talk (press again or Esc to stop)');
   $('#input').classList.toggle('mic-live', on);
 }
 // What the session heard, as one run of words: the heard part, then the part
@@ -10213,7 +10223,9 @@ function micTimer(ms) {
 }
 function micStart() {
   const Engine = MIC_ENGINE();
-  if (!Engine || MIC) return;
+  if (MIC) return;
+  const why = micUnavailable();
+  if (why) { micNote(why); return; }
   const input = $('#input');
   micNote('');
   if (typeof speakStop === 'function') speakStop();
