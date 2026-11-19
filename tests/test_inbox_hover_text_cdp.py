@@ -16,6 +16,9 @@ on every row's text in turn; checked on each:
   (the row's own text, or its hover copy's): nothing is drawn over it;
 * a cut question shows whole in its hover copy; one that fits shows none;
 * the actions are one line, inside the card, below the question;
+* while a cut question's copy is up, the row's buttons stay on top at their
+  place (P414 item 5), the copy's text wrapped around them, and a real click on
+  each reaches that very button;
 * the same after a repaint arriving while the pointer is on the row (held
   under a hover copy, drawn at once without one), and after the pointer leaves;
 * a row whose message could not be opened, at both widths: its note and its
@@ -66,7 +69,7 @@ async function main() {
     const line = li.querySelector('.ibx-line'), card = li.getBoundingClientRect(), box = line.getBoundingClientRect();
     const rg = document.createRange(); rg.selectNodeContents(line);
     const rects = [...rg.getClientRects()].filter(r => r.width > 2 && r.top >= box.top - 1 && r.bottom <= box.bottom + 1);
-    const copy = document.querySelector('.row-expanded');
+    const copy = document.querySelector('.row-expanded'), acts = li.querySelector('.ibx-acts');
     let pts = 0, hid = 0; const bad = [];
     for (const r of rects) for (const f of [0.08, 0.3, 0.5, 0.7, 0.92]) {
       const x = r.left + r.width * f, y = r.top + r.height / 2; pts++;
@@ -81,12 +84,20 @@ async function main() {
       const ls = getComputedStyle(cl);
       copyShown = cps.length > 0 && cs.visibility === 'visible' && Number(cs.opacity) > 0.95 && ls.visibility === 'visible' && Number(ls.opacity) > 0.95
         && ls.color !== 'rgba(0, 0, 0, 0)' && ls.webkitTextFillColor !== 'rgba(0, 0, 0, 0)' && cps.every(r => [0.1, 0.5, 0.9].every(f => {
-        const e = document.elementFromPoint(r.left + r.width * f, r.top + r.height / 2); return !!e && copy.contains(e); })); }
-    const acts = li.querySelector('.ibx-acts'), ab = acts && acts.getBoundingClientRect(), lk = li.querySelector('a.ibx-link').getBoundingClientRect();
+        const e = document.elementFromPoint(r.left + r.width * f, r.top + r.height / 2); return !!e && copy.contains(e) && !!e.closest('.ibx-line'); })); }
+    // P414 item 5: the row's buttons are on top while the copy is up: the button itself, or the copy's picture of
+    // it at its place (the same label); never the copy's text.
+    const keep = (acts && getComputedStyle(acts).display !== 'none' ? [...acts.querySelectorAll('.ibx-btn')] : []).map(b => {
+      const r = b.getBoundingClientRect(), e = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      if (e && b.contains(e)) return 'orig';
+      const pb = e && e.closest('.row-expand-keep .ibx-btn');
+      return pb && copy && copy.contains(pb) && pb.textContent === b.textContent ? 'pic' : (e ? e.tagName + '.' + e.className : 'none');
+    });
+    const ab = acts && acts.getBoundingClientRect(), lk = li.querySelector('a.ibx-link').getBoundingClientRect();
     const btns = acts ? [...acts.querySelectorAll('.ibx-btn')] : [];
     return { id: li.dataset.ibx, text: line.textContent, pts, hid, bad,
       cut: line.scrollHeight > line.clientHeight + 1,
-      copy: !!copy, copyWhole: !!cl && cl.textContent === line.textContent && cl.scrollHeight <= cl.clientHeight + 1, copyShown,
+      copy: !!copy, keep, copyWhole: !!cl && cl.textContent === line.textContent && cl.scrollHeight <= cl.clientHeight + 1, copyShown,
       acts: acts && getComputedStyle(acts).display !== 'none' ? { n: btns.length, h: Math.round(ab.height), oneLine: new Set(btns.map(b => Math.round(b.getBoundingClientRect().top))).size === 1,
         inCard: ab.left >= card.left - 0.5 && ab.right <= card.right + 0.5 && ab.bottom <= card.bottom + 0.5,
         belowText: ab.top >= lk.bottom - 0.5, labels: btns.map(b => { const sp = [...b.children].filter(e => { const cs = getComputedStyle(e); return cs.display !== 'none' && cs.clipPath === 'none'; });
@@ -124,6 +135,31 @@ async function main() {
         o.rows.push({ i, before, hover, rp, during, after, left });
       }
       if (w) await evalIn(`(() => { ${D}.style.width = ''; ${D}.style.maxWidth = ''; return 0; })()`);
+    }
+    // P414 item 5: with a cut question's copy up, a real click on each of its buttons reaches that very button.
+    {
+      const i = out.default.rows.find(r => r.hover.cut).i;
+      await evalIn(`(() => { window.__p414 = []; window.__p414f = ev => { const b = ev.target.closest && ev.target.closest('.ibx-btn'); if (!b || !${D}.contains(b)) return;
+        window.__p414.push({ inInbox: ${D}.contains(b), act: Object.keys(b.dataset).join(','), t: b.textContent.trim() }); ev.preventDefault(); ev.stopImmediatePropagation(); };
+        window.addEventListener('click', window.__p414f, true); return 0; })()`);
+      const clicks = [];
+      const nb = await evalIn(`${D}.querySelectorAll('li.ibx-row[data-q]')[${i}].querySelectorAll('.ibx-acts .ibx-btn').length`);
+      for (let k = 0; k < nb; k++) {
+        await move(5, 5); await frame();
+        const [x, y] = await at(i);
+        await move(x, y); await sleep(450); await frame();
+        const st = await evalIn(look(i));
+        const [bx, by] = await evalIn(`(() => { const b = ${D}.querySelectorAll('li.ibx-row[data-q]')[${i}].querySelectorAll('.ibx-acts .ibx-btn')[${k}].getBoundingClientRect();
+          return [Math.round(b.left + b.width / 2), Math.round(b.top + b.height / 2)]; })()`);
+        await c.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: bx, y: by, button: 'left', clickCount: 1 }, sessionId);
+        await c.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: bx, y: by, button: 'left', clickCount: 1 }, sessionId);
+        await sleep(80); await frame();
+        const want = await evalIn(`(() => { const b = ${D}.querySelectorAll('li.ibx-row[data-q]')[${i}].querySelectorAll('.ibx-acts .ibx-btn')[${k}]; return Object.keys(b.dataset).join(','); })()`);
+        clicks.push({ k, copy: st.copy, keep: st.keep, got: await evalIn(`window.__p414.splice(0)`), want });
+      }
+      await evalIn(`(() => { window.removeEventListener('click', window.__p414f, true); return 0; })()`);
+      await move(5, 5); await frame();
+      out.keepClicks = clicks;
     }
     // Review 1: a row whose message could not be opened (its note and its ways under the meta line), a cut
     // question and one that fits: the pointer on its text, then on each of the note's ways.
@@ -254,6 +290,26 @@ class HoverTextInChrome(close.CloseInChrome):
             for phase in ("hover", "after"):
                 if r[phase]["cut"]:
                     self.assertTrue(r[phase]["copyShown"], (k, r["i"], phase, r[phase]))
+
+    def test_the_buttons_stay_on_top_of_a_cut_question_s_copy(self):
+        # P414 item 5: while a cut question's copy is up, its row's buttons show at their place, over the copy.
+        seen = 0
+        for k, r in self._rows():
+            for phase in ("hover", "after"):
+                s = r[phase]
+                self.assertTrue(all(x in ("orig", "pic") for x in s["keep"]), (k, r["i"], phase, s["keep"]))
+                seen += s["copy"] and "pic" in s["keep"]
+        self.assertGreater(seen, 0, "some copy reaches over its row's buttons")
+
+    def test_a_click_on_a_button_under_the_copy_reaches_it(self):
+        cl = self.got["keepClicks"]
+        self.assertGreaterEqual(len(cl), 2, cl)
+        for x in cl:
+            self.assertTrue(x["copy"], x)
+            self.assertIn("pic", x["keep"], x)
+            self.assertEqual(len(x["got"]), 1, x)
+            self.assertTrue(x["got"][0]["inInbox"], x)
+            self.assertEqual(x["got"][0]["act"], x["want"], x)
 
     def test_a_row_that_could_not_open_keeps_its_note_and_ways_usable(self):
         f = self.got["failed"]

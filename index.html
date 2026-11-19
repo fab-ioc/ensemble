@@ -13909,6 +13909,7 @@ function rowExpandShow(row, spec, focus = false) {
   const host = spec.host ? row.closest(spec.host) : null;
   if (host) rowExpandHostHold(host);
   else rowExpandHostLet();
+  if (host && spec.keep) rowExpandKeep(copy, host.querySelector(`:scope > ${spec.keep}`), win);
   ROW_EXPAND = { row, copy, spec, host, focus };
   if (win.MutationObserver) {
     // A menu opening, or the row redrawn away under the copy (Dock redraws its tabs), lets it go.
@@ -13920,6 +13921,44 @@ function rowExpandShow(row, spec, focus = false) {
   ROW_EXPAND_WIN = win;
   win.addEventListener('resize', rowExpandHide);
   ROW_EXPAND_LAST = Date.now();
+}
+// P414 (item 5): spec.keep (an Inbox card's Close / Earlier / Done): the card's own
+// buttons the copy grows over stay on top, where they are. The copy, in the body
+// above the Inbox, shows a picture of them at their place (the same computed
+// look; its text skips their line, so no word goes under them); a press there
+// goes to the real button under it (covered), and the pointer moving onto them
+// lets the copy go, so the real ones take over.
+function rowExpandKeep(copy, acts, win) {
+  if (!acts || win.getComputedStyle(acts).display === 'none') return;
+  const ar = acts.getBoundingClientRect(), cr = copy.getBoundingClientRect();
+  if (!ar.width || cr.bottom <= ar.top + 0.5 || cr.top >= ar.bottom - 0.5 || cr.right <= ar.left || cr.left >= ar.right) return;
+  const doc = copy.ownerDocument, cs = win.getComputedStyle(copy);
+  const top0 = cr.top + copy.clientTop + parseFloat(cs.paddingTop);
+  // Two floats keep the band the buttons take free of the copy's text, across its width (a word is never cut beside them).
+  const above = doc.createElement('span'), band = doc.createElement('span');
+  above.className = band.className = 'row-expand-keep-gap';
+  above.style.cssText = `float:right;width:0;height:${Math.max(0, ar.top - top0)}px`;
+  band.style.cssText = `float:right;clear:right;width:100%;height:${ar.height}px`;
+  copy.prepend(above);
+  above.after(band);
+  const pic = acts.cloneNode(true);
+  pic.classList.add('row-expand-keep');
+  pic.setAttribute('aria-hidden', 'true');
+  pic.querySelectorAll('[id]').forEach(el => el.removeAttribute('id'));
+  pic.querySelectorAll('button, [tabindex]').forEach(el => { el.tabIndex = -1; });
+  copy.appendChild(pic);
+  // Out of the Inbox the card's rules no longer reach the picture: what differs is set on it.
+  const look = (o, c) => {
+    const os = win.getComputedStyle(o), now = win.getComputedStyle(c), set = [];
+    for (let i = 0; i < os.length; i++) { const p = os[i]; if (now.getPropertyValue(p) !== os.getPropertyValue(p)) set.push([p, os.getPropertyValue(p)]); }
+    for (const [p, v] of set) c.style.setProperty(p, v);
+    for (let i = 0; i < o.children.length && i < c.children.length; i++) look(o.children[i], c.children[i]);
+  };
+  look(acts, pic);
+  const at = copy.getBoundingClientRect();
+  Object.assign(pic.style, { position: 'absolute', margin: '0', right: 'auto', bottom: 'auto', zIndex: '1',
+    left: `${ar.left - at.left - copy.clientLeft + copy.scrollLeft}px`, top: `${ar.top - at.top - copy.clientTop + copy.scrollTop}px`,
+    width: `${ar.width}px`, height: `${ar.height}px` });
 }
 function rowExpandSchedule(row, spec, immediate = false) {
   if (ROW_EXPAND && ROW_EXPAND.row === row) return;
@@ -19125,7 +19164,7 @@ rowExpandWire(document.getElementById('ld-projs'),
 rowExpandWire(document.getElementById('ld-ibx-body'),
   { row: '.ibx-head, a.ibx-link', name: '.ibx-title-listed, .ibx-line',
     covered: '.ibx-head, a.ibx-link, .ibx-meta, .ibx-acts, .ibx-btn, .ibx-more > summary, .ibx-gone',
-    host: '.ibx-row', copyClass: 'ldp-expanded', focusClass: 'ldp-expand-focus' });
+    host: '.ibx-row', keep: '.ibx-acts', copyClass: 'ldp-expanded', focusClass: 'ldp-expand-focus' });
 (function () {
   const box = document.getElementById('ld-projs');
   if (!box) return;
