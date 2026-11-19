@@ -73,6 +73,7 @@ from pathlib import Path
 
 import points
 import durable
+import turn_steps
 
 _d = None   # the dashboard module, set by bind()
 
@@ -366,6 +367,12 @@ def _sessions(room: dict, led: dict) -> list[str]:
     """The chat's sessions (points._session_ids: its agent's, those it was
     rotated from, those its points were made in)."""
     return [s for s in points._session_ids(room, led) if _d._solo_owner(room, s) is not None]
+
+
+def current_session(room: dict) -> str:
+    """The PO's session now (its agent's): the one whose unended run of
+    mid-turn lines is the live line (#402)."""
+    return next((str(p.get("sessionId") or "") for p in points._agents(room) if p.get("sessionId")), "")
 
 
 def balloons(room: dict, led: dict, on_session=None, on_turn=None) -> list[dict]:
@@ -1238,6 +1245,10 @@ def build(room_id: str, room: dict | None = None, *, show_progress: bool = True,
                     announce("Reading conversations", done, total),
                     lambda session, sessions, done, total:
                     announce(f"Reading conversation {session} of {sessions}", done, total))
+    # #402: the PO's mid-turn lines are steps of the reply that ends the
+    # turn, before threading sees them: a step is never in a thread apart
+    # from its reply.
+    recs, step_of, open_mid = turn_steps.fold(recs, current_session(room), turn_steps.chosen_mids(side))
     task_of = points.task_lookup(room_id, room)
     announce("Sorting messages into threads", 0, len(recs))
     try:
@@ -1320,6 +1331,7 @@ def build(room_id: str, room: dict | None = None, *, show_progress: bool = True,
     hidden |= _archived_mids(out)
     idx = {**out, "sig": sig, "builtAt": time.time(), "took": round(time.time() - t0, 3),
            "by_mid": by_mid, "recs": recs, "hidden": hidden,
+           "stepOf": step_of, "openMid": open_mid,
            # The sends confirmed whose turns this index holds: a channel that
            # does not show one has it in a thread; one not held yet is a
            # turn the next build brings, its send drawn till then (#259).
@@ -1438,6 +1450,8 @@ def _meta(th: dict) -> dict:
 def _turn(idx: dict, mid: str, tid: str = "") -> dict:
     r = idx["by_mid"][mid]
     out = {**r["turn"], "mid": mid}
+    if mid == idx.get("openMid"):
+        out["open"] = True      # #402: the turn may still run (the live line)
     parts = (idx.get("split") or {}).get(mid)
     if parts:
         # Answers to points in several places: here only its part (#379).
@@ -1512,6 +1526,12 @@ def _span(idx: dict, seq: list[str], n: int, upto: str = "", before: str = "",
     return max(0, len(seq) - n), len(seq)
 
 
+def _own(idx: dict, mid: str) -> str:
+    """A step's reply (#402: a link, a search or a held page that names a
+    mid-turn line lands on the message it is folded into); any other as is."""
+    return (idx.get("stepOf") or {}).get(mid, mid) if mid else mid
+
+
 def _replied(idx: dict, archived: bool = False) -> set[str]:
     """The threads with replies (#304: what the Threads filter shows and
     counts): more than their first balloon, or one the person started
@@ -1553,6 +1573,8 @@ def channel_view(room_id: str, room: dict, n: int = CHANNEL_MAX, upto: str = "",
             return _quick_channel(room_id, room, n)
         return {"pending": True, "progress": progress.snapshot().get("thread:" + room_id)}
     ch = idx["channel"]
+    step = upto if upto in (idx.get("stepOf") or {}) else ""
+    upto, before, frm, after, to = (_own(idx, m) for m in (upto, before, frm, after, to))
     only = _replied(idx) if threads_only else None
     filter_tag = ":threads" if threads_only else ""
     if only is not None:
@@ -1624,6 +1646,8 @@ def channel_view(room_id: str, room: dict, n: int = CHANNEL_MAX, upto: str = "",
         out["latestAnyAt"] = newest["ts"]
     if upto:
         out["uptoAt"] = upto_at     # "balloon", "room" (a room message), "" (not in this chat)
+        if step:
+            out["uptoStep"] = {"mid": step, "owner": upto}     # #402: its steps open on it
     if before or after:
         return out      # a page above or below: the rest the reader holds already
     out["activity"] = _meta(idx["threads"]["team:activity"]) if "team:activity" in idx["threads"] else None
@@ -1658,20 +1682,27 @@ def _quick_channel(room_id: str, room: dict, n: int) -> dict:
     stat = {sid: points._session_stat(sid) for sid in sids}
     per, held = [], 0
     for sid in sorted(sids, key=lambda s: -(stat[s] or [0, 0.0])[1]):
-        if held >= n and per and stat[sid] and stat[sid][1] < min((f for f, _e in per if f), default=0.0):
+        if held >= n and per and stat[sid] and stat[sid][1] < min((f for f, _s, _e in per if f), default=0.0):
             break
         entries = [(mid, t) for mid, t in _d.page_turn_ids(sid, _d.read_session_turns(sid) or [])]
         if entries:
             per.append((next((_d._turn_epoch(t.get("timestamp")) for _m, t in entries
-                               if t.get("timestamp")), 0.0), entries))
+                               if t.get("timestamp")), 0.0), sid, entries))
             held += sum(1 for _m, t in entries if t.get("role") != "user" or _told(t)[1] == "human")
     # A deleted thread's balloons (#319) stay out while the threads are read.
     try:
-        gone = {m for rec in load_side(room_id)["deleted"].values() for m in rec.get("mids") or []}
+        side = load_side(room_id)
     except ValueError:
-        gone = set()
-    shown = [(mid, t) for _f, entries in sorted(per, key=lambda x: x[0]) for mid, t in entries
-             if (t.get("role") != "user" or _told(t)[1] == "human") and mid not in gone]
+        side = _empty_side()
+    gone = {m for rec in side["deleted"].values() for m in rec.get("mids") or []}
+    # #402: mid-turn lines folded into their replies, as the index does.
+    recs = [_rec(sid, mid, t) if t.get("interim") and t.get("role") != "user"
+            else {"mid": mid, "sid": sid, "role": "user" if t.get("role") == "user" else "agent", "turn": t}
+            for _f, sid, entries in sorted(per, key=lambda x: (x[0], x[1])) for mid, t in entries
+            if not t.get("hidden")]
+    recs, _step_of, open_mid = turn_steps.fold(recs, current_session(room), turn_steps.chosen_mids(side))
+    shown = [(r["mid"], {**r["turn"], "open": True} if r["mid"] == open_mid else r["turn"]) for r in recs
+             if (r["turn"].get("role") != "user" or _told(r["turn"])[1] == "human") and r["mid"] not in gone]
     items, size = [], 0
     for mid, t in reversed(shown[-n:] if n else []):
         item = {**t, "mid": mid}
@@ -1700,6 +1731,8 @@ def thread_view(room_id: str, room: dict, tid: str = "", mid: str = "", n: int =
     idx = ready(room_id, room)
     if idx is None:
         return {"pending": True, "progress": progress.snapshot().get("thread:" + room_id)}
+    step = next((m for m in (upto, mid) if m in (idx.get("stepOf") or {})), "")
+    mid, upto, before, frm, after, to = (_own(idx, m) for m in (mid, upto, before, frm, after, to))
     if not tid and mid:
         # Team activity is the chat's own traffic, not a thread (#234): a
         # balloon of it starts a thread of its own.
@@ -1732,6 +1765,8 @@ def thread_view(room_id: str, room: dict, tid: str = "", mid: str = "", n: int =
            "progress": progress.snapshot().get("thread:" + room_id),
            "thread": _meta(th), "items": [_turn(idx, m, tid) for m in members[start:end]],
            "before": start, "after": len(members) - end}
+    if step and upto in members:
+        out["uptoStep"] = {"mid": step, "owner": upto}     # #402: its steps open on it
     # Its question cards (#379): room messages the page draws among its
     # balloons by their time, as the channel does with its own.
     mine = set(th.get("cards") or ())
@@ -1769,19 +1804,31 @@ def search_balloons(room_id: str, room: dict, groups: list[list[str]], limit: in
     for r in idx["recs"]:
         if _who(r) not in ("you", "po") or r["mid"] in idx.get("hidden", ()):
             continue
-        line = r["turn"].get("text") or ""
-        if not text_matches(line, groups):
-            continue
-        homes = [t for t in idx["of"].get(r["mid"], ()) if t != "team:activity"]
-        tids.update(homes)
-        if _who(r) == "po" and r["mid"] not in idx["work"] and homes:
-            direct_answers.append((r["ts"], homes[-1], idx["threads"][homes[-1]], r))
-        hits.append({"roomId": room_id, "msgId": r["mid"], "ts": r["ts"],
-                     "fromLabel": "PO" if _who(r) == "po" else _d.operator_name(),
-                     "snippet": snippet(line, terms), "thread": homes[-1] if homes else "",
-                     "threadTitle": idx["threads"][homes[-1]].get("title") or "" if homes else "",
-                     "threadNamed": bool(homes) and bool(idx["threads"][homes[-1]].get("named"))})
+        # #402: a reply's folded steps are searched too; a hit on one lands
+        # on it (the hub opens its reply's steps).
+        for msg_id, line, at in [(r["mid"], r["turn"].get("text") or "", r["ts"])] + [
+                (st["mid"], st.get("text") or "", _d._turn_epoch(st.get("timestamp")) or r["ts"])
+                for st in r["turn"].get("steps") or []]:
+            if not text_matches(line, groups):
+                continue
+            homes = [t for t in idx["of"].get(r["mid"], ()) if t != "team:activity"]
+            tids.update(homes)
+            if msg_id == r["mid"] and _who(r) == "po" and r["mid"] not in idx["work"] and homes:
+                direct_answers.append((r["ts"], homes[-1], idx["threads"][homes[-1]], r))
+            hits.append(_hit(room_id, idx, r, msg_id, line, at, homes, terms, snippet))
     hits.sort(key=lambda h: -h["ts"])
+    return _search_answer(idx, hits, tids, direct_answers, terms, snippet, limit, room_id)
+
+
+def _hit(room_id, idx, r, msg_id, line, at, homes, terms, snippet) -> dict:
+    return {"roomId": room_id, "msgId": msg_id, "ts": at,
+            "fromLabel": "PO" if _who(r) == "po" else _d.operator_name(),
+            "snippet": snippet(line, terms), "thread": homes[-1] if homes else "",
+            "threadTitle": idx["threads"][homes[-1]].get("title") or "" if homes else "",
+            "threadNamed": bool(homes) and bool(idx["threads"][homes[-1]].get("named"))}
+
+
+def _search_answer(idx, hits, tids, direct_answers, terms, snippet, limit, room_id) -> dict:
     answers = []
     for tid in tids:
         th = idx["threads"].get(tid)

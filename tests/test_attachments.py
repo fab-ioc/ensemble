@@ -519,6 +519,25 @@ class Attachments(unittest.TestCase):
         self.assertEqual([t["text"] for t in agent.read_turns("s")], sent)
         self.assertEqual(message_refs.all_images(sent[2]), [str(a), str(b), str(c)])
 
+    def test_a_codex_commentary_message_is_interim(self):
+        # #402 review 1: Codex logs a message written mid-turn with phase
+        # "commentary" and the turn's last with "final_answer"; the first is
+        # what Claude's transcripts mark interim, so a Codex PO's steps fold.
+        from agents import codex
+        rows = [("user", None, "merge #395"), ("assistant", "commentary", "Merging #395 now."),
+                ("assistant", "commentary", "Checking the hub log."), ("assistant", "final_answer", "I merged #395."),
+                ("assistant", None, "An older rollout: no phase.")]
+        rollout = Path(self.tmp.name) / "rollout-phase.jsonl"
+        rollout.write_text("\n".join(json.dumps({"type": "response_item", "timestamp": "2026-11-19T14:00:00Z", "payload": {
+            "type": "message", "id": f"p{i}", "role": r, **({"phase": ph} if ph else {}),
+            "content": [{"type": "input_text" if r == "user" else "output_text", "text": t}]}}) for i, (r, ph, t) in enumerate(rows)),
+            encoding="utf-8")
+        agent = codex.CodexAgent()
+        agent.rollouts_for_session = lambda sid: [rollout]
+        got = agent.read_turns("s")
+        self.assertEqual([t["text"] for t in got], [t for _r, _p, t in rows])
+        self.assertEqual([bool(t.get("interim")) for t in got], [False, True, True, False, False])
+
     def test_with_images_and_split_images(self):
         paths = [r"C:\t\attachments\a.png", "/t/attachments/b c.png"]
         text = message_refs.with_images("hello", paths)
