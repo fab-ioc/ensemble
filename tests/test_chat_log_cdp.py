@@ -34,6 +34,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from http.server import ThreadingHTTPServer
 from pathlib import Path
@@ -162,7 +163,7 @@ async function main() {
     await dash.ev(`localStorage.removeItem('cd-chat-log'); localStorage.setItem('cd-theme', 'light'); 0`);
     const p = await tab(1440, 900);
     out.fresh = {};
-    for (const room of [A.po, A.task7]) { await p.chat(room); out.fresh[room] = await p.ev(VIEW); await p.shot(`chat-log-off-${room === A.po ? 'po' : 'task7'}`); }
+    for (const room of [A.po, A.task7]) { await p.chat(room); if (room === A.po) await p.until(`!!document.querySelector('.rl.po[data-po-fill]')`, 'po colour'); out.fresh[room] = await p.ev(VIEW); await p.shot(`chat-log-off-${room === A.po ? 'po' : 'task7'}`); }
     // Settings › Preferences › Chat as a log: On, with a real click. The open chat follows.
     await dash.ev(`openSettings('prefs'); 0`); await sleep(400);
     out.prefBefore = await dash.ev(`[...document.querySelectorAll('#pref-chat-log button')].map(b => [b.dataset.val, b.getAttribute('aria-pressed')])`);
@@ -180,7 +181,10 @@ async function main() {
       await p.ev(`localStorage.setItem('cd-theme', '${theme}'); cdTheme.apply(); 0`);
       for (const room of [A.po, A.task7]) {
         await p.chat(room);
+        // The PO label takes its project's colour once /api/projects is back.
+        if (room === A.po) await p.until(`!!document.querySelector('.rl.po[data-po-fill]')`, 'po colour');
         out.on[theme][room] = await p.ev(VIEW);
+        if (room === A.po) out.on[theme].poFill = await p.ev(`document.querySelector('.rl.po').dataset.poFill`);
         await p.shot(`chat-log-on-${room === A.po ? 'po' : 'task7'}-${theme}`);
       }
     }
@@ -245,6 +249,9 @@ class ChatLogInChrome(unittest.TestCase):
         points._CACHE.clear(); points._SYNCED.clear(); points._SCANNED.clear(); points._ADOPT_SEEN.clear()
         cls.addClassCleanup(points._CACHE.clear)
         ok, proj, _ = dashboard.register_project('Motors'); assert ok, proj
+        # Another project, busier lately: the project list puts it first, so Motors' PO
+        # takes the palette's second colour (green), not the blue of the person's accent.
+        ok, brakes, _ = dashboard.register_project('Brakes'); assert ok, brakes
         pid = proj['id']
         cls.task7, cls.task9 = cls.task('Export the parts list', pid, 7), cls.task('Upload page', pid, 9)
         po = chatroom.create_room('PO', [dict(m) for m in TEAM])['id']
@@ -274,6 +281,9 @@ class ChatLogInChrome(unittest.TestCase):
                               ('user', 'Good.', 'claude')]:
             chatroom.post_message(cls.task7, who, text, to=to)
         cls.counts = {po: 5, cls.task7: 5}
+        later = chatroom.create_room('Brakes work', [dict(m) for m in TEAM])['id']
+        dashboard.assign_session_project(later, brakes['id'])
+        time.sleep(1.1); chatroom.post_message(later, 'user', 'Check the pads.', to='claude')
         cls.server = ThreadingHTTPServer(('127.0.0.1', 0), dashboard.Handler)
         cls.server.daemon_threads = True; cls.server.handle_error = lambda *a: None
         threading.Thread(target=cls.server.serve_forever, daemon=True).start()
@@ -399,6 +409,7 @@ class ChatLogInChrome(unittest.TestCase):
             on = self.got['on'][theme][self.po]
             self.assertEqual([lb['bg'] for lb in self.label(on, 'po')], [lb['bg'] for lb in self.label(off, 'po')])
             self.assertTrue(self.label(on, 'po'))
+            self.assertEqual(self.got['on'][theme].get('poFill'), 'var(--c-success-bold)', 'the PO label is in its project colour')
 
     def test_settings_switches_an_open_chat_and_the_hub_keeps_it(self):
         self.assertTrue(self.got['sameDoc'], 'no reload')
