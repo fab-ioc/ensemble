@@ -113,7 +113,7 @@ async function main() {
     // A press elsewhere on the page (the project switcher), then the page itself brings Brakes's
     // tab to the front (PD.opening, as a project switch's fronts put back): not the person's pick (review 1).
     await step('autoAfterPress', async () => {
-      await clickAt('#proj-switch');
+      await clickAt('#proj-switch .caret');
       await evalIn(`(() => { closeProjMenu(); PD.opening = true; try { PD.dock.activate('chat:' + ${JSON.stringify(T.Brakes)}); } finally { PD.opening = false; } return 0; })()`);
     });
     out.autoFront = await evalIn(`PD.dock.frontOf('po-chat')`);
@@ -142,7 +142,7 @@ async function main() {
     // A project switch and back brings the tabs, the task in front open.
     await clickAt(tab('chat:' + T.Brakes)); await sleep(1200);
     // ... with real clicks in the project switcher.
-    const pick = async pid => { await clickAt('#proj-switch'); await until(`!!document.querySelector('#proj-menu .pm-item[data-proj="${pid}"]:not(.pm-set)')`, 5000);
+    const pick = async pid => { await clickAt('#proj-switch .caret'); await until(`!!document.querySelector('#proj-menu .pm-item[data-proj="${pid}"]:not(.pm-set)')`, 5000);
       await clickAt(`#proj-menu .pm-item[data-proj="${pid}"]:not(.pm-set)`); };
     await step('trading', () => pick(P.Trading), 2000);
     await step('motors', () => pick(P.Motors), 2500);
@@ -214,7 +214,7 @@ async function main() {
     out.removedBefore = await evalIn(ST);
     out.removedShown = await evalIn(`PD.dock.isShown(${JSON.stringify(out.removed.id)})`);
     await step('hubRemoved', async () => {
-      await clickAt('#proj-switch');
+      await clickAt('#proj-switch .caret');
       await evalIn(`(() => { closeProjMenu(); PD.dock.removePanel(${JSON.stringify(out.removed.id)}); return 0; })()`);
     });
     out.leftShown = await evalIn(`PD.dock.isShown(${JSON.stringify(out.removed.left)})`);

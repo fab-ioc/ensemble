@@ -374,7 +374,7 @@ async function main() {
     await sleep(800);
     out.few = await ev(BAR);
     // 10. A task in no project, from project ▾: the top level.
-    await clickAt(null, '#proj-switch');
+    await clickAt(null, '#proj-switch .caret');
     try { await until(`!!document.querySelector('#proj-menu [data-pm-task]')`, 'tasks in no project', 40); }
     catch (e) { throw Error(e.message + JSON.stringify(await ev(`(()=>{const un=(PROJECTS.projects||[]).find(p=>p.id===UNASSIGNED_ID);
       const row=ALL_ROWS.find(r=>r.roomId===${JSON.stringify(A.loose)});
@@ -392,7 +392,7 @@ async function main() {
     out.top = await ev(BAR);
     out.top.ico = await ev(`!!document.querySelector('#proj-switch-ico .bt-hash')`);
     await snap('bar-top-task');
-    await clickAt(null, '#proj-switch');
+    await clickAt(null, '#proj-switch .caret');
     await until(`!!document.querySelector('#proj-menu [data-pm-task]')`, 'menu again');
     out.free2 = await ev(`[...document.querySelectorAll('#proj-menu .pm-free [data-pm-task].on')].map(b => b.dataset.pmTask)`);
     await ev(`closeProjMenu(); 0`);

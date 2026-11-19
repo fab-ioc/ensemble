@@ -234,6 +234,8 @@ async function main() {
     await until(`!!barTopTask() && barTopTask().roomId===${JSON.stringify(A.loose)}`, 'top level task');
     await sleep(600);
     out.top = await ev(BAR);
+    await moveTo('#proj-switch .pj-nm');
+    await snap('main-top-hover');
     await thrMenuOpen();
     out.topMenu = await ev(`[...document.querySelectorAll('#thr-menu [data-thr-pick]')].map(b => b.dataset.thrPick)`);
     await clickAt(null, '#thr-menu [data-thr-pick=""]');
