@@ -8971,19 +8971,21 @@ def project_icon_gen_info(project_id: str) -> dict | None:
             "name": proj.get("name") or "", "about": project_icon_about(proj)}
 
 
-def generate_project_icons(project_id: str, name: str = "", colour: str = "") -> tuple[bool, str, dict]:
+def generate_project_icons(project_id: str, name: str = "", colour: str = "", ask: str = "") -> tuple[bool, str, dict]:
     """Four icons for a project, drawn by the CLI the hub runs (#335). Nothing is
     kept: the page shows them and saves the picked one through /api/projects/icon.
     `name` is the one typed in the settings, not saved yet; else the project's.
     `colour` (P362) is its PO label colour as #rrggbb, which the page works out
-    (the colour is the list's pick, in the theme painted): every icon is drawn in it."""
+    (the colour is the list's pick, in the theme painted): every icon is drawn in it.
+    `ask` (P373) is what the person typed it should show; icon_gen.clean_ask
+    makes it safe, and it is not kept (the page remembers it while open)."""
     proj = find_project(project_id)
     if proj is None:
         return False, "no_such_project", {}
     # A lone surrogate (JSON's "\ud800") cannot be encoded for the CLI: it becomes "?".
     name = str(name or "").encode("utf-8", "replace").decode("utf-8")
     name = " ".join(name.split())[:120] or proj.get("name") or ""
-    return icon_gen.generate(project_id, name, project_icon_about(proj), colour=colour)
+    return icon_gen.generate(project_id, name, project_icon_about(proj), colour=colour, ask=icon_gen.clean_ask(ask))
 
 
 def project_icon_file(project_id: str) -> Path | None:
@@ -23695,7 +23697,7 @@ class Handler(BaseHTTPRequestHandler):
                                 {"error": msg, "message": refusals.get(msg, msg)})
             return
         if p == "/api/projects/icon-gen":
-            # #335: {projectId, name?} -> {ok, svgs[<=4], agent, model, ms}; nothing is saved.
+            # #335: {projectId, name?, colour?, ask?} -> {ok, svgs[<=4], agent, model, ms}; nothing is saved.
             why = self._page_refusal()
             if why:
                 self._send_json(403, {"error": "page_only", "message": why})
@@ -23703,9 +23705,9 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(data, dict):
                 self._send_json(400, {"error": "bad_json"})
                 return
-            nm, col = data.get("name"), data.get("colour")
+            nm, col, ask = data.get("name"), data.get("colour"), data.get("ask")
             ok, code, res = generate_project_icons(str(data.get("projectId") or ""), nm if isinstance(nm, str) else "",
-                                                   col if isinstance(col, str) else "")
+                                                   col if isinstance(col, str) else "", ask if isinstance(ask, str) else "")
             if ok:
                 self._send_json(200, {"ok": True, **res})
             else:
