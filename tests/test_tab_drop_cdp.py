@@ -78,6 +78,11 @@ async function main() {
     await mouse('mouseMoved', p, 0); await sleep(60);
     await mouse('mousePressed', p, 1); await sleep(60);
     await moveTo(p, q);
+    // A busy machine can drop the first moves: nudge until Dock's drag has started (then its box is drawn).
+    for (let i = 0; i < 10 && !(await ev(`PD_ROOT.classList.contains('dk-dragging')`)); i++) {
+      await mouse('mouseMoved', { x: q.x + (i % 2 ? 1 : -1), y: q.y }, 1); await sleep(100);
+      await mouse('mouseMoved', q, 1); await sleep(100);
+    }
     return q;
   };
   const moveTo = async (p, q) => {
@@ -171,6 +176,13 @@ async function main() {
       Object.assign(L.floats[0], { x: Math.round(r.left - b.left + r.width * 0.3), y: Math.round(r.top - b.top + r.height * 0.3),
         w: Math.round(r.width * 0.4), h: Math.round(r.height * 0.4) }); PD.dock._replaceLayout(L); })()`;
     await run('tool>float-over', [`PD.dock.setViewMode('board', 'pinned')`, `PD.dock.float(${JSON.stringify(TB)})`, OVER], { sel: tabSel('board') },
+      { sel: `PD_ROOT.querySelector('.dk-float')`, fx: 0.5, fy: 0.6 });
+    // The same with the window exactly over the conversation's stack (the same rectangle).
+    const SAME = `(() => { const L = PD.dock.layout(), b = PD_ROOT.getBoundingClientRect(),
+      r = document.querySelector('[data-dk-tab="po-chat"]').closest('.dk-stack').getBoundingClientRect();
+      Object.assign(L.floats[0], { x: Math.round(r.left - b.left), y: Math.round(r.top - b.top),
+        w: Math.round(r.width), h: Math.round(r.height) }); PD.dock._replaceLayout(L); })()`;
+    await run('tool>float-same', [`PD.dock.setViewMode('board', 'pinned')`, `PD.dock.float(${JSON.stringify(TB)})`, SAME], { sel: tabSel('board') },
       { sel: `PD_ROOT.querySelector('.dk-float')`, fx: 0.5, fy: 0.6 });
     // A release the page missed: a move with no button down ends the drag; the release after moves nothing.
     await run('lost>move', [], { sel: tabSel(TA) }, async from => {
@@ -322,6 +334,7 @@ class TabDrop(unittest.TestCase):
         'tool>center-release-left': (None, 'row([T*,A,B,C]|[board*])', 'row([board*]|[T*,A,B,C])'),
         'tool>center-then-left': ('left', 'row([T*,A,B,C]|[board*])', 'row([board*]|[T*,A,B,C])'),
         'tool>float-over': ('center', 'row([T*,A,C]|[board*]) ~[B*]', '[T*,A,C] ~[B,board*]'),
+        'tool>float-same': ('center', 'row([T*,A,C]|[board*]) ~[B*]', '[T*,A,C] ~[B,board*]'),
         # A release the page missed (a move with no button, the window's blur): nothing moves.
         'lost>move': ('left', '[T*,A,B,C]', '[T*,A,B,C]'),
         'lost>blur': ('left', '[T*,A,B,C]', '[T*,A,B,C]'),

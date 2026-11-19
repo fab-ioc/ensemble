@@ -17225,24 +17225,27 @@ PD_ROOT.addEventListener('pointerdown', e => {
 }, true);
 // A tool is never a tab of the conversation's stack (pdKeepMiddle puts it back
 // on the right), so its drag into that stack's middle shows no box and drops
-// nothing; its edges still split beside the conversation. The box Dock shows
-// says where it would drop: the conversation's stack when it is that stack's
-// own rectangle (a window over the conversation is a drop of its own).
-function pdNoDrop() {
+// nothing; its edges still split beside the conversation. Dock's drop target
+// is a window under the pointer first (any window, as Dock's dropAt: one over
+// the conversation, even one of the very same size, is a drop of its own),
+// then the stack under it: the conversation's when the pointer is inside it.
+function pdNoDrop(x, y) {
   if (!PD_TOOLS.includes(pdPressId) || !PD_ROOT.classList.contains('dk-dragging')) return false;
   const pv = PD_ROOT.querySelector('.dk-preview');
   if (!pv || pv.hidden || pv.dataset.side !== 'center') return false;
   const st = PD_ROOT.querySelector('[data-dk-tab="po-chat"]')?.closest('.dk-stack');
   if (!st) return false;
-  const r = st.getBoundingClientRect(), base = PD_ROOT.getBoundingClientRect();
-  const near = (a, b) => Math.abs(a - b) < 1.5;
-  return near(parseFloat(pv.style.left) + base.left, r.left) && near(parseFloat(pv.style.top) + base.top, r.top)
-    && near(parseFloat(pv.style.width), r.width) && near(parseFloat(pv.style.height), r.height);
+  const inside = el => { const r = el.getBoundingClientRect();
+    return r.width > 0 && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom; };
+  // Dock tries the windows from the front one (the highest z-index) back.
+  const top = [...PD_ROOT.querySelectorAll('.dk-float')].filter(inside)
+    .sort((a, b) => (+b.style.zIndex || 0) - (+a.style.zIndex || 0))[0];
+  return top ? top.contains(st) : inside(st);
 }
 // After Dock's own (the document's): the window's, bubbling.
-window.addEventListener('pointermove', () => {
+window.addEventListener('pointermove', e => {
   if (!pdPressId) return;
-  pdNoDropOn = pdNoDrop();
+  pdNoDropOn = pdNoDrop(e.clientX, e.clientY);
   if (pdNoDropOn) PD_ROOT.querySelector('.dk-preview').hidden = true;
 });
 // Ends Dock's gesture as a cancel (no drop; the click after it opens nothing;
