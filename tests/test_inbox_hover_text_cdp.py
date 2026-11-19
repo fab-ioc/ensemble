@@ -17,7 +17,10 @@ on every row's text in turn; checked on each:
 * a cut question shows whole in its hover copy; one that fits shows none;
 * the actions are one line, inside the card, below the question;
 * the same after a repaint arriving while the pointer is on the row (held
-  under a hover copy, drawn at once without one), and after the pointer leaves.
+  under a hover copy, drawn at once without one), and after the pointer leaves;
+* a row whose message could not be opened: its note and its ways (Open the
+  conversation, Done) are never covered by its actions, which sit on their own
+  line under them, always shown; the row's height never changes.
 
 Set ENSEMBLE_SHOTS=<dir> for a screenshot of a hovered row at each width.
 """
@@ -62,19 +65,25 @@ async function main() {
     const line = li.querySelector('.ibx-line'), card = li.getBoundingClientRect(), box = line.getBoundingClientRect();
     const rg = document.createRange(); rg.selectNodeContents(line);
     const rects = [...rg.getClientRects()].filter(r => r.width > 2 && r.top >= box.top - 1 && r.bottom <= box.bottom + 1);
+    const copy = document.querySelector('.row-expanded');
     let pts = 0, hid = 0; const bad = [];
     for (const r of rects) for (const f of [0.08, 0.3, 0.5, 0.7, 0.92]) {
       const x = r.left + r.width * f, y = r.top + r.height / 2; pts++;
       const e = document.elementFromPoint(x, y);
-      if (!e || !e.closest('.ibx-line')) { hid++; if (bad.length < 3) bad.push([Math.round(x), Math.round(y), e ? e.tagName + '.' + e.className : null]); }
+      if (!e || !e.closest('.ibx-line') || !(li.contains(e) || (copy && copy.contains(e)))) { hid++; if (bad.length < 3) bad.push([Math.round(x), Math.round(y), e ? e.tagName + '.' + e.className : null]); }
     }
-    const copy = document.querySelector('.row-expanded');
     const cl = copy && copy.querySelector('.ibx-line');
+    // The copy is painted: on top at every point of its own lines, and not see-through.
+    let copyShown = false;
+    if (cl) { const cr = document.createRange(); cr.selectNodeContents(cl); const cs = getComputedStyle(copy);
+      const cps = [...cr.getClientRects()].filter(r => r.width > 2);
+      copyShown = cps.length > 0 && cs.visibility === 'visible' && Number(cs.opacity) > 0.95 && cps.every(r => [0.1, 0.5, 0.9].every(f => {
+        const e = document.elementFromPoint(r.left + r.width * f, r.top + r.height / 2); return !!e && copy.contains(e); })); }
     const acts = li.querySelector('.ibx-acts'), ab = acts && acts.getBoundingClientRect(), lk = li.querySelector('a.ibx-link').getBoundingClientRect();
     const btns = acts ? [...acts.querySelectorAll('.ibx-btn')] : [];
     return { id: li.dataset.ibx, text: line.textContent, pts, hid, bad,
       cut: line.scrollHeight > line.clientHeight + 1,
-      copy: !!copy, copyWhole: !!cl && cl.textContent === line.textContent && cl.scrollHeight <= cl.clientHeight + 1,
+      copy: !!copy, copyWhole: !!cl && cl.textContent === line.textContent && cl.scrollHeight <= cl.clientHeight + 1, copyShown,
       acts: acts && getComputedStyle(acts).display !== 'none' ? { n: btns.length, h: Math.round(ab.height), oneLine: new Set(btns.map(b => Math.round(b.getBoundingClientRect().top))).size === 1,
         inCard: ab.left >= card.left - 0.5 && ab.right <= card.right + 0.5 && ab.bottom <= card.bottom + 0.5,
         belowText: ab.top >= lk.bottom - 0.5, labels: btns.map(b => { const sp = [...b.children].filter(e => { const cs = getComputedStyle(e); return cs.display !== 'none' && cs.clipPath === 'none'; });
@@ -112,6 +121,38 @@ async function main() {
         o.rows.push({ i, before, hover, rp, during, after, left });
       }
       if (w) await evalIn(`(() => { ${D}.style.width = ''; ${D}.style.maxWidth = ''; return 0; })()`);
+    }
+    // Review 1: a row whose message could not be opened (its note and its ways under the meta line), a cut
+    // question and one that fits: the pointer on its text, then on each of the note's ways.
+    const failLook = i => `(() => {
+      const li = ${D}.querySelectorAll('li.ibx-row[data-q]')[${i}], note = li.querySelector('.ibx-fail'), fa = li.querySelector('.ibx-fail-acts');
+      const acts = li.querySelector('.ibx-acts'), ab = acts.getBoundingClientRect(), nb = note.getBoundingClientRect(), card = li.getBoundingClientRect();
+      const ways = [...fa.querySelectorAll('.ibx-btn')].map(b => { const r = b.getBoundingClientRect(); const e = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+        return { t: b.textContent.trim(), hit: !!e && b.contains(e), at: e ? e.tagName + '.' + e.className : null }; });
+      const nr = document.createRange(); nr.selectNodeContents(note);
+      const cov = [...nr.getClientRects()].filter(r => r.width > 2).map(r => document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)).filter(e => !e || !note.contains(e));
+      const noteHid = cov.length, noteByCopy = cov.every(e => !!e && !!e.closest('.row-expanded'));
+      return { h: Math.round(card.height), shown: getComputedStyle(acts).display !== 'none', below: ab.top >= fa.getBoundingClientRect().bottom - 0.5,
+        inCard: ab.left >= card.left - 0.5 && ab.right <= card.right + 0.5 && ab.bottom <= card.bottom + 0.5, ways, noteHid, noteByCopy, noteH: Math.round(nb.height) };
+    })()`;
+    out.failed = [];
+    const dr = out.default.rows, picks = [dr.find(r => r.hover.cut).i, dr.find(r => !r.hover.cut).i];
+    for (const i of picks) {
+      await move(5, 5); await frame();
+      await evalIn(`(() => { const li = ${D}.querySelectorAll('li.ibx-row[data-q]')[${i}]; IBX.failed.set(li.dataset.ibx, 'the message was removed'); ibxRepaint(); return 0; })()`);
+      await frame();
+      const before = await evalIn(failLook(i));
+      const [x, y] = await at(i);
+      await move(x, y); await sleep(450); await frame();
+      const text = await evalIn(look(i)), onText = await evalIn(failLook(i));
+      const wayAt = await evalIn(`(() => { const li = ${D}.querySelectorAll('li.ibx-row[data-q]')[${i}];
+        return [...li.querySelectorAll('.ibx-fail-acts .ibx-btn')].map(b => { const r = b.getBoundingClientRect(); return [Math.round(r.left + r.width / 2), Math.round(r.top + r.height / 2)]; }); })()`);
+      const onWays = [];
+      for (const [wx, wy] of wayAt) { await move(wx, wy); await sleep(200); await frame(); onWays.push(await evalIn(failLook(i))); }
+      await shot(`p408-failed-row${i}`, await evalIn(`(() => { const b = ${D}.querySelectorAll('li.ibx-row[data-q]')[${i}].getBoundingClientRect(); return { x: b.left - 8, y: b.top - 8, width: b.width + 16, height: b.height + 16 }; })()`));
+      await move(5, 5); await frame();
+      out.failed.push({ i, before, text, onText, onWays });
+      await evalIn(`(() => { IBX.failed.clear(); ibxRepaint(); return 0; })()`); await frame();
     }
   } finally {
     try { ch.kill(); } catch (e) {}
@@ -195,6 +236,31 @@ class HoverTextInChrome(close.CloseInChrome):
         self.assertIn("Done with this", d[0])
         self.assertEqual(nr[0][1:], ["Earlier", "Done"])
         self.assertEqual(d[0][0], "Close")
+
+    def test_a_cut_question_s_copy_is_painted(self):
+        for k, r in self._rows():
+            for phase in ("hover", "after"):
+                if r[phase]["cut"]:
+                    self.assertTrue(r[phase]["copyShown"], (k, r["i"], phase, r[phase]))
+
+    def test_a_row_that_could_not_open_keeps_its_note_and_ways_usable(self):
+        f = self.got["failed"]
+        self.assertEqual(len(f), 2)
+        self.assertTrue(f[0]["text"]["cut"] and not f[1]["text"]["cut"], "a cut question and one that fits")
+        for x in f:
+            self.assertEqual(x["text"]["hid"], 0, x["text"])
+            states = [x["before"], x["onText"]] + x["onWays"]
+            self.assertGreaterEqual(len(x["onWays"]), 2, x)
+            for s in states:
+                self.assertTrue(s["shown"] and s["below"] and s["inCard"], (x["i"], s))
+                self.assertEqual(s["h"], x["before"]["h"], (x["i"], "nothing moves", s))
+                if s is x["onText"] and x["text"]["cut"]:
+                    # The pointer on a cut question: its hover copy (#337) is raised over what is under it; nothing else.
+                    self.assertTrue(s["noteByCopy"], (x["i"], s))
+                else:
+                    self.assertEqual(s["noteHid"], 0, (x["i"], s))
+            for s in [x["before"]] + x["onWays"]:
+                self.assertTrue(all(w["hit"] for w in s["ways"]), (x["i"], s["ways"]))
 
     def test_a_repaint_while_hovering_is_held_only_under_a_copy(self):
         for k, r in self._rows():

@@ -4405,6 +4405,10 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
       .ibx-row:not(.ibx-confirming) > .ibx-acts > .ibx-btn .ibx-ls { display: inline; }
       .ibx-row:not(.ibx-confirming) > .ibx-acts > .ibx-earlier .ibx-cn { display: none; }
     }
+    /* P408 review 1: a row with something under its meta line (the could-not-open note and its ways, an answers list)
+       has its actions on their own line at its foot, always shown, so they cover neither, and nothing moves on hover. */
+    .ibx .ibx-row:has(> .ibx-fail, > .ibx-more):not(.ibx-confirming) > .ibx-acts { display: flex; position: static; max-width: none;
+      margin-top: var(--s-100); padding: 0; background: none; justify-content: flex-start; }
   }
   .ibx-row.ibx-mark.ibx-confirming .ibx-link, .ibx-row.ibx-mark.ibx-confirming .ibx-line, .ibx-row.ibx-mark:hover .ibx-line { color: var(--fg); }
   .ibx-conf { margin-top: var(--s-200); padding: var(--s-200) var(--s-300); background: var(--surface); border: 1px solid var(--border-strong);
