@@ -5862,9 +5862,13 @@ function loadOlder(upto = '') {
       // #234) stays at the end and keeps following.
       const atEnd = !upto && STICK && nearEnd(box);
       STICK = false;
+      // A render that landed a link (the page asked for a message older than
+      // those held) has put that message on screen: the old place is not kept.
+      const landed0 = LANDED;
       if (SOLO_MODE) { if (!threadedView() && SOLO_SID) renderSolo(SOLO_SID, SOLO_AGENT, true); }
       else if (ROOM_OBJ) renderMsgs(ROOM_OBJ);
-      if (atEnd && !DRAW_HELD) { box.scrollTop = box.scrollHeight; STICK = true; }
+      if (LANDED && LANDED !== landed0) { /* landed: stays on the message */ }
+      else if (atEnd && !DRAW_HELD) { box.scrollTop = box.scrollHeight; STICK = true; }
       else if (!DRAW_HELD && place) {
         const at = mid && [...box.querySelectorAll('[data-mid]')].find(e => e.dataset.mid === mid && e.offsetParent);
         const row = at && [...box.children].find(k => k.contains(at));
