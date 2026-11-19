@@ -4387,8 +4387,27 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .ldp-expanded .ibx-reason { font-size: 11px; line-height: 1.4; margin-top: 0; color: var(--fg-subtle); }
   .ibx-listed .ibx-row.ibx-mark { margin: 5px 0; padding: 7px 8px; box-shadow: none; border-left-color: var(--c-danger-bold); }
   /* #394: within the card, the narrow column's three actions wrap to the right (none past its left edge). */
-  @media (hover: hover) { .ibx-listed .ibx-row:not(.ibx-confirming) > .ibx-acts, .ibx-listed .ibx-row.ibx-mark:not(.ibx-confirming) > .ibx-acts { right: 8px; bottom: 6px;
-    left: 8px; flex-wrap: wrap; justify-content: flex-end; padding-left: 0; background: var(--ibx-ground); } }
+  /* #394, P408: on a computer the row's actions are one line over its meta line only, inside the card, never over its
+     question: 18px buttons at 11px; their labels shorten with the Inbox's width (Close · Earlier N · Done with this at
+     the default 260px, Close · Earlier · Done when narrower, full words from 320px; full words always in the tooltip
+     and to a screen reader). Still too wide, the line is cut at its left, never wrapped. */
+  .ibx-ls { display: none; }
+  .ibx-listed .ibx-cards { container: ibx-cards / inline-size; }
+  @media (hover: hover) {
+    .ibx-listed .ibx-row:not(.ibx-confirming) > .ibx-acts, .ibx-listed .ibx-row.ibx-mark:not(.ibx-confirming) > .ibx-acts { left: auto; right: 8px; bottom: 4px;
+      max-width: calc(100% - 16px); overflow: hidden; flex-wrap: nowrap; justify-content: flex-end; padding-left: var(--s-300);
+      background: linear-gradient(to right, transparent, var(--ibx-ground) var(--s-200)); }
+    .ibx-listed .ibx-row:not(.ibx-confirming) > .ibx-acts > .ibx-btn { flex: none; height: 18px; padding: 0 6px; font-size: var(--fs-100); }
+    @container ibx-cards (max-width: 319.98px) {
+      .ibx-row:not(.ibx-confirming) > .ibx-acts > .ibx-earlier .ibx-lw { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+      .ibx-row:not(.ibx-confirming) > .ibx-acts > .ibx-earlier .ibx-ls { display: inline; }
+    }
+    @container ibx-cards (max-width: 239.98px) {
+      .ibx-row:not(.ibx-confirming) > .ibx-acts > .ibx-btn .ibx-lw { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+      .ibx-row:not(.ibx-confirming) > .ibx-acts > .ibx-btn .ibx-ls { display: inline; }
+      .ibx-row:not(.ibx-confirming) > .ibx-acts > .ibx-earlier .ibx-cn { display: none; }
+    }
+  }
   .ibx-row.ibx-mark.ibx-confirming .ibx-link, .ibx-row.ibx-mark.ibx-confirming .ibx-line, .ibx-row.ibx-mark:hover .ibx-line { color: var(--fg); }
   .ibx-conf { margin-top: var(--s-200); padding: var(--s-200) var(--s-300); background: var(--surface); border: 1px solid var(--border-strong);
     border-radius: var(--r-300); box-shadow: var(--e-200); }
@@ -17773,7 +17792,7 @@ function ibxHtml(d, scope, pid, now, phone, opts) {
     if (n) {
       acts = `<button type="button" class="ibx-btn" data-ibx-close="${esc(r.id)}" title="Close this question without an answer">Close</button>`
         + (n > 1 ? `<button type="button" class="ibx-btn ibx-earlier${conf === r.id ? ' on' : ''}" data-ibx-earlier="${esc(r.id)}"`
-          + ` aria-expanded="${conf === r.id}" title="Close this question and every question below it">Close this and earlier <span class="ibx-cn">${n}</span></button>` : '');
+          + ` aria-expanded="${conf === r.id}" title="Close this question and every question below it"><span class="ibx-lw">Close this and earlier</span><span class="ibx-ls" aria-hidden="true">Earlier</span> <span class="ibx-cn">${n}</span></button>` : '');
     } else if (r.kind === 'check' && cardN < 0) {
       acts = `<button type="button" class="ibx-btn" data-ibx-done="${esc(r.id)}" title="Checked: take it off the list">Done</button>`;
     } else if (ibxDealt(r)) {
@@ -17781,7 +17800,7 @@ function ibxHtml(d, scope, pid, now, phone, opts) {
       acts = `<button type="button" class="ibx-btn" data-ibx-done="${esc(r.id)}" title="Done: off the list until something new happens">Done</button>`;
     }
     if (listed && dismissible.has(r.roomId) && r.kind !== 'check' && !ibxDealt(r)) {
-      acts += `<button type="button" class="ibx-btn" data-room="${esc(r.roomId)}" data-ibx-dismiss title="Done with this: a new ask brings the row back">Done with this</button>`;
+      acts += `<button type="button" class="ibx-btn" data-room="${esc(r.roomId)}" data-ibx-dismiss title="Done with this: a new ask brings the row back"><span class="ibx-lw">Done with this</span><span class="ibx-ls" aria-hidden="true">Done</span></button>`;
     }
     const link = `<a class="ibx-link" href="${esc(href(r))}" data-room="${esc(r.roomId)}" data-mid="${esc(r.mid || '')}" data-part="${esc(r.part || '')}"`
       + ` title="${esc(r.mid ? 'Open it in its conversation' : 'Open the conversation')}">`
