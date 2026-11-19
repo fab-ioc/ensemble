@@ -243,7 +243,8 @@ class FoldALongConversation(unittest.TestCase):
     def setUpClass(cls):
         code = NOUN + ATTACH + fold_block(SRC) + js_function(SRC, "soloItems") + js_function(SRC, "patchChildren")
         payload = {"code": code, "showPending": js_line(SRC, "const SENT_LOCAL = new Map();") + js_function(SRC, "noteSent"),
-                   "scrolled": js_function(SRC, "toEnd") + js_function(SRC, "msgsScrolled") + js_function(SRC, "msgsSettle")}
+                   "scrolled": js_function(SRC, "toEnd") + js_function(SRC, "msgsScrolled") + js_function(SRC, "msgsSettle")
+                   + "let LAND_KEEP = null;\n" + js_function(SRC, "landKeepScrolled")}   # #394: nothing landed, nothing kept
         out = subprocess.run([NODE, "-e", JS], input=json.dumps(payload), capture_output=True,
                              text=True, encoding="utf-8", timeout=60)
         if out.returncode != 0:
@@ -538,8 +539,9 @@ class ThePageUsesIt(unittest.TestCase):
     def test_reopening_a_task_panel_goes_to_the_latest(self):
         index = (ROOT / "index.html").read_text(encoding="utf-8").replace("\r\n", "\n")
         self.assertIn("ensemble: 'shown'", js_function(index, "openDetail"))
-        # (A link to a balloon in the same gesture wins: no jump to the latest then.)
-        self.assertRegex(SRC, r"d\.ensemble === 'shown' && e\.source === window\.parent\) \{\s*if \(!GOTO && Date\.now\(\) - GOTO_AT > 2000\) \{ toLatest\(\); if \(CHAT_DRAWN\) catchUpOpen\(\); \}\s*if \(typeof tickNow === 'function'\) tickNow\(\);\s*\}")
+        # (A link to a balloon in the same gesture wins: no jump to the latest then;
+        # #394: nor while the balloon a link landed on is kept where it was.)
+        self.assertRegex(SRC, r"d\.ensemble === 'shown' && e\.source === window\.parent\) \{\s*if \(!GOTO && Date\.now\(\) - GOTO_AT > 2000 && !landKeepPut\(\)\) \{ toLatest\(\); if \(CHAT_DRAWN\) catchUpOpen\(\); \}\s*if \(typeof tickNow === 'function'\) tickNow\(\);\s*\}")
 
 
 if __name__ == "__main__":

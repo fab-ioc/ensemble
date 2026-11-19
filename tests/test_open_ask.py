@@ -411,7 +411,7 @@ class AnsweredInTheTerminal(_Bell):
         self.assertEqual(chatroom.get_room(self.rid, public=False)["status"], "paused")
         self.assertIn("paused at their limit", self.item()["reason"])
 
-    def test_a_message_closed_by_a_completed_leaves_the_bell_once_the_task_works_again(self):
+    def test_a_message_closed_by_a_completed_leaves_the_bell_and_stays_to_check(self):
         for mode in ("solo", "collab"):
             full = chatroom.get_room(self.rid, public=False)
             full["mode"] = mode
@@ -423,7 +423,8 @@ class AnsweredInTheTerminal(_Bell):
             self.assertIsNone(self.item())
             self.assertEqual(self.reported()["line"], "Sold.")
             self.report("update", "Archived the listing.")
-            self.assertIsNone(self.reported())
+            # #394 (review 2): only Done, or a newer completed report, takes it off.
+            self.assertEqual(self.reported()["line"], "Sold.")
             self.assertEqual(chatroom.get_room(self.rid, public=False)["status"], "active")
             self.assertIsNone(self.item(), mode)
             self.assertNotIn("openAsk", dashboard._annotate_room_liveness(chatroom.get_room(self.rid)))
