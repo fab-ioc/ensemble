@@ -58,12 +58,19 @@ class FoldTest(unittest.TestCase):
             agent("m04", "Built at https://example.org/x", True),
             agent("m05", "[image] /home/fab/shot.png", True),
             agent("m06", "The drawing is /home/fab/Ensemble Projects/Docs/#402 plan.png now", True),
+            # Review 1: a relative or bare file name is a file too.
+            agent("m09", "See src/report.md", True),
+            agent("m10", "README.md is updated.", True),
+            agent("m11", "Reading threads.py and session.html", True),
+            agent("m12", "Fixed at ./a/b.py:12.", True),
         ]
         for rec in cases:
             with self.subTest(text=rec["turn"]["text"]):
                 self.assertTrue(turn_steps.kept(rec))
         self.assertFalse(turn_steps.kept(agent("m07", "Merging #395 now.", True)))
-        self.assertFalse(turn_steps.kept(agent("m08", "Reading threads.py and session.html", True)))
+        for text in ("Checking every page.", "v1.2 is out, 0.45/0.53 of it", "e.g. P413/P422", "a 3/4.5x ratio"):
+            with self.subTest(text=text):
+                self.assertFalse(turn_steps.kept(agent("m08", text, True)), "no dotted word is a file")
 
     def test_steps_before_a_kept_line_are_its_own(self):
         recs = [user("m00", "go"),

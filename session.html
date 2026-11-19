@@ -5288,7 +5288,9 @@ function renderBubbles(items, opt = {}) {
   // Hide team activity (#402): the person's view, its gaps and task rows not drawn.
   const hideTeam = poTeamHidden();
   const clean = !THREAD_MODE && (hideTeam || !TEAM_ALL) && items.some(m => isHubInput(m) || (m.from !== 'user' && m.answers));
-  const gaps = clean ? gapsOf(items, held) : [];
+  // Hidden keeps no team message in view for being a thread's first message,
+  // a Work log entry or a held point's (review 1): only one asking the person.
+  const gaps = clean ? gapsOf(items, hideTeam ? (m => openAsks(m, POINTS).length > 0) : held) : [];
   const gapAt = new Map(), inGap = new Set();
   GAP_OF_MID = new Map();
   FOLD_REV_OF_MID = new Map();
@@ -8279,7 +8281,9 @@ function threadLineHtml(tid, mine) {
   const t = THR_META[tid];
   if (!t) return '';
   const n = +t.replies || 0, unread = +t.unread || 0;
-  const work = +t.workCount || 0;
+  // Hide team activity (#402): no Work log count and no state on it.
+  const hide = poTeamHidden();
+  const work = hide ? 0 : +t.workCount || 0;
   // A thread the person started shows its row from the start (#367 review 1).
   if (!n && !work && !t.chosen) return '';
   // New indexes carry the same role labels as balloons; older indexes fall back
@@ -8290,10 +8294,10 @@ function threadLineHtml(tid, mine) {
     if (w === 'hub') return { cls: 'hub', text: 'Hub' };
     return { cls: 'person', text: 'you' };
   });
-  const st = THR_STATE[t.state] || '';
+  const st = hide ? '' : THR_STATE[t.state] || '';
   const label = !n && !work ? 'New thread' : `${n} repl${n === 1 ? 'y' : 'ies'}${work ? ` · ${work} in Work log` : ''}`;
   const on = TS && TS.tid === tid;
-  return `<div class="thr-line${unread ? ' unread' : ''}${mine ? ' mine' : ''}${on ? ' on' : ''}" data-thr-line="${esc(tid)}" data-last-mid="${esc(t.lastMid || '')}" data-key="thr:${esc(tid)}:${n}:${work}:${unread}:${esc(t.state || '')}:${+t.lastAt || 0}:${on ? 1 : 0}">`
+  return `<div class="thr-line${unread ? ' unread' : ''}${mine ? ' mine' : ''}${on ? ' on' : ''}" data-thr-line="${esc(tid)}" data-last-mid="${esc(t.lastMid || '')}" data-key="thr:${esc(tid)}:${n}:${work}:${unread}:${esc(t.state || '')}:${+t.lastAt || 0}:${on ? 1 : 0}:${hide ? 1 : 0}">`
     + `<button type="button" class="thr-open" data-thr="${esc(tid)}" title="Open the thread beside the chat" aria-label="${esc(label + (unread ? ', ' + unread + ' new' : '') + '. Open the thread “' + (t.title || '') + '”')}">`
     + (who.length ? `<span class="thr-who" aria-hidden="true">${who.map(w => `<span class="rl ${esc(w.cls)}"${w.cls === 'po' && w.projectId ? ` data-po-project="${esc(w.projectId)}"` : w.cls === 'po' && (w.projectName || w.otherProject) ? ` data-po-name="${esc(w.projectName || '')}"` : ''}>${esc(w.cls === 'person' ? OPERATOR || 'you' : w.text)}</span>`).join('')}</span>` : '')
     + `<span class="thr-count">${label}</span>`

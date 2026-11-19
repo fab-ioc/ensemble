@@ -97,6 +97,8 @@ const VIEW = `(() => {
         mid: li.dataset.step, landed: li.classList.contains('landed') })) })),
     gaps: document.querySelectorAll('#msgs .msg-fold.gap').length,
     states: document.querySelectorAll('#msgs .pt-st').length,
+    thrStates: [...document.querySelectorAll('#msgs .thr-line .thr-state')].map(words),
+    thrCounts: [...document.querySelectorAll('#msgs .thr-line .thr-count')].map(words),
     chips: [...document.querySelectorAll('#msgs .pt-chip')].map(words),
     acks: [...document.querySelectorAll('#msgs [data-pt-act="ack"]')].map(b => b.dataset.pt),
     live: { shown: !!lt && !lt.hidden, po: words(lt && lt.querySelector('.po-live')), who: words(lt && lt.querySelector('.po-live .lt-who')),
@@ -136,7 +138,8 @@ async function main() {
       // Who works: set by the test, not by the hub's poll.
       await evalIn('renderActivity = function () { renderLiveTail(); }; 0');
       o.ids = await evalIn(`(() => { const f = re => (LAST_ITEMS.find(m => re.test(m.text || '')) || {}); const own = f(/^Re P1:/);
-        return { noted: f(/^Noted/).id, owner: own.id, step: ((own.steps || [])[2] || {}).mid }; })()`);
+        return { noted: f(/^Noted/).id, owner: own.id, step: ((own.steps || [])[2] || {}).mid,
+          root: f(/^Brakes are due/).id, mine: f(/^How is #12/).id }; })()`);
       o.first = await evalIn(VIEW);
       await shot('1-folded');
       // "4 steps ▸" opens them in place, and folds them again.
@@ -302,8 +305,29 @@ class QuietPoChat(unittest.TestCase):
         lines += [_turn(sid, "user", "[digest] Motors: all quiet.", t0 + 500),
                   _turn(sid, "assistant", "Noted, nothing to do.", t0 + 501)]
         write()
+        # Review 1: the person's thread on a team message (its first message
+        # is team activity), and a new thread of theirs whose task's report
+        # is in its Work log, with a state on its line.
+        lines += [_turn(sid, "user", "[digest] Motors: brakes due.", t0 + 510),
+                  _turn(sid, "assistant", "Brakes are due next week.", t0 + 511)]
+        root = f"{sid}:{len(lines) - 1}"
+        write()
+        q, ids = points.take(chatroom.get_room(rid, public=False), "Book them in", key="P3", now=t0 + 520, sid=sid)
+        assert ids == ["P3"], ids
+        threads.note_send(rid, "m:" + root, "P3", ids, False, q, now=t0 + 520)
+        lines += [_turn(sid, "user", q, t0 + 521), _turn(sid, "assistant", "Re P3: booked for Monday.", t0 + 522)]
+        write()
+        q, ids = points.take(chatroom.get_room(rid, public=False), "How is #12?", key="P4", now=t0 + 530, sid=sid)
+        assert ids == ["P4"], ids
+        threads.note_send(rid, "", "P4", ids, False, q, now=t0 + 530, new=True)
+        lines += [_turn(sid, "user", q, t0 + 531), _turn(sid, "assistant", "Re P4: the chart is in review.", t0 + 532),
+                  _turn(sid, "user", "[report] update from task 'Chart' (#12, codex): Review passed", t0 + 540),
+                  _turn(sid, "assistant", "Review passed; merging now.", t0 + 541)]
+        write()
+        idx = threads.build(rid, show_progress=False)
+        assert root in idx["threads"]["m:" + root]["members"], sorted(idx["threads"])
         # A turn still running: two lines, no reply yet.
-        ask("P3", "And #397?", t0 + 600)
+        ask("P5", "And #397?", t0 + 600)
         lines += [_interim(sid, "Merging #397 now.", t0 + 610), _interim(sid, "Checking the Inbox rows.", t0 + 620)]
         write()
         threads._ensure_since(rid, t0 - 60)
@@ -367,6 +391,16 @@ class QuietPoChat(unittest.TestCase):
                 self.assertFalse(any(c.startswith(("answers P", "plans P")) for c in hd["chips"]), hd["chips"])
                 self.assertIn("P1", hd["acks"], "Ack stays")
                 self.assertNotIn("Noted, nothing to do.", hd["texts"])
+                # Review 1: a thread's first message that is team activity,
+                # and the state and Work log count on the person's thread.
+                self.assertIn(o["ids"]["root"], f["mids"])
+                self.assertTrue(f["thrStates"], "Shown: a state on a thread line")
+                self.assertTrue(any("Work log" in c for c in f["thrCounts"]), f["thrCounts"])
+                self.assertNotIn(o["ids"]["root"], hd["mids"], "a team message is hidden though a thread starts on it")
+                self.assertEqual(hd["thrStates"], [])
+                self.assertFalse(any("Work log" in c for c in hd["thrCounts"]), hd["thrCounts"])
+                self.assertIn(o["ids"]["mine"], hd["mids"], "the person's own thread stays")
+                self.assertTrue(any("repl" in c for c in hd["thrCounts"]), hd["thrCounts"])
                 if w != "1280":
                     self.assertTrue(f["phoneFilter"])
                     self.assertFalse(hd["phoneFilter"], "no Team activity filter while Hidden")

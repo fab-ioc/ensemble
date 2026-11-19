@@ -13,9 +13,10 @@ and its turn are copied before they change (threads._BAL caches them).
 
 A step stays a message of its own (*kept*) when it is something the person
 must be able to find and answer in the chat: a ``Re Pn`` answer, a question
-(Ask: or a card's), a link, a URL, an image or file line, an absolute file
-path, or a balloon the person started a thread on. A task number (#395) does
-not keep it: "Merging #395" is a step.
+(Ask: or a card's), a link, a URL, an image or file line, a file path or
+name (absolute, relative or bare: README.md), or a balloon the person
+started a thread on. A task number (#395) does not keep it: "Merging #395"
+is a step.
 
 Nothing is ever lost: a run of steps nothing ended (a crash, a restart, a hub
 line typed into the turn) becomes a message itself, its last step the text,
@@ -34,6 +35,14 @@ _LINK = re.compile(r"\]\(|https?://", re.I)
 # An absolute path ending in a file name with an extension: /a/b.png,
 # ~/x/y.md, /home/fab/Ensemble Projects/Docs/#402 plan.html (spaces inside).
 _PATH = re.compile(r"(?:^|[\s(\[`'\"])(?:~|/)[^\n`'\"()<>]*?/[^\n/`'\"()<>]+?\.[A-Za-z0-9]{1,8}\b")
+# A relative file name as the page links it (session.html LINK_RE): a path
+# with a folder (src/report.md, ./a/b.py), or a bare name with an extension
+# agents write about (README.md, shot.png). An extension holds a letter, so
+# "0.45/0.53", "3/4.5x" or "v1.2" is no file; nor are "e.g." and "#402".
+_BARE_EXT = ("md|txt|py|js|ts|tsx|jsx|html|css|json|yaml|yml|toml|csv|pdf|sh|ps1|sql|xml|log|ini|cfg"
+             "|png|jpg|jpeg|gif|webp|svg|bmp")
+_REL = re.compile(r"(?:^|[\s(*_`'\"])(?:(?:\.\.?/)?(?:[\w.-]+/)+[\w.-]+\.[A-Za-z]\w{0,7}"
+                  r"|\w[\w-]*\.(?:" + _BARE_EXT + r"))(?::\d+)?(?=[\s.,;:)\]`'\"]|$)", re.I)
 
 
 def kept(rec: dict, chosen: set[str] | frozenset = frozenset()) -> bool:
@@ -41,7 +50,7 @@ def kept(rec: dict, chosen: set[str] | frozenset = frozenset()) -> bool:
     if rec.get("re") or rec.get("ask") or rec.get("mid") in chosen:
         return True
     text = (rec.get("turn") or {}).get("text") or ""
-    if _LINK.search(text) or _PATH.search(text):
+    if _LINK.search(text) or _PATH.search(text) or _REL.search(text):
         return True
     return any(line.lstrip().startswith(_REF_PREFIXES) for line in text.splitlines())
 
