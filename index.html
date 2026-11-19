@@ -14099,7 +14099,7 @@ const CH_ROW_EXPAND = { row: '.chf:not(.none)', name: '.nm', copyClass: 'ch-expa
 // over its neighbours. Its clicks, ×, right click and drag go to the tab under
 // it (spec.forward); its right edge stays fixed so the × does not move.
 const TAB_ROW_EXPAND = {
-  row: '.dk-stack:not(.dk-min) .dk-tab-wrap:not(.row-expanded), .wst-tab:not(.row-expanded)',
+  row: '.dk-stack:not(.dk-min) .dk-tab-wrap:not(.row-expanded), .dk-head.bt-head .dk-tab-wrap:not(.row-expanded), .wst-tab:not(.row-expanded)',
   name: '.dk-tab:not(.dk-tab-iconic), .wst-nm', untitle: '.dk-tab, .wst-tab',
   copyClass: 'tab-expanded', focusClass: 'tab-expand-focus', forward: true, anchorClose: true,
 };
@@ -26774,13 +26774,18 @@ function openMsgLink(rid, msg, part) {
 function sendGotoMsg(rid) {
   const g = gotoPending(rid);
   if (!g) return;
+  const frames = [];
   for (const d of [document, ...PD_POP_DOCS.keys()]) {
     let fs = [];
     try { fs = [...d.querySelectorAll('iframe.dp-session, iframe.po-session')]; } catch (e) {}
-    fs.forEach(f => {
-      if (f.dataset.room !== rid || !f.contentWindow) return;
-      try { f.contentWindow.postMessage({ ensemble: 'goto-msg', msg: g.msg, part: g.part || '', thread: g.thread || '', tmid: g.tmid || '', hl: inboxHlSec() }, location.origin); } catch (e) {}
-    });
+    frames.push(...fs.filter(f => f.dataset.room === rid && f.contentWindow));
+  }
+  // A phone can retain this room in both a shown task pane and an off-screen
+  // Dock panel. Let the shown frame take the landing and focus. If the only
+  // frame is off-screen, it still receives the request for its later reveal.
+  const shown = frames.filter(f => !(f.closest && f.closest('.dk-off')));
+  for (const f of shown.length ? shown : frames) {
+    try { f.contentWindow.postMessage({ ensemble: 'goto-msg', msg: g.msg, part: g.part || '', thread: g.thread || '', tmid: g.tmid || '', hl: inboxHlSec() }, location.origin); } catch (e) {}
   }
 }
 // Settings › Preferences › Inbox highlight, seconds (the hub's inboxHighlightSec, #343).

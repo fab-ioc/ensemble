@@ -70,7 +70,7 @@ class Cdp {
   send(method, params = {}, sessionId) { const id = ++this.id; return new Promise((res, rej) => { this.waits.set(id, { res, rej }); this.ws.send(JSON.stringify({ id, method, params, sessionId })); }); }
 }
 // The chat document holding balloon `mid` (a frame of the dashboard, or the page itself).
-const DOC = mid => `[...document.querySelectorAll('iframe')].map(f => { try { return f.getBoundingClientRect().width > 0 && f.contentDocument; } catch (e) { return null; } })
+const DOC = mid => `[...document.querySelectorAll('iframe')].sort((a, b) => Number(!!a.closest('.dk-off')) - Number(!!b.closest('.dk-off'))).map(f => { try { return f.getBoundingClientRect().width > 0 && f.contentDocument; } catch (e) { return null; } })
   .concat([document]).find(d => d && d.getElementById('msgs') && [...d.querySelectorAll('.msg[data-mid]')].some(e => e.dataset.mid === ${JSON.stringify(mid)}))`;
 // Where balloon `mid` is and how it is marked.
 const MEASURE = mid => `(() => {
@@ -144,6 +144,23 @@ async function main() {
         PD_POP_DOCS.set(doc, []);
         try { sendGotoMsg(rid); } finally { PD_POP_DOCS.delete(doc); GOTO_MSG.delete(rid); }
         return sent[0] || null;
+      })()`);
+      o.offscreenForward = await p.evalIn(`(() => {
+        const rid = 'room-offscreen-inbox-check', sent = { hidden: [], shown: [] };
+        const hidden = { dataset: { room: rid }, closest: () => ({}),
+          contentWindow: { postMessage: data => sent.hidden.push(data.msg) } };
+        const shown = { dataset: { room: rid }, closest: () => null,
+          contentWindow: { postMessage: data => sent.shown.push(data.msg) } };
+        const frames = [hidden], doc = { querySelectorAll: () => frames };
+        GOTO_MSG.set(rid, { msg: 'one-frame', part: 'inbox' });
+        PD_POP_DOCS.set(doc, []);
+        try {
+          sendGotoMsg(rid);
+          frames.push(shown);
+          GOTO_MSG.set(rid, { msg: 'shown-frame', part: 'inbox' });
+          sendGotoMsg(rid);
+        } finally { PD_POP_DOCS.delete(doc); GOTO_MSG.delete(rid); }
+        return sent;
       })()`);
       o.inboxRowMarked = await p.evalIn(`[...document.querySelectorAll('.ibx-row')].some(r => /landed|current/.test(r.className) || r.hasAttribute('aria-current'))`);
       // (a) the answer, from a real Inbox click
@@ -380,6 +397,11 @@ class InboxHighlightInChrome(unittest.TestCase):
                 self.assertEqual(sent["data"]["part"], "inbox,ask:0")
                 self.assertEqual(sent["data"]["hl"], 3.5)
                 self.assertTrue(sent["origin"].startswith("http://127.0.0.1:"))
+
+    def test_an_offscreen_frame_receives_a_landing_only_when_it_is_the_sole_frame(self):
+        for o, gap, tag in self.each():
+            with self.subTest(tag):
+                self.assertEqual(o["offscreenForward"], {"hidden": ["one-frame"], "shown": ["shown-frame"]})
 
     def test_a_second_click_moves_it_and_an_ask_marks_its_whole_message(self):
         for o, gap, tag in self.each():

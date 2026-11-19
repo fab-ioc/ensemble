@@ -625,11 +625,11 @@ class TaskSwitcher(unittest.TestCase):
         # The filter is remembered per browser.
         self.assertIn("localStorage.setItem(SW_KEY + '-project'", wiring)
         self.assertIn("localStorage.setItem(SW_KEY + '-view', v)", wiring)    # and a grouped view, from its ⋯ (#189)
-        self.assertIn("menuItems: () => swMenuItems()", INDEX)
+        self.assertIn("menuItems: pdWithCommon(() => swMenuItems())", INDEX)
         self.assertNotIn('id="sw-by"', INDEX)
         self.assertIn('<label class="sw-pick sw-pick-proj"><select id="sw-proj"', INDEX)
-        # Always there on a desktop, never on a phone; the page makes room.
-        self.assertIn("function swOn() { try { return !isPhone() || phList(); }", wiring)
+        # #322: the list is a phone pane and a test-only desktop dock panel.
+        self.assertIn("return isPhone() ? phList() : (!!window.ensListDocked", wiring)
         self.assertIn("body.sw-on main { padding-left: calc(var(--list-w) + 20px); }", INDEX)
         self.assertIn("body { --sw-w: 300px; }", INDEX)
         # #114's button, pin and close are gone: the list is not a panel you open.
