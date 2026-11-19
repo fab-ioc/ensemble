@@ -222,22 +222,41 @@ async function main() {
     out.threadFail.failed = await evalIn(`IBX.failed.has(${JSON.stringify(out.threadFail.row)})`);
     await shot('thread-fail');
     } catch (e) { out.threadFailErr = String(e).slice(0, 300); }
-    // (10) #394 review 2: a link no chat answers (its goto-done never reaches the
-    // dashboard): after GOTO_MSG_MS the row pressed says it could not be loaded.
+    // (10) #394 review 2, 4: a link no chat answers (its goto-done never reaches
+    // the dashboard): after GOTO_MSG_MS the row pressed says it could not be
+    // loaded and its press ends, whichever finds it first (its timer, or a chat
+    // that asks for it after then); a result after that changes nothing.
     try {
-    await evalIn(`(() => { GOTO_MSG_MS = 1500; IBX.failed.clear(); const r = IBX.data.rows.find(x => x.roomId === ${JSON.stringify(A.tpo)}); IBX.pressed = { id: r.id, rid: r.roomId, mid: ${JSON.stringify(A.tmid)}, at: Date.now() };
-      window.__ibxRow = r.id; window.__g0 = gotoDoneHere; gotoDoneHere = (rid, msg, ...r) => msg === ${JSON.stringify(A.tmid)} ? undefined : window.__g0(rid, msg, ...r); return 0; })()`);
-    out.silent = { row: await evalIn('window.__ibxRow') };
-    await evalIn(`openMsgLink(${JSON.stringify(A.tpo)}, ${JSON.stringify(A.tmid)}, 'inbox'); 0`);
-    out.silent.pendingSoon = await evalIn(`GOTO_MSG.has(${JSON.stringify(A.tpo)})`);
+    const T = JSON.stringify(A.tpo), M = JSON.stringify(A.tmid);
+    const press = `(() => { IBX.failed.clear(); ibxRepaint(); const r = IBX.data.rows.find(x => x.roomId === ${T}); IBX.pressed = { id: r.id, rid: r.roomId, mid: ${M}, at: Date.now() }; window.__ibxRow = r.id; return r.id; })()`;
+    const look = `(() => { const li = LD_INBOX.querySelector('li.ibx-row[data-ibx="' + CSS.escape(window.__ibxRow) + '"]'); const n = li && li.querySelector('.ibx-fail');
+      return { pending: GOTO_MSG.has(${T}), failed: IBX.failed.has(window.__ibxRow), note: n ? n.textContent : '', pressed: !!IBX.pressed }; })()`;
+    await evalIn(`(() => { GOTO_MSG_MS = 1500; window.__g0 = gotoDoneHere; gotoDoneHere = (rid, msg, ...r) => msg === ${M} ? undefined : window.__g0(rid, msg, ...r); return 0; })()`);
+    out.silent = { row: await evalIn(press) };
+    await evalIn(`openMsgLink(${T}, ${M}, 'inbox'); 0`);
+    out.silent.soon = await evalIn(look);
     await sleep(2500);
-    out.silent.pendingAfter = await evalIn(`GOTO_MSG.has(${JSON.stringify(A.tpo)})`);
-    out.silent.failed = await evalIn(`IBX.failed.has(window.__ibxRow)`);
-    out.silent.rowNote = await evalIn(`(() => { const li = LD_INBOX.querySelector('li.ibx-row[data-ibx="' + CSS.escape(window.__ibxRow) + '"]'); const n = li && li.querySelector('.ibx-fail'); return n ? n.textContent : ''; })()`);
-    out.silent.stillPressed = await evalIn('!!IBX.pressed');
-    await evalIn("GOTO_MSG_MS = 30000; gotoDoneHere = window.__g0; 0");
+    out.silent.after = await evalIn(look);
+    // A result that still comes once it was given up on: the note stays.
+    await evalIn(`window.__g0(${T}, ${M}, true, ''), 0`); await sleep(200);
+    out.silent.lateResult = await evalIn(look);
     await shot('silent');
-    } catch (e) { out.silentErr = String(e).slice(0, 300); }
+    // Found expired first (a chat asking for it, sendGotoMsg) before its timer: the same note, once.
+    await evalIn(press);
+    await evalIn(`(() => { window.__lands = 0; const l0 = ibxLanded; window.__l0 = l0; ibxLanded = (...a) => { window.__lands++; return l0(...a); }; openMsgLink(${T}, ${M}, 'inbox'); GOTO_MSG_MS = -1; sendGotoMsg(${T}); GOTO_MSG_MS = 1500; return 0; })()`);
+    out.silent.expiredFirst = await evalIn(look);
+    await sleep(2500);
+    out.silent.expiredLater = await evalIn(look);
+    out.silent.lands = await evalIn('window.__lands');
+    await evalIn('ibxLanded = window.__l0; 0');
+    // A link its chat does answer: no note when its timer comes.
+    await evalIn('gotoDoneHere = window.__g0; 0');
+    await evalIn(press);
+    await evalIn(`openMsgLink(${T}, ${M}, 'inbox'); 0`);
+    await sleep(2500);
+    out.silent.answered = await evalIn(look);
+    await evalIn('GOTO_MSG_MS = 30000; IBX.failed.clear(); ibxRepaint(); 0');
+    } catch (e) { out.silentErr = String(e).slice(0, 300); try { await evalIn('GOTO_MSG_MS = 30000; if (window.__g0) gotoDoneHere = window.__g0; if (window.__l0) ibxLanded = window.__l0; 0'); } catch (e2) {} }
   } finally {
     try { ch.kill(); } catch (e) {}
   }
@@ -455,12 +474,26 @@ class InboxTrustInChrome(unittest.TestCase):
     def test_a_link_no_chat_answers_says_so_on_its_row(self):
         self.assertNotIn("silentErr", self.got)
         f = self.got["silent"]
-        self.assertTrue(f["pendingSoon"], f)
-        self.assertFalse(f["pendingAfter"], f)
-        self.assertTrue(f["failed"], f)
-        self.assertIn("could not be loaded", f["rowNote"], f)
-        # Kept pressed: a real result that still comes puts the note right.
-        self.assertTrue(f["stillPressed"], f)
+        self.assertTrue(f["soon"]["pending"] and f["soon"]["pressed"] and not f["soon"]["failed"], f)
+        a = f["after"]
+        self.assertEqual((a["pending"], a["failed"], a["pressed"]), (False, True, False), f)
+        self.assertIn("could not be loaded", a["note"], f)
+        # Given up on: a result that still comes leaves the note, the press over.
+        self.assertEqual(f["lateResult"], a, f)
+
+    def test_a_link_found_expired_first_says_so_once(self):
+        self.assertNotIn("silentErr", self.got)
+        f = self.got["silent"]
+        e = f["expiredFirst"]
+        self.assertEqual((e["pending"], e["failed"], e["pressed"]), (False, True, False), f)
+        self.assertIn("could not be loaded", e["note"], f)
+        self.assertEqual(f["expiredLater"], e, f)
+        self.assertEqual(f["lands"], 1, "its timer, after, says nothing again")
+
+    def test_a_link_its_chat_answers_has_no_note_after_its_timer(self):
+        self.assertNotIn("silentErr", self.got)
+        a = self.got["silent"]["answered"]
+        self.assertEqual((a["pending"], a["failed"], a["pressed"], a["note"]), (False, False, False, ""), a)
 
     def test_no_section_failed(self):
         for k in ("keepErr", "reloadErr", "pressErr"):

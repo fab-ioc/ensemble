@@ -144,6 +144,14 @@ async function main() {
       out.menuUndone = await p.evalIn(pmN);
       out.menuSetBare = await p.evalIn(`document.querySelectorAll('#proj-menu .pm-set .pm-needs').length === 0`);
       out.menuOpen = await p.evalIn(`!document.getElementById('proj-menu').hidden`);
+      // #394 review 4: its Undo over and the hub not yet answered (IBX.hide), the switcher still agrees.
+      out.hidden = await p.evalIn(`(() => { const id = ibxRows(IBX.data, 'project', ${JSON.stringify(A.ids.opTen)}).filter(ibxLive).find(r => r.kind !== 'check').id;
+        window.__rs = ibxRowSend; ibxRowSend = () => new Promise(() => {}); ibxRowAct(id, 'Closed'); const g = IBX.gone.get(id); clearTimeout(g.timer); g.fire();
+        return { id, held: IBX.hide.has(id), inbox: ibxLiveN(ibxRows(IBX.data, 'project', ${JSON.stringify(A.ids.opTen)})) }; })()`);
+      await sleep(200);
+      out.hidden.menu = await p.evalIn(pmN);
+      await p.evalIn(`(() => { ibxRowSend = window.__rs; IBX.hide.delete(${JSON.stringify(out.hidden.id)}); return 0; })()`);
+      await p.evalIn('ibxRepaint(), 0'); await sleep(200);
       await p.evalIn('closeProjMenu(), 0'); await sleep(200);
       out.undone = await geo(p);
       out.undoneStrip = await p.evalIn(`ibxStripCounts(${JSON.stringify(A.ids.opTen)}).q + ibxStripCounts(${JSON.stringify(A.ids.Motors)}).q`);
@@ -299,6 +307,10 @@ class EveryOpenCardIsARowInChrome(unittest.TestCase):
         self.assertTrue(set(g["menuUndone"]) == {"10"}, g["menuUndone"])
         self.assertTrue(g["menuOpen"], "counted again while it stays open")
         self.assertTrue(g["menuSetBare"], "its settings items get no count")
+        h = g["hidden"]
+        self.assertTrue(h["held"], h)
+        self.assertEqual(h["inbox"], 9, h)
+        self.assertEqual(set(h["menu"]), {"9"}, h)
 
     def test_mixed_asked_again_counts_both_and_cleared_none(self):
         a = self.got["mixed"]["all"]

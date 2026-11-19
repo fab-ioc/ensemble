@@ -17701,10 +17701,13 @@ function ibxFailHtml(r, why) {
 // row pressed: four rows of one message share the landing, not the note.
 const IBX_PRESSED_MS = 60000;
 // late: no chat said in time; the press stays, so a result that still comes counts.
-function ibxLanded(rid, msg, ok, why, late) {
+// linkAt: a link no chat answered (gotoExpire), opened then: the row pressed
+// for it (not one pressed since) says so, however long that took.
+function ibxLanded(rid, msg, ok, why, linkAt) {
   const p = IBX.pressed;
-  if (!p || p.rid !== rid || p.mid !== msg || Date.now() - p.at > IBX_PRESSED_MS) return;
-  if (!late) IBX.pressed = null;
+  if (!p || p.rid !== rid || p.mid !== msg) return;
+  if (linkAt ? p.at > linkAt : Date.now() - p.at > IBX_PRESSED_MS) return;
+  IBX.pressed = null;
   const had = IBX.failed.has(p.id);
   if (ok) IBX.failed.delete(p.id); else IBX.failed.set(p.id, why || '');
   if (!ok || had) ibxRepaint();
@@ -24665,7 +24668,7 @@ function projMatches(projects, q) {
 }
 // #394: what waits in that project, counted as the Inbox counts it (a row waiting on its Undo is not).
 function projInboxN(pid) {
-  return IBX.data ? ibxLiveN((IBX.data.rows || []).filter(r => r.projectId === pid)) : 0;
+  return IBX.data ? ibxLiveN(ibxRows(IBX.data, 'project', pid)) : 0;
 }
 function projItemHtml(pj, here, cls) {
   const n = projInboxN(pj.id);
@@ -25675,8 +25678,17 @@ const GOTO_MSG = new Map();   // roomId → { msg, part }: message id and passag
 let GOTO_MSG_MS = 30000;     // (let: a test shortens it)
 function gotoPending(rid) {
   const g = GOTO_MSG.get(rid);
-  if (g && g.at && Date.now() - g.at > GOTO_MSG_MS) { GOTO_MSG.delete(rid); return null; }
+  if (g && g.at && Date.now() - g.at > GOTO_MSG_MS) { gotoExpire(rid, g); return null; }
   return g || null;
+}
+// #394 review 4: a link given up on, by its timer or found expired first: the
+// row pressed for it says it could not be loaded, and its press ends; once.
+const GOTO_UNLOADED_WHY = 'The linked message could not be loaded. Reload the page to try again.';
+function gotoExpire(rid, g) {
+  if (GOTO_MSG.get(rid) === g) GOTO_MSG.delete(rid);
+  if (g.ended) return;
+  g.ended = true;
+  if (typeof ibxLanded === 'function') ibxLanded(rid, g.msg, false, GOTO_UNLOADED_WHY, g.at);
 }
 function gotoTaken(rid) {
   const g = GOTO_MSG.get(rid);
@@ -25684,7 +25696,7 @@ function gotoTaken(rid) {
 }
 function gotoDoneHere(rid, msg, ok, why) {
   const g = GOTO_MSG.get(rid);
-  if (g && g.msg === msg) GOTO_MSG.delete(rid);
+  if (g && g.msg === msg) { g.ended = true; GOTO_MSG.delete(rid); }
   if (typeof ibxLanded === 'function') ibxLanded(rid, msg, ok, why);
 }
 function openMsgLink(rid, msg, part) {
@@ -25697,13 +25709,9 @@ function openMsgLink(rid, msg, part) {
   const g = { msg, part: part || '', at: Date.now() };
   GOTO_MSG.set(rid, g);
   // #394 review 2: no chat said (a thread's page that never loaded, a chat
-  // that never started): the row pressed says it could not be loaded; a
-  // result that still comes puts it right.
-  setTimeout(() => {
-    if (GOTO_MSG.get(rid) !== g) return;
-    GOTO_MSG.delete(rid);
-    if (typeof ibxLanded === 'function') ibxLanded(rid, msg, false, 'The linked message could not be loaded. Reload the page to try again.', true);
-  }, GOTO_MSG_MS);
+  // that never started): the row pressed says it could not be loaded (a
+  // result that came meanwhile has ended the press: nothing to say).
+  setTimeout(() => gotoExpire(rid, g), GOTO_MSG_MS);
   if (pj) {
     openPoOf(pj);
   } else {
