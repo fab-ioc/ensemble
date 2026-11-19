@@ -148,9 +148,16 @@ class Notify(unittest.TestCase):
         take.assert_not_called()
         led = points.load(self.rid) if points.exists(self.rid) else {}
         self.assertEqual(float(led.get("asksSettledAt") or 0), 0.0)
-        self.assertEqual(asks.open_in(chatroom.get_room(self.rid, public=False)), before)
-        # What the person's own words do, so the check above means something.
+        room = chatroom.get_room(self.rid, public=False)
+        self.assertFalse(any(p.get("answeredAt") for p in room["participants"]), "no answer recorded")
+        self.assertEqual(asks.open_in(room), before)
+        # #394 (P395): words written in the chat no longer settle an ask
+        # (asksSettledAt is not read); in a task chat with no PO a message
+        # submitted to the agent after it does (answeredAt), so the check
+        # above means something.
         self.assertEqual(self.post({"roomId": self.rid, "text": "Yes"}, path="/api/room/say")[0], 200)
+        self.assertEqual(asks.open_in(chatroom.get_room(self.rid, public=False)), before)
+        chatroom.record_answer(self.rid, "claude", time.time())
         self.assertEqual(asks.open_in(chatroom.get_room(self.rid, public=False)), [])
 
     # ---- who may post ----

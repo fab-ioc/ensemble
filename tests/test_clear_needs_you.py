@@ -1,16 +1,14 @@
-"""Clear Needs you in one action; rows the conversation moved past leave by
-themselves (#279).
+"""Clear Needs you in one action (#279); rows the conversation moved past stay
+until each is dealt with (P396).
 
 * Clear all: ``POST /api/attention/done {roomIds}`` records Done with this
   for every room in one page-only write (the guard, a cap of 200, room ids
   only, a gone room listed as missing) and answers each room's marks before;
   ``POST /api/attention/undo {restore}`` puts them back, only ever back;
-* the supersede rule: an ask leaves Needs you once the person wrote words of
-  their own after it (a chat message, not a card's quick answer, a command
-  or a refused send) or an agent reported its work completed or its asks
-  over; one put after stays;
-* the chat's Decisions: ``POST /api/room/points/decisions`` clears every
-  open card to the Older fold and undoes it.
+* no supersede rule any more (P396): the person's words after an ask, or an
+  agent's report, leave it waiting until it is answered or closed;
+* the chat's Decisions: ``POST /api/room/points/decisions`` closes every
+  open card (Clear all: none from before it is listed) and undoes it.
 """
 from __future__ import annotations
 
@@ -99,30 +97,21 @@ class ClearAll(_Page):
 
 
 class Supersede(_Page):
-    def test_words_after_an_ask_take_it_off(self):
+    def test_words_after_an_ask_leave_it_open(self):
+        # P396: "Writing past a card doesn't mean anything." The person's
+        # words in the chat, or the agent's report, leave its asks waiting
+        # until each is answered or closed; Done with this sets them aside.
         rid = self.asked()
         room = chatroom.get_room(rid)
         self.assertEqual([a["n"] for a in asks.open_in(room)], [0, 1, 2])
-        self.assertEqual(asks.open_in({**room, "personAt": self.t0 + 5}), [], "the person wrote since")
-        self.assertEqual(asks.open_in({**room, "askClosedAt": self.t0 + 5}), [], "the agent reported it over")
-        self.assertEqual(len(asks.open_in({**room, "personAt": self.t0 + 1})), 3, "written before the ask: it stays")
+        self.assertEqual(len(asks.open_in({**room, "personAt": self.t0 + 5})), 3, "the person wrote since")
+        self.assertEqual(len(asks.open_in({**room, "askClosedAt": self.t0 + 5})), 3, "the agent reported")
+        led = points.load(rid)
+        led["asksSettledAt"] = self.t0 + 5
+        points._save(rid, led)
+        asks.forget()
+        self.assertEqual(len(asks.open_in(chatroom.get_room(rid))), 3, "settled by words: still open")
         self.assertEqual([c["n"] for c in asks.open_cards(room)], [0, 1, 2], "the cards stay open in the chat")
-
-    def test_what_counts_as_moving_past(self):
-        room = {"participants": [{"identity": "claude", "kind": "agent"}, {"identity": "user", "kind": "human"}]}
-        t = 1000.0
-        msgs = [
-            {"from": "user", "text": "1. yes 2. nothing else", "ts": t},
-            {"from": "claude", "kind": "report", "reportKind": "completed", "text": "done", "ts": t + 1},
-            {"from": "claude", "kind": "report", "reportKind": "update", "text": "still on it", "ts": t + 2},
-            {"from": "user", "text": "Re “Which one?”: A", "ts": t + 3},
-            {"from": "user", "text": "/compact", "ts": t + 4},
-        ]
-        self.assertEqual(attention._moved_past(room, msgs), {"personAt": t, "askClosedAt": t + 1})
-        msgs.append({"from": "claude", "kind": "report", "reportKind": "update", "clears": True, "ts": t + 5})
-        msgs.append({"from": "user", "text": "thanks, carry on", "ts": t + 6})
-        self.assertEqual(attention._moved_past(room, msgs), {"personAt": t + 6, "askClosedAt": t + 5})
-        self.assertEqual(attention._moved_past(room, []), {"personAt": 0.0, "askClosedAt": 0.0})
 
 
 class Decisions(_Page):
@@ -134,12 +123,13 @@ class Decisions(_Page):
             with self.subTest(body=body):
                 self.assertEqual(http("/api/room/points/decisions", body)[0], code)
         room = chatroom.get_room(rid)
-        sid = lambda: [c["n"] for c in asks.decisions(room, points.load(rid))[0]]   # noqa: E731
+        sid = lambda: [c["n"] for c in asks.decisions(room, points.load(rid))]   # noqa: E731
         self.assertEqual(sid(), [0, 1, 2])
         status, r = http("/api/room/points/decisions", {"roomId": rid, "action": "clear"})
         self.assertEqual((status, r["before"]), (200, 0), r)
-        self.assertEqual(r["points"]["needs"]["decisions"], [], "every card to Older")
-        self.assertEqual(r["points"]["needs"]["olderCount"], 3)
+        self.assertEqual(r["points"]["needs"]["decisions"], [], "Clear all closed every card (P396)")
+        self.assertNotIn("olderCount", r["points"]["needs"])
+        self.assertEqual(sid(), [])
         self.assertTrue(points.load(rid).get("decisionsClearedAt"))
         status, u = http("/api/room/points/decisions", {"roomId": rid, "action": "undo", "before": r["before"]})
         self.assertEqual((status, u["restored"]), (200, True), u)
@@ -147,10 +137,9 @@ class Decisions(_Page):
         self.assertEqual(len(u["points"]["needs"]["decisions"]), 3, "Undo: back on top")
         self.assertEqual(sid(), [0, 1, 2])
 
-    def test_the_chats_own_view_reads_the_persons_words(self):
-        # The chat's Needs you works from the room itself, not an attention
-        # summary: the person's message after the cards, which never went
-        # through settle_asks, still moves them to Older (review 1).
+    def test_the_chats_own_view_keeps_cards_written_past(self):
+        # P396: the person's message after the cards moves nothing: the chat's
+        # Needs you still lists all three, as the Inbox does.
         rid = self.asked()
         p = mock.patch.object(asks, "cards_ready", lambda room: True)   # read now, not in the background
         p.start()
@@ -158,10 +147,9 @@ class Decisions(_Page):
         view = lambda: points._needs_view(rid, None, points.load(rid))   # noqa: E731
         self.assertEqual(len(view()["decisions"]), 3)
         chatroom.post_message(rid, "user", "Let's leave those, look at the brakes instead.")
-        self.assertFalse(points.load(rid).get("asksSettledAt"))
         v = view()
-        self.assertEqual((v["decisions"], v["olderCount"]), ([], 3), v)
-        self.assertEqual({c["why"] for c in v["older"]}, {"past"})
+        self.assertEqual(len(v["decisions"]), 3, v)
+        self.assertNotIn("older", v)
 
 
 if __name__ == "__main__":

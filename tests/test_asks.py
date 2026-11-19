@@ -525,14 +525,15 @@ class TheEndpoint(_World):
         self.assertFalse(dashboard.withdraw_send(rid, "ask:sid-1:1:2"))
         self.assertEqual(len(res.queue), 1)
 
-    def test_words_in_the_chat_leave_unanswered_cards_open(self):
+    def test_words_in_the_chat_leave_unanswered_cards_waiting(self):
         rid = self._room()
         with mock.patch.object(dashboard.Handler, "_resume_room", self._resume([])):
             http("/api/room/ask", {"roomId": rid, "mid": "sid-1:1", "n": 0, "option": "30 days"})
             self.assertEqual([a["n"] for a in asks.open_in(chatroom.get_room(rid))], [1, 2])
             self.assertEqual(http("/api/room/resume", {"roomId": rid, "text": "1. yes 2. nothing else", "key": "k9"})[0], 200)
         self.assertEqual([a["n"] for a in asks.open_cards(chatroom.get_room(rid))], [1, 2])
-        self.assertEqual(asks.open_in(chatroom.get_room(rid)), [], "words settle attention, not the cards")
+        # P396: words in the chat answer no card: both still wait on the person.
+        self.assertEqual([a["n"] for a in asks.open_in(chatroom.get_room(rid))], [1, 2])
         self.assertGreater(points.view(rid)["asksSettledAt"], self.t0 + 2)
 
     def test_a_command_or_a_refused_send_does_not_end_the_wait(self):

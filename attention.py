@@ -708,13 +708,6 @@ def _is_po_room(room: dict, projects: list[dict] | None = None) -> bool:
     return any((p.get("poRoomId") or "").strip() == rid for p in projects)
 
 
-# An ask the person has read leaves Needs you this long after it was put,
-# answered or not: Needs you is for what they have not seen to, and a read
-# question a day old is theirs to come back to from the task's own chat
-# (GitHub issue 11: rows the CEO had long seen stayed there for days).
-READ_ASK_KEEP_S = 24 * 3600
-
-
 def seen_at(room: dict) -> float:
     """Up to when the person has read the room's chat (``seenAt``, written by
     ``chatroom.record_seen`` from the page's read point), or 0."""
@@ -722,17 +715,6 @@ def seen_at(room: dict) -> float:
         return float((room or {}).get("seenAt") or 0)
     except (TypeError, ValueError):
         return 0.0
-
-
-def read_and_old(room: dict, ts, now: float | None = None) -> bool:
-    """What was put to the person at ``ts`` is read (their read point is at or
-    past it) and older than :data:`READ_ASK_KEEP_S`."""
-    try:
-        ts = float(ts or 0)
-    except (TypeError, ValueError):
-        return False
-    now = time.time() if now is None else now
-    return bool(ts) and seen_at(room) >= ts and now - ts >= READ_ASK_KEEP_S
 
 
 def dealt_at(room: dict) -> float:
@@ -879,6 +861,33 @@ def _open_to_human(room: dict, msgs: list, po: str | None = None,
     return message
 
 
+def _report_to_check(room: dict, msgs: list, po: str | None = None) -> dict | None:
+    """The newest finished report to the person still to check (#394, P395):
+    ``{from, ts, id, line}``, or None. Unlike :func:`_open_to_human`, the
+    person writing in the chat (here or in a terminal) does not settle it:
+    only Done (``set_aside``, read by :func:`_reported`) does, or the agent's
+    own newer completed report, which takes its place. An update, a
+    question or a blocked report after it leaves it to check (#394 review 2:
+    only Done is being done with it). A newest completed report to the PO
+    (it has one and the task still does) is the PO's to check."""
+    agents = {p.get("identity") for p in room.get("participants", [])
+              if p.get("kind") == "agent"}
+    reports = [r for r in (room.get("lastReport"), room.get("lastRealReport")) if isinstance(r, dict)]
+    for m in reversed(msgs):
+        if m.get("kind") != "report" or m.get("from", "") not in agents:
+            continue
+        if m.get("reportKind", "") != "completed":
+            continue
+        if m.get("reportTo") and po:
+            return None
+        text = next((r.get("text", "") for r in reports if r.get("messageId") == m.get("id")), None)
+        if text is None:
+            text = _REPORT_HEADING.sub("", m.get("text", "") or "")
+        return {"from": m.get("from", ""), "ts": m.get("ts", 0), "id": m.get("id", ""),
+                "line": _first_line(text)}
+    return None
+
+
 def _first_line(text) -> str:
     """The first line of an ask that says something, without Markdown marks."""
     for ln in (text or "").splitlines():
@@ -965,49 +974,8 @@ def _summarize(room: dict, po: str | None = None, is_po: bool | None = None) -> 
         "seenAt": seen_at(room),
         "dealtAt": dealt_at(room),
         "openToHuman": _open_to_human(room, msgs, po, is_po),
-        **_moved_past(room, msgs),
+        "reportToCheck": _report_to_check(room, msgs, po),
     }
-
-
-def _moved_past(room: dict, msgs: list) -> dict:
-    """When the conversation last moved past what was put to the person
-    (#279): ``personAt``, the person's last own message in the chat (a slash
-    command is not one), and ``askClosedAt``, an agent's last report that
-    closes its asks (``completed``, or an ``update`` that ``clears``). An ask
-    from before either leaves Needs you (``asks.open_in``); its card stays
-    open in the chat."""
-    agents = {p.get("identity") for p in room.get("participants", []) if p.get("kind") == "agent"}
-    person = closed = 0.0
-    cr = _d.chatroom
-    for m in reversed(msgs):
-        if person and closed:
-            break
-        if cr.is_command_record(m):
-            continue
-        frm = m.get("from", "")
-        try:
-            ts = float(m.get("ts") or 0)
-        except (TypeError, ValueError):
-            continue
-        if frm == "user" and not person and _own_words(m.get("text")):
-            person = ts
-        elif frm in agents and not closed and m.get("kind") == "report" and (
-                m.get("reportKind") == "completed" or (m.get("reportKind") == "update" and m.get("clears"))):
-            closed = ts
-    return {"personAt": person, "askClosedAt": closed}
-
-
-def _own_words(text) -> bool:
-    """A chat message of the person's own words, as ``points.settle_asks``
-    reads them: not a command, not hub input, not a card's quick answer
-    ("Re “<ask>”: …", which answers that card only)."""
-    body = str(text or "").strip()
-    if not body or body.startswith(("/", "Re “", _d.PO_MESSAGE_PREFIX)):
-        return False
-    try:
-        return _d.hub_input_kind(body)["kind"] == "human"
-    except Exception:  # noqa: BLE001 — unread, it counts as words
-        return True
 
 
 def _po_still(summary: dict, projects: list[dict], links: dict) -> bool:
@@ -1403,10 +1371,10 @@ def _classify_agent(room: dict, part: dict, ev: dict, stall_seconds: int,
         put = None              # its PO's to answer, not the CEO's (task → PO → CEO)
     # Put to the person, and nothing for them to do (GitHub issue 11): a
     # finished report is ready for their check (``reported``), never Needs
-    # you; an ask they read a day ago is theirs to come back to. Either way
-    # the agent waits on the person, so it is not stalled either.
-    rested = bool(put) and (put["kind"] == "completed" or read_and_old(room, put.get("ts"), now)
-                            or set_aside(room, put.get("ts")))
+    # you; an ask they set aside (Done with this) is dealt with. Reading it
+    # is not (P395). Either way the agent waits on the person, so it is not
+    # stalled either.
+    rested = bool(put) and (put["kind"] == "completed" or set_aside(room, put.get("ts")))
     if rested:
         put = None
     q = (put or {}).get("text", "")
@@ -1584,7 +1552,7 @@ def _room_level(room: dict, live_agents: list[str],
     collaboration hit its hop limit and paused. Only meaningful while an agent
     is still alive to receive the answer. A PO's room waiting on the person
     asks nothing by that alone (see ``_open_to_human``), and what the person
-    read a day ago has left (``read_and_old``)."""
+    set aside (Done with this) has left; reading it does not (P395)."""
     if not live_agents:
         return None
     status = room.get("status", "active")
@@ -1599,7 +1567,7 @@ def _room_level(room: dict, live_agents: list[str],
         return None
     if status in ("waiting_human", "paused"):
         last = room.get("lastMessage") or {}
-        if read_and_old(room, last.get("ts"), now) or set_aside(room, last.get("ts")):
+        if set_aside(room, last.get("ts")):
             return None
         who = last.get("from", "") or room.get("waitingFor", "") or "the agents"
         text = " ".join((last.get("text") or "").split())[:200]
@@ -1758,18 +1726,20 @@ def waiting_on_po() -> dict[str, dict]:
 
 
 def _reported(room: dict, live_agents: list[str]) -> dict | None:
-    """A finished report the person has not looked at: ``{since, line,
+    """A finished report the person has not checked: ``{since, line,
     agent}`` for the list's "Ready for your check", or None. It is never
-    Needs you (GitHub issue 11), and it leaves when the person reads the chat
-    past it (``seenAt``), writes in it (the report is no longer open, see
-    ``_open_to_human``), or the task is Done or stopped (no agent running)."""
-    put = room.get("openToHuman")
-    if not put or put.get("kind") != "completed" or put.get("to") != "user" or not live_agents:
+    Needs you (GitHub issue 11), and it leaves when the person is done with it
+    (Done, ``set_aside``), when the agent's newer finished report takes its
+    place (an update or a question after it does not), or when the task is
+    Done or stopped (no agent running). Reading the chat past it or writing in
+    it is not being done with it (#394, P395: :func:`_report_to_check`)."""
+    put = room.get("reportToCheck")
+    if not put or not live_agents:
         return None
     if _d is not None and _d.normalize_workflow(room.get("workflow")) == "done":
         return None
     ts = float(put.get("ts") or 0)
-    if ts and (seen_at(room) >= ts or set_aside(room, ts)):
+    if ts and set_aside(room, ts):
         return None
     return {"since": ts, "line": put.get("line", ""), "agent": put.get("from", ""),
             "mid": put.get("id", "")}
