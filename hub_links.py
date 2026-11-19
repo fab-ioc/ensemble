@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import functools
 import ipaddress
+import posixpath
 import re
 import socket
 from urllib.parse import parse_qs, unquote, urlsplit
@@ -156,11 +157,33 @@ def _proxies_hub(proxy, whole: bool = False) -> bool:
     return to == (hub_port(), True) and (not whole or u.path in ("", "/"))
 
 
+# The pages the tailnet's plain http is sent to https for (dashboard._to_https).
+_REDIRECTED = ("/", "/session")
+
+
+def _serve_mount(handlers: dict, path: str) -> str:
+    """The handler tailscale serve picks for a path (its getServeHandler):
+    the path itself, else each parent with and without a trailing slash, up
+    to "/"; "" when none."""
+    if path in handlers:
+        return path
+    pth = posixpath.normpath(path) if path else "/"
+    while True:
+        for m in (pth.rstrip("/") + "/", pth):
+            if m in handlers:
+                return m
+        if pth == "/":
+            return ""
+        pth = posixpath.dirname(pth)
+
+
 def learn_tailscale(status: dict | None, serve: dict | None) -> None:
     """What `tailscale status --json` and `tailscale serve status --json` say:
     this machine's tailnet name, and each https address tailscale serve proxies
     to the hub's port on this machine. One whose "/" is the hub (the whole
-    address, not a path of it) is also where a page is sent for https."""
+    address, not a path of it), and where no other handler takes a page sent
+    there (a "/session" for another service), is also where a page is sent
+    for https."""
     me = (status or {}).get("Self") or {}
     name = _norm(me.get("DNSName") or "")
     if name:
@@ -169,7 +192,8 @@ def learn_tailscale(status: dict | None, serve: dict | None) -> None:
         handlers = (cfg or {}).get("Handlers") or {}
         if any(_proxies_hub((h or {}).get("Proxy")) for h in handlers.values()):
             listens(where, "https")
-        if _proxies_hub((handlers.get("/") or {}).get("Proxy"), whole=True):
+        if _proxies_hub((handlers.get("/") or {}).get("Proxy"), whole=True) and \
+                all(_serve_mount(handlers, path) == "/" for path in _REDIRECTED):
             hp = _split(where, "https")
             if hp and hp not in _HTTPS:
                 _HTTPS.append(hp)

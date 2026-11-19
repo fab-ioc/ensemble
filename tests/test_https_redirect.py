@@ -104,6 +104,35 @@ class HttpsAddress(unittest.TestCase):
         self.assertEqual(hub_links.https_address(), "")
         self.assertTrue(hub_links.hub_origin(NAME, 443, "https"), "its links are still the hub's")
 
+    def test_a_more_specific_handler_for_another_service_keeps_its_pages(self):
+        # Review 2: "/" is the hub but "/session" (or a parent of it) is
+        # another service's: a chat sent there would open that service.
+        for other in ({"/session": {"Proxy": "http://127.0.0.1:8789"}},
+                      {"/session/": {"Proxy": "http://127.0.0.1:8789"}}):
+            with self.subTest(other):
+                hub_links._HTTPS.clear()
+                self._learn({f"{NAME}:443": {"Handlers": {"/": {"Proxy": "http://127.0.0.1:8765"}, **other}}})
+                self.assertEqual(hub_links.https_address(), "")
+        # The next address, whose pages are all the hub's, is used instead.
+        hub_links._HTTPS.clear()
+        self._learn({f"{NAME}:443": {"Handlers": {"/": {"Proxy": "http://127.0.0.1:8765"},
+                                                  "/session": {"Proxy": "http://127.0.0.1:8789"}}},
+                     f"{NAME}:9443": {"Handlers": {"/": {"Proxy": "http://127.0.0.1:8765"}}}})
+        self.assertEqual(hub_links.https_address(), f"{NAME}:9443")
+        # A handler that takes none of the redirected pages changes nothing.
+        hub_links._HTTPS.clear()
+        self._learn({f"{NAME}:443": {"Handlers": {"/": {"Proxy": "http://127.0.0.1:8765"},
+                                                  "/sessions": {"Proxy": "http://127.0.0.1:8789"},
+                                                  "/other/": {"Proxy": "http://127.0.0.1:8789"}}}})
+        self.assertEqual(hub_links.https_address(), NAME)
+
+    def test_serve_mount_follows_tailscale(self):
+        h = {"/": 1, "/a/": 1, "/b": 1}
+        self.assertEqual(hub_links._serve_mount(h, "/session"), "/")
+        self.assertEqual(hub_links._serve_mount(h, "/a/x/y"), "/a/")
+        self.assertEqual(hub_links._serve_mount(h, "/b/c"), "/b")
+        self.assertEqual(hub_links._serve_mount({"/x": 1}, "/"), "")
+
     def test_no_serve_no_address(self):
         hub_links.learn_tailscale(None, None)
         self.assertEqual(hub_links.https_address(), "")

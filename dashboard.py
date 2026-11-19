@@ -19194,7 +19194,7 @@ class Handler(BaseHTTPRequestHandler):
             return False
         u = urlparse(self.path)
         q = parse_qs(u.query)
-        if not (u.path == "/" or (u.path == "/session" and not q.get("embed"))):
+        if not (u.path == "/" or (u.path == "/session" and not q.get("embed"))):   # hub_links._REDIRECTED
             return False
         # From the tailnet, and to the hub's own tailnet address: on a wildcard
         # bind a request to the LAN address stays there, its reader may not
