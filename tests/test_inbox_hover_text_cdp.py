@@ -18,9 +18,10 @@ on every row's text in turn; checked on each:
 * the actions are one line, inside the card, below the question;
 * the same after a repaint arriving while the pointer is on the row (held
   under a hover copy, drawn at once without one), and after the pointer leaves;
-* a row whose message could not be opened: its note and its ways (Open the
-  conversation, Done) are never covered by its actions, which sit on their own
-  line under them, always shown; the row's height never changes.
+* a row whose message could not be opened, at both widths: its note and its
+  ways (Open the conversation, Done) are never covered by its actions, which
+  sit on their own line under them, always shown; the row's height never
+  changes. Outside the listed Inbox such a row is as it was.
 
 Set ENSEMBLE_SHOTS=<dir> for a screenshot of a hovered row at each width.
 """
@@ -77,7 +78,9 @@ async function main() {
     let copyShown = false;
     if (cl) { const cr = document.createRange(); cr.selectNodeContents(cl); const cs = getComputedStyle(copy);
       const cps = [...cr.getClientRects()].filter(r => r.width > 2);
-      copyShown = cps.length > 0 && cs.visibility === 'visible' && Number(cs.opacity) > 0.95 && cps.every(r => [0.1, 0.5, 0.9].every(f => {
+      const ls = getComputedStyle(cl);
+      copyShown = cps.length > 0 && cs.visibility === 'visible' && Number(cs.opacity) > 0.95 && ls.visibility === 'visible' && Number(ls.opacity) > 0.95
+        && ls.color !== 'rgba(0, 0, 0, 0)' && ls.webkitTextFillColor !== 'rgba(0, 0, 0, 0)' && cps.every(r => [0.1, 0.5, 0.9].every(f => {
         const e = document.elementFromPoint(r.left + r.width * f, r.top + r.height / 2); return !!e && copy.contains(e); })); }
     const acts = li.querySelector('.ibx-acts'), ab = acts && acts.getBoundingClientRect(), lk = li.querySelector('a.ibx-link').getBoundingClientRect();
     const btns = acts ? [...acts.querySelectorAll('.ibx-btn')] : [];
@@ -136,7 +139,9 @@ async function main() {
         inCard: ab.left >= card.left - 0.5 && ab.right <= card.right + 0.5 && ab.bottom <= card.bottom + 0.5, ways, noteHid, noteByCopy, noteH: Math.round(nb.height) };
     })()`;
     out.failed = [];
-    const dr = out.default.rows, picks = [dr.find(r => r.hover.cut).i, dr.find(r => !r.hover.cut).i];
+    for (const [name, w] of [['default', 0], ['narrow', 240]]) {
+    if (w) { await evalIn(`(() => { ${D}.style.width = '${w}px'; ${D}.style.maxWidth = '${w}px'; return 0; })()`); await frame(); }
+    const dr = out[name].rows, picks = [dr.find(r => r.hover.cut).i, dr.find(r => !r.hover.cut).i];
     for (const i of picks) {
       await move(5, 5); await frame();
       await evalIn(`(() => { const li = ${D}.querySelectorAll('li.ibx-row[data-q]')[${i}]; IBX.failed.set(li.dataset.ibx, 'the message was removed'); ibxRepaint(); return 0; })()`);
@@ -149,11 +154,18 @@ async function main() {
         return [...li.querySelectorAll('.ibx-fail-acts .ibx-btn')].map(b => { const r = b.getBoundingClientRect(); return [Math.round(r.left + r.width / 2), Math.round(r.top + r.height / 2)]; }); })()`);
       const onWays = [];
       for (const [wx, wy] of wayAt) { await move(wx, wy); await sleep(200); await frame(); onWays.push(await evalIn(failLook(i))); }
-      await shot(`p408-failed-row${i}`, await evalIn(`(() => { const b = ${D}.querySelectorAll('li.ibx-row[data-q]')[${i}].getBoundingClientRect(); return { x: b.left - 8, y: b.top - 8, width: b.width + 16, height: b.height + 16 }; })()`));
+      await shot(`p408-failed-${name}-row${i}`, await evalIn(`(() => { const b = ${D}.querySelectorAll('li.ibx-row[data-q]')[${i}].getBoundingClientRect(); return { x: b.left - 8, y: b.top - 8, width: b.width + 16, height: b.height + 16 }; })()`));
       await move(5, 5); await frame();
-      out.failed.push({ i, before, text, onText, onWays });
+      out.failed.push({ width: name, i, before, text, onText, onWays });
       await evalIn(`(() => { IBX.failed.clear(); ibxRepaint(); return 0; })()`); await frame();
     }
+    if (w) await evalIn(`(() => { ${D}.style.width = ''; ${D}.style.maxWidth = ''; return 0; })()`);
+    }
+    // The other Inboxes keep their own rule: a failed-open row outside the listed Inbox shows its actions only on hover.
+    out.unlisted = await evalIn(`(() => { const box = document.createElement('div'); box.className = 'ibx'; box.style.cssText = 'position:fixed;left:900px;top:20px;width:300px';
+      box.innerHTML = '<ul class="ibx-cards"><li class="ibx-row" data-q="1"><a class="ibx-link"><span class="ibx-line">Q?</span></a><div class="ibx-meta">PO</div>'
+        + '<div class="ibx-fail">Could not open</div><div class="ibx-fail-acts"><button class="ibx-btn">Done</button></div><div class="ibx-acts"><button class="ibx-btn">Close</button></div></li></ul>';
+      document.body.appendChild(box); const d = getComputedStyle(box.querySelector('.ibx-acts')).display; box.remove(); return d; })()`);
   } finally {
     try { ch.kill(); } catch (e) {}
   }
@@ -245,8 +257,10 @@ class HoverTextInChrome(close.CloseInChrome):
 
     def test_a_row_that_could_not_open_keeps_its_note_and_ways_usable(self):
         f = self.got["failed"]
-        self.assertEqual(len(f), 2)
-        self.assertTrue(f[0]["text"]["cut"] and not f[1]["text"]["cut"], "a cut question and one that fits")
+        self.assertEqual([x["width"] for x in f], ["default", "default", "narrow", "narrow"])
+        for a, b in (f[0:2], f[2:4]):
+            self.assertTrue(a["text"]["cut"] and not b["text"]["cut"], "a cut question and one that fits, at each width")
+        self.assertEqual(self.got["unlisted"], "none", "outside the listed Inbox the actions still wait for hover")
         for x in f:
             self.assertEqual(x["text"]["hid"], 0, x["text"])
             states = [x["before"], x["onText"]] + x["onWays"]
