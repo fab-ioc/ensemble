@@ -41,7 +41,7 @@ class World:
         self.projects = [{"id": "proj-a", "name": "Alpha", "poRoomId": PO},
                          {"id": "proj-b", "name": "Beta", "poRoomId": PO2}]
         self.open_asks = {}             # rid → open_in rows
-        self.decisions = {}             # rid → (waiting, older)
+        self.decisions = {}             # rid → the open cards (asks.decisions)
         self.ledgers = {}               # rid → {"points": [...]}
         self.snap = {"items": [], "reported": {}}
         self.threads = {}               # rid → index
@@ -53,12 +53,12 @@ class World:
         attention = types.SimpleNamespace(
             _room_summaries=lambda: [dict(r) for r in w.rooms],
             snapshot=lambda *a, **k: w.snap,
-            read_and_old=lambda *a, **k: False, set_aside=lambda *a, **k: False)
+            set_aside=lambda *a, **k: False)
         asks = types.SimpleNamespace(
             open_by_room=lambda rooms, now=None: w.open_asks,
             cards_ready=lambda s: True, warm_cards=lambda s: None,
-            decisions=lambda s, led=None: w.decisions.get(s["id"], ([], [])),
-            _room_asks=lambda s: [], moved_past=lambda s, led: 0.0)
+            decisions=lambda s, led=None: w.decisions.get(s["id"], []),
+            _room_asks=lambda s: [], answered_by_message=lambda s: 0.0)
         pts = types.SimpleNamespace(
             exists=lambda rid: rid in w.ledgers, load=lambda rid, shared=False: w.ledgers[rid],
             needs_you=real_points.needs_you, last_answer=real_points.last_answer,
@@ -98,7 +98,7 @@ class InboxTest(unittest.TestCase):
         # The PO asks in the answer to P12: its card, Needs you's row for the
         # card, the point (answer not seen) and the thread are one question.
         card = {"mid": "m-ans", "n": 0, "question": "Ship it?", "ts": NOW - 100, "who": "claude", "points": ["P12"]}
-        self.w.decisions[PO] = ([card], [])
+        self.w.decisions[PO] = [card]
         self.w.open_asks[PO] = [{"mid": "m-ans", "n": 0, "question": "Ship it?", "ts": NOW - 100, "who": "claude"}]
         self.w.ledgers[PO] = {"points": [delivered("P12", "m-q", "m-ans")]}
         self.w.snap = {"items": [{"roomId": PO, "state": "waiting_for_you", "askKind": "asks", "askId": "m-ans",
@@ -124,7 +124,7 @@ class InboxTest(unittest.TestCase):
         # started. The inbox starts that build itself, says it is pending,
         # and the next request folds the thread into the one row.
         card = {"mid": "m-ans", "n": 0, "question": "Ship it?", "ts": NOW - 100, "who": "claude", "points": ["P12"]}
-        self.w.decisions[PO] = ([card], [])
+        self.w.decisions[PO] = [card]
         self.w.ledgers[PO] = {"points": [delivered("P12", "m-q", "m-ans")]}
         self.w.cold[PO] = {"threads": {"t1": {"members": ["m-q", "m-ans"], "points": ["P12"]}}}
         mod = self.w.module()
@@ -154,16 +154,20 @@ class InboxTest(unittest.TestCase):
 
     def test_point_folds_into_card_on_its_answer_message(self):
         # The card does not name its point, but it sits on the point's answer.
-        self.w.decisions[PO] = ([{"mid": "m-ans", "n": 0, "question": "Which?", "ts": NOW - 10, "who": "po"}], [])
+        self.w.decisions[PO] = [{"mid": "m-ans", "n": 0, "question": "Which?", "ts": NOW - 10, "who": "po"}]
         self.w.ledgers[PO] = {"points": [delivered("P3", "m-q", "m-ans")]}
         out = self.build()
         self.assertEqual(out["count"], 1)
         self.assertEqual(out["rows"][0]["points"], ["P3"])
         self.assertNotIn("sources", out["rows"][0])     # only with debug
 
-    def test_answered_leaves(self):
-        # Answered: no source lists it any more, so no row.
-        self.w.ledgers[PO] = {"points": [delivered("P5", "m-q", "m-a", seen=True)]}
+    def test_a_seen_answer_stays_until_done(self):
+        # P395: seeing an answer removes nothing; Done (the point acked) does.
+        p = delivered("P5", "m-q", "m-a", seen=True)
+        self.w.ledgers[PO] = {"points": [p]}
+        out = self.build()
+        self.assertEqual([(r["kind"], r["mid"], r["dismiss"]) for r in out["rows"]], [("check", "m-a", "done")])
+        p["state"] = "acknowledged"
         self.assertEqual(self.build()["count"], 0)
 
     def test_point_to_try_is_check(self):
@@ -174,7 +178,7 @@ class InboxTest(unittest.TestCase):
         self.assertEqual((r["kind"], r["mid"]), ("check", "m-a"))
         self.assertIn("try", r["reason"])
 
-    def test_ready_for_check_appears_and_leaves_when_read(self):
+    def test_ready_for_check_appears_and_leaves_when_attention_drops_it(self):
         self.w.snap = {"items": [], "reported": {TASK: {"since": NOW - 60, "line": "Done: the fix", "agent": "claude",
                                                          "mid": "m-rep"}}}
         out = self.build()
@@ -182,7 +186,9 @@ class InboxTest(unittest.TestCase):
         r = out["rows"][0]
         self.assertEqual((r["kind"], r["roomId"], r["mid"], r["ref"], r["project"]),
                          ("check", TASK, "m-rep", "#7", "Alpha"))
-        # Read: attention no longer reports it (its seenAt rule), and it leaves.
+        # Done (or a later report, or the task done/stopped): attention no longer
+        # reports it, and it leaves. Reading or writing in it does not (#394,
+        # P395: test_needs_you_real.AFinishedReport).
         self.w.snap = {"items": [], "reported": {}}
         self.assertEqual(self.build()["count"], 0)
 
@@ -197,7 +203,7 @@ class InboxTest(unittest.TestCase):
         self.assertEqual(out["rows"][0]["roomId"], OTHER)        # answers first
 
     def test_cross_project_rows_carry_their_project(self):
-        self.w.decisions[PO2] = ([{"mid": "b1", "n": 0, "question": "Beta?", "ts": NOW, "who": "po"}], [])
+        self.w.decisions[PO2] = [{"mid": "b1", "n": 0, "question": "Beta?", "ts": NOW, "who": "po"}]
         self.w.snap = {"items": [{"roomId": OTHER, "state": "blocked", "reason": "stuck", "since": NOW}],
                        "reported": {TASK: {"since": NOW, "line": "done", "agent": "claude"}}}
         out = self.build()
@@ -214,14 +220,14 @@ class InboxTest(unittest.TestCase):
     def test_no_row_shows_a_bare_link_as_its_question(self):
         # P321: an ask whose words are only a link reads as who asks it.
         url = "http://127.0.0.1:8765/session?room=room-8d56cd21&msg=d6801a1e8ab0&part=ask:0"
-        self.w.decisions[PO] = ([{"mid": "m1", "n": 0, "question": url, "ts": NOW - 100, "who": "claude"}],
-                                [{"mid": "o1", "n": 0, "question": url, "ts": NOW - 9000, "who": "claude", "why": "past"}])
+        self.w.decisions[PO] = [{"mid": "m1", "n": 0, "question": url, "ts": NOW - 100, "who": "claude"},
+                                {"mid": "o1", "n": 0, "question": url, "ts": NOW - 9000, "who": "claude"}]
         self.w.open_asks[TASK] = [{"mid": "t1", "n": 0, "question": url, "ts": NOW - 50, "who": "codex"},
                                   {"mid": "t2", "n": 0, "question": "Ship it?", "ts": NOW - 40, "who": "codex"},
                                   {"mid": "t3", "n": 0, "question": "https://example.org/a;b", "ts": NOW - 30,
                                    "who": "codex"}]
         out = self.build()
-        lines = sorted(r["line"] for r in out["rows"] + out["older"])
+        lines = sorted(r["line"] for r in out["rows"])
         # #361: a PO chat's card is the PO's, whichever agent sits in its seat.
         self.assertEqual(lines, ["Question from codex", "Question from codex", "Question from the PO",
                                  "Question from the PO", "Ship it?"])
@@ -236,18 +242,12 @@ class InboxTest(unittest.TestCase):
         self.assertEqual(inbox._asker(s, "gemini", False), "gemini")
         self.assertEqual(inbox._asker({}, "", False), "an agent")
 
-    def test_older_questions_are_dropped_with_reason(self):
-        old = {"mid": "o1", "n": 0, "question": "Old?", "ts": NOW - 9000, "who": "po", "why": "past"}
-        self.w.decisions[PO] = ([], [old])
-        out = self.build(debug=True)
-        self.assertEqual(out["count"], 0)
-        self.assertEqual(out["dropped"][0]["why"], "older question: the person wrote past it")
-
-    def test_older_questions_come_in_older_newest_first_with_their_ids(self):
-        # #310: the Inbox lists them under Older questions so they can be closed.
-        a = {"mid": "o1", "n": 0, "question": "Old?", "ts": NOW - 9000, "who": "Claude", "why": "past", "task": "#7"}
-        b = {"mid": "o2", "n": 2, "question": "Newer?", "ts": NOW - 600, "who": "po", "why": "again"}
-        self.w.decisions[PO] = ([], [a, b])
+    def test_every_open_po_card_is_a_row_with_its_ids(self):
+        # P396: no Older questions group: a card written past or asked again
+        # later is a row in Needs your answer, newest first, with its ids.
+        a = {"mid": "o1", "n": 0, "question": "Old?", "ts": NOW - 9000, "who": "Claude", "task": "#7"}
+        b = {"mid": "o2", "n": 2, "question": "Newer?", "ts": NOW - 600, "who": "po"}
+        self.w.decisions[PO] = [a, b]
         m = self.w.module()
         m._task_index = lambda: [{"id": TASK, "no": 7, "noProjectId": "proj-a", "workflow": "inprogress",
                                   "participants": []}]
@@ -257,16 +257,34 @@ class InboxTest(unittest.TestCase):
         m.normalize_workflow = lambda v: v
         inbox.bind(m)
         out = inbox.build(now=NOW)
-        self.assertEqual(out["count"], 0)
-        self.assertEqual(out["olderCount"], 2)
-        self.assertEqual([(r["mid"], r["n"], r["roomId"]) for r in out["older"]], [("o2", 2, PO), ("o1", 0, PO)])
-        self.assertEqual([r["age"] for r in out["older"]], [600, 9000])
-        self.assertTrue(all(r["older"] and r["kind"] == "answer" for r in out["older"]))
-        self.assertEqual((out["older"][1]["taskRef"], out["older"][1]["taskState"]), ("#7", "stopped"))
-        self.assertNotIn("taskState", out["older"][0])
-        # #361: an older card names the seat by its role, as the open row does, never an identity.
-        self.assertEqual([r["reason"] for r in out["older"]], ["The PO asks"] * 2)
-        self.assertEqual(inbox.build(project_id="proj-b", now=NOW)["olderCount"], 0)
+        self.assertNotIn("older", out)
+        self.assertNotIn("olderCount", out)
+        self.assertEqual(out["counts"]["answer"], 2)
+        rows = out["rows"]
+        self.assertEqual([(r["mid"], r["n"], r["roomId"], r["kind"]) for r in rows],
+                         [("o2", 2, PO, "answer"), ("o1", 0, PO, "answer")])
+        self.assertEqual([r["age"] for r in rows], [600, 9000])
+        self.assertEqual([r["dismiss"] for r in rows], ["close", "close"])
+        self.assertEqual((rows[1]["taskRef"], rows[1]["taskState"]), ("#7", "stopped"))
+        self.assertNotIn("taskState", rows[0])
+        # #361: the seat by its role, never an identity.
+        self.assertEqual([r["reason"] for r in rows], ["The PO asks"] * 2)
+        self.assertEqual(inbox.build(project_id="proj-b", now=NOW)["count"], 0)
+
+    def test_a_needs_you_item_for_a_closed_po_card_is_no_row(self):
+        # #394: a PO chat's cards are its Decisions. A Needs you item for a
+        # card not among them (just closed; the snapshot not read again yet)
+        # makes no row of its own. A task room's ask item still does.
+        self.w.snap = {"items": [
+            {"roomId": PO, "state": "waiting_for_you", "askKind": "asks", "askId": "m-gone",
+             "askPart": "ask:0", "reason": "claude asked you", "since": NOW - 50},
+            {"roomId": TASK, "state": "waiting_for_you", "askKind": "asks", "askId": "m-t",
+             "askPart": "ask:0", "reason": "claude asked you", "since": NOW - 40}],
+            "reported": {}}
+        out = self.build(debug=True)
+        self.assertEqual([(r["roomId"], r["mid"]) for r in out["rows"]], [(TASK, "m-t")], out["rows"])
+        whys = [(d.get("mid"), d["why"]) for d in out["dropped"]]
+        self.assertIn(("m-gone", "not among the PO chat's Decisions (answered or closed)"), whys)
 
     def test_one_answer_to_two_points_is_one_row(self):
         self.w.ledgers[PO] = {"points": [delivered("P1", "q1", "m-a"), delivered("P2", "q2", "m-a")]}
@@ -308,20 +326,24 @@ class PoFixes(unittest.TestCase):
         self.assertIn("    if keep:\n        with _LOCK:\n            _INDEX[room_id] = (sig, idx)\n"
                       "        progress.clear(key)", src.replace("\r\n", "\n"))
 
-    def test_2_repeated_or_cleared_po_question_is_one_row(self):
+    def test_2_asked_again_is_two_rows_and_cleared_is_none(self):
+        # P396: the old and the newer card are rows until each is closed; a
+        # card from before Clear all is not in the Decisions and not a row.
         new = {"mid": "m-new", "n": 0, "question": "Ship it?", "ts": NOW - 10, "who": "po"}
-        rep = {"mid": "m-old", "n": 0, "question": "Ship it?", "ts": NOW - 900, "who": "po", "why": "repeat"}
-        clr = {"mid": "m-clr", "n": 0, "question": "Before?", "ts": NOW - 2000, "who": "po", "why": "cleared"}
-        self.w.decisions[PO] = ([new], [rep, clr])
+        rep = {"mid": "m-old", "n": 0, "question": "Ship it?", "ts": NOW - 900, "who": "po"}
+        self.w.decisions[PO] = [new, rep]
         self.w.open_asks[PO] = [{"mid": m, "n": 0, "question": q, "ts": t, "who": "po"}
                                 for m, q, t in (("m-new", "Ship it?", NOW - 10), ("m-old", "Ship it?", NOW - 900),
                                                 ("m-clr", "Before?", NOW - 2000))]
         for debug in (False, True):
             out = self.build(debug=debug)
-            self.assertEqual([r["mid"] for r in out["rows"]], ["m-new"], debug)
+            self.assertEqual([r["mid"] for r in out["rows"]], ["m-new", "m-old"], debug)
         whys = {(d["mid"], d["source"]): d["why"] for d in out["dropped"]}
-        self.assertTrue(whys[("m-old", "ask:open")].startswith("asked again"))
-        self.assertTrue(whys[("m-clr", "ask:open")].endswith("before Clear all"))
+        self.assertIn(("m-clr", "ask:open"), whys)
+        # Closed (its card no longer open): the row goes, the other stays.
+        self.w.decisions[PO] = [new]
+        self.w.open_asks[PO] = self.w.open_asks[PO][:1]
+        self.assertEqual([r["mid"] for r in self.build()["rows"]], ["m-new"])
 
     def test_3_one_cached_build_one_flight(self):
         inbox.bind(self.w.module())
@@ -366,7 +388,7 @@ class PoFixes(unittest.TestCase):
         self.assertNotEqual(r1["id"], r2["id"])
 
     def test_5_a_failing_source_is_skipped_and_named(self):
-        self.w.decisions[PO2] = ([{"mid": "b1", "n": 0, "question": "Beta?", "ts": NOW, "who": "po"}], [])
+        self.w.decisions[PO2] = [{"mid": "b1", "n": 0, "question": "Beta?", "ts": NOW, "who": "po"}]
         mod = self.w.module()
 
         def boom(*a, **k):
@@ -395,7 +417,7 @@ class PoFixes(unittest.TestCase):
             delivered("P3", "q3", "m-a3")]}
         self.w.ledgers[PO2] = {"points": [delivered("P9", "q9", "m-b9")]}
         # A question stays a row of its own.
-        self.w.decisions[PO] = ([{"mid": "m-ask", "n": 0, "question": "Ship?", "ts": NOW, "who": "po"}], [])
+        self.w.decisions[PO] = [{"mid": "m-ask", "n": 0, "question": "Ship?", "ts": NOW, "who": "po"}]
         out = self.build()
         rows = {(r["roomId"], r["kind"]): r for r in out["rows"]}
         self.assertEqual(out["counts"], {"answer": 1, "check": 2, "waiting": 0})
@@ -417,7 +439,7 @@ class PoFixes(unittest.TestCase):
                 "since": since, "askedAt": since, **kw}
 
     def test_352_every_row_has_open_and_dismiss(self):
-        self.w.decisions[PO] = ([{"mid": "m-ask", "n": 0, "question": "Ship?", "ts": NOW, "who": "po"}], [])
+        self.w.decisions[PO] = [{"mid": "m-ask", "n": 0, "question": "Ship?", "ts": NOW, "who": "po"}]
         self.w.ledgers[PO] = {"points": [delivered("P3", "q3", "m-a3")]}
         self.w.snap = {"items": [
             self.folder_item(),

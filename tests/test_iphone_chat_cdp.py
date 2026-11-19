@@ -58,11 +58,10 @@ const PO_STATE = `(() => {
   const items = Array.from({ length: 30 }, (_, i) => ({ id: 'po-' + i, from: i % 3 ? who : 'user', to: 'user', ts: now - 3600 + i * 60,
     text: 'Status of the listing ' + i + ': the draft is ready in your mail, and the buyer asked for a test drive on Saturday.' }));
   ROOM_OBJ = { ...ROOM_OBJ, openCards: Array.from({ length: 14 }, (_, i) => ({ mid: 'po-' + (i + 1), n: 0, question: 'Shall I send reply ' + (i + 1) + '?', ts: now - 86400 - i, who })) };
-  const older = ROOM_OBJ.openCards.map(c => ({ ...c }));
   POINTS = pointMaps({ delivered: 1, open: 0, planned: 0,
     items: [{ id: 'P1', mid: 'po-3', text: 'Check the buyer', state: 'delivered', createdAt: now - 600, answers: [{ mid: 'po-4', said: 'Checked' }] }],
     threads: [{ id: 'po-5', title: 'Saturday test drive', unread: 2, lastAt: now - 60 }, { id: 'po-8', title: 'Lease takeover', unread: 1, lastAt: now - 120 }],
-    needs: { decisions: [], older, olderCount: older.length, news: 1, totry: 0, closed: [], closedCount: 0 } });
+    needs: { decisions: [], news: 1, totry: 0, closed: [], closedCount: 0 } });
   THREADED = true; THR_UNREAD = [{ id: 'po-5', lastMid: 'po-6', root: 'po-5' }, { id: 'po-8', lastMid: 'po-9', root: 'po-8' }];
   LAST_ITEMS = items; renderBubbles(items);
   pointsTell({ items: [], needs: { news: 1 }, delivered: 1, threads: [{}, {}] });

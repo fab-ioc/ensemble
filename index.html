@@ -4128,8 +4128,6 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
      switcher's count (.pm-needs), on every row, the selected one included. */
   .ldp-n { flex: none; padding: 0 6px; border-radius: 8px; background: var(--c-warning-bg); color: var(--c-warning-fg);
     font-size: 10px; text-align: center; font-weight: 600; }
-  /* #360: older questions only: their number outlined, no fill, muted. */
-  .ldp-row .ldp-n.ldp-old { background: transparent; box-shadow: inset 0 0 0 1px var(--border-strong); color: var(--fg-muted); font-weight: 400; }
   .ldp-item { position: relative; display: flex; align-items: center; }
   .ldp-dots { position: absolute; right: 2px; top: 50%; transform: translateY(-50%); width: 24px; height: 22px; border: 0; border-radius: var(--r-200);
     background: var(--surface); color: var(--fg-subtle); font: inherit; cursor: pointer; opacity: 0; }
@@ -4172,8 +4170,6 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   body.pin-dragging, body.pin-dragging * { cursor: grabbing !important; user-select: none; }
   .ibx-title.ibx-title-listed { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     font-size: var(--fs-100); line-height: var(--lh-100); color: var(--fg-muted); text-transform: uppercase; letter-spacing: .04em; }
-  /* #360: the Older questions heading's case, as the Inbox's own heading above (its other styles with the Inbox's, below). */
-  .ibx-older-t { text-transform: uppercase; letter-spacing: .04em; }
   /* ---- The PO screen as panels ---------------------------------------------
      A project with a PO: its Overview is a Dock (static/dock, a vendored copy
      of the Dock library) of five panels: PO chat, Points, Board, Workspace and
@@ -4328,6 +4324,8 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .ibx-items { list-style: none; margin: var(--s-100) 0 0; padding: 0 0 0 var(--s-300); border-left: 2px solid var(--border); }
   .ibx-item { padding: var(--s-100) 0; min-width: 0; }
   .ibx-item .ibx-line { font-size: var(--fs-200); line-height: var(--lh-200); }
+  .ibx-item .ibx-meta { align-items: center; }
+  .ibx-item-done { margin-left: auto; }
   .ibx-others { padding: 0; border: 0; background: none; font: inherit; color: var(--link); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; border-radius: var(--r-100); }
   @media (hover: none) { .ibx-others { min-height: var(--touch-min); } }
   @media (hover: none) { .ibx-scope button { height: var(--touch-min); } .ibx-more > summary { min-height: var(--touch-min); display: flex; align-items: center; } }
@@ -4360,6 +4358,16 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .ibx-row.ibx-mark { background: var(--c-danger-bg); box-shadow: inset 3px 0 0 var(--c-danger-bold);
     margin: 0 calc(-1 * var(--s-200)) 0 calc(-1 * (var(--s-200) + 3px)); padding-left: calc(var(--s-200) + 3px); padding-right: var(--s-200); }
   .ibx-row.ibx-mark .ibx-link, .ibx-row.ibx-mark .ibx-line, .ibx-row.ibx-mark .ibx-reason, .ibx-row.ibx-mark .ibx-meta { color: var(--fg-muted); }
+  /* #394 (P394 drawing, part 2 option 1): a message that could not be opened says so on the row
+     pressed, in the amber of "uncertain, not broken", with a way on. Always shown, never on hover. */
+  .ibx-fail { margin-top: var(--s-100); padding: var(--s-100) var(--s-200); border-radius: var(--r-100); background: var(--c-warning-bg);
+    color: var(--c-warning-fg); font-size: var(--fs-100); line-height: var(--lh-100); overflow-wrap: anywhere; }
+  .ibx-fail b { font-weight: 600; }
+  .ibx-fail-acts { display: flex; flex-wrap: wrap; gap: var(--s-100); margin-top: var(--s-100); }
+  /* Its ways on sit side by side at the default Inbox width (PO, live vs drawing): the note's own 11px type;
+     they wrap only in a narrower panel. */
+  .ibx-fail-acts .ibx-btn { font-size: var(--fs-100); white-space: nowrap; }
+  @media (hover: none) { .ibx-fail-acts .ibx-btn { height: var(--touch-min); } }
   /* #322 P287 drawing: under the project list the rows are cards (.row: 7px 8px, 1px border, radius 6, 5px apart,
      12px, bold title, small muted line), a 3px left bar: amber asks/waits, green checks. */
   .ibx.ibx-listed { gap: 0; padding: 8px; font-family: var(--ldp-font, inherit); }
@@ -4367,17 +4375,8 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .ibx-cards { list-style: none; margin: 0; padding: 0; }
   .ibx-listed .ibx-row, .ibx-listed .ibx-row:last-child { padding: 7px 8px; margin: 5px 0; border: 1px solid var(--border); border-radius: var(--r-200);
     background: var(--surface); font-size: 12px; line-height: 1.4; }
-  .ibx-listed .ibx-row[data-stage="answer"], .ibx-listed .ibx-row[data-stage="waiting"], .ibx-listed .ibx-row[data-stage="older"] { border-left: 3px solid var(--c-warning-bold); }
+  .ibx-listed .ibx-row[data-stage="answer"], .ibx-listed .ibx-row[data-stage="waiting"] { border-left: 3px solid var(--c-warning-bold); }
   .ibx-listed .ibx-row[data-stage="check"] { border-left: 3px solid var(--c-success-fg); }
-  /* #360 (P333): the older questions under their own heading (a hairline above it unless it comes first), quiet:
-     a grey bar, the sunken ground, a regular-weight title in the subtle colour. */
-  .ibx-older-head { list-style: none; margin: 12px 0 2px; padding: 10px 4px 0; border-top: 1px solid var(--border); }
-  .ibx-cards > .ibx-older-head:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
-  .ibx-older-t { margin: 0; font-size: 11px; line-height: 1.4; font-weight: 600; color: var(--fg-muted); }
-  .ibx-older-why { margin: 0; font-size: 11px; line-height: 1.4; font-weight: 400; color: var(--fg-muted); }
-  .pdp-group > .ibx-older-why { margin: 2px 0 4px; font-size: var(--fs-100); line-height: var(--lh-100); }
-  .ibx-listed .ibx-row[data-stage="older"] { border-left-color: var(--border-strong); background: var(--surface-sunken); }
-  .ibx-listed .ibx-row[data-stage="older"] .ibx-line, .pdp-group[data-stage="older"] .ibx-line { font-weight: 500; color: var(--fg-subtle); }
   .ibx-listed .ibx-line { font-size: 12px; line-height: 1.4; font-weight: 600; }
   .ibx-listed .ibx-reason, .ibx-listed .ibx-meta { font-size: 11px; line-height: 1.4; margin-top: 0; }
   .ibx-listed .ibx-meta { color: var(--fg-muted); }
@@ -4387,7 +4386,9 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .ldp-expanded .ibx-line { font-size: 12px; line-height: 1.4; font-weight: 600; }
   .ldp-expanded .ibx-reason { font-size: 11px; line-height: 1.4; margin-top: 0; color: var(--fg-subtle); }
   .ibx-listed .ibx-row.ibx-mark { margin: 5px 0; padding: 7px 8px; box-shadow: none; border-left-color: var(--c-danger-bold); }
-  @media (hover: hover) { .ibx-listed .ibx-row:not(.ibx-confirming) > .ibx-acts, .ibx-listed .ibx-row.ibx-mark:not(.ibx-confirming) > .ibx-acts { right: 8px; bottom: 6px; } }
+  /* #394: within the card, the narrow column's three actions wrap to the right (none past its left edge). */
+  @media (hover: hover) { .ibx-listed .ibx-row:not(.ibx-confirming) > .ibx-acts, .ibx-listed .ibx-row.ibx-mark:not(.ibx-confirming) > .ibx-acts { right: 8px; bottom: 6px;
+    left: 8px; flex-wrap: wrap; justify-content: flex-end; padding-left: 0; background: var(--ibx-ground); } }
   .ibx-row.ibx-mark.ibx-confirming .ibx-link, .ibx-row.ibx-mark.ibx-confirming .ibx-line, .ibx-row.ibx-mark:hover .ibx-line { color: var(--fg); }
   .ibx-conf { margin-top: var(--s-200); padding: var(--s-200) var(--s-300); background: var(--surface); border: 1px solid var(--border-strong);
     border-radius: var(--r-300); box-shadow: var(--e-200); }
@@ -7252,7 +7253,7 @@ function costChipHtml(r, cls) {
 }
 // What waits on the person in a task's or a PO's chat (points.py; the row's
 // points: {open, planned, delivered, decisions, totry, news}), as quiet words:
-// "1 decision · 2 new". Only what the chat's Needs you lists (#209): what
+// "1 decision · 2 to check" (#394: an answer counts, seen or not, until its Done). Only what the chat's Needs you lists (#209): what
 // waits on the PO is not counted. It is information for them, like the cost:
 // never a lozenge. A hub from before Needs you sends no `news`: its answered
 // ones count as new (and "answered" before the stages, for delivered).
@@ -7265,14 +7266,14 @@ function pointsCountText(p) {
   const n = pointsNeeds(p), bits = [];
   if (n.decisions) bits.push(`${n.decisions} decision${n.decisions === 1 ? '' : 's'}`);
   if (n.totry) bits.push(`${n.totry} to try`);
-  if (n.news) bits.push(`${n.news} new`);
+  if (n.news) bits.push(`${n.news} to check`);
   return bits.join(' · ');
 }
 function pointsCountTip(p) {
   const n = pointsNeeds(p), bits = [];
   if (n.decisions) bits.push(`${n.decisions} question${n.decisions === 1 ? '' : 's'} for you to decide`);
   if (n.totry) bits.push(`${n.totry} answer${n.totry === 1 ? '' : 's'} for you to try`);
-  if (n.news) bits.push(`${n.news} new answer${n.news === 1 ? '' : 's'}`);
+  if (n.news) bits.push(`${n.news} answer${n.news === 1 ? '' : 's'} to check`);
   return bits.length ? 'Needs you: ' + bits.join(' · ') + '. Open the chat to see them.' : '';
 }
 function pointsCountHtml(p, cls) {
@@ -13667,6 +13668,8 @@ function rowExpandHide() {
     else rowExpandHostLet();
   }
   ROW_EXPAND = null;
+  // #394: an Inbox repaint held for the copy is drawn now.
+  try { ibxHoldEnd(); } catch (e) {}
 }
 // The card under a copy that just went (spec.host): the browser marks it :hover
 // only at the pointer's next move, so a press at once would miss its Close/Done.
@@ -17436,7 +17439,7 @@ function pdTabShown(room, front = false) {
 // says what came meanwhile, and polls now (session.html's `shown`). Not when
 // a link is taking it to one of its messages: that lands it (goto-msg).
 function pdWakeChat(f) {
-  if (!f || !f.contentWindow || GOTO_MSG.has(String(f.dataset.room || ''))) return;
+  if (!f || !f.contentWindow || gotoPending(String(f.dataset.room || ''))) return;
   try { f.contentWindow.postMessage({ ensemble: 'shown' }, location.origin); } catch (e) {}
 }
 // Brings a panel on screen: shown if hidden, in front of its stack, slid out
@@ -17697,30 +17700,22 @@ function pdPopChat(out) {
 // poll; "This project" filters them here, "All" lists them with the project.
 // A row opens its message or card (openMsgLink), or its task when it names
 // no message. The bar's Inbox N counts every project.
-// #310: questions (Needs your answer, then the PO chats' Older questions) can
+// #310: questions (Needs your answer: every open card, P396) can
 // be closed one by one or "this and every one below it" (Close this and
 // earlier), with Undo; an answers-to-check row has Done. `hide`: rows closed
 // here, left out until the hub's list no longer has them; `gone`: a row just
 // closed or done, shown as "Closed · Undo" for a few seconds; `confirm`: the
 // row whose Close this and earlier is asking; `bulk`: its Undo bar.
 const IBX = { data: null, busy: false, again: false, sig: '', phSig: '', scope: 'project', soon: 0, open: new Set(),
-  hide: new Map(), gone: new Map(), confirm: '', busyClose: false, bulk: null, tick: 0 };
+  hide: new Map(), gone: new Map(), confirm: '', busyClose: false, bulk: null, tick: 0,
+  // #394 (P394 drawing, part 2 option 1): the row last pressed to open a message,
+  // and the rows whose message could not be opened (row id -> why), kept across repaints.
+  pressed: null, failed: new Map() };
 try { if (localStorage.getItem('cd-inbox-scope') === 'all') IBX.scope = 'all'; } catch (e) {}
 const IBX_ROW_UNDO_S = 10, IBX_BULK_UNDO_S = 30, IBX_CHUNK = 200, IBX_HIDE_S = 20;
 // Questions last, so "this and earlier" is every question below the row.
-const IBX_GROUPS = [['check', 'Ready to check'], ['waiting', 'Waiting on you'], ['answer', 'Needs your answer'], ['older', 'Older questions']];
-// #360: why older questions are not counted, said under their heading: the hub's
-// `why` for each (asks.py split_waiting). All one reason reads whole; a mix names each.
-const IBX_OLDER_WHY = { past: 'You wrote past them in their chat', repeat: 'Asked again later: only the newest counts',
-  cleared: 'From before Clear all' };
-const IBX_OLDER_PART = { past: 'written past in their chat', repeat: 'asked again later', cleared: 'from before Clear all' };
-function ibxOlderWhy(list) {
-  const got = new Set((list || []).map(r => IBX_OLDER_PART[r.why] ? r.why : ''));
-  const ws = Object.keys(IBX_OLDER_PART).filter(w => got.has(w));
-  if (ws.length === 1 && got.size === 1) return IBX_OLDER_WHY[ws[0]];
-  const parts = ws.map(w => IBX_OLDER_PART[w]).concat(got.has('') ? ['older'] : []);
-  return 'Not counted: ' + (parts.length > 1 ? parts.slice(0, -1).join(', ') + ' or ' + parts[parts.length - 1] : parts[0] || 'older');
-}
+// #394 (P396): no Older questions group: a card asked again or written past is a row here.
+const IBX_GROUPS = [['check', 'Ready to check'], ['waiting', 'Waiting on you'], ['answer', 'Needs your answer']];
 const IBX_STATE = { running: 'running', stopped: 'stopped', done: 'Done', gone: 'not on the board' };
 function ibxWhere(r, all) {
   const who = r.isPo ? 'PO' : [r.ref, r.task].filter(Boolean).join(' ');
@@ -17742,13 +17737,16 @@ function ibxItemsLeft(r) { return (r.items || []).filter(i => !IBX.hide.has(ibxI
 // The card's answers still to check: not taken off, not waiting on their Undo.
 function ibxItemsLive(r) { return ibxItemsLeft(r).filter(i => !IBX.gone.has(ibxItemKey(r, i))); }
 function ibxRows(d, scope, pid) { return ibxScoped(d && d.rows, scope, pid); }
-function ibxOlder(d, scope, pid) { return ibxScoped(d && d.older, scope, pid); }
+// #394: what a count shows: a row closed and waiting on its Undo is not counted (heading, chips, badge agree).
+// A bundled row whose every answer is Done and waiting on its Undo is not counted either.
+function ibxLive(r) { return !IBX.gone.has(r.id) && !(r.items && r.items.length && !ibxItemsLive(r).length); }
+function ibxLiveN(rows) { return rows.filter(ibxLive).length; }
 // The desktop Inbox replaces the Tasks list's Needs you head. Clear only the
 // dismissible rooms shown in its current scope, using the old Needs you rules.
 function ibxClearKeys(d, scope, pid) {
   if (!d) return [];
   const shown = ibxRows(d, scope, pid);
-  const rooms = new Set(shown.concat(ibxOlder(d, scope, pid)).map(r => r.roomId));
+  const rooms = new Set(shown.map(r => r.roomId));
   const keys = swClearable(swGroups(ALL_ROWS, attentionItems(), registeredProjects(), {}).needs.filter(e => rooms.has(e.key)));
   // #352: a card closed by Done is cleared by Clear all too; `needs` stays
   // the rooms Done with this is offered for (an item it clears).
@@ -17783,10 +17781,9 @@ function ibxHtml(d, scope, pid, now, phone, opts) {
     : `<div class="ibx-head"><h2 class="ibx-title">Inbox</h2>${sw}</div>`;
   if (!d) return `<div class="ibx">${headOf(null)}<p class="pdp-empty">Reading what waits on you…</p></div>`;
   const rows = ibxRows(d, scope, pid);
-  const head = headOf(rows.length);
-  const older = ibxOlder(d, scope, pid);
+  const head = headOf(ibxLiveN(rows));
   // The questions top to bottom; each closable one's N: itself and every closable one below it.
-  const qs = rows.filter(r => r.kind === 'answer').concat(older);
+  const qs = rows.filter(r => r.kind === 'answer');
   const earlier = new Map();
   let below = 0;
   for (let i = qs.length - 1; i >= 0; i--) if (ibxClosable(qs[i]) && !IBX.gone.has(qs[i].id)) earlier.set(qs[i].id, ++below);
@@ -17826,7 +17823,8 @@ function ibxHtml(d, scope, pid, now, phone, opts) {
       lineN = line.replace(/\d+ answers? to check$/, `${cardN} answer${cardN === 1 ? '' : 's'} to check`);
       const tries = cardLive.filter(i => i.try).length;
       reason = reason.replace(/^\d+ asks? you to try something/, tries ? `${tries} ask${tries === 1 ? 's' : ''} you to try something` : '');
-      hint = cardN > 1 ? 'Open one to check it, or Done for all' : cardN === 1 ? 'Open it to check it, or Done' : '';
+      // #394 (P395): opening an answer does not check it; its own Done does.
+      hint = cardN > 1 ? 'Done on each one you checked, or Done for all' : '';
       if (cardN) {
         doneAll = `<button type="button" class="ibx-btn ibx-done-all" data-ibx-done="${esc(r.id)}"`
           + ` title="${esc(cardN > 1 ? `Checked: take all ${cardN} answers off the list` : 'Checked: take it off the list')}">${esc(cardN > 1 ? `Done · all ${cardN}` : 'Done')}</button>`;
@@ -17856,11 +17854,12 @@ function ibxHtml(d, scope, pid, now, phone, opts) {
       + (task ? `<span class="ibx-task">${esc(task)}</span>` : '') + (st ? `<span class="ibx-state">${esc(st)}</span>` : '')
       + `<span class="pdp-age" data-at="${esc(String(r.since || 0))}">${esc(pdPtAge(r.since, now))}</span></div>`
       + (r.items && r.items.length ? more(r) : '')
+      + (IBX.failed.has(r.id) ? ibxFailHtml(r, IBX.failed.get(r.id)) : '')
       + (acts ? `<div class="ibx-acts">${acts}</div>` : '')
       + (conf === r.id && !phone ? confHtml('ibx-conf') : '') + '</li>';
   };
   // A PO chat's answers to check: one row, its answers listed under it, each opening its answer.
-  // #325: opening one checks it: "Checked · Undo" in its place for a few seconds, then it is acked.
+  // #394 (P395): opening one only opens it; its Done checks it: "Done · Undo" in its place for a few seconds, then it is acked.
   const more = r => {
     const left = ibxItemsLeft(r);
     const n = ibxItemsLive(r).length;
@@ -17875,32 +17874,28 @@ function ibxHtml(d, scope, pid, now, phone, opts) {
             + `<button type="button" class="ibx-btn subtle" data-ibx-undo="${esc(k)}">Undo</button></li>`;
         }
         return `<li class="ibx-item" data-ibx-item="${esc(k)}"><a class="ibx-link" href="${esc(href({ roomId: r.roomId, mid: i.mid }))}"`
-          + ` data-room="${esc(r.roomId)}" data-mid="${esc(i.mid || '')}" data-part="" data-ibx-check="${esc(k)}" title="Open the answer in its conversation: that checks it">`
+          + ` data-room="${esc(r.roomId)}" data-mid="${esc(i.mid || '')}" data-part="" title="Open the answer in its conversation">`
           + `<span class="ibx-line">${esc(t)}</span>`
           + (i.reason ? `<span class="ibx-reason">${esc(i.reason)}</span>` : '') + '</a>'
-          + `<div class="ibx-meta"><span class="pdp-age" data-at="${esc(String(i.since || 0))}">${esc(pdPtAge(i.since, now))}</span></div></li>`;
+          + `<div class="ibx-meta"><span class="pdp-age" data-at="${esc(String(i.since || 0))}">${esc(pdPtAge(i.since, now))}</span>`
+          + `<button type="button" class="ibx-btn subtle ibx-item-done" data-ibx-check="${esc(k)}" title="Checked: take this answer off the list">Done</button></div></li>`;
       }).join('')
       + '</ul></details>';
   };
   // Under the project list (P287 drawing) the rows are cards in one flat list, no group headings:
   // the card's left bar says which (amber: answer or waiting, green: check).
-  // #360 (P333): the older questions alone get a heading, "Older questions · N" and why, right
-  // above them: they are listed, not counted, so a 0 above them is never left unexplained.
-  const olderLive = older.filter(r => !IBX.gone.has(r.id)).length, olderWhy = ibxOlderWhy(older);
   const groups = listed
-    ? IBX_GROUPS.map(([k]) => (k === 'older' && older.length
-      ? `<li class="ibx-older-head"><h3 class="ibx-older-t">${esc(`Older questions · ${olderLive}`)}</h3><p class="ibx-older-why">${esc(olderWhy)}</p></li>` : '')
-      + (k === 'older' ? older : rows.filter(r => r.kind === k)).map(r => row(r).replace('<li class="ibx-row', `<li data-stage="${k}" class="ibx-row`)).join('')).join('')
+    ? IBX_GROUPS.map(([k]) => rows.filter(r => r.kind === k)
+      .map(r => row(r).replace('<li class="ibx-row', `<li data-stage="${k}" class="ibx-row`)).join('')).join('')
     : IBX_GROUPS.map(([k, title]) => {
-    const got = k === 'older' ? older : rows.filter(r => r.kind === k);
-    const live = got.filter(r => !IBX.gone.has(r.id)).length;
+    const got = rows.filter(r => r.kind === k);
+    const live = ibxLiveN(got);
     return got.length ? `<li class="pdp-group" data-stage="${k}"><h3 class="pdp-head">${esc(title)} <span class="pdp-n">${live}</span></h3>`
-      + (k === 'older' ? `<p class="ibx-older-why">${esc(olderWhy)}</p>` : '')
       + `<ul class="pdp-list">${got.map(row).join('')}</ul></li>` : '';
   }).join('');
   const note = d.pending ? '<p class="pdp-note">Reading a conversation’s question cards: more may come.</p>' : '';
   // This project has none but others do (the bar counts them all): say so, one tap to All (#307).
-  const others = !all && !groups ? (ibxRows(d, 'all', '').length + ibxOlder(d, 'all', '').length) : 0;
+  const others = !all && !groups ? ibxRows(d, 'all', '').length : 0;
   const empty = others ? `<p class="pdp-empty">${esc(loose ? 'Nothing waits on you here.' : nounText('Nothing waits on you in this {project}.'))} `
       + `<button type="button" class="ibx-others" data-ibx-scope="all">${esc(`${others} in other ${noun(others === 1 ? 'one' : 'many')}`)}</button></p>`
     : '<p class="pdp-empty">Nothing waits on you.</p>';
@@ -17914,17 +17909,14 @@ function ibxHtml(d, scope, pid, now, phone, opts) {
 function ibxPaint() {
   const el = PD.els.inbox;
   const pid = PD.pid || '';
-  const all = IBX.data ? ibxRows(IBX.data, 'all', '').length : 0;
-  const n = IBX.data ? ibxRows(IBX.data, IBX.scope, pid).length : 0;
+  const all = IBX.data ? ibxLiveN(ibxRows(IBX.data, 'all', '')) : 0;
+  const n = IBX.data ? ibxLiveN(ibxRows(IBX.data, IBX.scope, pid)) : 0;
   const btn = document.getElementById('inbox-btn');
   if (btn) {
     const t = all ? ' ' + all : '';
     if (btn.lastChild.textContent !== t) btn.lastChild.textContent = t;
-    // The count is what waits (as drawn in #309); older questions are listed, not counted.
-    const old = IBX.data ? (IBX.data.older || []).filter(r => !IBX.hide.has(r.id)).length : 0;
-    const olderT = old ? `${old} older question${old === 1 ? '' : 's'}` : '';
-    btn.title = all ? `${all} thing${all === 1 ? '' : 's'} wait${all === 1 ? 's' : ''} on you, in every project${old ? '; ' + olderT : ''}`
-      : old ? `Nothing new waits on you; ${olderT}` : 'Nothing waits on you';
+    // The count is what waits (as drawn in #309).
+    btn.title = all ? `${all} thing${all === 1 ? '' : 's'} wait${all === 1 ? 's' : ''} on you, in every project` : 'Nothing waits on you';
   }
   if (PD.dock) PD.dock.setBadge('inbox', n ? String(n) : null, n ? `${n} waiting on you` : null);
   // A phone's Inbox pane (#307), while it is open: the project the bar names.
@@ -17935,7 +17927,7 @@ function ibxPaint() {
   if (window.LD && LD.dock) {
     const lp = ibxLdPid();
     IBX.ldPid = lp;
-    const ln = IBX.data ? ibxRows(IBX.data, IBX.scope, lp).length : 0;
+    const ln = IBX.data ? ibxLiveN(ibxRows(IBX.data, IBX.scope, lp)) : 0;
     LD.dock.setBadge('inbox', ln ? String(ln) : null, ln ? `${ln} waiting on you` : null);
     const box = ldPart('ld-inbox');
     box.classList.remove('ibx-phone');
@@ -17945,6 +17937,7 @@ function ibxPaint() {
     ldSplitApply();
   }
   ibxStrip();
+  ibxCountsOut();
   if (!el) return;
   // #311: on a phone the dock's Inbox is a full tab, drawn with the phone's touch sizes.
   const phone = !!(PD.dock && PD.dock.narrow());
@@ -17955,7 +17948,7 @@ function ibxPaint() {
 // check"): its project's counts, written on each PO chat frame; the chat reads
 // them on load and when they change (session.html inboxStrip).
 function ibxStripCounts(pid) {
-  const rows = IBX.data && pid ? ibxRows(IBX.data, 'project', pid) : [];
+  const rows = IBX.data && pid ? ibxRows(IBX.data, 'project', pid).filter(ibxLive) : [];
   const n = k => rows.filter(r => r.kind === k).length;
   return { q: n('answer'), check: n('check'), wait: n('waiting') };
 }
@@ -17976,22 +17969,100 @@ function ibxPaintIn(el, pid, key, phone, opts) {
     if (SW_CLEAR && SW_CLEAR.phase === 'confirm' && !SW_CLEAR_KEYS.length) SW_CLEAR = null;
     opts = { ...opts, clearHtml: swClearHtml(SW_CLEAR_KEYS), dismissible: SW_CLEAR_KEYS.needs || SW_CLEAR_KEYS };
   }
+  ibxPressWire(el.ownerDocument);
   const html = ibxHtml(IBX.data, IBX.scope, pid, Date.now() / 1000, phone === undefined ? key === 'phSig' : !!phone, opts);
   const sig = html.replace(/(<span class="(?:pdp-age|ibx-tm)"[^>]*>)[^<]*/g, '$1');
   if (sig === IBX[key]) {
     el.querySelectorAll('.pdp-age[data-at]').forEach(s => { const t = pdPtAge(+s.dataset.at); if (s.textContent !== t) s.textContent = t; });
     return;
   }
+  // #394: a poll's news is not drawn under a press on the list, nor under a
+  // row's hover copy: the press would land on rows that are gone. Drawn once
+  // it is over. (A repaint the person's own press asks for is drawn now.)
+  if (IBX.polled && ibxHeld(el)) { IBX.held = true; return; }
   // A repaint keeps the focus on the control it was on (Close, Undo…), where it still is.
   const f = document.activeElement && el.contains(document.activeElement) ? document.activeElement : null;
-  const fk = f ? ['data-ibx-close', 'data-ibx-earlier', 'data-ibx-done', 'data-ibx-undo', 'data-ibx-go', 'data-ibx-cancel', 'data-ibx-bulk-undo', 'data-ibx-dismiss', 'data-clear']
+  const fk = f ? ['data-ibx-close', 'data-ibx-earlier', 'data-ibx-done', 'data-ibx-check', 'data-ibx-undo', 'data-ibx-go', 'data-ibx-cancel', 'data-ibx-bulk-undo', 'data-ibx-dismiss', 'data-clear']
     .map(a => f.hasAttribute(a) ? `[${a}${f.getAttribute(a) ? `="${CSS.escape(f.getAttribute(a))}"` : ''}]` : '').find(Boolean) : '';
   IBX[key] = sig;
   rowExpandBeforeChange(el);
   el.innerHTML = html;
   if (fk) { const g = el.querySelector(fk); if (g) g.focus({ preventScroll: true }); }
 }
+// #394: the counts drawn elsewhere while open (the project switcher's, a
+// project settings' sample row) follow the Inbox's, in place.
+function ibxCountsOut() {
+  const m = document.getElementById('proj-menu');
+  if (m && !m.hidden) m.querySelectorAll('.pm-item[data-proj]:not(.pm-set)').forEach(b => {
+    const n = projInboxN(b.dataset.proj);
+    let c = b.querySelector('.pm-needs');
+    if (!n) { if (c) c.remove(); return; }
+    if (!c) { c = document.createElement('span'); c.className = 'pm-needs'; b.appendChild(c); }
+    if (c.textContent !== String(n)) c.textContent = String(n);
+    c.title = `${n} in your Inbox`;
+  });
+  document.querySelectorAll('.ps-sample .ps-srow[data-ps-pid]').forEach(r => {
+    const n = IBX.data ? ibxLiveN(ibxRows(IBX.data, 'project', r.dataset.psPid)) : 0;
+    let c = r.querySelector('.ldp-n');
+    if (!n) { if (c) c.remove(); return; }
+    if (!c) { c = document.createElement('span'); c.className = 'ldp-n'; r.appendChild(c); }
+    if (c.textContent !== String(n)) c.textContent = String(n);
+  });
+}
 function ibxRepaint() { IBX.sig = IBX.phSig = IBX.ldSig = ''; ibxPaint(); }
+// #394 (P394 drawing, part 2 option 1): the row's note when its message could
+// not be opened. Its chat says why (gotoFail); a message it could not load
+// (a read that failed) is told apart from one that is not there.
+function ibxFailHtml(r, why) {
+  const t = /could not be loaded/i.test(why || '')
+    ? 'it could not be loaded from its conversation. Reload the page to try again.'
+    : 'it was not found in its conversation (deleted, or no longer shown there).';
+  return `<div class="ibx-fail" role="status"><b>Could not open this message:</b> ${esc(t)}</div>`
+    + `<div class="ibx-fail-acts"><button type="button" class="ibx-btn" data-ibx-fail-room="${esc(r.roomId)}">Open the conversation</button>`
+    // A row to check has a Done of its own: the note gives no second one (PO, live vs drawing).
+    + (r.kind === 'check' ? '' : `<button type="button" class="ibx-btn" data-ibx-fail-done="${esc(r.id)}" title="Take this note away">Done</button>`) + '</div>';
+}
+// A chat said whether the message last opened from the Inbox landed
+// (goto-done): the row pressed for it says so when it could not. Only the
+// row pressed: four rows of one message share the landing, not the note.
+const IBX_PRESSED_MS = 60000;
+// late: no chat said in time; the press stays, so a result that still comes counts.
+// linkAt: a link no chat answered (gotoExpire), opened then: the row pressed
+// for it (not one pressed since) says so, however long that took.
+function ibxLanded(rid, msg, ok, why, linkAt) {
+  const p = IBX.pressed;
+  if (!p || p.rid !== rid || p.mid !== msg) return;
+  if (linkAt ? p.at > linkAt : Date.now() - p.at > IBX_PRESSED_MS) return;
+  IBX.pressed = null;
+  const had = IBX.failed.has(p.id);
+  if (ok) IBX.failed.delete(p.id); else IBX.failed.set(p.id, why || '');
+  if (!ok || had) ibxRepaint();
+}
+// #394: a press on an Inbox list (its rows, or a row's hover copy over them),
+// from pointerdown until the click it makes has run; a press older than 10 s
+// (its pointerup missed) holds nothing.
+const IBX_PRESS = { el: null, at: 0 };
+function ibxHeld(el) {
+  if (IBX_PRESS.el && Date.now() - IBX_PRESS.at < 10000 && (el.contains(IBX_PRESS.el) || (ROW_EXPAND && ROW_EXPAND.copy && ROW_EXPAND.copy.contains(IBX_PRESS.el) && el.contains(ROW_EXPAND.row)))) return true;
+  return !!(ROW_EXPAND && ROW_EXPAND.row && ROW_EXPAND.row.isConnected && el.contains(ROW_EXPAND.row));
+}
+// The hold over: what came meanwhile is drawn (after the click's own work).
+function ibxHoldEnd() {
+  if (!IBX.held) return;
+  setTimeout(() => { if (IBX.held) { IBX.held = false; ibxPolledPaint(); } }, 0);
+}
+function ibxPolledPaint() {
+  IBX.polled = true;
+  try { ibxPaint(); } finally { IBX.polled = false; }
+}
+function ibxPressWire(doc) {
+  if (!doc || doc._ibxPress) return;
+  doc._ibxPress = true;
+  doc.addEventListener('pointerdown', e => { IBX_PRESS.el = e.target; IBX_PRESS.at = Date.now(); }, true);
+  const up = () => setTimeout(() => { IBX_PRESS.el = null; ibxHoldEnd(); }, 0);
+  doc.addEventListener('pointerup', up, true);
+  doc.addEventListener('pointercancel', up, true);
+}
 // #390: a computer's Inbox panel and its parts, by reference: out of the page's
 // document while a switch lays the docks out again, or popped out (in its
 // window's document), getElementById finds none of them (ibxPaint threw), and
@@ -18080,11 +18151,12 @@ function ibxPoll() {
     .then(d => {
       if (!d || !Array.isArray(d.rows)) return;
       // A row closed here stays out until the hub's list drops it too (or a while has passed).
-      const have = new Set(d.rows.concat(d.older || []).flatMap(r => [r.id, ...(r.items || []).map(i => ibxItemKey(r, i))]));
+      const have = new Set(d.rows.flatMap(r => [r.id, ...(r.items || []).map(i => ibxItemKey(r, i))]));
       const t = Date.now();
       for (const [id, at] of IBX.hide) if (!have.has(id) || t - at > IBX_HIDE_S * 1000) IBX.hide.delete(id);
+      for (const id of IBX.failed.keys()) if (!have.has(id)) IBX.failed.delete(id);
       IBX.data = d;
-      ibxPaint();
+      ibxPolledPaint();
     })
     .catch(() => {}).finally(() => {
       IBX.busy = false;
@@ -18112,7 +18184,7 @@ function ibxOpenRoom(rid) {
 }
 function ibxFind(id) {
   const d = IBX.data || {};
-  return (d.rows || []).concat(d.older || []).find(r => r.id === id) || null;
+  return (d.rows || []).find(r => r.id === id) || null;
 }
 async function ibxPost(url, body) {
   const r = await (window.pageWrite ? pageWrite(url, body)
@@ -18144,13 +18216,13 @@ function ibxRowSend(r) {
     throw e;
   });
 }
-// #325: an answer opened from its card is checked: "Checked · Undo" in its
-// place for a few seconds, then acked, as a row's Done is.
+// An answer's own Done (#325; since #394, P395, opening it no longer checks it):
+// "Done · Undo" in its place for a few seconds, then acked, as a row's Done is.
 function ibxItemAct(rowId, key) {
   const r = ibxFind(rowId);
   const i = r && (r.items || []).find(x => ibxItemKey(r, x) === key);
   if (!i || !(i.points || []).length || IBX.gone.has(key) || IBX.gone.has(rowId)) return;
-  ibxRowAct(key, 'Checked', { kind: 'check', item: true, id: key, rowId, answer: i.answer || '', roomId: r.roomId, points: i.points.slice() });
+  ibxRowAct(key, 'Done', { kind: 'check', item: true, id: key, rowId, answer: i.answer || '', roomId: r.roomId, points: i.points.slice() });
 }
 // A checked answer whose point got a newer answer meanwhile: its ack would take
 // the newer one off unopened, so it is not sent.
@@ -18312,11 +18384,21 @@ function ibxWire(box) {
     if ((b = at('[data-ibx-dismiss]'))) { swDone(b); return; }
     if ((b = at('[data-ibx-close]'))) { ibxRowAct(b.dataset.ibxClose, 'Closed'); return; }
     if ((b = at('[data-ibx-done]'))) { ibxRowAct(b.dataset.ibxDone, 'Done'); return; }
+    if ((b = at('[data-ibx-check]'))) { const li = b.closest('li.ibx-row[data-ibx]'); if (li) ibxItemAct(li.dataset.ibx, b.dataset.ibxCheck); return; }
     if ((b = at('[data-ibx-undo]'))) { ibxRowUndo(b.dataset.ibxUndo, box); return; }
     if ((b = at('[data-ibx-earlier]'))) { IBX.confirm = IBX.confirm === b.dataset.ibxEarlier ? '' : b.dataset.ibxEarlier; ibxRepaint(); if (!IBX.confirm) markFrom(''); else { const g = box.querySelector('[data-ibx-go]'); if (g) g.focus({ preventScroll: true }); } return; }
     if ((b = at('[data-ibx-cancel]'))) { const id = IBX.confirm; IBX.confirm = ''; ibxRepaint(); const x = box.querySelector(`[data-ibx-earlier="${CSS.escape(id)}"]`); if (x) x.focus({ preventScroll: true }); return; }
     if ((b = at('[data-ibx-go]'))) { ibxCloseMarked(box); return; }
     if ((b = at('[data-ibx-bulk-undo]'))) { ibxBulkUndo(); return; }
+    if ((b = at('[data-ibx-fail-room]'))) { ibxOpenRoom(b.dataset.ibxFailRoom); return; }
+    if ((b = at('[data-ibx-fail-done]'))) {
+      const li = b.closest('li.ibx-row[data-ibx]');
+      IBX.failed.delete(b.dataset.ibxFailDone);
+      ibxRepaint();
+      const g = li && box.querySelector(`li.ibx-row[data-ibx="${CSS.escape(li.dataset.ibx)}"] a.ibx-link`);
+      if (g) g.focus({ preventScroll: true });
+      return;
+    }
     const sc = at('[data-ibx-scope]');
     if (sc) {
       IBX.scope = sc.dataset.ibxScope === 'all' ? 'all' : 'project';
@@ -18326,21 +18408,15 @@ function ibxWire(box) {
     }
     const a = e.target.closest && e.target.closest('a.ibx-link[data-room]');
     if (!a || e.button) return;
-    // #325: an answer opened from its card (here or in a new tab) is checked.
-    const ck = a.dataset.ibxCheck ? () => { const li = a.closest('li.ibx-row[data-ibx]'); if (li) ibxItemAct(li.dataset.ibx, a.dataset.ibxCheck); } : null;
-    if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) { if (ck) ck(); return; }
+    // #394 (P395): opening a row (here or in a new tab) never deals with it.
+    if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
     e.preventDefault();
+    // #394: the row pressed hears whether its message landed (ibxLanded).
+    const pli = a.closest('li.ibx-row[data-ibx]');
+    if (a.dataset.mid && pli) IBX.pressed = { id: pli.dataset.ibx, rid: a.dataset.room, mid: a.dataset.mid, at: Date.now() };
     // #343: the chat highlights it as opened from the Inbox (its part starts "inbox").
     if (a.dataset.mid) openMsgLink(a.dataset.room, a.dataset.mid, 'inbox' + (a.dataset.part ? ',' + a.dataset.part : ''));
     else ibxOpenRoom(a.dataset.room);
-    if (ck) ck();
-  });
-  // A middle click opens the answer in a new tab: checked as well.
-  box.addEventListener('auxclick', e => {
-    if (e.button !== 1) return;
-    const a = e.target.closest && e.target.closest('a.ibx-link[data-room][data-ibx-check]');
-    const li = a && a.closest('li.ibx-row[data-ibx]');
-    if (li) ibxItemAct(li.dataset.ibx, a.dataset.ibxCheck);
   });
 }
 ibxWire(PD.els.inbox);
@@ -18446,7 +18522,7 @@ function ldpInKey() {
 // A project's (or 'room:<id>') Inbox count, the one its row shows; '' is All's.
 function ldpCount(pid) {
   const d = IBX.data;
-  return d ? ibxRows(d, pid ? 'project' : 'all', pid).length : 0;
+  return d ? ibxLiveN(ibxRows(d, pid ? 'project' : 'all', pid)) : 0;
 }
 // #337: nothing moves under the pointer. A change that comes while it is over
 // the list (or a row raised from it) waits until it has left and 2 s have
@@ -18564,20 +18640,10 @@ function ldpKindIcon(kind, cls) {
     + '<rect x=".9" y="1.6" width="10.2" height="8.8" rx="1.4" fill="var(--c-neutral-bold)" fill-opacity=".22" stroke="var(--c-neutral-bold)" stroke-width="1.2"/>'
     + '<path d="M3.2 4.6l1.8 1.4-1.8 1.4M6.4 7.8h2.4" stroke="var(--c-neutral-bold)" stroke-width="1.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 }
-// #360 (P333): a row with older questions and nothing waiting shows their number, outlined grey:
-// the ones not closed (one waiting on its Undo is not), as the Older questions heading counts them.
-function ldpOlder(pid) {
-  const d = IBX.data;
-  return d ? ibxOlder(d, pid ? 'project' : 'all', pid).filter(r => !IBX.gone.has(r.id)) : [];
-}
 function ldpHtml(m) {
   const cnt = ldpCount;
-  // `k`: the row's key for ldpCount ('' for All).
-  const pill = (n, k) => {
-    if (n) return `<span class="ldp-n" title="${n} waiting on you">${n}</span>`;
-    const old = ldpOlder(k), o = old.length;
-    return o ? `<span class="ldp-n ldp-old" title="${esc(`${o} older question${o === 1 ? '' : 's'}, not counted. ${ibxOlderWhy(old)}`)}">${o}</span>` : '';
-  };
+  // `k`: the row's key for ldpCount ('' for All); no pill when nothing waits.
+  const pill = (n, k) => n ? `<span class="ldp-n" title="${n} waiting on you">${n}</span>` : '';
   const lp = ibxLdPid();
   const selAll = IBX.scope === 'all' || !lp;
   // data-cur: the row raised whole on hover (#337) drops aria-current but stays selected.
@@ -20236,7 +20302,7 @@ function psDialogHtml(pj, d, phone) {
   const small = sq ? ldpTile(pj.id, psName(d.name) || pj.name)
     : (src ? `<span class="ldp-ico ldp-pic"><img src="${esc(src)}" alt=""></span>` : '<span class="ldp-ico"></span>');
   let n = 0;
-  try { n = IBX.data ? ibxRows(IBX.data, 'project', pj.id).length : 0; } catch (e) {}
+  try { n = IBX.data ? ibxLiveN(ibxRows(IBX.data, 'project', pj.id)) : 0; } catch (e) {}
   const save = psCanSave(pj, d);
   return `<h3 class="ps-h">${ldpSwatch(pj.id)}<span class="ps-title">${esc(nounText('{Project} settings'))}</span>`
     + `<button type="button" class="ps-x" id="ps-x" aria-label="Close" title="Close">✕</button></h3>`
@@ -20259,7 +20325,7 @@ function psDialogHtml(pj, d, phone) {
     + (d.iconErr ? `<p class="ps-err" role="alert">${esc(d.iconErr)}</p>` : '')
     + `<p class="ps-hint">${phone ? 'PNG, JPEG, SVG or WebP, up to 1 MB, or Generate. Cropped to a square.'
         : "PNG, JPEG, SVG or WebP, up to 1 MB, or Generate. A picture that is not square is cropped to its middle. It shows in place of the square at the square's size:"}</p>`
-    + (phone ? '' : `<div class="ps-sample"><span class="ldp-row ps-srow" aria-current="true">${small}<span class="ldp-name">${esc(psName(d.name) || pj.name)}</span>${n ? `<span class="ldp-n">${n}</span>` : ''}</span></div>`)
+    + (phone ? '' : `<div class="ps-sample"><span class="ldp-row ps-srow" aria-current="true" data-ps-pid="${esc(pj.id)}">${small}<span class="ldp-name">${esc(psName(d.name) || pj.name)}</span>${n ? `<span class="ldp-n">${n}</span>` : ''}</span></div>`)
     // P366: the hint under the sample (the hint above ends on it with a colon).
     + `<p class="ps-hint ps-chint">${esc(nounText("An uploaded picture's main colour becomes the {project}'s colour."))}</p>`
     + '</div>'
@@ -25195,8 +25261,9 @@ function projMatches(projects, q) {
   return (projects || []).filter(p => p && (!t || String(p.name || '').toLowerCase().includes(t) || String(p.key || '').toLowerCase().includes(t)))
     .sort((a, b) => ((a.id === UNASSIGNED_ID) - (b.id === UNASSIGNED_ID)) || String(a.name).localeCompare(String(b.name)));
 }
+// #394: what waits in that project, counted as the Inbox counts it (a row waiting on its Undo is not).
 function projInboxN(pid) {
-  return IBX.data ? (IBX.data.rows || []).filter(r => r.projectId === pid).length : 0;
+  return IBX.data ? ibxLiveN(ibxRows(IBX.data, 'project', pid)) : 0;
 }
 function projItemHtml(pj, here, cls) {
   const n = projInboxN(pj.id);
@@ -26204,7 +26271,8 @@ window.addEventListener('message', (ev) => {
     poColourBroadcast(ev.source);
     sendGotoMsg(String(d.roomId));
   }
-  if (d && d.type === 'goto-taken' && d.roomId && ev.origin === location.origin) GOTO_MSG.delete(String(d.roomId));
+  if (d && d.type === 'goto-taken' && d.roomId && ev.origin === location.origin) gotoTaken(String(d.roomId));
+  if (d && d.type === 'goto-done' && d.roomId && ev.origin === location.origin) gotoDoneHere(String(d.roomId), String(d.msg || ''), !!d.ok, String(d.why || ''));
   // #311: a PO chat's phone strip, Inbox ›.
   if (d && d.type === 'inbox-open' && ev.origin === location.origin) ibxOpen();
   if (d && d.type === 'chat-clicked' && ev.origin === location.origin) pdChatClicked(ev.source, !!d.menu);
@@ -26239,6 +26307,34 @@ window.addEventListener('message', (ev) => {
 // balloon to land on; a chat still loading is told when it starts
 // (chat-ready). A conversation that is neither here opens in a tab of its own.
 const GOTO_MSG = new Map();   // roomId → { msg, part }: message id and passage, until that chat has landed
+// #394: a balloon's link (at: when it was asked) is kept until its chat says
+// it landed or cannot (goto-done), so a chat page that starts again meanwhile
+// is asked again (chat-ready); given up after GOTO_MSG_MS. A thread's, or one
+// without at, is the chat's once it has taken it (goto-taken).
+let GOTO_MSG_MS = 30000;     // (let: a test shortens it)
+function gotoPending(rid) {
+  const g = GOTO_MSG.get(rid);
+  if (g && g.at && Date.now() - g.at > GOTO_MSG_MS) { gotoExpire(rid, g); return null; }
+  return g || null;
+}
+// #394 review 4: a link given up on, by its timer or found expired first: the
+// row pressed for it says it could not be loaded, and its press ends; once.
+const GOTO_UNLOADED_WHY = 'The linked message could not be loaded. Reload the page to try again.';
+function gotoExpire(rid, g) {
+  if (GOTO_MSG.get(rid) === g) GOTO_MSG.delete(rid);
+  if (g.ended) return;
+  g.ended = true;
+  if (typeof ibxLanded === 'function') ibxLanded(rid, g.msg, false, GOTO_UNLOADED_WHY, g.at);
+}
+function gotoTaken(rid) {
+  const g = GOTO_MSG.get(rid);
+  if (g && !(g.at && g.msg && !g.thread && !g.tmid)) GOTO_MSG.delete(rid);
+}
+function gotoDoneHere(rid, msg, ok, why) {
+  const g = GOTO_MSG.get(rid);
+  if (g && g.msg === msg) { g.ended = true; GOTO_MSG.delete(rid); }
+  if (typeof ibxLanded === 'function') ibxLanded(rid, msg, ok, why);
+}
 function openMsgLink(rid, msg, part) {
   const pj = registeredProjects().find(p => p.poRoomId === rid && poRowOf(p));
   const row = ALL_ROWS.find(r => r.roomId === rid || r.sessionId === rid);
@@ -26246,7 +26342,12 @@ function openMsgLink(rid, msg, part) {
     window.open('/session?room=' + encodeURIComponent(rid) + '&msg=' + encodeURIComponent(msg) + (part ? '&part=' + encodeURIComponent(part) : ''), '_blank', 'noopener');
     return;
   }
-  GOTO_MSG.set(rid, { msg, part: part || '' });
+  const g = { msg, part: part || '', at: Date.now() };
+  GOTO_MSG.set(rid, g);
+  // #394 review 2: no chat said (a thread's page that never loaded, a chat
+  // that never started): the row pressed says it could not be loaded (a
+  // result that came meanwhile has ended the press: nothing to say).
+  setTimeout(() => gotoExpire(rid, g), GOTO_MSG_MS);
   if (pj) {
     openPoOf(pj);
   } else {
@@ -26257,7 +26358,7 @@ function openMsgLink(rid, msg, part) {
 // The chats framed here and in the Dock's pop-out windows (#343: a chat
 // popped out is told as well); hl: the Inbox highlight's length now.
 function sendGotoMsg(rid) {
-  const g = GOTO_MSG.get(rid);
+  const g = gotoPending(rid);
   if (!g) return;
   for (const d of [document, ...PD_POP_DOCS.keys()]) {
     let fs = [];

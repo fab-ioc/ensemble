@@ -301,6 +301,28 @@ class Brief(_Repeats):
         self.assertLessEqual(len(line), asks.NOTE_MAX)
         self.assertEqual(asks.prompt_block(chatroom.get_room(self.team_room())), "")
 
+    def test_the_brief_lists_only_what_the_inbox_lists(self):
+        # #394 (PO): a card closed by Clear all, or set aside with Done with
+        # this, is not "still open in the Inbox": the brief leaves it out.
+        rid = self.team_room()
+        refs = [self.ask(rid, [{"question": f"Decide {t} now?", "yesno": True}], f"c{i}")["references"][0]
+                for i, t in enumerate(["alpha", "beta", "gamma"])]
+        cards = asks.open_cards(chatroom.get_room(rid))       # newest first
+        self.assertEqual(len(cards), 3)
+        ts = sorted(c["ts"] for c in cards)
+        points.clear_decisions(rid, now=ts[0])                 # Clear all after the first
+        asks.forget()
+        room = chatroom.get_room(rid)
+        block, line = asks.prompt_block(room), asks.note_line(room, "claude")
+        self.assertNotIn(refs[0], block)
+        self.assertNotIn(refs[0], line)
+        self.assertIn(refs[1], block)
+        self.assertIn("Clear all", block)
+        self.assertIn("Done with this", block)
+        self.assertEqual(asks.prompt_block({**room, "dealtAt": ts[2]}), "", "Done with this set them all aside")
+        self.assertNotIn(refs[1], asks.prompt_block({**room, "dealtAt": ts[1]}))
+        self.assertIn(refs[2], asks.prompt_block({**room, "dealtAt": ts[1]}))
+
     def test_the_strict_rule_is_in_the_notes_and_the_skill(self):
         skill = (ROOT / "skills/ensemble/SKILL.md").read_text(encoding="utf-8")
         self.assertIn("Never ask an open question again", skill)
