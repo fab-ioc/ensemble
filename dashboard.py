@@ -26,6 +26,7 @@ import errno
 import getpass
 import hashlib
 import hmac
+import ipaddress
 import json
 import math
 import mimetypes
@@ -324,6 +325,23 @@ def _keep_token(path: Path, tok: str) -> None:
                 pass
 
 
+# Tailscale gives its devices addresses in these ranges (CGNAT and its ULA
+# prefix). A reader there can open the hub's tailscale serve https address.
+_TAILNET_NETS = (ipaddress.ip_network("100.64.0.0/10"),
+                 ipaddress.ip_network("fd7a:115c:a1e0::/48"))
+
+
+def _addr_on_tailnet(host: str) -> bool:
+    h = (host or "").strip().lower()
+    if h.startswith("::ffff:"):
+        h = h[7:]
+    try:
+        a = ipaddress.ip_address(h)
+    except ValueError:
+        return False
+    return any(a.version == n.version and a in n for n in _TAILNET_NETS)
+
+
 def _addr_is_loopback(host: str) -> bool:
     h = (host or "").strip().lower()
     if h.startswith("::ffff:"):
@@ -468,7 +486,12 @@ def _learn_tailscale_origins() -> None:
     try:
         hub_links.learn_tailscale(_tailscale_json("status"), _tailscale_json("serve", "status"))
     except Exception:   # noqa: BLE001 — best effort; the hub's own port still counts
-        pass
+        return
+    where = hub_links.https_address()
+    if where:
+        # Where another device opens the hub (P386): the tailnet's plain http
+        # is sent here, where the browser allows the microphone.
+        print(f"open from another device: https://{where}/", flush=True)
 
 
 def _detect_tailscale_ip() -> str | None:
@@ -19159,7 +19182,49 @@ class Handler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError, OSError):
             pass
 
+    def _to_https(self) -> bool:
+        """A page opened from another device on the tailnet's plain http (the
+        hub's tailnet listener) is sent to the same page at tailscale serve's
+        https address, when it has one (P386): a browser lets only a secure
+        page use the microphone. A reader with the access token takes it along
+        as ?token=, which the https side swaps for its own cookie (_gate).
+        Never for this machine, a proxy here, an API call or a chat's frame
+        (embed=1): an old page's frames stay on its own origin."""
+        if self.command not in ("GET", "HEAD"):
+            return False
+        u = urlparse(self.path)
+        q = parse_qs(u.query)
+        if not (u.path == "/" or (u.path == "/session" and not q.get("embed"))):   # hub_links._REDIRECTED
+            return False
+        # From the tailnet, and to the hub's own tailnet address: on a wildcard
+        # bind a request to the LAN address stays there, its reader may not
+        # reach the tailnet name.
+        if not _addr_on_tailnet(self._client_ip()):
+            return False
+        try:
+            local = self.connection.getsockname()[0]
+        except (OSError, AttributeError, IndexError):
+            return False
+        if not _addr_on_tailnet(str(local)) or not self._is_page_navigation():
+            return False
+        where = hub_links.https_address()
+        if not where:
+            return False
+        keep = [(k, v) for k, v in parse_qsl(u.query, keep_blank_values=True) if k != "token"]
+        tok = self._presented_token(u)
+        if ACCESS_TOKEN and tok and _same_secret(tok, ACCESS_TOKEN):
+            keep.append(("token", ACCESS_TOKEN))
+        dest = f"https://{where}{u.path}" + (("?" + urlencode(keep)) if keep else "")
+        self.send_response(302)
+        self.send_header("Location", dest)
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+        return True
+
     def do_GET(self):
+        if self._to_https():
+            return
         if not self._gate():
             return
         if self._startup_hold():

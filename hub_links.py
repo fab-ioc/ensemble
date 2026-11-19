@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import functools
 import ipaddress
+import posixpath
 import re
 import socket
 from urllib.parse import parse_qs, unquote, urlsplit
@@ -59,6 +60,9 @@ def _own_names() -> frozenset[str]:
 _SEEN: set[tuple[str, int]] = set()
 # This machine's tailnet names (MagicDNS), from `tailscale status`.
 _TS_NAMES: set[str] = set()
+# The https addresses tailscale serve gives the hub, as (host, port), in the
+# order `tailscale serve status` lists them (learn_tailscale).
+_HTTPS: list[tuple[str, int]] = []
 
 
 def _norm(host: str) -> str:
@@ -139,27 +143,72 @@ def listens(host: str, scheme: str = "http") -> None:
         _add(*hp)
 
 
+def _proxies_hub(proxy, whole: bool = False) -> bool:
+    """Whether a tailscale serve proxy target is the hub's port on this
+    machine's loopback; whole: and its root, not a path under it."""
+    proxy = str(proxy or "")
+    if not proxy:
+        return False
+    try:
+        u = urlsplit(proxy if "://" in proxy else "http://" + proxy)
+        to = (u.port, _loopback(_norm(u.hostname or "")))
+    except ValueError:
+        return False
+    return to == (hub_port(), True) and (not whole or u.path in ("", "/"))
+
+
+# The pages the tailnet's plain http is sent to https for (dashboard._to_https).
+_REDIRECTED = ("/", "/session")
+
+
+def _serve_mount(handlers: dict, path: str) -> str:
+    """The handler tailscale serve picks for a path (its getServeHandler):
+    the path itself, else each parent with and without a trailing slash, up
+    to "/"; "" when none."""
+    if path in handlers:
+        return path
+    pth = posixpath.normpath(path) if path else "/"
+    while True:
+        for m in (pth.rstrip("/") + "/", pth):
+            if m in handlers:
+                return m
+        if pth == "/":
+            return ""
+        pth = posixpath.dirname(pth)
+
+
 def learn_tailscale(status: dict | None, serve: dict | None) -> None:
     """What `tailscale status --json` and `tailscale serve status --json` say:
     this machine's tailnet name, and each https address tailscale serve proxies
-    to the hub's port on this machine."""
+    to the hub's port on this machine. One whose "/" is the hub (the whole
+    address, not a path of it), and where no other handler takes a page sent
+    there (a "/session" for another service), is also where a page is sent
+    for https."""
     me = (status or {}).get("Self") or {}
     name = _norm(me.get("DNSName") or "")
     if name:
         _TS_NAMES.add(name)
     for where, cfg in ((serve or {}).get("Web") or {}).items():
-        for h in ((cfg or {}).get("Handlers") or {}).values():
-            proxy = str((h or {}).get("Proxy") or "")
-            if not proxy:
-                continue
-            try:
-                u = urlsplit(proxy if "://" in proxy else "http://" + proxy)
-                to = (u.port, _loopback(_norm(u.hostname or "")))
-            except ValueError:
-                continue
-            if to == (hub_port(), True):
-                listens(where, "https")
-                break
+        handlers = (cfg or {}).get("Handlers") or {}
+        if any(_proxies_hub((h or {}).get("Proxy")) for h in handlers.values()):
+            listens(where, "https")
+        if _proxies_hub((handlers.get("/") or {}).get("Proxy"), whole=True) and \
+                all(_serve_mount(handlers, path) == "/" for path in _REDIRECTED):
+            hp = _split(where, "https")
+            if hp and hp not in _HTTPS:
+                _HTTPS.append(hp)
+
+
+def https_address() -> str:
+    """Where tailscale serve gives the hub https, as ``host`` or ``host:port``
+    (the default port first), or "" when it serves none (P386): a page opened
+    on the tailnet's plain http is sent there, where the browser lets it use
+    the microphone."""
+    if not _HTTPS:
+        return ""
+    h, p = sorted(_HTTPS, key=lambda hp: hp[1] != 443)[0]
+    h = f"[{h}]" if ":" in h else h
+    return h if p == 443 else f"{h}:{p}"
 
 
 def hub_origin(host: str, port: int | None, scheme: str = "http") -> bool:

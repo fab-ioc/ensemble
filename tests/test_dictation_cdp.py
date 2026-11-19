@@ -3,7 +3,8 @@
 A ``FakeRec`` stands in for ``SpeechRecognition``/``webkitSpeechRecognition``
 before the page loads; the test makes it say words (interim and final, cut the
 way Chrome and Safari cut them), fail and end, while the keys and clicks are
-real CDP input. Checked: the mic shows only with an engine; words land at the
+real CDP input. Checked: the mic is live only with an engine on a secure page,
+otherwise greyed, a press saying why in the box (P387); words land at the
 caret, the ones still being heard selected; nothing is sent; a second press,
 Esc (without stopping the agent) and 4 s of silence stop it; a refused
 microphone is one line in the box (no dialog), cleared by typing; a typed key
@@ -35,6 +36,8 @@ from tests import chrome_profile  # noqa: E402
 from tests.test_page_update import CHROME  # noqa: E402
 
 NODE = shutil.which('node')
+NO_ENGINE = 'Dictation isn’t available in this browser: use Safari or Chrome.'
+INSECURE = 'Dictation needs a secure page: open the hub at its https address.'
 BLOCKED = 'Microphone blocked: allow it for this site in the browser’s settings.'
 # Requests that would send a message or stop an agent.
 SEND_PATHS = ('/api/room/resume', '/api/room/command', '/api/room/interrupt')
@@ -57,6 +60,8 @@ INIT = r"""(() => {
       return Promise.resolve(new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
     return realFetch(u, o);
   };
+  // ?insecure=1: the page as a plain-http address on another machine sees it (P387).
+  if (location.search.includes('insecure=1')) Object.defineProperty(window, 'isSecureContext', { value: false, configurable: true });
   if (location.search.includes('nomic=1')) {
     for (const k of ['SpeechRecognition', 'webkitSpeechRecognition']) {
       try { delete window[k]; } catch (e) {}
@@ -153,16 +158,28 @@ async function main() {
   const shown = `(() => { const m = document.getElementById('mic'); const b = m.getBoundingClientRect();
     return {hidden: m.hidden, display: getComputedStyle(m).display, w: b.width, h: b.height,
       beforeSend: !!(m.compareDocumentPosition(document.getElementById('send-split')) & Node.DOCUMENT_POSITION_FOLLOWING),
-      inRow: !!m.closest('.ed-row'), label: m.getAttribute('aria-label'),
+      inRow: !!m.closest('.ed-row'), label: m.getAttribute('aria-label'), title: m.title, disabled: m.getAttribute('aria-disabled'),
+      color: getComputedStyle(m).color, cursor: getComputedStyle(m).cursor, secure: window.isSecureContext,
+      greyColor: (() => { const p = document.createElement('span'); p.style.color = 'var(--fg-disabled)'; document.body.append(p); const c = getComputedStyle(p).color; p.remove(); return c; })(),
+      itemDisabled: document.querySelector('[data-phone-action="mic"]').getAttribute('aria-disabled'),
       plusShown: getComputedStyle(document.querySelector('.phone-compose-tools')).display !== 'none',
       plusItem: !document.querySelector('[data-phone-action="mic"]').hidden,
       plusItemDrawn: getComputedStyle(document.querySelector('[data-phone-action="mic"]')).display !== 'none'}; })()`;
   const out = {};
   try {
-    // 1. Shown with an engine, hidden without one.
+    // 1. Shown with an engine; without one, or on a page that is not secure, drawn inactive and pressing it says why (P387).
     await open('&nomic=1');
     out.noEngine = await ev(shown);
     out.noEngine.engine = await ev(`!!(window.SpeechRecognition || window.webkitSpeechRecognition)`);
+    await ev(`document.getElementById('input').focus(); 0`);
+    await click('#mic');
+    out.noEnginePress = {...await st(), dialogs: await ev('window.__dialogs.length')};
+    await type('x');
+    out.noEngineTyped = await st();
+    await open('&insecure=1');
+    out.insecure = await ev(shown);
+    await click('#mic');
+    out.insecurePress = await st();
     await open();
     out.engine = await ev(shown);
     out.engine.secure = await ev('window.isSecureContext');
@@ -534,6 +551,13 @@ async function main() {
     out.phoneEsc2 = {...await phone(), ...await st()};
     await ev('window.__end(); 0');
     out.phoneEnded = {...await phone(), ...await st()};
+    // A phone without an engine (an iPhone's browser without Dictation, P387): the + menu's Dictate is there, greyed; tapped, the menu closes and the line says why.
+    await open('&nomic=1');
+    await tap('.phone-compose-tools > summary');
+    out.phoneNoEngineMenu = {...await phone(), itemDisabled: await ev(`document.querySelector('[data-phone-action="mic"]').getAttribute('aria-disabled')`),
+      itemColor: await ev(`getComputedStyle(document.querySelector('[data-phone-action="mic"]')).color`)};
+    await tap('[data-phone-action="mic"]');
+    out.phoneNoEngineTap = {...await phone(), ...await st()};
     console.log(JSON.stringify(out));
   } finally { await send('Browser.close').catch(() => {}); ch.kill(); }
 }
@@ -612,12 +636,40 @@ class Dictation(unittest.TestCase):
         self.assertGreater(g['engine']['w'], 0)
         self.assertTrue(g['engine']['inRow'] and g['engine']['beforeSend'], g['engine'])
         self.assertEqual(g['engine']['label'], 'Dictate')
-        self.assertFalse(g['noEngine']['engine'], 'both constructors gone')
-        self.assertTrue(g['noEngine']['hidden'], g['noEngine'])
-        self.assertEqual(g['noEngine']['display'], 'none')
+        self.assertIsNone(g['engine']['disabled'], 'an engine on a secure page: the mic is live')
         self.assertTrue(g['engine']['plusItem'], "the + menu's Dictate is there with the mic")
         self.assertFalse(g['engine']['plusItemDrawn'], "a wide box has the mic in its row, not twice (in the + menu too)")
-        self.assertFalse(g['noEngine']['plusItem'], 'and hidden with it')
+        self.assertIsNone(g['engine']['itemDisabled'])
+
+    def test_1b_greyed_with_its_reason_where_it_cannot_work(self):
+        # P387: no engine (an iPhone's browser without Dictation), or a page that
+        # is not secure (plain http from another machine): the mic is still in the
+        # row, inactive, and a press says why in the box's line; nothing listens.
+        g = self.got
+        for case, press, why in (('noEngine', 'noEnginePress', NO_ENGINE), ('insecure', 'insecurePress', INSECURE)):
+            with self.subTest(case):
+                n = g[case]
+                self.assertFalse(n['hidden'], n)
+                self.assertNotEqual(n['display'], 'none')
+                self.assertGreater(n['w'], 0)
+                self.assertTrue(n['inRow'] and n['beforeSend'], n)
+                self.assertEqual(n['disabled'], 'true')
+                self.assertEqual(n['color'], n['greyColor'], 'drawn in --fg-disabled')
+                self.assertEqual(n['cursor'], 'not-allowed')
+                self.assertEqual(n['title'], why)
+                self.assertIn(why, n['label'])
+                self.assertEqual(n['itemDisabled'], 'true', "the + menu's Dictate is greyed with it")
+                self.assertTrue(n['plusItem'])
+                p = g[press]
+                self.assertEqual(p['hint'], why)
+                self.assertEqual(p['recs'], 0, 'no recognition started')
+                self.assertEqual(p['pressed'], 'false')
+                self.assertFalse(p['live'])
+        self.assertFalse(g['noEngine']['engine'], 'both constructors gone')
+        self.assertFalse(g['insecure']['secure'])
+        self.assertEqual(g['noEnginePress']['dialogs'], 0, 'no dialog')
+        self.assertEqual(g['noEngineTyped']['hint'], '', 'typing clears the line')
+        self.assertEqual(g['noEngineTyped']['value'], 'x')
 
     def test_2_words_at_the_caret(self):
         g = self.got
@@ -784,6 +836,16 @@ class Dictation(unittest.TestCase):
         self.assertEqual(e2['sends'], [])
         self.assertEqual(g['phoneEnded']['value'], 'from the phone')
         self.assertEqual(g['phoneEnded']['input'], r['input'], 'the words get their room back')
+        n = g['phoneNoEngineMenu']
+        self.assertTrue(n['menuOpen'] and n['item'] and n['itemShown'], n)
+        self.assertEqual(n['itemDisabled'], 'true')
+        self.assertEqual(n['itemColor'], g['noEngine']['greyColor'])
+        self.assertEqual(n['display'], 'none', 'no mic in the row at rest')
+        t = g['phoneNoEngineTap']
+        self.assertFalse(t['menuOpen'], 'the menu closes')
+        self.assertEqual(t['hint'], NO_ENGINE)
+        self.assertEqual(t['recs'], 0)
+        self.assertEqual(t['display'], 'none', 'and the row stays as it was')
 
 
     def test_14_a_selection_waits_for_the_first_words(self):
