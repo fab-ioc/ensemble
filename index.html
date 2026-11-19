@@ -8,6 +8,7 @@
 <title>Ensemble</title>
 <script src="/static/noun.js"></script>
 <script src="/static/hub-resilience.js"></script>
+<script src="/static/frame-guard.js"></script>
 <script>
 // Appearance, resolved before first paint so the page never flashes the wrong
 // theme. A theme is a complete token set under :root[data-theme="<name>"].
@@ -127,6 +128,8 @@
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (s) {
         if (!s) return;
+        // The page's own settings read from this answer (session.html's Chat as a log, #401).
+        try { window.dispatchEvent(new CustomEvent('cd-settings', { detail: s })); } catch (e) {}
         // The hub's word for a board (static/noun.js): kept for the next load,
         // and the page told when it is not the word it painted with.
         if (s.projectNoun && window.setNoun && window.setNoun(s.projectNoun)) {
@@ -5374,6 +5377,26 @@ window.DOC_LISTENERS_PAUSED = false;
       </div>
     </div>
     <p class="cfg-hint" data-noun="{A project} without an icon of its own shows as a tile in its colour with its initials, flat or glossy, in every list. An icon uploaded in its settings takes the tile&#39;s place. One choice for this hub, so every device shows the same.">A project without an icon of its own shows as a tile in its colour with its initials, flat or glossy, in every list. An icon uploaded in its settings takes the tile's place. One choice for this hub, so every device shows the same.</p>
+    <!-- #401 (P412): Chat as a log, one choice for the hub; off by default. -->
+    <h5 class="sp-sub">Chat</h5>
+    <div class="pref-row" style="margin-top: 14px;">
+      <span class="pref-label" id="pref-chat-log-label">Chat as a log</span>
+      <div class="seg pref-seg" id="pref-chat-log" role="group" aria-labelledby="pref-chat-log-label">
+        <button type="button" data-val="off" aria-pressed="true">Off</button>
+        <button type="button" data-val="on" aria-pressed="false">On</button>
+      </div>
+    </div>
+    <p class="cfg-hint">Every message on the left, one thin line between any two items, “answers Pn” inside its message, and each task’s agents in its own colour. A computer only; a phone is unchanged. Off by default.</p>
+    <!-- #402 (issue 60, P422): the PO chat with only you and the PO in it. -->
+    <h5 class="sp-sub">PO chat</h5>
+    <div class="pref-row" style="margin-top: 14px;">
+      <span class="pref-label" id="pref-po-team-label">Team activity in the PO chat</span>
+      <div class="seg pref-seg" id="pref-po-team" role="group" aria-labelledby="pref-po-team-label">
+        <button type="button" data-val="shown" aria-pressed="true">Shown</button>
+        <button type="button" data-val="hidden" aria-pressed="false">Hidden</button>
+      </div>
+    </div>
+    <p class="cfg-hint">Hides hub lines, task rows, reports and “answers Pn”. Shown by default.</p>
     <!-- #343 (P317): how long a message opened from the Inbox stays marked in its chat. -->
     <h5 class="sp-sub">Inbox</h5>
     <div class="pref-row" style="margin-top: 14px;">
@@ -9286,6 +9309,11 @@ async function saveAgentModel(sel, value) {
   await loadAgentModels();        // the other lists, and this one once it is left
   refreshUsage();                 // the pool Codex is judged by follows the model
 }
+// #401: the chat frames read Chat as a log from this browser's storage
+// (cd-chat-log), so a switch reaches them without a reload.
+function chatLogLocal(v) {
+  try { if (localStorage.getItem('cd-chat-log') !== v) localStorage.setItem('cd-chat-log', v); } catch (_) {}
+}
 function renderPrefs() {
   if (!PREFS) return;
   const taskTools = document.getElementById('pref-task-agent-tools');
@@ -9352,6 +9380,15 @@ function renderPrefs() {
       b.setAttribute('aria-pressed', String(b.dataset.val === value));
     });
   }
+  const clSeg = document.getElementById('pref-chat-log');
+  if (clSeg) {
+    const value = PREFS.chatLog === 'on' ? 'on' : 'off';
+    clSeg.querySelectorAll('button').forEach(b => {
+      b.classList.toggle('active', b.dataset.val === value);
+      b.setAttribute('aria-pressed', String(b.dataset.val === value));
+    });
+    chatLogLocal(value);
+  }
   const paceSeg = document.getElementById('pref-pace-week');
   if (paceSeg) {
     const value = PREFS.paceWeek === false ? 'off' : 'on';
@@ -9386,6 +9423,17 @@ function renderPrefs() {
     rtkSeg.querySelectorAll('button').forEach(b => {
       b.classList.toggle('active', b.dataset.val === value);
     });
+  }
+  // #402: Team activity in the PO chat. Every open PO chat (an iframe, a
+  // pop-out) reads the copy in localStorage at once (its storage event).
+  const poTeamSeg = document.getElementById('pref-po-team');
+  if (poTeamSeg) {
+    const value = PREFS.poTeamActivity === 'hidden' ? 'hidden' : 'shown';
+    poTeamSeg.querySelectorAll('button').forEach(b => {
+      b.classList.toggle('active', b.dataset.val === value);
+      b.setAttribute('aria-pressed', String(b.dataset.val === value));
+    });
+    try { if (localStorage.getItem('cd-po-team') !== value) localStorage.setItem('cd-po-team', value); } catch (e) {}
   }
   const readerSeg = document.getElementById('pref-reader-tasks');
   if (readerSeg) {
@@ -9784,7 +9832,12 @@ function setPref(key, val) {
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({[key]: val}),
       });
-      if (n !== SETPREF_N[key]) return;
+      // A later click may still fail. Keep this successful value as the last
+      // saved one even while the later request is queued (#401 review 2).
+      if (n !== SETPREF_N[key]) {
+        if (key === 'chatLog' && PREFS) PREFS.chatLog = updated.chatLog;
+        return;
+      }
       PREFS = updated;
       renderPrefs();
       toast(`preference saved`, 1500, 'ok');
@@ -28312,6 +28365,13 @@ if ('serviceWorker' in navigator) {
     const b = ev.target.closest('button[data-val]');
     if (b) setPref('readerForTasks', b.dataset.val === 'on');
   });
+  document.getElementById('pref-po-team')?.addEventListener('click', (ev) => {
+    const b = ev.target.closest('button[data-val]');
+    if (!b) return;
+    // At once in every open PO chat, before the hub has saved it.
+    try { localStorage.setItem('cd-po-team', b.dataset.val); } catch (e) {}
+    setPref('poTeamActivity', b.dataset.val);
+  });
   document.getElementById('pref-retention-keep')?.addEventListener('click', (ev) => {
     keepRetentionYear(ev.currentTarget);
   });
@@ -28328,6 +28388,20 @@ if ('serviceWorker' in navigator) {
     if (!b) return;
     ptileLook(b.dataset.val);
     await setPref('projectIcons', b.dataset.val);
+  });
+  // #401: Chat as a log, for the hub. This browser's chats change at once (the
+  // storage event reaches every chat frame); the hub's answer settles it: a
+  // save that failed puts the chats back to the saved choice.
+  document.getElementById('pref-chat-log')?.addEventListener('click', async (ev) => {
+    const b = ev.target.closest('button[data-val]');
+    if (!b) return;
+    chatLogLocal(b.dataset.val);
+    const saving = setPref('chatLog', b.dataset.val), n = SETPREF_N.chatLog;
+    await saving;
+    if (n === SETPREF_N.chatLog && PREFS) {
+      chatLogLocal(PREFS.chatLog === 'on' ? 'on' : 'off');
+      renderPrefs(); // The latest PUT may have failed after an earlier one succeeded.
+    }
   });
   // The week's pace (ED-164): the switch, and the head start in points.
   document.getElementById('pref-pace-week')?.addEventListener('click', async (ev) => {

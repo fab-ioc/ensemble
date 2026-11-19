@@ -508,8 +508,12 @@ class CodexAgent(AgentType):
                         if key in seen:
                             continue
                         seen.add(key)
-                        turns.append({"timestamp": d.get("timestamp", ""),
-                                      "role": role, "text": text})
+                        turn = {"timestamp": d.get("timestamp", ""), "role": role, "text": text}
+                        if role == "assistant" and payload.get("phase") == "commentary":
+                            # Written mid-turn, between tool calls (#402):
+                            # what Claude's transcripts mark ``interim``.
+                            turn["interim"] = True
+                        turns.append(turn)
             except OSError:
                 continue
         return turns
