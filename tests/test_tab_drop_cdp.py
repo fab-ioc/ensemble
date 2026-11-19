@@ -72,17 +72,29 @@ async function main() {
   const mouse = (type, p, buttons) => send('Input.dispatchMouseEvent', { type, x: p.x, y: p.y, button: 'left', buttons, clickCount: type === 'mouseMoved' ? 0 : 1 }, s);
   const PREVIEW = `(() => { const p = PD_ROOT.querySelector('.dk-preview'); if (!p || p.hidden) return null;
     const r = p.getBoundingClientRect(); return { side: p.dataset.side, x: Math.round(r.left), y: Math.round(r.top), w: Math.round(r.width), h: Math.round(r.height) }; })()`;
-  // A real drag: press on `from`, move there in steps, look at the box, release; what the dock is after.
-  const drag = async (from, to) => {
+  // A real press on `from` and moves there in steps (the button held); the point it ends at.
+  const press = async (from, to) => {
     const p = await at(from.sel, from.fx, from.fy), q = await at(to.sel, to.fx, to.fy);
     await mouse('mouseMoved', p, 0); await sleep(60);
     await mouse('mousePressed', p, 1); await sleep(60);
+    await moveTo(p, q);
+    return q;
+  };
+  const moveTo = async (p, q) => {
     for (let i = 1; i <= 12; i++) { await mouse('mouseMoved', { x: Math.round(p.x + (q.x - p.x) * i / 12), y: Math.round(p.y + (q.y - p.y) * i / 12) }, 1); await sleep(25); }
     await sleep(120);
-    const box = await ev(PREVIEW);
+  };
+  // What the dock is after a release at q; the clicks that reached the window since the run began.
+  const release = async q => {
     await mouse('mouseReleased', q, 0);
     await sleep(900);
-    return { box, tree: await ev(TREE), boxAfter: await ev(PREVIEW) };
+    return { tree: await ev(TREE), boxAfter: await ev(PREVIEW), clicks: await ev(`window.__clicks`) };
+  };
+  // A real drag: press on `from`, move there in steps, look at the box, release.
+  const drag = async (from, to) => {
+    const q = await press(from, to);
+    const box = await ev(PREVIEW);
+    return { box, ...await release(q) };
   };
   const out = { runs: [] };
   const A_TASKS = A.tasks;
@@ -103,7 +115,7 @@ async function main() {
     out.barHead = await ev(`!!document.querySelector('.dk-head.bt-head')`);
     await snap('start');
     const [TA, TB, TC] = A_TASKS.map(r => 'chat:' + r);
-    await ev(`window.__L0 = JSON.stringify(PD.dock.layout()); 0`);
+    await ev(`window.__L0 = JSON.stringify(PD.dock.layout()); window.__clicks = 0; window.addEventListener('click', () => window.__clicks++); 0`);
     const restore = async () => { await ev(`PD.dock._replaceLayout(JSON.parse(__L0)); PD.dock.activate('po-chat'); 0`); await sleep(500); };
     const T = 'po-chat';
     const run = async (what, setup, from, to) => {
@@ -111,7 +123,8 @@ async function main() {
       for (const x of setup || []) await ev(x + '; 0');
       if (setup && setup.length) await sleep(600);
       const before = await ev(TREE);
-      const r = await drag(from, to);
+      await ev(`window.__clicks = 0`);
+      const r = typeof to === 'function' ? await to(from) : await drag(from, to);
       out.runs.push({ what, before, ...r, press: await ev(`document.body.classList.contains('pd-press')`), dragging: await ev(`PD_ROOT.classList.contains('dk-dragging')`) });
     };
     const body = (id, fx, fy) => ({ sel: stackOf(id), fx, fy });
@@ -138,6 +151,61 @@ async function main() {
     // A tool docked, dragged into the conversation's stack.
     await run('tool>center', [`PD.dock.setViewMode('board', 'pinned')`], { sel: tabSel('board') }, body(T, 0.5, 0.5));
     await run('tool>left', [`PD.dock.setViewMode('board', 'pinned')`], { sel: tabSel('board') }, body(T, 0.1, 0.5));
+    // A tool's release is judged where it happens: shown no box over the middle, released at the left edge.
+    await run('tool>center-release-left', [`PD.dock.setViewMode('board', 'pinned')`], { sel: tabSel('board') }, async from => {
+      await press(from, body(T, 0.5, 0.5));
+      const box = await ev(PREVIEW);
+      return { box, ...await release(await at(stackOf(T), 0.1, 0.5)) };
+    });
+    // After a release over the middle (nothing moves), the next drag of the tool works.
+    await run('tool>center-then-left', [`PD.dock.setViewMode('board', 'pinned')`], { sel: tabSel('board') }, async from => {
+      const first = await release(await press(from, body(T, 0.5, 0.5)));
+      const q = await press(from, body(T, 0.1, 0.5));
+      const box = await ev(PREVIEW);
+      return { box, firstTree: first.tree, ...await release(q) };
+    });
+    // A window over the conversation: a tool dropped into it joins it (its box is the window's).
+    // The window is put in the middle of the conversation's stack.
+    const OVER = `(() => { const L = PD.dock.layout(), b = PD_ROOT.getBoundingClientRect(),
+      r = document.querySelector('[data-dk-tab="po-chat"]').closest('.dk-stack').getBoundingClientRect();
+      Object.assign(L.floats[0], { x: Math.round(r.left - b.left + r.width * 0.3), y: Math.round(r.top - b.top + r.height * 0.3),
+        w: Math.round(r.width * 0.4), h: Math.round(r.height * 0.4) }); PD.dock._replaceLayout(L); })()`;
+    await run('tool>float-over', [`PD.dock.setViewMode('board', 'pinned')`, `PD.dock.float(${JSON.stringify(TB)})`, OVER], { sel: tabSel('board') },
+      { sel: `PD_ROOT.querySelector('.dk-float')`, fx: 0.5, fy: 0.6 });
+    // A release the page missed: a move with no button down ends the drag; the release after moves nothing.
+    await run('lost>move', [], { sel: tabSel(TA) }, async from => {
+      const q = await press(from, body(T, 0.1, 0.5));
+      const box = await ev(PREVIEW);
+      await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: q.x + 4, y: q.y, button: 'none', buttons: 0 }, s); await sleep(150);
+      const mid = { midBox: await ev(PREVIEW), midDragging: await ev(`PD_ROOT.classList.contains('dk-dragging')`), midPress: await ev(`document.body.classList.contains('pd-press')`) };
+      return { box, ...mid, ...await release(q) };
+    });
+    // The window loses focus mid-drag: the drag ends; moves and the release after it move nothing.
+    await run('lost>blur', [], { sel: tabSel(TA) }, async from => {
+      const q = await press(from, body(T, 0.1, 0.5));
+      const box = await ev(PREVIEW);
+      await ev(`window.dispatchEvent(new Event('blur')); 0`); await sleep(150);
+      const mid = { midBox: await ev(PREVIEW), midDragging: await ev(`PD_ROOT.classList.contains('dk-dragging')`), midPress: await ev(`document.body.classList.contains('pd-press')`) };
+      const q2 = await at(stackOf(T), 0.9, 0.5);
+      await moveTo(q, q2);
+      return { box, ...mid, ...await release(q2) };
+    });
+    // A window being moved when the window loses focus stays where it was left.
+    await restore();
+    await ev(`PD.dock.float(${JSON.stringify(TB)}); 0`); await sleep(600);
+    {
+      const head = `PD_ROOT.querySelector('.dk-float .dk-head')`;
+      const p = await at(head, 0.8, 0.5);
+      const q = { x: p.x - 120, y: p.y + 80 };
+      await mouse('mouseMoved', p, 0); await sleep(60);
+      await mouse('mousePressed', p, 1); await sleep(60);
+      await moveTo(p, q);
+      await ev(`window.dispatchEvent(new Event('blur')); 0`); await sleep(150);
+      const left = await ev(`JSON.stringify((({x, y}) => ({x, y}))(PD.dock.layout().floats[0]))`);
+      await moveTo(q, { x: q.x - 200, y: q.y + 100 });
+      await mouse('mouseReleased', { x: q.x - 200, y: q.y + 100 }, 0); await sleep(600);
+      out.floatBlur = { left, after: await ev(`JSON.stringify((({x, y}) => ({x, y}))(PD.dock.layout().floats[0]))`), press: await ev(`document.body.classList.contains('pd-press')`) };
+    }
     // A strip button dragged over the conversation to the left edge.
     await restore();
     out.stripBefore = await ev(`PD.dock.side('spec') + ':' + PD.dock.viewMode('spec')`);
@@ -249,6 +317,14 @@ class TabDrop(unittest.TestCase):
         'group': (None, '[T*,A,B,C]', '[T*,A,B,C]'),
         'tool>center': (None, 'row([T*,A,B,C]|[board*])', 'row([T*,A,B,C]|[board*])'),
         'tool>left': ('left', 'row([T*,A,B,C]|[board*])', 'row([board*]|[T*,A,B,C])'),
+        # A tool: no box over the middle, but a release at the left edge splits there; after a
+        # release over the middle the next drag works; a window over the conversation takes it.
+        'tool>center-release-left': (None, 'row([T*,A,B,C]|[board*])', 'row([board*]|[T*,A,B,C])'),
+        'tool>center-then-left': ('left', 'row([T*,A,B,C]|[board*])', 'row([board*]|[T*,A,B,C])'),
+        'tool>float-over': ('center', 'row([T*,A,C]|[board*]) ~[B*]', '[T*,A,C] ~[B,board*]'),
+        # A release the page missed (a move with no button, the window's blur): nothing moves.
+        'lost>move': ('left', '[T*,A,B,C]', '[T*,A,B,C]'),
+        'lost>blur': ('left', '[T*,A,B,C]', '[T*,A,B,C]'),
     }
 
     def test_every_drop_the_box_offers_happens(self):
@@ -267,6 +343,31 @@ class TabDrop(unittest.TestCase):
                 self.assertIsNone(r['boxAfter'])
                 self.assertFalse(r['dragging'])
                 self.assertFalse(r['press'])     # the frames take the pointer again
+
+    def test_a_drag_opens_nothing_on_release(self):
+        # The release of a drag, a drop or one the page cancels, clicks nothing.
+        for r in self.got['runs']:
+            if r['what'] == 'group':
+                continue
+            with self.subTest(r['what']):
+                self.assertEqual(r['clicks'], 0)
+
+    def test_a_lost_release_ends_the_drag_at_once(self):
+        for what in ('lost>move', 'lost>blur'):
+            with self.subTest(what):
+                r = next(x for x in self.got['runs'] if x['what'] == what)
+                self.assertIsNone(r['midBox'])
+                self.assertFalse(r['midDragging'])
+                self.assertFalse(r['midPress'])
+
+    def test_a_tool_released_over_the_middle_leaves_the_next_drag_working(self):
+        r = next(x for x in self.got['runs'] if x['what'] == 'tool>center-then-left')
+        self.assertEqual(r['firstTree'], 'row([T*,A,B,C]|[board*])')
+
+    def test_a_window_moved_when_focus_is_lost_stays(self):
+        fb = self.got['floatBlur']
+        self.assertEqual(fb['after'], fb['left'])
+        self.assertFalse(fb['press'])
 
     def test_a_strip_button_dragged_over_the_conversation_lands(self):
         self.assertEqual(self.got['stripBefore'], 'right:unpinned')
