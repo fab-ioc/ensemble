@@ -16358,6 +16358,14 @@ function pdThreadInClose(quiet) {
   if (!quiet) pdThreadTell(e.room, 'thread-closed');
   barTabsSync();
 }
+// P417 (#396): the PO chat framed by frameEl landed a link on a balloon of its
+// channel: the thread shown in place over it goes, the chat is told (Main).
+function pdThreadInLeave(room, frameEl) {
+  const e = PD.thrIn;
+  if (!e || e.room !== room || !frameEl || !PO_PANEL.contains(frameEl) || !frameEl.classList.contains('po-session')) return false;
+  pdThreadInClose(false);
+  return true;
+}
 function pdThreadPanel(frameEl, o) {
   const d = PD.dock;
   if (!d || !pdPanelsOn() || !o || !o.room || (!o.tid && !o.mid)) return false;

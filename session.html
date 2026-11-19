@@ -6209,6 +6209,7 @@ function landPending() {
       return;
     }
     GOTO = ''; THR_ASKED = '';
+    landOverThread();
     const part = GOTO_PART;
     GOTO_PART = '';
     unwrapMarks(box);
@@ -6247,6 +6248,15 @@ function landPending() {
     landKeepSet(el);
     gotoDone(mid, true);
   } finally { _landing = false; }
+}
+// P417 (#396): a balloon landed on in the channel is shown: a thread the
+// dashboard shows in place over this chat goes (as thread ▾ → Main), so an
+// Inbox row, or a link, to a message of the main chat lands where one sees it
+// from a thread too. A thread beside the channel (its side column) stays.
+function landOverThread() {
+  if (typeof THREADED === 'undefined' || !THREADED || THREAD_MODE || !window.frameElement) return;
+  const host = dashboardHost();
+  try { host?.pdThreadInLeave?.(ROOM, window.frameElement); } catch (e) {}
 }
 // #394: the balloon a link landed on stays where it is on screen while the
 // reader has not scrolled it away or asked for the latest: the chat shown

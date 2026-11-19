@@ -4,7 +4,7 @@ The bar on a computer reads ENSEMBLE / project ▾ / thread ▾. In a thread the
 group reads as a breadcrumb, so the project's name is the way back: one click on
 it while a thread is shown shows the main conversation. thread ▾ → Main
 conversation goes back too, in every way a thread is shown: picked in thread ▾,
-a thread line clicked in the chat, an Inbox link (the chat's sideOpen), a task
+a thread line clicked in the chat, an Inbox row of a card filed in it, a task
 in no project (pdMid). thread ▾ names the thread shown, never Main while one is.
 The name and its ▾ are two hit areas (#396): the ▾ is always the menu; on Main
 with the conversation in front the name opens the menu as before; another tab
@@ -127,6 +127,19 @@ async function main() {
     await sleep(300);
     return ev(BAR);
   };
+  // The Inbox shown, its row for the card pressed for real; the thread then in place.
+  const viaInbox = async label => {
+    await ev(`ibxOpen(); 0`);
+    const row = `[...document.querySelectorAll('a.ibx-link[data-room=${JSON.stringify(A.po)}][data-mid=${JSON.stringify(A.card)}]')].find(a => a.getBoundingClientRect().width > 0)`;
+    await until(`!!${row}`, label + ': the Inbox row');
+    await ev(`document.querySelectorAll('[data-t396]').forEach(a => a.removeAttribute('data-t396')); ${row}.setAttribute('data-t396', ''); 0`);
+    await clickAt(null, '[data-t396]');
+    await until(inPlace(out.ta), label);
+    // The card is drawn in the thread shown in place, not in the main chat.
+    await until(`(() => { const has = x => !!x && [...x.querySelectorAll('.msg[data-mid]')].some(m => m.dataset.mid === ${JSON.stringify(A.card)} && m.offsetParent);
+      return has(PD.thrIn?.el.querySelector('iframe')?.contentDocument) && !has(${PO}?.contentDocument?.getElementById('msgs')); })()`, label + ': the card in the thread');
+    out.inboxRows = (out.inboxRows || 0) + 1;
+  };
   const inPlace = tid => `PD.thrIn?.tid===${JSON.stringify(tid)} && pdThreadInShown() && document.getElementById('thr-switch-name').textContent!=='Main'`;
   const threadsIn = `[...${PO}.contentDocument.querySelectorAll('#msgs .thr-open[data-thr]')].map(b=>b.dataset.thr)`;
   const sid = room => `ALL_ROWS.find(x => x.roomId === ${JSON.stringify(room)}).sessionId`;
@@ -182,15 +195,14 @@ async function main() {
     await until(inPlace(tb), 'thread in place from its line, again');
     await sleep(400);
     out.lineName = await viaName('thread line then the name');
-    // 2c. An Inbox link to the thread (pdThreadOpen → goto-msg → the chat's gotoThread → sideOpen).
-    await ev(`pdThreadOpen(${JSON.stringify(A.po)}, ${JSON.stringify(ta)}, '', null, 'inbox'); 0`);
-    await until(inPlace(ta), 'thread in place from an Inbox link');
+    // 2c. The Inbox row of a card filed in the thread, pressed (#394's row
+    // click → openMsgLink → the thread in place, landing on the card).
+    await viaInbox('thread in place from an Inbox row');
     await sleep(400);
     out.inboxIn = await ev(BAR);
     out.inboxMain = await viaMenuMain('Inbox link');
     // The keyboard: the button focused, Enter is the name.
-    await ev(`pdThreadOpen(${JSON.stringify(A.po)}, ${JSON.stringify(ta)}, '', null, 'inbox'); 0`);
-    await until(inPlace(ta), 'thread in place from an Inbox link, again');
+    await viaInbox('thread in place from an Inbox row, again');
     await sleep(400);
     await ev(`document.getElementById('proj-switch').focus(); 0`);
     await key('Enter', 'Enter', 13, '\r');
@@ -228,6 +240,57 @@ async function main() {
     await until(`document.getElementById('bar-grp').classList.contains('on')`, 'the name: the conversation in front');
     await sleep(300);
     out.nameFront = await ev(BAR);
+
+    // 4. P417: an Inbox row shows the right conversation from wherever one is,
+    // landing on its message: Main, the right thread, from a task's tab.
+    const pressRow = async (mid, label) => {
+      await ev(`ibxOpen(); 0`);
+      const row = `[...document.querySelectorAll('a.ibx-link[data-room=${JSON.stringify(A.po)}][data-mid=${JSON.stringify(mid)}]')].find(a => a.getBoundingClientRect().width > 0)`;
+      await until(`!!${row}`, label + ': the Inbox row');
+      await ev(`document.querySelectorAll('[data-t396]').forEach(a => a.removeAttribute('data-t396')); ${row}.setAttribute('data-t396', ''); 0`);
+      await clickAt(null, '[data-t396]');
+    };
+    // The balloon drawn inside its chat's view (a frame's document).
+    const seen = (doc, mid) => `(() => { const d = ${doc}; const box = d && d.getElementById('msgs'); const m = box && [...box.querySelectorAll('.msg[data-mid]')].find(e => e.dataset.mid === ${JSON.stringify(mid)});
+      if (!m || !m.offsetParent || !box.clientHeight) return false; const b = box.getBoundingClientRect(), r = m.getBoundingClientRect(); return r.bottom > b.top + 1 && r.top < b.bottom - 1; })()`;
+    const mainShows = mid => `(${onMain}) && PD.dock.frontOf('po-chat')==='po-chat' && document.getElementById('bar-grp').classList.contains('on') && ${seen(PO + '?.contentDocument', mid)}`;
+    const threadShows = (tid, mid) => `(${inPlace(tid)}) && PD.dock.frontOf('po-chat')==='po-chat' && ${seen("PD.thrIn?.el.querySelector('iframe')?.contentDocument", mid)}`;
+    const toThread = async tid => { await thrMenuOpen(); await clickAt(null, `#thr-menu [data-thr-pick="${tid}"]`); await until(inPlace(tid), 'in place: ' + tid); await sleep(400); };
+    out.p417 = {};
+    // a. A thread shown, a row in Main: Main, on the card.
+    await toThread(ta);
+    await pressRow(A.cardM, 'thread → Main row');
+    await until(mainShows(A.cardM), 'thread shown, a row in Main: Main on its card');
+    out.p417.threadToMain = await ev(BAR);
+    await snap('p417-thread-to-main');
+    // b. A thread shown, a row in another thread: that thread, on the card.
+    await toThread(ta);
+    await pressRow(A.cardB, 'thread → other thread row');
+    await until(threadShows(tb, A.cardB), 'thread shown, a row in another thread: that thread on its card');
+    out.p417.threadToThread = await ev(BAR);
+    await snap('p417-thread-to-thread');
+    // c. Main shown, a row in a thread: the thread, on the card.
+    await viaMenuMain('back to Main for P417 c');
+    await pressRow(A.card, 'Main → thread row');
+    await until(threadShows(ta, A.card), 'Main shown, a row in a thread: the thread on its card');
+    out.p417.mainToThread = await ev(BAR);
+    // d. Another task's tab in front, a row in the PO's Main: the conversation, Main, on the card
+    // (here with a thread left shown in the conversation, the harder way).
+    await ev(`openDetail(${sid(A.task)}); 0`);
+    await until(`!document.getElementById('bar-grp').classList.contains('on') && barTabsSync && [...PD.rt].length > 0`, 'the task\'s tab in front');
+    await sleep(600);
+    out.p417.taskFront = await ev(BAR);
+    await pressRow(A.cardM, 'task tab → Main row');
+    await until(mainShows(A.cardM), 'a task\'s tab in front, a row in Main: the conversation on its card');
+    out.p417.taskToMain = await ev(BAR);
+    // and with Main shown behind the task's tab.
+    await ev(`openDetail(${sid(A.task)}); 0`);
+    await until(`!document.getElementById('bar-grp').classList.contains('on')`, 'the task\'s tab in front again');
+    await sleep(600);
+    await pressRow(A.cardM, 'task tab → Main row, again');
+    await until(mainShows(A.cardM), 'a task\'s tab in front again: the conversation on its card');
+    out.p417.taskToMainAgain = await ev(BAR);
+    await snap('p417-task-to-main');
 
     // 3. A task in no project (pdMid): thread ▾ → Main conversation.
     await ev(`openDetail(${sid(A.loose)}); 0`);
@@ -302,7 +365,7 @@ class BarMain(unittest.TestCase):
         chatroom.update_room(full)
         cls.loose = t['id']
         transcript = base / 'transcripts' / 'C--bar-main'; transcript.mkdir()
-        at = time.time() - 3600
+        at = int(time.time()) - 3600  # whole seconds, as the transcript's stamps: each at its own second, the card (+4) after the reply sent in the first thread (+3), before the second topic (+5)
 
         def turn(role, text, offset):
             stamp = time.strftime('%Y-%m-%dT%H:%M:%S', time.gmtime(at + offset)) + '.000Z'
@@ -310,16 +373,50 @@ class BarMain(unittest.TestCase):
             if role == 'assistant': msg['stop_reason'] = 'end_turn'
             return {'type':role,'timestamp':stamp,'sessionId':sid,'message':msg}
         lines = [turn('user','The first topic.',1), turn('assistant','The first reply.',2),
-                 turn('user','The second topic.',3), turn('assistant','The second reply.',4)]
+                 turn('user','More on the first topic.',3),
+                 turn('user','The second topic.',5), turn('assistant','The second reply.',6),
+                 turn('user','More on the second topic.',7)]
         (transcript / f'{sid}.jsonl').write_text(''.join(json.dumps(x)+'\n' for x in lines), encoding='utf-8')
-        for text, offset in (('The first topic.', 1), ('The second topic.', 3)):
+        for text, offset in (('The first topic.', 1), ('The second topic.', 5)):
             threads.note_send(cls.po, '', '', [], False, text, now=at + offset, new=True)
+        # A reply sent from the first thread's box, then an open card: the card
+        # is filed in that thread (threads: where the input before it is) and
+        # is an Inbox row.
+        threads.note_send(cls.po, f'm:{sid}:0', '', [], False, 'More on the first topic.', now=at + 3)
+        qs = dashboard.asks.validated([{'question': 'Brakes first?', 'options': [{'label': 'Yes'}, {'label': 'No'}]}], [])
+        with mock.patch.object(chatroom, '_now', lambda: at + 4):
+            posted = chatroom.post_message(cls.po, 'claude', 'A question on the first topic.', to='user', structured_asks=qs, ask_audience='user')
+        cls.card = ((posted or {}).get('message') or {}).get('id', ''); assert cls.card, posted
+        # P417: a card in the main chat (asked before any input) and one in the
+        # second thread (after a reply sent from its box).
+        def card(text, offset):
+            with mock.patch.object(chatroom, '_now', lambda: at + offset):
+                m = chatroom.post_message(cls.po, 'claude', text, to='user', structured_asks=dashboard.asks.validated(
+                    [{'question': text, 'options': [{'label': 'Yes'}, {'label': 'No'}]}], []), ask_audience='user')
+            return ((m or {}).get('message') or {}).get('id', '')
+        cls.cardM = card('A question for the main chat?', 0.5)
+        threads.note_send(cls.po, f'm:{sid}:3', '', [], False, 'More on the second topic.', now=at + 7)
+        cls.cardB = card('A question on the second topic?', 8)
+        # Built before the page loads (as test_inbox_trust_cdp): the chat's first
+        # draw already knows the card is in the thread.
+        built = threads.build(cls.po, show_progress=False)
+        filed = (built or {}).get('cards', {})
+        assert (filed.get(cls.card), filed.get(cls.cardB), filed.get(cls.cardM)) == (f'm:{sid}:0', f'm:{sid}:3', None), built
+        # A task of Motors: it opens as a tab of its own (#393).
+        home_t = base / 'gearbox'; home_t.mkdir()
+        g = chatroom.create_room('Gearbox', [{'identity':'claude','agent':'claude','cwd':str(home_t)}])
+        chatroom.post_message(g['id'], 'user', 'About the gearbox')
+        full = chatroom.get_room(g['id'], public=False)
+        full.update(mode='solo', launched=True, workflow='inprogress', cwd=str(home_t))
+        chatroom.update_room(full)
+        dashboard.assign_session_project(g['id'], cls.proj)
+        cls.task = g['id']
         cls.server = ThreadingHTTPServer(('127.0.0.1', 0), dashboard.Handler)
         cls.server.daemon_threads = True; cls.server.handle_error = lambda *a: None
         threading.Thread(target=cls.server.serve_forever, daemon=True).start()
         args = {**chrome_profile.node_args(), 'tmp':cls.tmp.name,
                 'base':f'http://127.0.0.1:{cls.server.server_address[1]}',
-                'proj':cls.proj, 'po':cls.po, 'loose':cls.loose,
+                'proj':cls.proj, 'po':cls.po, 'loose':cls.loose, 'card':cls.card, 'cardM':cls.cardM, 'cardB':cls.cardB, 'task':cls.task,
                 'shots':os.environ.get('ENSEMBLE_SHOTS', '')}
         script = base / 'bar_main_cdp.js'; script.write_text(CDP_JS, encoding='utf-8')
         result = subprocess.run([NODE,str(script),json.dumps(args)],capture_output=True,encoding='utf-8',timeout=300)
@@ -339,6 +436,7 @@ class BarMain(unittest.TestCase):
 
     def test_the_thread_is_named_in_each_way_it_is_shown(self):
         g = self.got
+        self.assertEqual(g.get('inboxRows'), 2, 'twice a real Inbox row of the card filed in the thread was pressed')
         self.assertEqual(g['start']['thr'], 'Main')
         for k, tid, title in (('menuIn', g['ta'], 'The first topic.'), ('lineIn', g['tb'], 'The second topic.'),
                               ('inboxIn', g['ta'], 'The first topic.')):
@@ -395,6 +493,18 @@ class BarMain(unittest.TestCase):
         self.assertEqual(len(g['ctrlTab']['threadTabs']), 1, f"Ctrl-click in thread ▾: a tab {g['ctrlTab']}")
         self.assertFalse(g['ctrlTab']['grpOn'])
         self.assertEqual((g['nameFront']['front'], g['nameFront']['grpOn'], g['nameFront']['projMenu']), ('po-chat', True, False))
+
+    def test_an_inbox_row_shows_its_conversation_from_anywhere(self):
+        # P417: each wait above was for the right conversation on screen,
+        # landed on the card; what the bar said then.
+        p = self.got['p417']
+        self.assertEqual((p['threadToMain']['thr'], p['threadToMain']['thrIn']), ('Main', None))
+        self.assertEqual(p['threadToThread']['thr'], 'The second topic.')
+        self.assertEqual(p['threadToThread']['thrIn']['tid'], self.got['tb'])
+        self.assertEqual(p['mainToThread']['thrIn']['tid'], self.got['ta'])
+        self.assertFalse(p['taskFront']['grpOn'], f"the task's tab was in front {p['taskFront']}")
+        for k in ('taskToMain', 'taskToMainAgain'):
+            self.assertEqual((p[k]['front'], p[k]['grpOn'], p[k]['thr']), ('po-chat', True, 'Main'), k)
 
     def test_no_errors(self):
         self.assertEqual(self.got['errors'], [])
