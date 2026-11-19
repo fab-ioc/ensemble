@@ -119,6 +119,19 @@ out.dropped = W.putAway(s4, 'p' + (W.MAX_CTXS + 3)).length;
 // What cannot be used is left out.
 out.bad = [W.load('not json'), W.load({ v: 2 }), W.load({ v: 1, cur: 3, pins: [1, 'a', 'a'], seen: { a: 'x', b: 2 },
   ctxs: { E: { at: 'x', items: [{ id: 'chat:a', kind: 'chat', room: 'a' }, { id: 'chat:a', kind: 'chat', room: 'a' }, { id: 'f', kind: 'file', path: 'p' }, null] }, '': {} } })];
+// #393: a thread's tab is an item too (its thread id, or the balloon it starts
+// on): put away with its project, brought back whole; one without either is
+// left out, and a balloon's mid is dropped once the thread has its id.
+const s6 = W.load(null);
+const th = { id: 'thread:po1:t-1', kind: 'thread', room: 'po1', tid: 't-1', mid: 'stale', title: 'A topic', extra: 1 };
+const tb = { id: 'thread:po1:m:po1:4', kind: 'thread', room: 'po1', tid: '', mid: 'po1:4', title: 7, front: true };
+W.settle(s6, 'E', [], 1);
+out.threadAway = W.settle(s6, 'T', [o(th, 'E'), o(tb, 'E'), o({ id: 'thread:x', kind: 'thread', room: 'po1', tid: '', mid: '' }, 'E')], 2);
+out.threadBack = W.settle(s6, 'E', [], 3);
+out.threadPinned = (() => { const s7 = W.load(null); W.settle(s7, 'E', [], 1); W.pin(s7, th.id, true); return W.settle(s7, 'T', [o(th, 'E')], 2); })();
+out.threadLoad = W.load({ v: 1, cur: 'T', ctxs: { E: { at: 1, items: [th, tb,
+  { id: 'thread:n', kind: 'thread', room: '', tid: 't' }, { id: 'thread:m', kind: 'thread', room: 'po1' },
+  { id: 'thread:o', kind: 'thread', room: 'po1', tid: 5 }] } } }).ctxs.E.items;
 console.log(JSON.stringify(out));
 """
 
@@ -211,6 +224,18 @@ class ProjectWorkspaceStore(unittest.TestCase):
         self.assertTrue(o["oldestGone"])
         self.assertTrue(o["ghostGone"])
         self.assertEqual(o["dropped"], 0)
+
+    def test_a_thread_tab_is_put_away_and_brought_back(self):
+        # #393: a thread's tab (thread:<room>:<thread>) is its project's.
+        o = self.o
+        clean = {"id": "thread:po1:t-1", "kind": "thread", "room": "po1", "tid": "t-1", "mid": "", "title": "A topic"}
+        balloon = {"id": "thread:po1:m:po1:4", "kind": "thread", "room": "po1", "tid": "", "mid": "po1:4",
+                   "title": "", "front": True}
+        self.assertEqual(o["threadAway"]["away"], ["thread:po1:t-1", "thread:po1:m:po1:4"],
+                         "a thread with neither id nor balloon is no item")
+        self.assertEqual(o["threadBack"]["back"], [clean, balloon])
+        self.assertEqual(o["threadPinned"], {"away": [], "back": []}, "a pinned thread tab stays open")
+        self.assertEqual(o["threadLoad"], [clean, balloon], "stored thread items: only the usable ones, cleaned")
 
     def test_what_it_cannot_use_is_left_out(self):
         a, b, c = self.o["bad"]

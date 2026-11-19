@@ -1097,23 +1097,25 @@ tab the person left in front, a tool or the conversation). The PO's chat, out of
 task is in the middle, is told it is shown when the task leaves (`pdWakeChat`), so it catches up
 at once rather than at its next 30 s tick. File and chat panels are the runtime panels (`PD.rt`; `pdMinOf` their least size:
 a chat the conversation's, a file 280 × 160, a thread 300 × 160); `dock-removed` disposes them (`pdRuntimeRemoved`).
-**A thread of the PO chat is a panel of its own** (#236, Slack's thread pane): one for the page
-(`thread:po`, `pdThreadPanel`), named after the thread (`setTitle` from the thread page's
-`thread-title`), closable and with the usual ⋯ (resize, move, pop out, maximise). The chat's page
-asks for it when a thread opens (`sideOpen` → the host's `pdThreadPanel`, synchronous) and shows
-the thread itself (#234's side column, or over the chat with Back) when the host says no: a phone
-(narrow dock), no panels, a popped-out or hidden PO chat. It goes back to its kept place (a reload,
-or closed and opened again), else at the dock's right edge, 440 px wide (`PD_THREAD_W`; Dock sizes
-an edge panel by its least width, so `pdMinOf` gives 440 while it is added: a stopgap until Dock's
-`addPanel` takes a size), while it fits (`pdFits`), else a tab of the chat's stack. Another thread
-opened replaces it; its × tells the chat (`thread-closed`); another PO shown takes it quietly and
-that PO's chat brings its own back (`thread-again`). When the chat shows the thread itself (a
-phone, its own window, which asks the page through its opener), the panel goes quietly: one thread
-on screen; the chat docked back brings it back. In the panel's own window, a link inside the
-thread that the page handles (a task, "Also in" another thread) reaches the window, not the page,
-as in a task chat's window: a known limit. Its frame is `iframe.po-thread`, never
-`.dp-session` / `.po-session`, so a balloon link (`sendGotoMsg`) goes to the chat, which opens the
-thread here.
+**A thread of the PO chat shows in place or as a tab** (#393, P391; it was one thread panel,
+`thread:po`, from #236). A plain click on a thread (a thread line in the chat, thread ▾, an Inbox card,
+a balloon link) shows it **in place**: over the conversation in the project's tab (`PD.thrIn`,
+`pdThreadPanel`; `div.pd-thread-in` in the `po-chat` panel, shown only while its own PO chat is the one
+on screen there, `pdThreadInShown`), named in the bar's thread ▾. Main conversation in thread ▾ goes back
+(the chat is told, `thread-closed`). **Ctrl/⌘ or a middle click opens it as a tab of its own**
+(`pdThreadTab`; `thread:<room>:<thread>`, kind `thread` in `PD.rt`) after the last tab of the project's
+stack, like a task's, named after the thread, closable, draggable beside the conversation like any tab;
+the thread tabs come back after a reload (`cd-thread-tabs`) and are put away and brought back with
+their project (`static/workspace.js`, kind `thread`). The chat's page asks the host when a thread
+opens (`sideOpen` → `pdThreadPanel`, synchronous; a trusted Ctrl/⌘/middle press just before asks for a
+tab, `SIDE_CLICK`) and shows the thread itself (#234's side column, or over the chat with Back) when
+the host says no: a phone (narrow dock), no panels, a popped-out or hidden PO chat. **Each project
+comes back at its last thread**: another PO shown, the one in place goes quietly (its chat keeps it,
+`TS_KEY`) and the chat now shown brings its own back (`thread-again`). **The Send box follows it**:
+a thread shown in place has the box (picked, the project shown again, a task closed, the project's
+tab clicked: `wcPanelTarget('po-chat')`), and so does a thread tab brought to the front. Its frame is
+`iframe.po-thread`, never `.dp-session` / `.po-session`, so a balloon link (`sendGotoMsg`) goes to
+the chat, which opens the thread here.
 On a phone both are tabs of the one column, as everything is. **Still interim**: the PO's two (Switch agent, the PO's task) wait in
 its header's ⋯, marked `data-interim="dock-menu"`, until they follow the same hook. The Board's own **⤢** (`.pd-board-max`, beside its view
 switch) takes the whole width and gives it back. **No Panels ▾ on a computer** (#386; it was
@@ -1130,12 +1132,12 @@ Changes · Files · Board · Spec`, with Panels ▾ in the bar. An open task is 
 too (`pdTask()` holds on a phone), so its tools are the same tabs, not the task panel's own:
 tabs, not a sheet, because they are the same dock and panes as the desktop's strip (no new
 component) and the mockup (`a2-…-390.png`) shows a tab row. The conversation's tab names what it holds
-(`pdSyncTitles`, Dock's `setTitle`): on a computer the PO's tab is **"PO"** with its project's icon (#386, P374's drawing; #261 named it after the project), its window "PO · *Project*" (`popTitle` names the panel's own project, so a pinned file of another one is "x.md · *Other*"); an Unassigned task in the middle titles it after the task, with no icon. A task of a project with a PO is **a tab of its own** (see *Each project's workspace* below), named after the task. **The header under a tab does not name it again**: the PO's says "PO" (a drawer, which has no tab, keeps "*Project* · PO"), and a docked task panel hides its title (`body.dp-docked … .dp-head h2`). A switch of project or a rename re-titles the tab. Long names are cut by Dock's tab ellipsis (`--dk-tab-max`) with the whole name in its tooltip. On a phone (the narrow dock) a task's conversation tab keeps reading **Chat** (`PD_TITLES`); the PO's is the project's name cut at 112 px (`#po-dock.dk-narrow .dk-tab[data-dk-tab="po-chat"]`), and a long press on a cut tab shows the whole name in a toast. The row scrolls sideways (Board is past a 390 px row's edge). The Tabs rule above ("a tab that renames itself…") is about the task panel's fixed tab set; a dock panel names its content, as a file panel does.
+(`pdSyncTitles`, Dock's `setTitle`): **on a computer there is no PO tab** (#393, P388): while the conversation's stack is in the page's dock, its title bar is drawn in the top bar (see *The tabs in the bar*, §5) and the bar's `project ▾ / thread ▾` group is the project's tab (its title, "PO" with its project's icon since #386, still names it in its window and a float); its window "PO · *Project*" (`popTitle` names the panel's own project, so a pinned file of another one is "x.md · *Other*"); an Unassigned task in the middle titles it after the task, with no icon. A task of a project with a PO is **a tab of its own** (see *Each project's workspace* below), named after the task. **The header under a tab does not name it again**: the PO's says "PO" (a drawer, which has no tab, keeps "*Project* · PO"), and a docked task panel hides its title (`body.dp-docked … .dp-head h2`). A switch of project or a rename re-titles the tab. Long names are cut by Dock's tab ellipsis (`--dk-tab-max`) with the whole name in its tooltip. On a phone (the narrow dock) a task's conversation tab keeps reading **Chat** (`PD_TITLES`); the PO's is the project's name cut at 112 px (`#po-dock.dk-narrow .dk-tab[data-dk-tab="po-chat"]`), and a long press on a cut tab shows the whole name in a toast. The row scrolls sideways (Board is past a 390 px row's edge). The Tabs rule above ("a tab that renames itself…") is about the task panel's fixed tab set; a dock panel names its content, as a file panel does.
 
 **Each project's workspace** (#386, P374, P376, P377; the drawing `Documents/P374 Workspace plan/drawing.html`).
-On a computer the PO's tab is first; **a task of a project with a PO opens as a tab of its own** after the
+On a computer the project's tab is first (the bar's `project ▾ / thread ▾` group, #393); **a task of a project with a PO opens as a tab of its own** after the
 last tab of the PO's stack (`pdTaskTabEnsure`), the task panel moved into it (`pdPlaceTask`) and lent the
-tab's own chat page (`pdFrameLend`: one page per room, kept across clicks). The PO's tab in front, or Esc,
+tab's own chat page (`pdFrameLend`: one page per room, kept across clicks). The project's tab in front (a click on the group), or Esc,
 closes the task and its tab stays; closing the tab closes the task. Each context (a project, or an Unassigned
 task) keeps what it put away (`static/workspace.js`, `cd-pd-ctx`): a project switch puts the other
 contexts' chat and file panels away (out of the dock, places kept) and brings this one's back, the tab that
@@ -1666,7 +1668,8 @@ you can go*, §4) · content (*what you are looking at*) · the issue view as an
    wordmark, which is the way home, `/`, then the project's name as a Subtle button with a caret:
    the project switcher (#303, see *The project switcher* below), which also holds the project's
    settings, its kind and key and, for a documents project without one, setting up its PO; on a
-   desktop this is the breadcrumb, see
+   computer with a PO's dock it is followed by **thread ▾** and the conversation's tabs, see
+   *The tabs in the bar* below; elsewhere on a desktop by the breadcrumb, see
    *The bar's breadcrumb* below), then **what you can do here** (`#bar-here`:
    a phone's PO screen's **Panels ▾**, `pdCtlHtml`; empty elsewhere), then the global group:
    **Inbox N** (`#inbox-btn`, #302: how many things wait on you in every project; on a computer it
@@ -1695,9 +1698,40 @@ you can go*, §4) · content (*what you are looking at*) · the issue view as an
      every theme with the contrast table.
    - Nothing else joins it: no product name in text, no badge but a non-default instance's.
 
-   **The bar's breadcrumb** (layout A, #124; a desktop, `body.mid`; `crumbsOf`, `barCrumbs` and
+   **The tabs in the bar** (#393, P388, P391; the drawing `Documents/P388 Tabs in the top bar/plan.html`;
+   `barTabsSync`, `body.bar-tabs`, tested in `tests/test_bar_tabs_cdp.py`): on a computer while a
+   conversation with the dock is in the middle (a PO screen, or a task in no project), the bar is
+   **one row**: `ENSEMBLE / project ▾ / thread ▾`, a thin divider (`.bar-vr`), then the
+   conversation's tabs, then search and the rest. There is no second row of tabs.
+   - **The group is the project's tab** (`#bar-grp`): `project ▾ / thread ▾` together stand for the
+     conversation's own tab, which is not drawn in the row. While the conversation is in front the
+     group is underlined as a selected tab (`.bar-grp.on`, an inset 2px `--accent` line); a click
+     on it (not on a ▾) brings the conversation to the front with the Send box on it (its thread in
+     place, if one is shown: `wcFront('po-chat', true)`).
+   - **The tabs** are Dock's own title bar of the conversation's stack, fixed over `#bar-tabs`
+     (`.bt-head`, placed by `--bt-l/-w/-t/-h`), so a tab drags, closes, has its pin and menu as
+     anywhere in the dock; the ⋯ follows the last tab. Inactive tabs are `--fg-subtle`, the one in
+     front `--fg`, all at `--fs-200`. **Many tabs:** names shrink first (each to 72px at least);
+     then the row scrolls and Dock's ▾ says how many are out of view, **"+N ▾"** (`barTabsMore`).
+     While that stack is out of the page's dock (a window, a float, minimised) the bar shows the group alone.
+   - **thread ▾** (`#thr-switch`, `#thr-menu`, `thrMenuHtml`) names the thread shown in place, or
+     **Main**. Its menu: a head "*Project* threads, latest first", **Main conversation**, the threads
+     latest first with their age ("today", "2 d"), the shown one marked; a task's room has none yet
+     ("No threads yet."); under a rule the tip "Ctrl/⌘-click: open as a new tab". A pick shows the
+     thread in place; Ctrl/⌘ (or a middle click) opens it as a tab of its own after the last tab (see
+     *A thread of the PO chat shows in place or as a tab* in §4).
+   - **No trail on a computer**: `› task › tool › file` is gone (`crumbState` returns the project
+     alone): a task, a tool and a file are named on their tabs. A phone keeps its trail (below).
+   - **A task in no project** is the top level: `ENSEMBLE / # task ▾ / thread ▾` (`barTopTask`), the
+     task's ▾ the project switcher. The switcher lists, after All projects, **Tasks in no project**
+     (`projFreeHtml`: a computer only, eight at most, latest first, each with the list's task icon in
+     a 22px box, `.pm-tico`); a pick makes that task the top level. They step aside while the filter
+     holds text.
+
+   **The bar's breadcrumb** (layout A, #124; a desktop, `body.mid`, where the tabs are not in the
+   bar, that is a project without a PO; a phone's below; `crumbsOf`, `barCrumbs` and
    `crumbGo` in `index.html`, tested in `tests/test_middle.py`): one line after the wordmark,
-   `ENSEMBLE / project ▾ › #18 the task (or PO) › its tool › the file`, four levels at most.
+   `ENSEMBLE / project ▾ › #18 the task › its tool › the file`, four levels at most.
    - **Every part is at the body size** (`--fs-300`, #126, as the mockup): weight says where you
      are, not size.
    - **The project** is the switcher, `#proj-switch` (name + caret, #303), `--fg` at `--fs-300`
@@ -1712,13 +1746,12 @@ you can go*, §4) · content (*what you are looking at*) · the issue view as an
      settings and **New project…**. Each row carries the project's unread dot and its Inbox count.
      While the filter holds text, Recent and the settings step aside; Enter opens the first match,
      Escape clears the filter, then closes. A phone's list starts with All projects as cards.
-   - **Then** the conversation: `PO` on a PO screen, or the open task's number and title; the
-     tool (a task's tab other than Activity, or a PO screen's tab other than PO chat, or a project
+   - **Then** the conversation: the open task's number and title; the
+     tool (a task's tab other than Activity, or a project
      without a PO's Workspace or Changes tab); the file open in that Workspace or Changes, by its
      name, the whole path in its tooltip.
    - **Every part but the last is a Subtle button that goes up one level**, in `--fg-subtle`:
-     the conversation closes the tool and keeps the conversation (a task's Activity; a PO screen's
-     PO chat); the tool goes back to its list (Changes: the diff closes; Workspace: the tree, the
+     the conversation closes the tool and keeps the conversation (a task's Activity); the tool goes back to its list (Changes: the diff closes; Workspace: the tree, the
      file shown in it). The last part is where you are: plain `--fg`, 500, `aria-current`.
    - **A file that is a panel of the dock** (#150, `crumbWsPanel`): while its panel is on screen
      (in front of its stack, or in a window of its own) it is where you are, `› Files › README.md`,

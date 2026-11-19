@@ -178,12 +178,12 @@ async function main() {
     await untilT(`typeof ALL_ROWS!=='undefined' && !!PROJECTS`);
     await evT(`SELECTED_PROJECT=${JSON.stringify(A.proj)}; PROJECT_TAB='tasks'; renderRows(); 0`);
     await untilT(`!!PD.dock && !!PD.els['po-chat'].querySelector('iframe.po-session')?.contentDocument?.querySelector('#msgs .thr-open[data-thr]')`);
-    // A PO chat's thread opens as a Dock panel of its own beside the chat (#236):
-    // the panel, its frame and the thread's box fill the dock's height.
+    // A PO chat's thread opens in place over the chat (#393; was a Dock panel
+    // beside it, #236): it, its frame and the thread's box fill the dock's height.
     const sideMeasure = `(() => {
       const b=e=>{if(!e)return null;const r=e.getBoundingClientRect();return {x:r.x,y:r.y,w:r.width,h:r.height,b:r.bottom};};
       const po=PD.els['po-chat'].querySelector('iframe.po-session'), pd=po?.contentDocument;
-      const side=PD.rt.get('thread:po')?.el, f=side?.querySelector('iframe'), d=f?.contentDocument;
+      const side=PD.thrIn&&pdThreadInShown()?PD.thrIn.el:null, f=side?.querySelector('iframe'), d=f?.contentDocument;
       const list=d?.querySelector('#msgs'), compose=d?.querySelector('#compose');
       const pb=b(po), sb=b(side), fb=b(f), lb=b(list), cb=b(compose), main=b(side?.closest('.dk-body')), foot=[...(d?.querySelectorAll('#msgs,#promptcard,#cmdpanel,#livetail,#stop-note,#thread-reply,#compose')||[])].map(b).filter(r=>r&&r.h).sort((p,q)=>q.b-p.b)[0];
       return {panel:sb, frame:fb, list:lb, box:cb, chat:pb, listHeight:lb?.h, bottomGap:foot&&fb?fb.h-foot.b:null,
@@ -192,7 +192,7 @@ async function main() {
         scrollTop:list?list.scrollTop:null, screens:list?list.scrollHeight/list.clientHeight:null,
         ratio:lb&&sb?lb.h/sb.h:null, layer:!side || !!pd?.getElementById('thr-side')?.classList.contains('layer')};
     })()`;
-    const sideReady = `!!PD.rt.get('thread:po')?.el.querySelector('iframe')?.contentDocument?.querySelector('#msgs .msg[data-mid]')`;
+    const sideReady = `pdThreadInShown() && !!PD.thrIn?.el.querySelector('iframe')?.contentDocument?.querySelector('#msgs .msg[data-mid]')`;
     await evT(`(() => { const t=PD.els['po-chat'].querySelector('iframe.po-session').contentDocument.querySelector('#msgs .thr-open[data-thr]').dataset.thr;
       if(!pdThreadOpen(${JSON.stringify(A.po)},t))throw Error('thread not opened'); return t; })()`);
     await untilT(sideReady);
@@ -307,7 +307,7 @@ class ChatHeight(unittest.TestCase):
                 # reload too (#333: the #234 open-at-top rule is gone); made
                 # taller once open (threadTall), it stays at the end.
                 self.assertLessEqual(g['scrollRemaining'], 16, g)
-                self.assertFalse(g['layer'], 'a laptop: the thread in a panel beside the chat')
+                self.assertFalse(g['layer'], 'a laptop: the thread in place in the dashboard, not the chat\'s own layer')
                 self.assertGreaterEqual(g['sideOfMain'], .99, g)
 
     def test_live_chat_grows_with_flex(self):

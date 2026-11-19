@@ -1,4 +1,5 @@
-"""The PO chat fills its Dock panel, and a thread opens as a Dock panel of its own beside it (#236)."""
+"""The PO chat fills its Dock panel; a thread opens in place over it (#393, was a Dock panel beside it, #236),
+or as a tab of its own."""
 from __future__ import annotations
 
 import json
@@ -47,24 +48,29 @@ async function main() {
   const untilIn=async (sid, expression, what) => { for(let i=0;i<120;i++){ try {if(await evIn(sid, expression)) return;}catch(e){} await sleep(150); } throw Error('timeout '+(what||expression)); };
   const until=(e, what) => untilIn(s, e, what);
   const PO = `PD.els['po-chat'].querySelector('iframe.po-session:not([hidden])')`;
-  const THR = `PD.rt.get('thread:po')?.el.querySelector('iframe')`;
+  // The thread shown in place over the PO chat (#393): PD.thrIn's page.
+  const THR = `PD.thrIn?.el.querySelector('iframe')`;
   // Widths: the PO chat's Dock panel (its body), the chat frame, its balloon
-  // column and message box; the thread's panel; what is left empty beside the
-  // balloons inside the chat's panel.
+  // column and message box; the thread shown in place over it; what is left
+  // empty beside the balloons inside the chat's panel.
   const measure = `(() => {
-    const b=e=>{if(!e)return null;const r=e.getBoundingClientRect();return {x:r.x,w:r.width,r:r.right};};
+    const b=e=>{if(!e)return null;const r=e.getBoundingClientRect();return {x:r.x,y:r.y,w:r.width,h:r.height,r:r.right};};
     const f=${PO}, d=f?.contentDocument, body=PD.els['po-chat'].closest('.dk-body');
     const pb=b(body), fb=b(f), lb=b(d?.querySelector('#msgs')), cb=b(d?.querySelector('#compose')), hb=b(PD.els['po-chat'].querySelector('.po-head'));
-    const tf=${THR}, tp=tf?.closest('.dk-body'), tb=b(tp);
+    const tf=${THR}, shown=!!PD.thrIn&&pdThreadInShown()&&!PD.thrIn.el.hidden, tb=shown?b(PD.thrIn.el):null, kb=b(PD.els['po-chat']);
     const bal=[...(d?.querySelectorAll('#msgs .msg[data-mid]')||[])].map(b).filter(x=>x&&x.w);
     const balL=bal.length?Math.min(...bal.map(x=>x.x)):null, balR=bal.length?Math.max(...bal.map(x=>x.r)):null;
     const loc=(()=>{try{return JSON.parse(f.contentWindow.localStorage.getItem('cd-thread-open:'+f.dataset.room)||'null');}catch(e){return 'err';}})();
+    // What is on top in the middle of the PO chat's panel.
+    const top=kb?document.elementFromPoint(kb.x+kb.w/2,kb.y+kb.h/2):null;
     return {panel:pb, frame:fb, list:lb, box:cb, head:hb, thread:tb,
       chatShare:pb&&fb?fb.w/pb.w:null, listShare:pb&&lb?lb.w/pb.w:null, boxShare:pb&&cb?cb.w/pb.w:null, headShare:pb&&hb?hb.w/pb.w:null,
       emptyLeft:pb&&balL!=null?balL+(fb?.x||0)-pb.x:null, emptyRight:pb&&balR!=null?pb.r-(fb?.x||0)-balR:null,
-      convShare:pb&&tb?pb.w/(pb.w+tb.w):null, threadSrc:tf?.getAttribute('src')||'',
+      cover:tb&&kb?{dx:Math.abs(tb.x-kb.x),dy:Math.abs(tb.y-kb.y),dw:Math.abs(tb.w-kb.w),dh:Math.abs(tb.h-kb.h)}:null,
+      onTop:top===tf?'thread':top===f?'chat':(top?top.tagName+'.'+top.className:null),
+      threadSrc:tf?.getAttribute('src')||'', inPlace:shown, inChat:!!PD.thrIn&&PD.els['po-chat'].contains(PD.thrIn.el),
       threadPanels:PD.dock.panels().map(p=>p.id).filter(id=>/^thread:/.test(id)),
-      threadTitle:PD.dock.title('thread:po'), sameStack:!!tb&&!!pb&&tp===body,
+      threadTitle:PD.thrIn?.title||null, barThread:document.getElementById('thr-switch-name')?.textContent||'',
       inFrame:!!d && !d.getElementById('thr-side').hidden, layer:!!d?.getElementById('thr-side').classList.contains('layer'),
       kept:loc};
   })()`;
@@ -78,26 +84,28 @@ async function main() {
     await sleep(500);
     for (const w of [1440, 1728, 2000]) { await size(w,1117); await sleep(400); out['none'+w]=await ev(measure); }
     await size(1728,1117); await sleep(300);
-    // A thread opened from its reply line (a click): a panel of its own.
+    // A thread opened from its reply line (a click): in place, over the chat.
     await ev(`${PO}.contentDocument.querySelector('#msgs .thr-open[data-thr]').click(); 0`);
-    await until(`!!${THR}?.contentDocument?.querySelector('#msgs .msg[data-mid]')`, 'thread panel');
+    await until(`!!${THR}?.contentDocument?.querySelector('#msgs .msg[data-mid]')`, 'thread in place');
     await sleep(500); out.open1728=await ev(measure);
+    await ev(`window.__thrEl = PD.thrIn.el; 0`);
     for (const w of [1440, 2000]) { await size(w,1117); await sleep(400); out['open'+w]=await ev(measure); }
     await size(1728,1117); await sleep(300);
-    // Another thread: the same panel.
+    // Another thread: the same place, the same element.
     const tids=await ev(`[...${PO}.contentDocument.querySelectorAll('#msgs .thr-open[data-thr]')].map(b=>b.dataset.thr)`);
     const t2=tids[tids.length-1];
     if (t2 === tids[0]) throw Error('one thread only: ' + JSON.stringify(tids));
     await ev(`${PO}.contentDocument.querySelector('#msgs .thr-open[data-thr="${t2}"]').click(); 0`);
     await until(`(${THR}?.getAttribute('src')||'').includes(encodeURIComponent(${JSON.stringify(t2)})) && !!${THR}?.contentDocument?.querySelector('#msgs .msg[data-mid]')`, 'second thread');
     await sleep(500); out.second=await ev(measure);
-    // A reload brings it back, where it was.
+    out.second.sameEl = await ev(`PD.thrIn?.el === window.__thrEl`);
+    // A reload brings it back, in place.
     await ev('window.__before = 1; 0');
     await send('Page.reload',{},s);
     await until(`!window.__before && !!PD.dock && !!${THR}?.contentDocument?.querySelector('#msgs .msg[data-mid]')`, 'thread after reload');
     await sleep(600); out.reload=await ev(measure);
-    // Closed (Dock's ⋯ › Close is removePanel): the width goes back to the chat.
-    await ev(`PD.dock.removePanel('thread:po'); 0`);
+    // Closed (the thread's Back, thread ▾ › Main): the chat is shown again.
+    await ev(`pdThreadInClose(false); 0`);
     await sleep(500); out.closed=await ev(measure);
     await ev('window.__before = 1; 0');
     await send('Page.reload',{},s);
@@ -112,33 +120,40 @@ async function main() {
       return {panel:w(p), frame:w(f), list:w(d.querySelector('#msgs')), box:w(d.querySelector('#compose')), top:w(p.querySelector('.dp-top')), tabs:w(p.querySelector(':scope > .dp-tabs'))}; })()`);
     await ev('closeDetail(); 0'); await sleep(400);
     const PANELS = `PD.dock.panels().map(p=>p.id).filter(id=>/^thread:/.test(id))`;
+    const IN = `({threadPanels:${PANELS}, inPlace:!!PD.thrIn&&pdThreadInShown(), tid:PD.thrIn?.tid||''})`;
     const LOADED = `!!${THR}?.contentDocument?.querySelector('#msgs .msg[data-mid]')`;
     const known = new Set([targetId]);
     const newTarget = async what => { for(let i=0;i<40;i++) { const t=await send('Target.getTargets'); const n=t.targetInfos.find(x=>x.type==='page'&&!known.has(x.targetId)&&x.url.startsWith(A.base)); if(n){ known.add(n.targetId); return n.targetId; } await sleep(100); } throw Error('no window: '+what); };
-    // A thread open, then another PO shown: its panel goes; that PO again, it comes back.
+    // A thread open, then another PO shown: its thread goes; that PO again, it comes back.
     await ev(`${PO}.contentDocument.querySelector('#msgs .thr-open[data-thr]').click(); 0`);
     await until(LOADED, 'thread before the switch');
     const src0 = (await ev(`${THR}.getAttribute('src')`)).split('&msg=')[0];
     await ev(`SELECTED_PROJECT=${JSON.stringify(A.proj2)}; PROJECT_TAB='tasks'; renderRows(); 0`);
     await until(`${PO}?.dataset.room===${JSON.stringify(A.po2)}`, 'the other PO');
     await sleep(800);
-    out.otherPo = await ev(`({threadPanels:${PANELS}})`);
+    out.otherPo = await ev(IN);
     await ev(`SELECTED_PROJECT=${JSON.stringify(A.proj)}; PROJECT_TAB='tasks'; renderRows(); 0`);
-    await until(`${PO}?.dataset.room===${JSON.stringify(A.po)} && ${LOADED}`, 'the thread back with its PO');
-    out.backPo = await ev(`({threadPanels:${PANELS}, src:${THR}.getAttribute('src').split('&msg=')[0]})`);
+    await until(`${PO}?.dataset.room===${JSON.stringify(A.po)} && ${LOADED} && pdThreadInShown()`, 'the thread back with its PO');
+    out.backPo = await ev(`({...${IN}, src:${THR}.getAttribute('src').split('&msg=')[0]})`);
     out.backPo.same = out.backPo.src === src0;
-    // The thread panel in a window of its own, and back.
-    await ev(`PD.dock.setViewMode('thread:po','window'); 0`);
-    await until(`!!PD.dock.popWindow('thread:po')`, 'thread window');
+    // A thread as a tab of its own (a Ctrl/⌘-click), in a window of its own, and back.
+    const tabId = await ev(`(() => { pdThreadTab({room:${JSON.stringify(A.po)}, tid:${JSON.stringify(t2)}, mid:'', title:'Second'}); return pdThreadTabId(${JSON.stringify(A.po)}, ${JSON.stringify(t2)}, ''); })()`);
+    const TAB = `PD.rt.get(${JSON.stringify(tabId)})?.el.querySelector('iframe')`;
+    await until(`!!${TAB}?.contentDocument?.querySelector('#msgs .msg[data-mid]')`, 'thread tab');
+    out.threadTab = await ev(`({...${IN}, id:${JSON.stringify(tabId)}})`);
+    await ev(`PD.dock.setViewMode(${JSON.stringify(tabId)},'window'); 0`);
+    await until(`!!PD.dock.popWindow(${JSON.stringify(tabId)})`, 'thread window');
     const tw = await newTarget('thread');
     const {sessionId:tws}=await send('Target.attachToTarget',{targetId:tw,flatten:true});
     await untilIn(tws, `!!document.querySelector('iframe.po-thread')?.contentDocument?.querySelector('#msgs .msg[data-mid]')`, 'thread in its window');
     out.threadWindow = await evIn(tws, `({loaded:true, title:document.title})`);
-    await ev(`PD.dock.setViewMode('thread:po','pinned'); 0`);
-    await until(`!PD.dock.popWindow('thread:po') && ${LOADED}`, 'thread docked back');
-    out.threadDocked = await ev(`({threadPanels:${PANELS}})`);
+    await ev(`PD.dock.setViewMode(${JSON.stringify(tabId)},'pinned'); 0`);
+    await until(`!PD.dock.popWindow(${JSON.stringify(tabId)}) && !!${TAB}?.contentDocument?.querySelector('#msgs .msg[data-mid]')`, 'thread tab docked back');
+    out.threadDocked = await ev(IN);
+    await ev(`PD.dock.removePanel(${JSON.stringify(tabId)}); PD.dock.activate('po-chat'); 0`);
+    await sleep(400);
     // A popped-out PO chat window: its thread opens in that window's chat, and
-    // the panel goes (one thread on screen); docked back, the panel returns.
+    // the one in place goes (one thread on screen); docked back, it returns.
     await ev(`PD.dock.setViewMode('po-chat','window'); 0`);
     await until(`!!PD.dock.popWindow('po-chat')`, 'pop-out');
     const popId = await newTarget('chat');
@@ -151,12 +166,12 @@ async function main() {
     await sleep(400);
     out.popped=await evIn(ps, `(() => { const d=${OWN}.contentDocument, side=d.getElementById('thr-side'), f=${OWN};
       return {inFrame:!side.hidden, side:side.getBoundingClientRect().width, chat:f.getBoundingClientRect().width, layer:side.classList.contains('layer')}; })()`);
-    out.poppedMain=await ev(`({threadPanels:${PANELS}})`);
+    out.poppedMain=await ev(`({...${IN}, thrIn:!!PD.thrIn})`);
     await ev(`PD.dock.setViewMode('po-chat','pinned'); 0`);
-    await until(`!PD.dock.popWindow('po-chat') && ${LOADED}`, 'panel back after the chat docks');
-    out.afterPopIn=await ev(`({threadPanels:${PANELS}, inFrame:!${PO}.contentDocument.getElementById('thr-side').hidden})`);
+    await until(`!PD.dock.popWindow('po-chat') && ${LOADED} && pdThreadInShown()`, 'thread back in place after the chat docks');
+    out.afterPopIn=await ev(`({...${IN}, inFrame:!${PO}.contentDocument.getElementById('thr-side').hidden})`);
     await sleep(600);
-    // A phone: the thread over the chat, with Back (#234), not a panel.
+    // A phone: the thread over the chat, with Back (#234), not in place in the dashboard.
     await size(390,844,true); await send('Emulation.setTouchEmulationEnabled',{enabled:true,maxTouchPoints:5},s);
     await until(`PD.dock.narrow() && !!${PO}?.contentDocument?.querySelector('#msgs .thr-open[data-thr]')`, 'phone chat');
     await sleep(600);
@@ -165,7 +180,7 @@ async function main() {
     await sleep(400);
     out.phone=await ev(`(() => { const d=${PO}.contentDocument, side=d.getElementById('thr-side'), r=side.getBoundingClientRect();
       return {inFrame:!side.hidden, layer:side.classList.contains('layer'), w:r.width, back:getComputedStyle(d.getElementById('ts-back')).display !== 'none',
-        threadPanels:PD.dock.panels().map(p=>p.id).filter(id=>/^thread:/.test(id))}; })()`);
+        threadPanels:PD.dock.panels().map(p=>p.id).filter(id=>/^thread:/.test(id)), inPlace:!!PD.thrIn&&pdThreadInShown()}; })()`);
     console.log(JSON.stringify(out));
   } finally { await send('Browser.close').catch(()=>{}); ch.kill(); }
 }
@@ -249,7 +264,7 @@ class ThreadPanel(unittest.TestCase):
         assert out.returncode == 0, out.stderr[-4000:]
         cls.got = json.loads(out.stdout.strip().splitlines()[-1])
         print('\nthread panel CDP: ' + json.dumps({k: {x: (round(y, 3) if isinstance(y, float) else y) for x, y in v.items()
-                                                       if not isinstance(y, dict) or x == 'thread'} for k, v in cls.got.items()}, indent=1))
+                                                       if not isinstance(y, dict) or x in ('thread', 'cover')} for k, v in cls.got.items()}, indent=1))
 
     @classmethod
     def tearDownClass(cls):
@@ -263,39 +278,42 @@ class ThreadPanel(unittest.TestCase):
                 for k in ('chatShare', 'listShare', 'boxShare', 'headShare'):
                     self.assertGreaterEqual(g[k], .9, (k, g))
 
-    def test_thread_is_a_panel_beside_the_chat(self):
+    def test_thread_shows_in_place_over_the_chat(self):
+        # #393: no panel beside the chat; the thread covers the PO chat's panel.
         for name in ('open1440', 'open1728', 'open2000', 'second', 'reload'):
             g = self.got[name]
             with self.subTest(name=name):
-                self.assertEqual(g['threadPanels'], ['thread:po'], g)
-                self.assertFalse(g['sameStack'], g)
+                self.assertEqual(g['threadPanels'], [], g)
+                self.assertTrue(g['inPlace'] and g['inChat'], g)
                 self.assertFalse(g['inFrame'], 'the chat shows no thread of its own')
+                self.assertEqual(g['onTop'], 'thread', g)
+                for k, v in g['cover'].items():
+                    self.assertLessEqual(v, 2, (k, g))
                 self.assertGreaterEqual(g['chatShare'], .9, g)
-                self.assertGreaterEqual(g['listShare'], .9, g)
-        g = self.got['open1728']
-        self.assertGreaterEqual(g['convShare'], .55, g)
-        self.assertGreaterEqual(g['thread']['w'], 400, g)
-        self.assertLessEqual(g['thread']['w'], 480, g)
 
-    def test_another_thread_reuses_the_panel_and_names_it(self):
+    def test_another_thread_reuses_the_place_and_names_it(self):
         g, first = self.got['second'], self.got['open1728']
         self.assertNotEqual(g['threadSrc'], first['threadSrc'])
-        self.assertEqual(g['threadPanels'], ['thread:po'])
+        self.assertTrue(g['sameEl'], 'the same element in place, its page moved')
         self.assertTrue(first['threadTitle'] and first['threadTitle'] != 'Thread', first)
+        self.assertEqual(first['barThread'], first['threadTitle'], "thread ▾ names it")
+        self.assertEqual(g['barThread'], g['threadTitle'])
 
-    def test_reload_keeps_it_where_it_was(self):
+    def test_reload_keeps_it_in_place(self):
         g, before = self.got['reload'], self.got['second']
         self.assertEqual(g['threadSrc'].split('&msg=')[0], before['threadSrc'].split('&msg=')[0])
-        self.assertLessEqual(abs(g['thread']['w'] - before['thread']['w']), 2, (g, before))
+        self.assertTrue(g['inPlace'], g)
 
-    def test_closing_gives_the_width_back(self):
+    def test_closing_shows_the_chat_again(self):
         for name in ('closed', 'closedReload'):
             g = self.got[name]
             with self.subTest(name=name):
                 self.assertEqual(g['threadPanels'], [], g)
+                self.assertFalse(g['inPlace'] or g['inChat'], g)
                 self.assertFalse(g['inFrame'], g)
                 self.assertIsNone(g['kept'], g)
-        self.assertGreater(self.got['closed']['panel']['w'], self.got['reload']['panel']['w'] + 300)
+                self.assertEqual(g['onTop'], 'chat', g)
+                self.assertEqual(g['barThread'], 'Main', g)
 
     def test_task_chat_fills_the_middle(self):
         g = self.got['task']
@@ -304,27 +322,35 @@ class ThreadPanel(unittest.TestCase):
 
     def test_popped_out_chat_keeps_its_thread_inside(self):
         self.assertTrue(self.got['popped']['inFrame'], self.got['popped'])
-        self.assertEqual(self.got['poppedMain']['threadPanels'], [])
+        g = self.got['poppedMain']
+        self.assertEqual((g['threadPanels'], g['inPlace'], g['thrIn']), ([], False, False), g)
 
-    def test_another_po_takes_the_panel_and_gives_it_back(self):
-        self.assertEqual(self.got['otherPo']['threadPanels'], [], self.got['otherPo'])
+    def test_another_po_takes_the_thread_away_and_gives_it_back(self):
+        g = self.got['otherPo']
+        self.assertEqual((g['threadPanels'], g['inPlace']), ([], False), g)
         g = self.got['backPo']
-        self.assertEqual(g['threadPanels'], ['thread:po'], g)
+        self.assertEqual(g['threadPanels'], [], g)
+        self.assertTrue(g['inPlace'], g)
         self.assertTrue(g['same'], g)
 
-    def test_thread_panel_pops_out_and_back(self):
+    def test_thread_tab_pops_out_and_back(self):
+        tab = self.got['threadTab']
+        self.assertEqual(tab['threadPanels'], [tab['id']], tab)
+        self.assertTrue(tab['id'].startswith('thread:' + self.po + ':'), tab)
         self.assertTrue(self.got['threadWindow']['loaded'], self.got['threadWindow'])
-        self.assertEqual(self.got['threadDocked']['threadPanels'], ['thread:po'])
+        self.assertEqual(self.got['threadDocked']['threadPanels'], [tab['id']])
 
     def test_popped_chat_takes_the_thread_and_gives_it_back(self):
         g = self.got['afterPopIn']
-        self.assertEqual(g['threadPanels'], ['thread:po'], g)
+        self.assertEqual(g['threadPanels'], [], g)
+        self.assertTrue(g['inPlace'], g)
         self.assertFalse(g['inFrame'], g)
 
     def test_phone_keeps_the_thread_over_the_chat(self):
         g = self.got['phone']
         self.assertTrue(g['inFrame'] and g['layer'] and g['back'], g)
         self.assertEqual(g['threadPanels'], [], g)
+        self.assertFalse(g['inPlace'], g)
 
 
 if __name__ == '__main__':

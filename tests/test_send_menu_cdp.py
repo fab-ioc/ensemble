@@ -2,7 +2,8 @@
 
 The workspace's Send box is a frame as tall as the box (#271), so a menu
 opening upward from it was cut at the frame's top edge. Over CDP, at
-1728x1117 and 1440x900 (the workspace box, PO chat and a thread above it),
+1728x1117 and 1440x900 (the workspace box, the PO chat and a thread shown in
+place over it above),
 in a task chat's own window and at a phone's 390x844, each menu - the box's
 + menu, Send's ▾ menu, Stop's choice of agent and the / command list - is
 opened with a real click (the list by its own drawing code), and measured:
@@ -60,14 +61,18 @@ async function main() {
     if(r.exceptionDetails) throw Error(expression.slice(0,120)+' '+JSON.stringify(r.exceptionDetails)); return r.result.value; };
   const until=async (expression,label) => { for(let i=0;i<120;i++){try{if(await ev(expression))return;}catch(e){} await sleep(150);} throw Error('timeout '+label); };
   const PO = `PD.els['po-chat'].querySelector('iframe.po-session:not([hidden])')`;
-  const THR = `PD.rt.get('thread:po')?.el.querySelector('iframe')`;
+  // The thread shown in place over the PO chat (#393).
+  const THR = `PD.thrIn?.el.querySelector('iframe')`;
   // The frame holding the box in the workspace (null in a chat's own window),
   // its page, and that page's window: where a menu's own code runs.
   const BOX = `(() => { const f = document.getElementById('workspace-compose-frame');
     const ws = !!f && !document.getElementById('workspace-compose').hidden;
     return ws ? {f, d:f.contentDocument, w:f.contentWindow} : {f:null, d:document, w:window}; })()`;
-  // Where the chats above are: each one's place on the page and its scroll.
-  const CHATS = `(() => { const {f} = ${BOX}; const list = f ? [${PO}, ${THR}] : [];
+  // Where the chats above are: each one's place on the page and its scroll
+  // (the ones on screen: the PO chat is under the thread shown in place).
+  const CHATS = `(() => { const {f} = ${BOX}; const seen = fr => { if (!fr) return false; const r = fr.getBoundingClientRect();
+      return document.elementFromPoint(r.left + r.width / 2, r.top + Math.min(r.height / 2, 200)) === fr; };
+    const list = f ? [${PO}, ${THR}].filter(seen) : [];
     return list.map(fr => { const r = fr.getBoundingClientRect(), m = fr.contentDocument.getElementById('msgs');
       return [Math.round(r.top), Math.round(r.height), m ? Math.round(m.scrollTop) : null]; }); })()`;
   const STATE = `(() => { const {f} = ${BOX}; return {frame: f ? Math.round(f.getBoundingClientRect().height * 10) / 10 : null,
@@ -163,7 +168,7 @@ async function main() {
       await ev(`localStorage.removeItem('cd-compose-h'); SELECTED_PROJECT=${JSON.stringify(A.proj)}; PROJECT_TAB='tasks'; renderRows(); 0`);
       await until(`!!${PO}?.contentDocument?.querySelector('#msgs .thr-open[data-thr]')`,'PO chat');
       await ev(`${PO}.contentDocument.querySelector('#msgs .thr-open[data-thr]').click(); 0`);
-      await until(`!!${THR}?.contentDocument?.querySelector('#thread-reply')`,'thread panel');
+      await until(`!!${THR}?.contentDocument?.querySelector('#thread-reply')`,'thread in place');
       await until(`${BOX}.f?.contentDocument?.getElementById('compose-size') && typeof ${BOX}.w.slDraw === 'function'`,'workspace box');
       await sleep(900);
       out['workspace' + w] = await menus('workspace ' + w, false);

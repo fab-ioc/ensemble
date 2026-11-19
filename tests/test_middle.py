@@ -11,10 +11,12 @@ a project that has a PO (Motors) and a task in it, and one that has none
 * at 1280, 1440 and 1728 the PO's conversation and a task's open full height
   in the middle, their text in a centred column no wider than --conv-w, with
   no page scroll;
-* the breadcrumb goes up level by level: the task's tool closes and the
-  conversation stays, a PO screen's tool goes back to the PO chat, the project
-  goes to its PO's conversation and closes the task, a project without a PO
-  goes back to its board;
+* on a computer with the PO's dock the bar's trail is the project alone
+  (#393: the tabs are in the bar, a task, a tool and a file are named on their
+  tabs): the task's tool closes by its strip button and the conversation stays,
+  a PO screen's tool goes back to the PO chat by the project's tab in the bar
+  (#bar-grp), the project goes to its PO's conversation and closes the task; a
+  project without a PO keeps its trail and goes back to its board;
 * the PO's row in the list over an open task gives the middle back to the PO;
 * #needs lands on the list's Needs you, focused (#135);
 * the page reloaded for an update comes back on the same task and tab;
@@ -160,6 +162,8 @@ const MID = `(() => {
     convW: parseFloat(getComputedStyle(document.body).getPropertyValue('--conv-w')),
     project: vis(document.getElementById('proj-switch')) ? document.getElementById('proj-switch-name').textContent : null,
     trail: [...document.querySelectorAll('#bar-crumbs [data-crumb]')].filter(vis).map(e => [e.dataset.crumb, e.textContent, e.tagName === 'BUTTON']),
+    barTabs: document.body.classList.contains('bar-tabs'),
+    tabs: [...document.querySelectorAll('.dk-head.bt-head .dk-tab')].filter(vis).map(e => e.textContent.trim()),
     crumbsShown: vis(document.getElementById('bar-crumbs')) || vis(document.getElementById('proj-switch')),
     header: Math.round(hd.height), scrollW: document.documentElement.scrollWidth, scrollH: document.documentElement.scrollHeight,
     itab: SELECTED_SID ? ISSUE_TAB : '', front: PD.dock ? PD.dock.frontOf('po-chat') : '', proj: SELECTED_PROJECT, ptab: PROJECT_TAB,
@@ -201,6 +205,13 @@ async function main() {
     await sleep(400);
   };
   const click = (p, sel) => p.evalIn(`(() => { const e = document.querySelector(${JSON.stringify(sel)}); if (!e) throw new Error('no ' + ${JSON.stringify(sel)}); e.click(); return 0; })()`);
+  // A real press and release (#393: the project's tab in the bar, #bar-grp).
+  const press = async (p, sel) => {
+    const q = await p.evalIn(`(() => { const e = document.querySelector(${JSON.stringify(sel)}); if (!e) throw new Error('no ' + ${JSON.stringify(sel)});
+      const r = e.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`);
+    for (const type of ['mouseMoved', 'mousePressed', 'mouseReleased'])
+      await c.send('Input.dispatchMouseEvent', { type, x: q.x, y: q.y, button: 'left', buttons: type === 'mousePressed' ? 1 : 0, clickCount: type === 'mouseMoved' ? 0 : 1 }, p.sessionId);
+  };
   // Up to the project: its name opens the switcher, where it is the marked one (#303).
   const projUp = async (p) => { await click(p, '#proj-switch'); await click(p, '#proj-menu .pm-any.on'); };
   try {
@@ -213,12 +224,13 @@ async function main() {
       out['task' + w] = await p.evalIn(MID);
       await p.shot(`middle-${w}-task`);
       if (w !== 1440) { await p.close(); continue; }
-      // A task's tool, and the task's crumb that closes it.
+      // A task's tool, and its strip button again that closes it (#393: no
+      // task crumb on a computer; the task is named on its tab in the bar).
       await click(p, '#po-dock .dk-strip-btn[data-dk-auto="changes"]');
       await sleep(300);
       out.taskTool = await p.evalIn(MID);
       await p.shot('middle-1440-task-changes');
-      await click(p, '#bar-crumbs button[data-crumb="task"]');
+      await click(p, '#po-dock .dk-strip-btn[data-dk-auto="changes"]');
       await sleep(300);
       out.taskUp = await p.evalIn(MID);
       // The page reloaded for an update comes back on the task and its tab.
@@ -234,12 +246,13 @@ async function main() {
       await projUp(p);
       await poReady(p); await sleep(400);
       out.projectUp = await p.evalIn(MID);
-      // A PO screen's tool, and the PO's tab that goes back to the chat (#386: no PO crumb).
+      // A PO screen's tool, and the project's tab in the bar that goes back to
+      // the chat (#386: no PO crumb; #393: no PO tab, the bar's #bar-grp is it).
       await p.evalIn("pdReveal('board'); 0");
       await sleep(400);
       out.poTool = await p.evalIn(MID);
       await p.shot('middle-1440-po-board');
-      await click(p, '#po-dock .dk-tab[data-dk-tab="po-chat"]');
+      await press(p, '#bar-grp .bar-thr-sep');
       await sleep(400);
       out.poUp = await p.evalIn(MID);
       // The PO's row in the list over an open task: the PO's conversation takes the middle.
@@ -257,7 +270,8 @@ async function main() {
       out.plainUp = await p.evalIn(MID);
       // Every theme: the crumbs keep their contrast (colours read from the page).
       out.themes = {};
-      // (A task's tool: task › tool, a button and the text; #386: a PO screen has no PO crumb.)
+      // (#393: on a computer the bar holds project ▾ / thread ▾ and the tabs,
+      // drawn over the bar: a task's tab in front and the project's behind.)
       await go(p, A.proj); await poReady(p);
       await openTask(p);
       await click(p, '#po-dock .dk-strip-btn[data-dk-auto="changes"]'); await sleep(300);
@@ -265,7 +279,7 @@ async function main() {
         await p.evalIn(`document.documentElement.dataset.theme = ${JSON.stringify(t)}; 0`);
         await sleep(120);
         out.themes[t] = await p.evalIn(`(() => { const hd = getComputedStyle(document.querySelector('header')).backgroundColor;
-          return ['#proj-switch', '#bar-crumbs .bar-crumb', '#bar-crumbs .crumb-here', '#bar-crumbs .crumb-sep'].map(s => [s, getComputedStyle(document.querySelector(s)).color, hd]); })()`);
+          return ['#proj-switch', '#thr-switch', '.bar-thr-sep', '.dk-head.bt-head .dk-tab.on'].map(s => [s, document.querySelector(s) ? getComputedStyle(document.querySelector(s)).color : 'missing', hd]); })()`);
       }
       await p.evalIn('document.documentElement.dataset.theme = "light"; 0');
       // Going somewhere else with a task open: the task gives way (R1-F1).
@@ -333,7 +347,12 @@ async function main() {
         }
       };
       await wsUp('plainWs', async () => { await go(p, A.plain, 'workspace'); }, 'project');
-      await wsUp('taskWs', async () => { await go(p, A.proj); await poReady(p); await openTask(p); await click(p, '#po-dock .dk-strip-btn[data-dk-auto="workspace"]'); }, 'task');
+      // A task's file on a computer (#393): no trail; it is a tab in the bar.
+      await go(p, A.proj); await poReady(p); await openTask(p); await click(p, '#po-dock .dk-strip-btn[data-dk-auto="workspace"]');
+      await p.until(`!!document.querySelector('.pd-ws > .dp-pane .wsp .wsp-tree .wse.file[data-path$="README.md"]')`);
+      await click(p, '.pd-ws > .dp-pane .wsp .wsp-tree .wse.file[data-path$="README.md"]');
+      await sleep(500);
+      out.taskWsFile = await p.evalIn(MID);
       await p.close();
     }
     // ---- a desktop opens on the last conversation (#135): the task the page
@@ -577,19 +596,19 @@ class TheMiddle(unittest.TestCase):
         self.assertEqual(po["project"], "Motors")
         self.assertEqual(po["trail"], [], "#386 (P372): no PO crumb")
         self.assertEqual(task["project"], "Motors")
-        self.assertEqual(len(task["trail"]), 1)
-        level, text, button = task["trail"][0]
-        self.assertEqual((level, button), ("task", False))
-        self.assertIn("Brakes", text)
-        self.assertEqual(self.got["taskTool"]["trail"][-1], ["tool", "Changes", False])
-        self.assertTrue(self.got["taskTool"]["trail"][0][2], "the task goes up")
+        # #393: a computer's trail is the project alone; the task is named on its tab in the bar.
+        self.assertTrue(po["barTabs"] and task["barTabs"], (po, task))
+        self.assertEqual(task["trail"], [])
+        self.assertTrue(any("Brakes" in t for t in task["tabs"]), task["tabs"])
+        self.assertEqual(self.got["taskTool"]["trail"], [])
+        self.assertEqual(self.got["taskTool"]["fly"], "changes")
 
-    def test_the_task_crumb_closes_the_tool_and_keeps_the_conversation(self):
+    def test_the_tools_button_again_closes_it_and_keeps_the_conversation(self):
         self.assertEqual(self.got["taskTool"]["fly"], "changes")
         g = self.got["taskUp"]
         self.assertTrue(g["open"])
         self.assertIsNone(g["fly"], "the tool went back to the strip")
-        self.assertEqual([t[0] for t in g["trail"]], ["task"])
+        self.assertEqual(g["trail"], [])
 
     def test_the_project_crumb_goes_to_its_pos_conversation(self):
         g = self.got["projectUp"]
@@ -599,7 +618,7 @@ class TheMiddle(unittest.TestCase):
 
     def test_a_po_tool_goes_back_to_the_po_chat(self):
         self.assertEqual(self.got["poTool"]["fly"], "board")
-        self.assertEqual(self.got["poTool"]["trail"], [["tool", "Board", False]])
+        self.assertEqual(self.got["poTool"]["trail"], [], "#393: no trail on a computer")
         self.assertIsNone(self.got["poUp"]["fly"])
         self.assertEqual(self.got["poUp"]["front"], "po-chat")
         self.assertEqual(self.got["poUp"]["trail"], [])
@@ -640,7 +659,8 @@ class TheMiddle(unittest.TestCase):
         for theme, rows in self.got["themes"].items():
             for sel, fg, bg in rows:
                 with self.subTest(theme=theme, sel=sel):
-                    need = 3.0 if sel.endswith("crumb-sep") else 4.5
+                    self.assertNotEqual(fg, "missing", sel)
+                    need = 3.0 if sel.endswith("-sep") else 4.5
                     self.assertGreaterEqual(contrast(fg, bg), need, f"{fg} on {bg}")
 
     def test_going_elsewhere_with_a_task_open_closes_it(self):
@@ -662,8 +682,16 @@ class TheMiddle(unittest.TestCase):
                 self.assertEqual((g["proj"], g["front"]), (self.proj, "po-chat"))
                 self.full_height(g, key)
 
+    def test_a_tasks_file_has_no_trail_on_a_computer(self):
+        # #393: on a computer the bar names no task, tool or file: the task is its tab, the tool its strip button.
+        f = self.got["taskWsFile"]
+        self.assertEqual(f["trail"], [])
+        self.assertEqual(f["fly"], "workspace")
+        self.assertTrue(any("Brakes" in t for t in f["tabs"]), f["tabs"])
+
     def test_a_workspace_tool_crumb_goes_back_to_the_tree(self):
-        for key in ("plainWs", "taskWs"):
+        # A project without a PO keeps its trail on a computer.
+        for key in ("plainWs",):
             f = self.got[key + "File"]
             with self.subTest(key=key):
                 self.assertEqual(f["trail"][-1][0], "file", "the file is a crumb")
@@ -674,13 +702,8 @@ class TheMiddle(unittest.TestCase):
                     self.assertTrue(g["before"]["hidden"], "the search hid the tree")
                     self.assertIn("file", g["before"]["trail"])
                     self.assertEqual((g["pane"], g["q"], g["recent"], g["treeHidden"]), ("tree", "", False, False))
-                    # A task's file is a panel of the dock (#150), still on screen with
-                    # the tree out: it stays the crumb. A plain project's is a tab of the
-                    # pane, so the tree takes its place.
-                    if key == "taskWs":
-                        self.assertEqual(g["trail"][-1][0], "file", "the file panel is where the person is")
-                    else:
-                        self.assertNotIn("file", [t[0] for t in g["trail"]])
+                    # A plain project's file is a tab of the pane, so the tree takes its place.
+                    self.assertNotIn("file", [t[0] for t in g["trail"]])
                     self.assertTrue(g["shown"], "the file is shown in the tree")
                     self.assertTrue(g["mark"].endswith("README.md"), g["mark"])
 

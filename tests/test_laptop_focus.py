@@ -9,6 +9,12 @@ class LaptopFocus(focus.PhoneFocus):
               .replace('const height = 844;', 'const height = ({768:800,1280:800,1440:900,1728:1117})[width];')
               .replace('if(!baseline && width<768)', 'if(!baseline)')
               .replace('length:6', 'length:20')
+              # #393: on a computer the PO's own tab is not drawn: the bar's project
+              # group (#bar-grp) is it, underlined while the conversation is in front.
+              .replace("const selected=tab && getComputedStyle(tab).boxShadow!=='none';",
+                       "const grp=document.body.classList.contains('bar-tabs')?document.getElementById('bar-grp'):null;"
+                       " const on=tab||(grp&&grp.classList.contains('on')?grp:null);"
+                       " const selected=!!on && getComputedStyle(on).boxShadow!=='none';")
               .replace("id:'focus-ask',from:", "id:'focus-ask',answers:['P1'],from:")
               .replace("const highlighted=marked.classList", "if(!marked)throw Error('missing fixture '+location.href+' '+w.location.href+' '+w.eval('JSON.stringify(LAST_ITEMS)')); const highlighted=marked.classList")
               .replace("d.querySelector('.copy-link').focus()", "d.getElementById('input').focus()")
