@@ -215,6 +215,15 @@ async function main() {
       await p.shot(`chat-log-on-po-rows-${theme}`);
       await p.ev(`document.querySelectorAll('#msgs [data-fixture]').forEach(e => e.remove()); 0`);
     }
+    // In the thread page, "Also in ..." is rendered after its own balloon.
+    // Use the page's real marker builder and that placement, then measure both sides.
+    await send('Page.navigate', {url: A.base + '/session?room=' + A.po + '&thread=P1'}, p.s);
+    await p.until(`THREAD_MODE && CHAT_DRAWN && document.querySelectorAll('#msgs > .msg').length >= 2`, 'P1 thread');
+    out.threadAfter = await p.ev(`(() => {
+      const m = document.querySelector('#msgs > .msg');
+      m.insertAdjacentHTML('afterend', threadMarkHtml({id:'also-fixture', from:'user', alsoIn:['P2']}));
+      return ${VIEW};
+    })()`);
     await p.ev(`localStorage.setItem('cd-theme', 'light'); cdTheme.apply(); 0`);
     // A fresh browser cache: the hub's choice still draws the log.
     await p.ev(`localStorage.removeItem('cd-chat-log'); 0`);
@@ -247,6 +256,29 @@ async function main() {
       pressed: await dash.ev(`[...document.querySelectorAll('#pref-chat-log button')].map(b => [b.dataset.val, b.getAttribute('aria-pressed')])`),
       hub: await dash.ev(`window.__api('/api/settings').then(j => j.chatLog)`)};
     await dash.ev(`api = window.__api; 0`);
+    // On persists, then the queued Off fails: the browser must recover On.
+    await dash.ev(`window.__api = api; api = (u, o) => {
+      if (u === '/api/settings' && o && o.method === 'PUT') {
+        const v = JSON.parse(o.body).chatLog;
+        if (v === 'on') { const n = SETPREF_N.chatLog;
+          return new Promise(r => { window.__releaseOn = () => { window.__onWasQueued = SETPREF_N.chatLog > n; r(window.__api(u, o)); }; }); }
+        if (v === 'off') return Promise.reject(new Error('offline'));
+      }
+      return window.__api(u, o);
+    }; 0`);
+    await dash.click(`document.querySelector('#pref-chat-log button[data-val="on"]')`);
+    await dash.click(`document.querySelector('#pref-chat-log button[data-val="off"]')`);
+    await dash.ev(`window.__releaseOn(); 0`);
+    await dash.until(`window.__api('/api/settings').then(j => j.chatLog === 'on')`, 'queued On saved');
+    await sleep(700);
+    out.queuedFailed = {queued: await dash.ev(`window.__onWasQueued === true`),
+      chat: await p.ev(`document.documentElement.dataset.chatLog`),
+      local: await dash.ev(`localStorage.getItem('cd-chat-log')`),
+      pressed: await dash.ev(`[...document.querySelectorAll('#pref-chat-log button')].map(b => [b.dataset.val, b.getAttribute('aria-pressed')])`),
+      hub: await dash.ev(`window.__api('/api/settings').then(j => j.chatLog)`)};
+    await dash.ev(`api = window.__api; 0`);
+    await dash.click(`document.querySelector('#pref-chat-log button[data-val="off"]')`);
+    await dash.until(`fetch('/api/settings').then(r => r.json()).then(j => j.chatLog === 'off')`, 'reset off');
     console.log(JSON.stringify(out));
   } finally { c.close(); ch.kill(); }
 }
@@ -386,7 +418,7 @@ class ChatLogInChrome(unittest.TestCase):
                 for a, b in zip(items, items[1:]):
                     gap = b['rect']['t'] - a['rect']['b']
                     # A thread's line is part of its balloon: under the one above, over the one below.
-                    if 'thr-line' in b['cls'].split() or 'thr-in' in a['cls'].split():
+                    if 'thr-line' in b['cls'].split() or ('thr-in' in a['cls'].split() and 'after' not in a['cls'].split()) or 'after' in b['cls'].split():
                         self.assertIsNone(b['line'], (a['cls'], b['cls']))
                         self.assertAlmostEqual(gap, 2, delta=0.6, msg=(a['cls'], b['cls'], gap))
                         continue
@@ -455,6 +487,23 @@ class ChatLogInChrome(unittest.TestCase):
 
     def test_a_failed_save_puts_the_chats_back(self):
         self.assertEqual(self.got['failed'], {'chat': 'off', 'local': 'off', 'pressed': [['off', 'true'], ['on', 'false']], 'hub': 'off'})
+
+    def test_a_queued_failed_save_keeps_the_last_success(self):
+        self.assertEqual(self.got['queuedFailed'], {'queued': True, 'chat': 'on', 'local': 'on', 'pressed': [['off', 'false'], ['on', 'true']], 'hub': 'on'})
+
+    def test_thread_mode_also_in_belongs_to_its_own_balloon(self):
+        items = self.got['threadAfter']['items']
+        n = next(i for i, item in enumerate(items) if 'after' in item['cls'].split())
+        self.assertGreater(n, 0)
+        self.assertLess(n + 1, len(items))
+        before, mark, after = items[n - 1:n + 2]
+        self.assertIn('msg', before['cls'].split())
+        self.assertIn('msg', after['cls'].split())
+        self.assertIn('Also in P2', mark['text'])
+        self.assertIsNone(mark['line'])
+        self.assertAlmostEqual(mark['rect']['t'] - before['rect']['b'], 2, delta=.6)
+        self.assertEqual((after['line']['h'], after['line']['top']), ('1px', '-11px'))
+        self.assertAlmostEqual(after['rect']['t'] - mark['rect']['b'], 21, delta=.6)
 
     def test_settings_switches_an_open_chat_and_the_hub_keeps_it(self):
         self.assertTrue(self.got['sameDoc'], 'no reload')

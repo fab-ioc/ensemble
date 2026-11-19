@@ -9792,7 +9792,12 @@ function setPref(key, val) {
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({[key]: val}),
       });
-      if (n !== SETPREF_N[key]) return;
+      // A later click may still fail. Keep this successful value as the last
+      // saved one even while the later request is queued (#401 review 2).
+      if (n !== SETPREF_N[key]) {
+        if (key === 'chatLog' && PREFS) PREFS.chatLog = updated.chatLog;
+        return;
+      }
       PREFS = updated;
       renderPrefs();
       toast(`preference saved`, 1500, 'ok');
@@ -28106,7 +28111,10 @@ if ('serviceWorker' in navigator) {
     chatLogLocal(b.dataset.val);
     const saving = setPref('chatLog', b.dataset.val), n = SETPREF_N.chatLog;
     await saving;
-    if (n === SETPREF_N.chatLog && PREFS) chatLogLocal(PREFS.chatLog === 'on' ? 'on' : 'off');
+    if (n === SETPREF_N.chatLog && PREFS) {
+      chatLogLocal(PREFS.chatLog === 'on' ? 'on' : 'off');
+      renderPrefs(); // The latest PUT may have failed after an earlier one succeeded.
+    }
   });
   // The week's pace (ED-164): the switch, and the head start in points.
   document.getElementById('pref-pace-week')?.addEventListener('click', async (ev) => {

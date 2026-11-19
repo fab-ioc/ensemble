@@ -1638,8 +1638,8 @@
     :root[data-chat-log="on"] #msgs { gap:21px; container-type:inline-size; }
     /* The items: balloons, folded and group rows, the catch-up note, checkpoint and
        rotation lines, "Show more" notes, a thread's work log. A thread's line is part
-       of its balloon: .thr-line the last line of the one above, .thr-in the first
-       of the one below (which then draws no line of its own). */
+       of its balloon: .thr-line and .thr-in.after close the one above;
+       a channel's .thr-in starts the one below. */
     :root[data-chat-log="on"] #msgs > :is(.msg, .msg-fold, .catchup, .cp-line, .rot-line, .fold-note, .thr-work, .thr-in) { position:relative; margin-block:0; }
     :root[data-chat-log="on"] #msgs > :is(.msg, .msg-fold, .catchup, .cp-line, .rot-line, .fold-note, .thr-work, .thr-in):not(:first-child)::before { content:''; position:absolute; left:0; top:-11px;
       width:100cqw; height:1px; background:var(--border); pointer-events:none; }
@@ -1652,8 +1652,10 @@
     :root[data-chat-log="on"] .msg .pt-under .pt-bar, :root[data-chat-log="on"] .pt-now { justify-content:flex-start; }
     :root[data-chat-log="on"] .msg :not(.pt-under) > .pt-bar { border-top:0; padding-top:0; margin-top:var(--s-100); }
     :root[data-chat-log="on"] #msgs > .thr-line { margin:calc(var(--s-050) - 21px) 0 0; }
-    :root[data-chat-log="on"] #msgs > .thr-in + :is(.msg, .msg-fold) { margin-top:calc(var(--s-050) - 21px); }
-    :root[data-chat-log="on"] #msgs > .thr-in + :is(.msg, .msg-fold)::before { content:none; }
+    :root[data-chat-log="on"] #msgs > :is(.msg, .msg-fold) + .thr-in.after { margin-top:calc(var(--s-050) - 21px); }
+    :root[data-chat-log="on"] #msgs > .thr-in.after::before { content:none; }
+    :root[data-chat-log="on"] #msgs > .thr-in:not(.after) + :is(.msg, .msg-fold) { margin-top:calc(var(--s-050) - 21px); }
+    :root[data-chat-log="on"] #msgs > .thr-in:not(.after) + :is(.msg, .msg-fold)::before { content:none; }
     :root[data-chat-log="on"] .rl.person { background:var(--accent); color:var(--accent-fg); box-shadow:none; }
     :root[data-chat-log="on"] .rl[data-tc="1"] { background:var(--c-task-1); color:#FFFFFF; }
     :root[data-chat-log="on"] .rl[data-tc="2"] { background:var(--c-task-2); color:#FFFFFF; }
@@ -8278,7 +8280,7 @@ function threadLineHtml(tid, mine) {
 function threadMarkHtml(m) {
   if (THREAD_MODE) {
     const also = (m.alsoIn || []).filter(t => THR_META[t] || t);
-    return also.length ? `<div class="thr-in${m.from === 'user' ? ' mine' : ''}" data-key="thr-in:${esc(m.id)}:${esc(also.join(','))}">Also in ${also.map(t => `<button type="button" class="thr-open" data-thr="${esc(t)}">${esc(/^P\d/.test(t) ? t : 'another thread')}</button>`).join(', ')}</div>` : '';
+    return also.length ? `<div class="thr-in after${m.from === 'user' ? ' mine' : ''}" data-key="thr-in:${esc(m.id)}:${esc(also.join(','))}">Also in ${also.map(t => `<button type="button" class="thr-open" data-thr="${esc(t)}">${esc(/^P\d/.test(t) ? t : 'another thread')}</button>`).join(', ')}</div>` : '';
   }
   if (!m.inThr) return '';
   // A reply that is in the chat too (Slack's "Also send to #channel", #234):
