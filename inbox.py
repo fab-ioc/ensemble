@@ -375,7 +375,8 @@ def _build_all(debug: bool = False, now: float | None = None) -> dict:
                     R.fold(hit, "ask:decision", pts)
                     continue
                 row(s, "answer", "ask:decision", c["mid"], part, _ask_title(c["question"], "the PO"),
-                    c["ts"], pts, reason="The PO asks", taskRef=c.get("task") or "")
+                    c["ts"], pts, reason="The PO asks", taskRef=c.get("task") or "",
+                    **({"multi": True} if c.get("multi") else {}))
         except Exception as e:      # noqa: BLE001
             failed("decisions", e, rid)
 
@@ -405,7 +406,7 @@ def _build_all(debug: bool = False, now: float | None = None) -> dict:
                     continue
                 who = _asker(s, q.get("who") or "", False)
                 row(s, "answer", "ask:open", q["mid"], part, _ask_title(q["question"], who),
-                    q["ts"], reason=f"{_cap(who)} asks")
+                    q["ts"], reason=f"{_cap(who)} asks", **({"multi": True} if q.get("multi") else {}))
         except Exception as e:      # noqa: BLE001
             failed("open asks", e, rid)
 

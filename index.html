@@ -4331,6 +4331,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   @media (hover: none) { .ibx-scope button { height: var(--touch-min); } .ibx-more > summary { min-height: var(--touch-min); display: flex; align-items: center; } }
   /* #310: Close, Close this and earlier, Done. On a computer they show on the row's hover or focus. */
   .ibx-meta .ibx-task, .ibx-meta .ibx-state { white-space: nowrap; }
+  .ibx-meta .ibx-multi { white-space: nowrap; color: var(--fg-subtle); font-weight: 600; }   /* P409: a pick-any card */
   /* #315: on a computer they sit over the row's bottom-right corner, on the row's own ground,
      so pointing at a row never moves it or the rows below it (a hover loop, the list jumping). */
   .ibx-row { --ibx-ground: var(--surface); position: relative; }
@@ -17791,6 +17792,7 @@ function ibxHtml(d, scope, pid, now, phone, opts) {
       + (doneAll ? `<div class="ibx-hd">${link}${doneAll}</div>` : link)
       + `<div class="ibx-meta"><span class="ibx-where">${all && r.project && r.projectId && typeof ldpSwatch === 'function' ? ldpSwatch(r.projectId) : ''}${esc(ibxWhere(r, all))}</span>`
       + (task ? `<span class="ibx-task">${esc(task)}</span>` : '') + (st ? `<span class="ibx-state">${esc(st)}</span>` : '')
+      + (r.multi ? '<span class="ibx-multi" title="Tick any of its options">pick any</span>' : '')
       + `<span class="pdp-age" data-at="${esc(String(r.since || 0))}">${esc(pdPtAge(r.since, now))}</span></div>`
       + (r.items && r.items.length ? more(r) : '')
       + (IBX.failed.has(r.id) ? ibxFailHtml(r, IBX.failed.get(r.id)) : '')

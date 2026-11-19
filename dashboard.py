@@ -20436,6 +20436,7 @@ class Handler(BaseHTTPRequestHandler):
             thread = ""
         pids: list = []
         noted = False
+        card = None     # (mid, n): the open card this message answers (P409)
         # A draft (created but never launched, e.g. by a planning agent)
         # starts fresh; anything else resumes its agents' conversations.
         try:
@@ -20465,6 +20466,8 @@ class Handler(BaseHTTPRequestHandler):
                     if text and not held:
                         if thread:
                             text = self._thread_text(room_full, thread, text)
+                        elif data.get("answers"):
+                            text, to, card = self._box_answer(room_full, data.get("answers"), text, to, key)
                         text, pids = self._take_points(room_full, text, to, key)
                         text = message_refs.with_images(text, paths, attachment_names(data.get("attachments")))
                     elif paths and not held:
@@ -20514,6 +20517,12 @@ class Handler(BaseHTTPRequestHandler):
                 sends.drop(rid, [key])      # the page keeps it in the box
             if not kept:
                 _points_discard(rid, pids, key)
+                if card:
+                    try:
+                        points.unanswer_ask(rid, *card)
+                        asks.forget()
+                    except Exception as e:      # noqa: BLE001
+                        print(f"[asks] {rid}: answer not taken back: {e!r}", flush=True)
                 if noted:
                     try:
                         threads.drop_send(rid, key)
@@ -20523,7 +20532,49 @@ class Handler(BaseHTTPRequestHandler):
                           **({"send": sends.get(rid, key)} if kept and key else {})})
         return (200, {"ok": True, **result,
                       **({"send": sends.get(rid, key)} if text and key else {}),
+                      **({"answered": {"mid": card[0], "n": card[1]}, "points": _points_view(rid)} if card else {}),
                       "room": chatroom.get_room(rid)})
+
+    def _box_answer(self, room_full: dict, answers, text: str, to: str, key: str) -> tuple[str, str, tuple | None]:
+        """P409: a message typed in the box while its chip names an open card
+        (``answers: {mid, n}``) is that card's answer, as its Comment would
+        be: recorded on the card (``box``: typed in the box, ``key``: its
+        send) and typed to the agent as ``Re “<question>”: <text>``, to the
+        card's asker unless the person directed it. A card answered or gone
+        meanwhile leaves the message a plain one. Returns (text, to, card)."""
+        rid = room_full.get("id", "")
+        if not isinstance(answers, dict):
+            return text, to, None
+        mid = str(answers.get("mid") or "").strip()[:200]
+        try:
+            n = int(answers.get("n"))
+        except (TypeError, ValueError):
+            return text, to, None
+        if not mid or n < 0:
+            return text, to, None
+        try:
+            found = asks.balloon_asks(rid, mid)
+        except Exception as e:  # noqa: BLE001
+            print(f"[asks] {rid}: {mid} not read: {e!r}", flush=True)
+            return text, to, None
+        if n >= len(found):
+            return text, to, None
+        ask = found[n]
+        try:
+            before = points.answer_ask(rid, mid, n, {"option": "", "comment": text[:4000], "question": ask["question"],
+                                                     "box": True, "key": key})
+        except Exception as e:  # noqa: BLE001
+            print(f"[asks] {rid}: box answer not saved: {e!r}", flush=True)
+            return text, to, None
+        if before is not None:
+            return text, to, None
+        asks.forget()
+        agents = [p for p in room_full.get("participants") or [] if p.get("kind") == "agent"]
+        if not to and room_full.get("mode") != "solo" and len(agents) > 1:     # a team: to the card's asker
+            asker = next((m.get("from") for m in room_full.get("messages") or [] if m.get("id") == mid), "")
+            if asker and chatroom.participant(room_full, asker):
+                to = asker
+        return asks.answer_text(ask, "", text), to, (mid, n)
 
     def _thread_text(self, room_full: dict, thread: str, text: str) -> str:
         """A reply typed in a thread's box as its PO gets it (threads.reply_text);
@@ -24356,7 +24407,14 @@ class Handler(BaseHTTPRequestHandler):
                                       "message": "That question is not in the message any more."})
                 return
             ask = found[n]
-            option = asks.check(ask, str(data.get("option") or ""))
+            # A pick-any card (P409) takes its ticks as ``options``, a list:
+            # typed to the agent as "A; B", kept as the list for the card.
+            picked = asks.check_many(ask, data.get("options")) if ask.get("multi") and data.get("options") is not None else None
+            if ask.get("multi") and data.get("options") is not None and picked is None:
+                self._send_json(400, {"error": "bad_answer",
+                                      "message": "Tick its options, or write a comment."})
+                return
+            option = "; ".join(picked) if picked else asks.check(ask, str(data.get("option") or ""))
             comment = str(data.get("comment") or "").strip()[:4000]
             if option is None or not (option or comment):
                 self._send_json(400, {"error": "bad_answer",
@@ -24367,7 +24425,8 @@ class Handler(BaseHTTPRequestHandler):
                 to = ""
             try:
                 before = points.answer_ask(rid, mid, n, {"option": option, "comment": comment,
-                                                         "question": ask["question"]})
+                                                         "question": ask["question"],
+                                                         **({"options": picked} if picked else {})})
             except Exception as e:  # noqa: BLE001
                 print(f"[asks] {rid}: answer not saved: {e!r}", flush=True)
                 self._send_json(500, {"error": "not_saved", "message": "The hub could not save that. Try again."})
@@ -24410,17 +24469,22 @@ class Handler(BaseHTTPRequestHandler):
             if got.get("undone"):
                 self._send_json(200, {"ok": True, "duplicate": True, "points": _points_view(rid)})
                 return
-            key = f"ask:{mid}:{n}"
+            # A message typed in the box as the card's answer (P409) is its
+            # own send, under its own key; withdrawn, its words go back to the box.
+            box = bool(got.get("box"))
+            key = str(got.get("key") or "") if box and got.get("key") else f"ask:{mid}:{n}"
             to = (sends.get(rid, key) or {}).get("to") or ""
             pid = points.ask_point(rid, key)
             if withdraw_send(rid, key):
                 points.unanswer_ask(rid, mid, n)
                 asks.forget()
-                self._send_json(200, {"ok": True, "withdrawn": True, "points": _points_view(rid)})
+                self._send_json(200, {"ok": True, "withdrawn": True, "points": _points_view(rid),
+                                      **({"text": str(got.get("comment") or "")} if box else {})})
                 return
             q = " ".join(str(got.get("question") or "").split())[:200]
-            text = (f"Re {pid}: Ignore my previous answer to {pid}, I clicked it by mistake." if pid
-                    else f"Ignore my previous answer to “{q}”, I clicked it by mistake.")
+            how = "I sent it by mistake" if box else "I clicked it by mistake"
+            text = (f"Re {pid}: Ignore my previous answer to {pid}, {how}." if pid
+                    else f"Ignore my previous answer to “{q}”, {how}.")
             code, reply = self._room_resume({"roomId": rid, "to": to, "key": "undo:" + key, "text": text})
             if code == 200 or reply.get("kept"):
                 points.undo_ask(rid, mid, n)
