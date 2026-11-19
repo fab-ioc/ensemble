@@ -4234,6 +4234,8 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   /* Just after a click restored a minimised panel: its second click, if it
      lands on the chat that slid under the pointer, is the dock's (pdDblGuard). */
   #po-dock.pd-dbl iframe { pointer-events: none; }
+  /* A tab or a window being dragged: the frames let the pointer through to the dock (pdPressEnd). */
+  body.pd-press iframe { pointer-events: none; }
   .dk-bar { background: var(--bg); }
   .dk-row > .dk-bar { border-left-color: var(--border); }
   .dk-col > .dk-bar { border-top-color: var(--border); }
@@ -17206,6 +17208,71 @@ function pdDblGuard(e) {
   pdDblT = setTimeout(() => PD_ROOT.classList.remove('pd-dbl'), PD_DBL_MS);
 }
 PD_ROOT.addEventListener('click', pdDblGuard, true);
+// A press on what Dock drags (a tab, a title bar, a window's edge, a strip
+// button) is the dock's until its release, wherever the pointer goes. A frame
+// under the pointer would take the moves and the release into its own page
+// (a conversation, the Send box), and Dock, waiting on this page's, kept its
+// drop box up and moved nothing (issue 66); a window being moved stopped and
+// then followed the pointer. So the page's frames let the pointer through
+// while the press lasts.
+const PD_PRESS_SEL = '.dk-head, [data-dk-rz], [data-dk-auto]';
+// The panel the press would drag (its tab, else its title bar's front tab), and
+// whether the drop box now shows a drop the page would undo (pdNoDrop).
+let pdPressId = '', pdNoDropOn = false;
+function pdPressEnd() { document.body.classList.remove('pd-press'); pdPressId = ''; pdNoDropOn = false; }
+PD_ROOT.addEventListener('pointerdown', e => {
+  if (e.button !== 0 || !e.target.closest || !e.target.closest(PD_PRESS_SEL)) return;
+  document.body.classList.add('pd-press');
+  const tab = e.target.closest('[data-dk-tab]') || e.target.closest('.dk-head')?.querySelector('.dk-tab.on[data-dk-tab]');
+  pdPressId = tab ? tab.dataset.dkTab : '';
+}, true);
+// A tool is never a tab of the conversation's stack (pdKeepMiddle puts it back
+// on the right), so its drag into that stack's middle shows no box and drops
+// nothing; its edges still split beside the conversation. Dock's drop target
+// is a window under the pointer first (any window, as Dock's dropAt: one over
+// the conversation, even one of the very same size, is a drop of its own),
+// then the stack under it: the conversation's when the pointer is inside it.
+function pdNoDrop(x, y) {
+  if (!PD_TOOLS.includes(pdPressId) || !PD_ROOT.classList.contains('dk-dragging')) return false;
+  const pv = PD_ROOT.querySelector('.dk-preview');
+  if (!pv || pv.hidden || pv.dataset.side !== 'center') return false;
+  const st = PD_ROOT.querySelector('[data-dk-tab="po-chat"]')?.closest('.dk-stack');
+  if (!st) return false;
+  const inside = el => { const r = el.getBoundingClientRect();
+    return r.width > 0 && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom; };
+  // Dock tries the windows from the front one (the highest z-index) back.
+  const top = [...PD_ROOT.querySelectorAll('.dk-float')].filter(inside)
+    .sort((a, b) => (+b.style.zIndex || 0) - (+a.style.zIndex || 0))[0];
+  return top ? top.contains(st) : inside(st);
+}
+// After Dock's own (the document's): the window's, bubbling.
+window.addEventListener('pointermove', e => {
+  if (!pdPressId) return;
+  pdNoDropOn = pdNoDrop(e.clientX, e.clientY);
+  if (pdNoDropOn) PD_ROOT.querySelector('.dk-preview').hidden = true;
+});
+// Ends Dock's gesture as a cancel (no drop; the click after it opens nothing;
+// a window being moved stays where it is): Dock's own pointercancel path.
+function pdCancelPress() {
+  if (!document.body.classList.contains('pd-press')) return;
+  document.dispatchEvent(new PointerEvent('pointercancel', { bubbles: true }));
+  pdPressEnd();
+}
+// Before Dock's: a tool's release is judged where it happens (a move there
+// first, so Dock's box and pdNoDrop see that point); over the conversation's
+// middle it ends the drag with nothing moved.
+window.addEventListener('pointerup', e => {
+  if (!PD_TOOLS.includes(pdPressId) || !PD_ROOT.classList.contains('dk-dragging')) return;
+  document.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: e.clientX, clientY: e.clientY, buttons: 1, pointerId: e.pointerId, pointerType: e.pointerType }));
+  if (pdNoDropOn) pdCancelPress();
+}, true);
+for (const t of ['pointerup', 'pointercancel']) window.addEventListener(t, pdPressEnd, true);
+// The page lost the release: the window lost focus (not to one of its own
+// frames), or a move comes back with no button down (released outside).
+window.addEventListener('blur', () => setTimeout(() => {
+  if (document.activeElement?.tagName !== 'IFRAME' || !document.hasFocus()) pdCancelPress();
+}, 0));
+window.addEventListener('pointermove', e => { if (!e.buttons && e.isTrusted) pdCancelPress(); }, true);
 // A tab cut short (the PO's project name on a phone, #261) has no tooltip
 // under a finger: a long press shows its whole name, once. Android's long
 // press is also a contextmenu, which would open Dock's tab menu: on a phone's
