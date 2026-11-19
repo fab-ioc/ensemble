@@ -1,4 +1,8 @@
-"""One composer follows a PO conversation and its open thread in Dock and on a phone."""
+"""One composer follows a PO conversation and its open thread in Dock and on a phone.
+
+#393: on a computer the thread shows in place over the PO chat (PD.thrIn); a
+thread's tab of its own (pdThreadTab, a Ctrl-click) is what goes to a window.
+"""
 from __future__ import annotations
 
 import json
@@ -46,7 +50,10 @@ async function main() {
     if(r.exceptionDetails) throw Error(expression.slice(0,120)+' '+JSON.stringify(r.exceptionDetails)); return r.result.value; };
   const until=async (expression,label) => { for(let i=0;i<120;i++){try{if(await ev(expression))return;}catch(e){} await sleep(150);} throw Error('timeout '+label); };
   const PO = `PD.els['po-chat'].querySelector('iframe.po-session:not([hidden])')`;
-  const THR = `PD.rt.get('thread:po')?.el.querySelector('iframe')`;
+  const THR = `PD.thrIn?.el.querySelector('iframe')`;
+  // A thread's tab of its own (#393): its id, its page.
+  const TAB = t => `pdThreadTabId(${JSON.stringify(A.po)},${t},'')`;
+  const TABF = t => `PD.rt.get(${TAB(t)})?.el.querySelector('iframe')`;
   const snap = async name => { if (!A.shots) return; const r=await send('Page.captureScreenshot',{format:'png',captureBeyondViewport:false},s);
     require('fs').writeFileSync(A.shots+'/'+name+'.png',Buffer.from(r.data,'base64')); };
   const count = `(() => { const main=${PO}, thread=${THR}, m=main?.contentDocument, t=thread?.contentDocument;
@@ -226,7 +233,7 @@ async function main() {
     await until(`WC.target?.kind==='thread'`,'thread selected before close');
     await ev(`document.getElementById('po-panel').hidden=true;0`); await sleep(550); out.threadAlone=await ev(count);
     await ev(`(()=>{const i=${THR}.contentDocument.getElementById('input');i.value='Changed in hidden Dock thread';i.dispatchEvent(new Event('input',{bubbles:true}));
-      PD.dock.removePanel('thread:po');document.getElementById('po-panel').hidden=false;return 0})()`);
+      pdThreadInClose(false);document.getElementById('po-panel').hidden=false;return 0})()`);
     await sleep(550); out.closedThread=await ev(count); out.closedTarget=await ev(workspace);
     await ev(`${PO}.contentDocument.querySelector('#msgs .thr-open[data-thr]').click();0`);
     await until(`!!${THR}?.contentDocument?.getElementById('thread-reply')`,'thread reopened after close');
@@ -235,8 +242,13 @@ async function main() {
     await until(`!!${PO}?.contentDocument?.getElementById('input') && !!${THR}?.contentDocument?.getElementById('thread-reply')`,'reload');
     await sleep(650); out.reload=await ev(count);
     out.reload.image=await ev(`${PO}.contentDocument.querySelector('#att-chips .att-name')?.textContent||''`);
-    await ev(`PD.dock.setViewMode('thread:po','window');0`);
-    await until(`!!PD.dock.popWindow('thread:po')`,'thread window');
+    // The thread as a tab of its own, to a window and back.
+    const T1 = `PD.thrIn.tid`;
+    const tab1 = await ev(TAB(T1));
+    await ev(`pdThreadTab({room:${JSON.stringify(A.po)},tid:PD.thrIn.tid,mid:'',title:PD.thrIn.title});0`);
+    await until(`!!PD.rt.get(${JSON.stringify(tab1)})?.el.querySelector('iframe')?.contentDocument?.getElementById('thread-reply')`,'thread tab');
+    await ev(`PD.dock.setViewMode(${JSON.stringify(tab1)},'window');0`);
+    await until(`!!PD.dock.popWindow(${JSON.stringify(tab1)})`,'thread window');
     let pop;
     for(let i=0;i<40&&!pop;i++){const targets=(await send('Target.getTargets')).targetInfos;
       pop=targets.find(x=>x.type==='page'&&x.targetId!==targetId&&x.url.startsWith(A.base));if(!pop)await sleep(100);}
@@ -246,8 +258,10 @@ async function main() {
       if(r.result.value)break;}catch(e){}await sleep(100);}
     const pr=await send('Runtime.evaluate',{expression:`(()=>{const d=document.querySelector('iframe.po-thread')?.contentDocument;return !!d&&getComputedStyle(d.getElementById('compose')).display!=='none'})()`,returnByValue:true},ps);
     out.threadWindow=pr.result.value;
-    await ev(`PD.dock.setViewMode('thread:po','pinned');0`);
-    await until(`!!${THR}?.contentDocument?.getElementById('thread-reply')`,'thread docked');
+    await ev(`PD.dock.setViewMode(${JSON.stringify(tab1)},'pinned');0`);
+    await until(`!PD.dock.popWindow(${JSON.stringify(tab1)}) && !!PD.rt.get(${JSON.stringify(tab1)})?.el.querySelector('iframe')?.contentDocument?.getElementById('thread-reply')`,'thread docked');
+    await ev(`PD.dock.close(${JSON.stringify(tab1)});PD.dock.activate('po-chat');0`);
+    await until(`!PD.rt.has(${JSON.stringify(tab1)}) && pdThreadInShown()`,'thread tab closed');
     await ev(`${PO}.contentDocument.getElementById('msgpane').dispatchEvent(new PointerEvent('pointerdown',{bubbles:true}));0`);
     await send('Page.reload',{},s);
     await until(`!!${PO}?.contentDocument?.getElementById('input') && !!${THR}?.contentDocument?.getElementById('thread-reply')`,'main choice reload');
@@ -255,29 +269,36 @@ async function main() {
     // Exercise the pre-ID balloon state and its title event in one turn, as
     // a real first reply can resolve the ID before a polling test observes it.
     out.promotedFrom=await ev(`(()=>{const button=[...${PO}.contentDocument.querySelectorAll('#msgs .thr-reply[data-mid]')].find(x=>x.dataset.mid==='shared-po:2');
-      button.click();const e=PD.rt.get('thread:po'),tid=e.tid,mid=button.dataset.mid;
+      button.click();const e=PD.thrIn,tid=e.tid,mid=button.dataset.mid;
       e.tid='';e.mid=mid;wcChoose({kind:'thread',room:${JSON.stringify(A.po)},mid});
-      pdThreadTitle(${JSON.stringify(A.po)},'A new topic without replies.',tid);
+      // As its page says it (#393: the holder is found by the page that says so).
+      pdThreadTitle(${JSON.stringify(A.po)},'A new topic without replies.',tid,undefined,e.el.querySelector('iframe').contentWindow);
       return {mid,tid,target:WC.target};})()`);
-    await until(`WC.target?.kind==='thread' && WC.target.thread===PD.rt.get('thread:po')?.tid`,'promoted thread target');
+    await until(`WC.target?.kind==='thread' && WC.target.thread===PD.thrIn?.tid`,'promoted thread target');
     await until(`document.getElementById('workspace-compose-frame')?.contentWindow?.liveTailBoxThread?.()===${JSON.stringify(out.promotedFrom.tid)} && document.getElementById('workspace-compose-frame')?.contentDocument?.getElementById('input') && document.getElementById('workspace-compose-frame')?.contentDocument?.getElementById('send')?.disabled===false`,'promoted thread editor');
     await sleep(300);
     out.newThreadFirst=await sendProbe('new thread first');
     out.newThreadSecond=await sendProbe('new thread second');
     out.promotedTarget=await ev(workspace);
-    await ev(`(()=>{const f=document.getElementById('workspace-compose-frame'),i=f.contentDocument.getElementById('input');i.value='Promoted main draft';i.dispatchEvent(new Event('input',{bubbles:true}));f.contentWindow.edStoreNow();PD.dock.setViewMode('thread:po','window');return 0})()`);
-    await until(`!!PD.dock.popWindow('thread:po')?.document.querySelector('iframe.po-thread')?.contentDocument?.getElementById('input')`,'promoted thread popped');
-    out.promotedPop=await ev(`(()=>{const f=PD.dock.popWindow('thread:po').document.querySelector('iframe.po-thread'),d=f.contentDocument,i=d.getElementById('input');
+    // The promoted thread taken from its place into a tab of its own (the box
+    // goes with it), then that tab to a window.
+    const PT = JSON.stringify(out.promotedFrom.tid), ptab = await ev(TAB(PT));
+    await ev(`(()=>{const title=PD.thrIn.title;pdThreadInClose(false);pdThreadTab({room:${JSON.stringify(A.po)},tid:${PT},mid:'',title});return 0})()`);
+    await until(`WC.target?.kind==='thread' && WC.target.thread===${PT} && pdThreadFind(WC.target)?.[0]===${JSON.stringify(ptab)} && !!${TABF(PT)}?.contentDocument?.getElementById('input') && document.getElementById('workspace-compose-frame')?.contentWindow?.liveTailBoxThread?.()===${PT} && document.getElementById('workspace-compose-frame')?.contentDocument?.getElementById('send')?.disabled===false`,'promoted thread tab');
+    await sleep(300);
+    await ev(`(()=>{const f=document.getElementById('workspace-compose-frame'),i=f.contentDocument.getElementById('input');i.value='Promoted main draft';i.dispatchEvent(new Event('input',{bubbles:true}));f.contentWindow.edStoreNow();PD.dock.setViewMode(${JSON.stringify(ptab)},'window');return 0})()`);
+    await until(`!!PD.dock.popWindow(${JSON.stringify(ptab)})?.document.querySelector('iframe.po-thread')?.contentDocument?.getElementById('input')`,'promoted thread popped');
+    out.promotedPop=await ev(`(()=>{const f=PD.dock.popWindow(${JSON.stringify(ptab)}).document.querySelector('iframe.po-thread'),d=f.contentDocument,i=d.getElementById('input');
       const before={draft:i.value,key:f.contentWindow.eval('ED_KEY()'),thread:f.contentWindow.eval('THREAD'),active:f.contentWindow.eval('COMPOSER_SHARED_ACTIVE'),display:getComputedStyle(d.getElementById('compose')).display};
       i.value='Edited popped thread';i.dispatchEvent(new Event('input',{bubbles:true}));
       return before;})()`);
-    await ev(`PD.dock.setViewMode('thread:po','pinned');0`);
+    await ev(`PD.dock.setViewMode(${JSON.stringify(ptab)},'pinned');0`);
     await until(`WC.target?.kind==='thread' && WC.target.thread===${JSON.stringify(out.promotedFrom.tid)} && document.getElementById('workspace-compose-frame')?.contentDocument?.getElementById('input')?.value==='Edited popped thread'`,'promoted thread returned');
     out.promotedBack=await ev(`({target:WC.target,draft:document.getElementById('workspace-compose-frame').contentDocument.getElementById('input').value})`);
-    await ev(`PD.dock.setViewMode('thread:po','window');0`);
-    await until(`!!PD.dock.popWindow('thread:po')?.document.querySelector('iframe.po-thread')?.contentDocument?.getElementById('input')`,'thread popped for close');
-    await ev(`(()=>{const win=PD.dock.popWindow('thread:po'),d=win.document.querySelector('iframe.po-thread').contentDocument,i=d.getElementById('input');i.value='Closed popped window draft';i.dispatchEvent(new Event('input',{bubbles:true}));win.close();return 0})()`);
-    await until(`!PD.dock.popWindow('thread:po')`,'thread window closed');
+    await ev(`PD.dock.setViewMode(${JSON.stringify(ptab)},'window');0`);
+    await until(`!!PD.dock.popWindow(${JSON.stringify(ptab)})?.document.querySelector('iframe.po-thread')?.contentDocument?.getElementById('input')`,'thread popped for close');
+    await ev(`(()=>{const win=PD.dock.popWindow(${JSON.stringify(ptab)}),d=win.document.querySelector('iframe.po-thread').contentDocument,i=d.getElementById('input');i.value='Closed popped window draft';i.dispatchEvent(new Event('input',{bubbles:true}));win.close();return 0})()`);
+    await until(`!PD.dock.popWindow(${JSON.stringify(ptab)})`,'thread window closed');
     out.closedPopDraft=await ev(`JSON.parse(sessionStorage.getItem('cd-draft:'+${JSON.stringify(A.po)}+':thread:'+${JSON.stringify(out.promotedFrom.tid)}))?.head||''`);
     console.log(JSON.stringify(out));
   } finally { c.close(); ch.kill(); }
@@ -428,7 +449,9 @@ class SharedComposer(unittest.TestCase):
         self.assertEqual(g['promotedPop']['thread'], g['promotedFrom']['tid'])
         self.assertTrue(g['promotedPop']['active'] and g['promotedPop']['display'] != 'none')
         self.assertTrue(g['promotedPop']['key'].endswith(':thread:'+g['promotedFrom']['tid']))
-        self.assertEqual(g['promotedBack'], {'target':g['promotedFrom']['target'],'draft':'Edited popped thread'})
+        # (#393: back from its window the target is the tab's, an empty mid with it.)
+        back = dict(g['promotedBack'], target={k: v for k, v in g['promotedBack']['target'].items() if v != '' or k != 'mid'})
+        self.assertEqual(back, {'target':g['promotedFrom']['target'],'draft':'Edited popped thread'})
         self.assertEqual(g['closedPopDraft'], 'Closed popped window draft')
         self.assertEqual(g['closedTarget']['target'], 'Motors PO')
         self.assertEqual(g['poReload'], 'PO draft')

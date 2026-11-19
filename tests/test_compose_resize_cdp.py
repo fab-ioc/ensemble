@@ -26,6 +26,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 import chatroom  # noqa: E402
 import dashboard  # noqa: E402
+import threads  # noqa: E402
 from tests import chrome_profile  # noqa: E402
 from tests.test_page_update import CHROME  # noqa: E402
 
@@ -53,7 +54,8 @@ async function main() {
     if(r.exceptionDetails) throw Error(expression.slice(0,120)+' '+JSON.stringify(r.exceptionDetails)); return r.result.value; };
   const until=async (expression,label) => { for(let i=0;i<120;i++){try{if(await ev(expression))return;}catch(e){} await sleep(150);} throw Error('timeout '+label); };
   const PO = `PD.els['po-chat'].querySelector('iframe.po-session:not([hidden])')`;
-  const THR = `PD.rt.get('thread:po')?.el.querySelector('iframe')`;
+  // #393: the thread shows in place, over the PO chat in the project's tab.
+  const THR = `PD.thrIn?.el.querySelector('iframe')`;
   const FRAME = `document.getElementById('workspace-compose-frame')`;
   // One sample: where the handle is on the page, the box and frame heights,
   // and each chat's distance from its end. `box` is the page holding the
@@ -106,7 +108,7 @@ async function main() {
       await ev(`localStorage.removeItem('cd-compose-h'); SELECTED_PROJECT=${JSON.stringify(A.proj)}; PROJECT_TAB='tasks'; renderRows(); 0`);
       await until(`!!${PO}?.contentDocument?.querySelector('#msgs .thr-open[data-thr]')`,'PO chat');
       await ev(`${PO}.contentDocument.querySelector('#msgs .thr-open[data-thr]').click(); 0`);
-      await until(`!!${THR}?.contentDocument?.querySelector('#thread-reply')`,'thread panel');
+      await until(`!!${THR}?.contentDocument?.querySelector('#thread-reply') && pdThreadInShown()`,'thread in place');
       await until(`${FRAME}?.contentDocument?.getElementById('compose-size') && !${FRAME}.contentDocument.getElementById('compose-size').hidden`,'workspace box');
       await sleep(900);
       out['workspace' + w] = await drag('workspace ' + w + 'x' + h);
@@ -211,6 +213,8 @@ class ComposeResize(unittest.TestCase):
                       turn('assistant', f'Answer {n}: a reply long enough to wrap onto a second line in a narrow panel of the dock.', 10 * n + 2)]
         lines += [turn('user', 'A conversation with a thread.', 400), turn('assistant', 'The thread reply.', 401)]
         (transcript / f'{sid}.jsonl').write_text(''.join(json.dumps(x)+'\n' for x in lines), encoding='utf-8')
+        # Sent as a new thread: only the person starts one (#367).
+        threads.note_send(cls.po, '', '', [], False, 'A conversation with a thread.', now=at + 400, new=True)
         (base / 'transcripts' / 'C--task').mkdir()
         lines = [turn('user' if n % 2 else 'assistant', f'Task message {n}: enough words to take a line or two in the chat.', n + 1, 'resize-task')
                  for n in range(40)]

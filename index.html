@@ -709,6 +709,9 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   body.bar-tabs #bar-tabs { display: block; flex: 1 1 0; min-width: 0; align-self: stretch; }
   body.bar-tabs #bar-here + .bar-break + .bar-gap { display: none; }
   body.po-dock.bar-tabs #po-dock-host { z-index: 11; }
+  /* The box's menu room goes over the chats, so over the dock lifted here
+     (it stops at the bar: wcFrameRoom). */
+  body.po-dock.bar-tabs #workspace-compose iframe.menu-room { z-index: 12; }
   body.bar-tabs .dk-head.bt-head {
     position: fixed; left: var(--bt-l, 0); top: var(--bt-t, 0); width: var(--bt-w, 0); height: var(--bt-h, 48px);
     background: transparent; border: 0; z-index: 1; align-items: stretch;
@@ -16060,11 +16063,13 @@ function wcFrameFit(height, sized, tray) {
 // room above it (P227). The frame grows up by it over the chats, clear there,
 // and keeps its place in the page: nothing above moves, and closing the menu
 // gives back the exact height. At most what is above the frame. The frame
-// calls this as the menu opens, so both show in the same paint.
+// calls this as the menu opens, so both show in the same paint. The room
+// stops under the top bar (over the dock, #393: not over the bar's tabs).
 function wcFrameRoom(px) {
   const f = document.getElementById('workspace-compose-frame');
   if (WC.boxH === undefined) WC.boxH = f.offsetHeight;
-  const above = Math.floor(f.getBoundingClientRect().top + (WC.room || 0));
+  const bar = document.querySelector('header')?.getBoundingClientRect().bottom || 0;
+  const above = Math.floor(f.getBoundingClientRect().top + (WC.room || 0) - Math.max(0, bar));
   WC.room = Math.max(0, Math.min(Math.ceil(+px || 0), above));
   wcFrameApply(f);
   return WC.room;
@@ -24696,6 +24701,36 @@ document.getElementById('bar-grp').addEventListener('click', (e) => {
   pdReveal('po-chat');
   // As a click on a tab: the box is the conversation's (its thread in place).
   wcFront('po-chat', true);
+});
+// The keyboard on the tabs: the project's own tab is not drawn, the group is
+// it. Dock's arrows that bring the conversation to the front cannot focus its
+// hidden tab: the focus goes to the group's project ▾. From the group's ▾s
+// (menus closed), ArrowRight / Home goes to the first drawn tab, ArrowLeft /
+// End to the last, as along a row of tabs. (After Dock's own keydown.)
+function barTabIds() {
+  const head = document.body.classList.contains('bar-tabs') ? barTabsHead() : null;
+  return head ? [...head.querySelectorAll(':scope > .dk-tabs [data-dk-tab]')].map(t => t.dataset.dkTab).filter(id => id !== 'po-chat') : [];
+}
+// Whether the key is on a tab of the bar is read before Dock's keydown: Dock
+// draws the row again as it brings a tab to the front, and the tab pressed is
+// then out of the page.
+let barTabKey = null;
+document.addEventListener('keydown', (e) => { barTabKey = e.target.closest?.('.dk-head.bt-head [data-dk-tab]') ? e : null; }, true);
+document.addEventListener('keydown', (e) => {
+  if (!document.body.classList.contains('bar-tabs') || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return;
+  const t = e.target;
+  if (barTabKey === e) {
+    if (PD.dock.frontOf('po-chat') === 'po-chat') $('#proj-switch').focus();
+    return;
+  }
+  if (!t.closest?.('#proj-switch, #thr-switch') || !$('#proj-menu').hidden || !$('#thr-menu').hidden) return;
+  const ids = barTabIds();
+  if (!ids.length) return;
+  e.preventDefault();
+  const id = e.key === 'ArrowRight' || e.key === 'Home' ? ids[0] : ids[ids.length - 1];
+  PD.dock.activate(id);
+  PD_ROOT.querySelector(`[data-dk-tab="${CSS.escape(id)}"]`)?.focus();
 });
 // The chat page in the project's tab: the PO's, or the task in no project
 // that is the top level (its chat in the middle).

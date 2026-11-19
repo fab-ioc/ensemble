@@ -217,9 +217,15 @@ async function main() {
     await closeAll();
     await click('#me-btn');
     bar.open = await shown('#me-menu');
-    bar.point = await evalIn(`(() => { for (const g of document.querySelectorAll('header .bar-gap')) { const r = g.getBoundingClientRect(); if (r.width < 8) continue;
-      const x = r.left + r.width / 2, y = r.top + r.height / 2, h = document.elementFromPoint(x, y);
-      if (h && h.closest('header') && !h.closest('button, a, input')) return { x, y, hit: true, what: h.tagName + '.' + h.className }; } return null; })()`);
+    // #393: with the tabs in the bar (body.bar-tabs) its gaps give way to the tab
+    // row: the empty end of that row (Dock's title bar drawn over #bar-tabs) is
+    // the bar's empty space then.
+    bar.point = await evalIn(`(() => { const at = [];
+      for (const g of document.querySelectorAll('header .bar-gap')) { const r = g.getBoundingClientRect(); if (r.width >= 8) at.push([r.left + r.width / 2, r.top + r.height / 2]); }
+      const t = document.getElementById('bar-tabs'), tr = t && t.getBoundingClientRect();
+      if (tr && tr.width >= 40) at.push([tr.right - 16, tr.top + tr.height / 2]);
+      for (const [x, y] of at) { const h = document.elementFromPoint(x, y);
+        if (h && h.closest('header, .dk-head.bt-head') && !h.closest('button, a, input, [role="tab"]')) return { x, y, hit: true, what: h.tagName + '.' + h.className }; } return null; })()`);
     if (bar.point) await press(bar.point);
     bar.after = await shown('#me-menu');
 
