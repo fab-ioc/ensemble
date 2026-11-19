@@ -168,6 +168,11 @@ async function main() {
     await dash.ev(`openSettings('prefs'); 0`); await sleep(400);
     out.prefBefore = await dash.ev(`[...document.querySelectorAll('#pref-chat-log button')].map(b => [b.dataset.val, b.getAttribute('aria-pressed')])`);
     out.prefLabel = await dash.ev(`document.getElementById('pref-chat-log-label').textContent`);
+    out.prefRect = await dash.ev(`(() => { const h = [...document.querySelectorAll('h5.sp-sub')].find(e => e.textContent.trim() === 'Chat'), seg = document.getElementById('pref-chat-log');
+      const hint = seg.closest('.pref-row').nextElementSibling; const a = h.getBoundingClientRect(), b = (hint || seg).getBoundingClientRect(), c = seg.getBoundingClientRect();
+      return {l: Math.min(a.left, b.left) - 16, t: a.top - 12, r: Math.max(c.right, b.right) + 16, b: b.bottom + 12, dpr: devicePixelRatio}; })()`);
+    await dash.shot('settings-chat');
+    if (A.shots) fs.writeFileSync(path.join(A.shots, 'settings-chat.json'), JSON.stringify(out.prefRect));
     await dash.click(`document.querySelector('#pref-chat-log button[data-val="on"]')`);
     await dash.until(`fetch('/api/settings').then(r => r.json()).then(j => j.chatLog === 'on')`, 'saved on');
     await p.until(`document.documentElement.dataset.chatLog === 'on'`, 'chat took on');
@@ -187,6 +192,28 @@ async function main() {
         if (room === A.po) out.on[theme].poFill = await p.ev(`document.querySelector('.rl.po').dataset.poFill`);
         await p.shot(`chat-log-on-${room === A.po ? 'po' : 'task7'}-${theme}`);
       }
+    }
+    // Every other kind of row the chat draws, with its markup's classes, put in the PO chat
+    // for one measure: a "Show more" note, the catch-up note, a rotation and a checkpoint
+    // line, a thread's line under a balloon and a "replied in a thread" line above one.
+    out.mixed = {};
+    for (const theme of ['light', 'dark']) {
+      await p.chat(A.po);
+      await p.ev(`localStorage.setItem('cd-theme', '${theme}'); cdTheme.apply(); 0`);
+      await p.until(`document.documentElement.dataset.scheme === '${theme}'`, 'theme ${theme}');
+      out.mixed[theme] = await p.ev(`(() => {
+        const box = document.getElementById('msgs'), m = [...box.querySelectorAll(':scope > .msg')];
+        const add = (html, before) => { const t = document.createElement('template'); t.innerHTML = html; const e = t.content.firstElementChild; e.dataset.fixture = '1'; box.insertBefore(e, before); };
+        add('<div class="fold-note thr-more"><button type="button" class="thr-more-btn">Show more</button></div>', box.firstElementChild);
+        add('<div class="catchup"><span class="cu-text">Since you last read: #7 done</span><button type="button" class="cu-read">Mark read</button></div>', m[1]);
+        add('<div class="thr-line"><button type="button" class="thr-open"><span class="thr-count">2 replies</span></button></div>', m[1].nextElementSibling);
+        add('<div class="rot-line" role="separator"><span>A fresh PO session</span></div>', m[2]);
+        add('<div class="cp-line"><span class="cp-what">2 files changed</span><button type="button" class="cp-btn">Undo</button></div>', m[3]);
+        add('<div class="thr-in"><button type="button" class="thr-open">replied in a thread</button></div>', m[4]);
+        return ${VIEW};
+      })()`);
+      await p.shot(`chat-log-on-po-rows-${theme}`);
+      await p.ev(`document.querySelectorAll('#msgs [data-fixture]').forEach(e => e.remove()); 0`);
     }
     await p.ev(`localStorage.setItem('cd-theme', 'light'); cdTheme.apply(); 0`);
     // A fresh browser cache: the hub's choice still draws the log.
@@ -211,6 +238,15 @@ async function main() {
     await dash.until(`fetch('/api/settings').then(r => r.json()).then(j => j.chatLog === 'off')`, 'saved off');
     await sleep(300);
     out.offAgain = await p.ev(VIEW);
+    // A save that fails: the open chat goes back to the saved choice (off), and so does Settings.
+    await dash.ev(`window.__api = api; api = (u, o) => o && o.method === 'PUT' && u === '/api/settings' ? Promise.reject(new Error('offline')) : window.__api(u, o); 0`);
+    await dash.click(`document.querySelector('#pref-chat-log button[data-val="on"]')`);
+    await sleep(800);
+    out.failed = {chat: await p.ev(`document.documentElement.dataset.chatLog`),
+      local: await dash.ev(`localStorage.getItem('cd-chat-log')`),
+      pressed: await dash.ev(`[...document.querySelectorAll('#pref-chat-log button')].map(b => [b.dataset.val, b.getAttribute('aria-pressed')])`),
+      hub: await dash.ev(`window.__api('/api/settings').then(j => j.chatLog)`)};
+    await dash.ev(`api = window.__api; 0`);
     console.log(JSON.stringify(out));
   } finally { c.close(); ch.kill(); }
 }
@@ -339,14 +375,20 @@ class ChatLogInChrome(unittest.TestCase):
                 self.assertEqual(len(lefts), 1, [(i['cls'], i['bal']) for i in self.msgs(view)])
 
     def test_one_line_in_the_middle_of_each_equal_gap(self):
-        for theme, room, view in self.views_on():
+        views = [*self.views_on(), *(('mixed ' + t, self.po, v) for t, v in self.got['mixed'].items())]
+        for theme, room, view in views:
             with self.subTest(theme=theme, room=room):
                 items = view['items']
                 self.assertGreaterEqual(len(items), 5)
+                if theme.startswith('mixed'):
+                    kinds = {k for i in items for k in ('fold-note', 'catchup', 'thr-line', 'rot-line', 'cp-line', 'thr-in', 'msg-fold') if k in i['cls'].split()}
+                    self.assertEqual(len(kinds), 7, kinds)
                 for a, b in zip(items, items[1:]):
                     gap = b['rect']['t'] - a['rect']['b']
-                    if b['line'] is None:
-                        self.assertRegex(b['cls'], r'thr-', ('only a thread line goes without a line', b))
+                    # A thread's line is part of its balloon: under the one above, over the one below.
+                    if 'thr-line' in b['cls'].split() or 'thr-in' in a['cls'].split():
+                        self.assertIsNone(b['line'], (a['cls'], b['cls']))
+                        self.assertAlmostEqual(gap, 2, delta=0.6, msg=(a['cls'], b['cls'], gap))
                         continue
                     self.assertAlmostEqual(gap, 21, delta=0.6, msg=(a['cls'], b['cls'], gap))
                     self.assertEqual((b['line']['h'], b['line']['top']), ('1px', '-11px'), b)
@@ -410,6 +452,9 @@ class ChatLogInChrome(unittest.TestCase):
             self.assertEqual([lb['bg'] for lb in self.label(on, 'po')], [lb['bg'] for lb in self.label(off, 'po')])
             self.assertTrue(self.label(on, 'po'))
             self.assertEqual(self.got['on'][theme].get('poFill'), 'var(--c-success-bold)', 'the PO label is in its project colour')
+
+    def test_a_failed_save_puts_the_chats_back(self):
+        self.assertEqual(self.got['failed'], {'chat': 'off', 'local': 'off', 'pressed': [['off', 'true'], ['on', 'false']], 'hub': 'off'})
 
     def test_settings_switches_an_open_chat_and_the_hub_keeps_it(self):
         self.assertTrue(self.got['sameDoc'], 'no reload')

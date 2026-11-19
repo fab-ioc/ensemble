@@ -1636,16 +1636,24 @@
      agents in the task's colour (data-tc on the label, from its number). */
   @media not all and (pointer: coarse) {
     :root[data-chat-log="on"] #msgs { gap:21px; container-type:inline-size; }
-    :root[data-chat-log="on"] #msgs > :is(.msg, .msg-fold) { position:relative; }
-    :root[data-chat-log="on"] #msgs > :is(.msg, .msg-fold):not(:first-child)::before { content:''; position:absolute; left:0; top:-11px;
+    /* The items: balloons, folded and group rows, the catch-up note, checkpoint and
+       rotation lines, "Show more" notes, a thread's work log. A thread's line is part
+       of its balloon: .thr-line the last line of the one above, .thr-in the first
+       of the one below (which then draws no line of its own). */
+    :root[data-chat-log="on"] #msgs > :is(.msg, .msg-fold, .catchup, .cp-line, .rot-line, .fold-note, .thr-work, .thr-in) { position:relative; margin-block:0; }
+    :root[data-chat-log="on"] #msgs > :is(.msg, .msg-fold, .catchup, .cp-line, .rot-line, .fold-note, .thr-work, .thr-in):not(:first-child)::before { content:''; position:absolute; left:0; top:-11px;
       width:100cqw; height:1px; background:var(--border); pointer-events:none; }
-    :root[data-chat-log="on"] #msgs > .msg-fold { margin-block:0; }
+    :root[data-chat-log="on"] #msgs > :is(.cp-line, .rot-line)::before { flex:none; margin:0; border-top:0; }
+    :root[data-chat-log="on"] #msgs > .cp-line:first-child::before, :root[data-chat-log="on"] #msgs > .rot-line::after { content:none; }
+    :root[data-chat-log="on"] #msgs > .rot-line { justify-content:flex-start; }
     :root[data-chat-log="on"] #msgs > .msg-fold.hub { border:0; }
     :root[data-chat-log="on"] .msg.user:not(.hub), :root[data-chat-log="on"] .thr-line.mine, :root[data-chat-log="on"] .thr-in.mine { align-self:flex-start; }
     :root[data-chat-log="on"] .msg.user.has-under { align-items:flex-start; }
     :root[data-chat-log="on"] .msg .pt-under .pt-bar, :root[data-chat-log="on"] .pt-now { justify-content:flex-start; }
     :root[data-chat-log="on"] .msg :not(.pt-under) > .pt-bar { border-top:0; padding-top:0; margin-top:var(--s-100); }
-    :root[data-chat-log="on"] #msgs > :is(.thr-line, .thr-in) { margin-top:calc(var(--s-050) - 21px); }
+    :root[data-chat-log="on"] #msgs > .thr-line { margin:calc(var(--s-050) - 21px) 0 0; }
+    :root[data-chat-log="on"] #msgs > .thr-in + :is(.msg, .msg-fold) { margin-top:calc(var(--s-050) - 21px); }
+    :root[data-chat-log="on"] #msgs > .thr-in + :is(.msg, .msg-fold)::before { content:none; }
     :root[data-chat-log="on"] .rl.person { background:var(--accent); color:var(--accent-fg); box-shadow:none; }
     :root[data-chat-log="on"] .rl[data-tc="1"] { background:var(--c-task-1); color:#FFFFFF; }
     :root[data-chat-log="on"] .rl[data-tc="2"] { background:var(--c-task-2); color:#FFFFFF; }

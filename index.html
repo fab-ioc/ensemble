@@ -28098,12 +28098,15 @@ if ('serviceWorker' in navigator) {
     await setPref('projectIcons', b.dataset.val);
   });
   // #401: Chat as a log, for the hub. This browser's chats change at once (the
-  // storage event reaches every chat frame); the hub's answer settles it.
+  // storage event reaches every chat frame); the hub's answer settles it: a
+  // save that failed puts the chats back to the saved choice.
   document.getElementById('pref-chat-log')?.addEventListener('click', async (ev) => {
     const b = ev.target.closest('button[data-val]');
     if (!b) return;
     chatLogLocal(b.dataset.val);
-    await setPref('chatLog', b.dataset.val);
+    const saving = setPref('chatLog', b.dataset.val), n = SETPREF_N.chatLog;
+    await saving;
+    if (n === SETPREF_N.chatLog && PREFS) chatLogLocal(PREFS.chatLog === 'on' ? 'on' : 'off');
   });
   // The week's pace (ED-164): the switch, and the head start in points.
   document.getElementById('pref-pace-week')?.addEventListener('click', async (ev) => {
