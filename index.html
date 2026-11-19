@@ -695,6 +695,16 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   body.bar-tabs.bt-thr #thr-switch { display: inline-flex; min-width: 0; flex: 0 1 auto; max-width: 260px; color: var(--fg); font-size: var(--fs-300); }
   .ldp-ico.bt-hash { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; margin-right: 6px; border-radius: var(--r-200); background: var(--c-neutral-bg); color: var(--c-neutral-fg); font-size: var(--fs-100); font-weight: 600; }
   #thr-switch-name { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  /* thread ▾ (#393): the conversation's threads, latest first, after Main. */
+  #thr-menu { max-height: 60vh; overflow-y: auto; width: 300px; max-width: calc(100vw - 16px); box-sizing: border-box; }
+  #thr-menu .pm-item { justify-content: space-between; }
+  #thr-menu .tm-age { flex: none; color: var(--fg-muted); font-size: var(--fs-100); }
+  #thr-menu .pm-item.on .tm-age { color: inherit; }
+  #thr-menu .tm-tip { text-transform: none; letter-spacing: 0; font-weight: 400; }
+  /* A thread shown in place in the project's tab: over its conversation. */
+  .pd-chat > .pd-thread-in { position: absolute; inset: 0; z-index: 2; background: var(--surface); }
+  .pd-chat > .pd-thread-in[hidden] { display: none; }
+  .pd-thread-in > iframe { width: 100%; height: 100%; border: 0; display: block; }
   body.bar-tabs .bar-vr { display: block; flex: none; width: 1px; height: 20px; background: var(--border); }
   body.bar-tabs #bar-tabs { display: block; flex: 1 1 0; min-width: 0; align-self: stretch; }
   body.bar-tabs #bar-here + .bar-break + .bar-gap { display: none; }
@@ -6508,9 +6518,9 @@ function closeDetail(o) {
   if (tab && !o?.keepFront) {
     PD.opening = true;
     try { if (PD.dock.frontOf('po-chat') === tab) PD.dock.activate('po-chat'); } catch (e) {} finally { PD.opening = false; }
-    // The box goes with it: the PO's, not the task's behind it.
-    const room = PD.rt.get(tab)?.room;
-    if (room && WC.target?.kind === 'task' && WC.target.room === room && wcPoRoom()) wcChoose({kind:'po', room:wcPoRoom()});
+    // The box goes with it: the PO's (its thread in place, #393), not the task's behind it.
+    const room = PD.rt.get(tab)?.room, to = wcPanelTarget('po-chat');
+    if (room && WC.target?.kind === 'task' && WC.target.room === room && to && wcValid(to)) wcChoose(to);
   }
   renderRows();
 }
@@ -15693,8 +15703,8 @@ function pdIbxWasNote() {
 // the conversation's; a file panel a reading width.
 function pdMinOf(id) {
   if (PD_MIN[id]) return PD_MIN[id];
-  // A thread panel: a reply box's width; its default while it is added (pdThreadPanel).
-  if (/^thread:/.test(String(id))) return { w: PD.thrAdding ? PD_THREAD_W : 300, h: 160 };
+  // A thread's tab: a reply box's width.
+  if (/^thread:/.test(String(id))) return { w: 300, h: 160 };
   return /^chat:/.test(String(id)) ? PD_MIN['po-chat'] : { w: 280, h: 160 };
 }
 // A file panel's tab says the file's path when hovered (Dock's tooltip is the
@@ -15808,7 +15818,7 @@ function wcThreadTarget(t) {
   if (!thread) return null;
   let info = null;
   try {
-    const own = PD.rt.get(PD_THREAD)?.el.querySelector('iframe.po-thread')?.contentWindow?.sharedThreadTarget?.();
+    const own = pdThreadFind(t)?.[1].el.querySelector('iframe.po-thread')?.contentWindow?.sharedThreadTarget?.();
     if (own && (own.thread === thread || own.thread === t.thread)) info = own.info || null;
   } catch (e) {}
   return {thread, title:wcTitle(t), info};
@@ -15836,10 +15846,9 @@ function wcChoose(t, focus = false) {
 function wcValid(t) {
   if (!t?.room || !PD.dock) return false;
   if (t.kind === 'thread') {
-    const e = PD.rt.get(PD_THREAD);
-    return !!e && e.room === t.room && (t.thread ? e.tid === t.thread || e.wcAlias === t.thread
-      : e.mid === t.mid || e.wcAlias === 'm:' + t.mid)
-      && !PD.dock.popWindow(PD_THREAD);
+    // In place: while it shows over its chat; a tab: while it is no window.
+    const h = pdThreadFind(t);
+    return !!h && (h[0] === 'po-chat' ? pdThreadInShown() : true) && !PD.dock.popWindow(h[0]);
   }
   if (t.kind === 'po') return t.room === wcPoRoom() && !PD.dock.popWindow('po-chat');
   if (t.kind === 'task') {
@@ -15852,7 +15861,7 @@ function wcValid(t) {
 }
 function wcPanelId(t) {
   if (!t) return '';
-  if (t.kind === 'thread') return PD_THREAD;
+  if (t.kind === 'thread') return pdThreadFind(t)?.[0] || '';
   if (t.kind === 'po') return 'po-chat';
   return PD.rt.has(pdChatId(t.room)) ? pdChatId(t.room) : 'po-chat';
 }
@@ -15903,7 +15912,7 @@ function wcFallback() {
   return main && wcValid(main) ? main : chat ? {kind:'task',room:chat.room} : null;
 }
 function wcTitle(t) {
-  if (t.kind === 'thread') return PD.rt.get(PD_THREAD)?.title || 'Thread';
+  if (t.kind === 'thread') return pdThreadFind(t)?.[1].title || 'Thread';
   if (t.kind === 'po') return (pdProjectName() || noun('one', 'title')) + ' PO';
   const r = ALL_ROWS.find(x => x.roomId === t.room);
   return r ? pdRowTitle(r) : 'Chat';
@@ -15969,7 +15978,8 @@ try {
   WC.target = JSON.parse(sessionStorage.getItem('cd-workspace-compose-target') || 'null');
   // A thread closed before the reload does not come back (its chat keeps
   // the open one, session.html's TS_KEY): the box is the PO's (P340).
-  if (WC.target?.kind === 'thread' && !localStorage.getItem('cd-thread-open:' + WC.target.room)) WC.target = {kind:'po', room:WC.target.room};
+  if (WC.target?.kind === 'thread' && !localStorage.getItem('cd-thread-open:' + WC.target.room)
+    && !pdThreadsSaved().some(x => x.room === WC.target.room && (WC.target.thread ? x.tid === WC.target.thread : x.mid === WC.target.mid))) WC.target = {kind:'po', room:WC.target.room};
   WC.restoring = !!WC.target;
 } catch (e) {}
 // The box back on the chat the PO's panel shows (P340): the PO, or the task in
@@ -15985,7 +15995,13 @@ document.getElementById('workspace-compose-back').addEventListener('click', () =
 // in the middle when the open task has no tab of its own), a task's tab that
 // task, the thread panel its thread.
 function wcPanelTarget(id) {
-  if (id === 'po-chat') return pdMid() ? wcMainTarget() : wcPoRoom() ? {kind:'po', room:wcPoRoom()} : null;
+  if (id === 'po-chat') {
+    if (pdMid()) return wcMainTarget();
+    // A thread shown in place in the project's tab (#393): the box is the thread's.
+    const i = PD.thrIn;
+    if (i && pdThreadInShown()) return {kind:'thread', room:i.room, thread:i.tid || '', mid:i.tid ? '' : i.mid};
+    return wcPoRoom() ? {kind:'po', room:wcPoRoom()} : null;
+  }
   const e = PD.rt.get(id);
   if (e?.kind === 'chat') return {kind:'task', room:e.room};
   if (e?.kind === 'thread') return {kind:'thread', room:e.room, thread:e.tid || '', mid:e.tid ? '' : e.mid};
@@ -16002,7 +16018,7 @@ function wcPanelTarget(id) {
 // press's. The thread's Back gives the box back from the thread (P340).
 function wcFront(id, tab = false) {
   const own = tab || WC.ownAt > WC.aimAt;
-  if (!PD.dock || PD.dock.narrow() || PD.thrRestoring || !navigator.userActivation?.isActive || (!own && Date.now() - WC.aimAt < 600)) return;
+  if (!PD.dock || PD.dock.narrow() || !navigator.userActivation?.isActive || (!own && Date.now() - WC.aimAt < 600)) return;
   const t = wcPanelTarget(id);
   // A tab the page itself brings to the front (PD.opening: a task opened, the
   // fronts of a project switch put back, the task's tab kept in front) is not
@@ -16013,14 +16029,14 @@ function wcFront(id, tab = false) {
   // (review 2): only a press on the tabs, or a tab the person closed.
   const press = tab || (PD.restored && !PD.wsQuiet && !PD.tabAdding && !PD.opening && Date.now() - WC.dockAt < 1500);
   if (press && t && wcValid(t)) { if (wcKey(t) !== wcKey(WC.target)) wcChoose(t); }
-  else if (id === 'po-chat' && WC.target?.kind === 'thread') wcToMain();
+  else if (id === 'po-chat' && WC.target?.kind === 'thread' && pdThreadFind(WC.target)?.[0] !== 'po-chat') wcToMain();
 }
 document.getElementById('workspace-compose-link').addEventListener('click', e => {
   e.preventDefault();
   const t = WC.target;
   if (!t) return;
   if (t.kind === 'po') { midLeave(); if (SELECTED_SID) closeDetail(); PD.dock.reveal('po-chat'); }
-  else if (t.kind === 'thread') PD.dock.reveal(PD_THREAD);
+  else if (t.kind === 'thread') { const id = pdThreadFind(t)?.[0]; if (id) PD.dock.reveal(id); }
   else {
     const id = PD.rt.has(pdChatId(t.room)) ? pdChatId(t.room) : 'po-chat';
     PD.dock.reveal(id);
@@ -16098,8 +16114,8 @@ setInterval(wcSync, 400);
 // a restore (a reload, the chat's load, another PO's chat shown again) nor
 // one opened by reply catch-up (o.auto): the box keeps what it had then.
 // The caret goes into the box after a click, unless a field has it.
-function pdThreadAim(o) {
-  if (o.restore || o.auto || PD.dock.popWindow(PD_THREAD)) return;
+function pdThreadAim(o, id) {
+  if (o.restore || o.auto || PD.dock.popWindow(id)) return;
   WC.aimAt = Date.now();
   wcChoose({kind:'thread', room:o.room, thread:o.tid || '', mid:o.tid ? '' : o.mid}, wcClicked());
 }
@@ -16236,71 +16252,167 @@ function pdThreadOpen(roomId, thread, mid, source, part = '', tmid = '') {
   sendGotoMsg(roomId);
   return true;
 }
-// The thread as a Dock panel of its own (#236), as Slack's thread pane: one
-// for the page (PD_THREAD), beside the PO chat, showing the thread last
-// opened; another thread opened replaces it. The PO chat's page asks for it
-// (session.html's sideOpen, synchronously) and shows the thread itself when
-// this says no: a phone (narrow), no panels, a chat that is not the PO's in
-// its panel here (a popped-out one, a hidden one). Where it goes: its kept
-// place (a reload, or closed and opened again), else at the dock's right edge
-// while it fits (PD_THREAD_W wide), else a tab of the chat's stack.
-const PD_THREAD = 'thread:po';
-const PD_THREAD_W = 440;
+// A thread of the project's conversation (#393, P391): shown in place, over
+// the conversation in the project's tab (PD.thrIn: one, the PO chat's own,
+// session.html's TS), or as a tab of its own (thread:<room>:<thread>, kind
+// 'thread' in PD.rt, as many as are opened; a Ctrl/⌘-click). The PO chat's
+// page asks for it (session.html's sideOpen, synchronously) and shows the
+// thread itself when this says no: a phone (narrow), no panels, a chat that
+// is not the PO's in its panel here (a popped-out one, a hidden one).
+// In place, the project comes back at its last thread: the chat keeps it
+// (TS_KEY) and brings it back (thread-again, its restore at load).
+const PD_THREADS_KEY = 'cd-thread-tabs';
+function pdThrKey(tid, mid) { return tid || 'm:' + mid; }
+function pdThreadTabId(room, tid, mid) { return 'thread:' + room + ':' + pdThrKey(tid, mid); }
+function pdThreadSrc(o) {
+  return '/session?id=' + encodeURIComponent(o.room) + '&embed=1&side=1'
+    + (o.tid ? '&thread=' + encodeURIComponent(o.tid) : '&thread=&tmid=' + encodeURIComponent(o.mid))
+    + (o.msg ? '&msg=' + encodeURIComponent(o.msg) : '') + (o.part ? '&part=' + encodeURIComponent(o.part) : '');
+}
+function pdThreadEl(o, cls) {
+  const el = document.createElement('div');
+  el.className = 'pd-chat pd-chat-x pd-thread' + (cls ? ' ' + cls : '');
+  el.dataset.room = o.room;
+  // Not iframe.dp-session / .po-session: balloon links (sendGotoMsg) go to the chat.
+  el.innerHTML = `<iframe class="po-thread" data-room="${esc(o.room)}" src="${esc(pdThreadSrc(o))}" title="Thread" allow="clipboard-read; clipboard-write; microphone"></iframe>`;
+  return el;
+}
+// Every thread on the page: [panel id, entry]; the one in place is the
+// project tab's ('po-chat').
+function pdThreadHolders() {
+  const l = PD.thrIn ? [['po-chat', PD.thrIn]] : [];
+  for (const [id, e] of PD.rt) if (e.kind === 'thread') l.push([id, e]);
+  return l;
+}
+// Does entry e show thread t ({room, thread, mid}, the box's terms)?
+function pdThreadIs(e, t) {
+  return !!e && !!t && e.room === t.room && (t.thread ? e.tid === t.thread || e.wcAlias === t.thread
+    : !!t.mid && (e.mid === t.mid || e.wcAlias === 'm:' + t.mid));
+}
+function pdThreadFind(t) { return pdThreadHolders().find(([, e]) => pdThreadIs(e, t)) || null; }
+// The thread page's window a chat page pairs with: the one in place for its
+// room, else the tab of the thread the box serves (session.html).
+function pdThreadWin(room) {
+  const of = e => e?.el.querySelector('iframe.po-thread')?.contentWindow || null;
+  if (PD.thrIn && PD.thrIn.room === room && pdThreadInShown()) return of(PD.thrIn);
+  const h = WC.target?.kind === 'thread' && WC.target.room === room ? pdThreadFind(WC.target) : null;
+  return h && h[0] !== 'po-chat' ? of(h[1]) : null;
+}
+// The thread in place shows only over its own chat (another PO chat, or a
+// task in the middle, hides it).
+function pdThreadInShown() {
+  const e = PD.thrIn;
+  if (!e) return false;
+  const f = PO_PANEL.querySelector('iframe.po-session:not([hidden])');
+  return !!f && f.dataset.room === e.room && !PO_PANEL.hidden && PO_PANEL.parentNode === PD.els['po-chat'];
+}
+function pdThreadInSync() {
+  const e = PD.thrIn;
+  if (!e) return;
+  const on = pdThreadInShown();
+  if (e.el.hidden === !on) return;
+  e.el.hidden = !on;
+  wcSync();
+}
+// The thread in place goes: quiet (another chat shown, the chat shows it
+// itself) leaves the chat's open thread kept; else the chat is told (Main).
+function pdThreadInClose(quiet) {
+  const e = PD.thrIn;
+  if (!e) return;
+  PD.thrIn = null;
+  if (WC.target?.kind === 'thread' && pdThreadIs(e, WC.target)) wcToMain();
+  try { e.el.querySelector('iframe')?.contentWindow?.edStoreNow(); } catch (err) {}
+  e.el.remove(); e.el.innerHTML = '';
+  if (!quiet) pdThreadTell(e.room, 'thread-closed');
+  barTabsSync();
+}
 function pdThreadPanel(frameEl, o) {
   const d = PD.dock;
   if (!d || !pdPanelsOn() || !o || !o.room || (!o.tid && !o.mid)) return false;
   if (!frameEl || frameEl.hidden || !frameEl.classList.contains('po-session')) return false;
   // The chat shows the thread itself (a phone, its own window): one thread on
-  // screen, so the panel goes, quietly (its place is kept).
-  if (d.narrow() || frameEl.classList.contains('pd-own') || d.popWindow('po-chat')) {
-    if (PD.rt.has(PD_THREAD)) { PD.thrQuiet = true; try { d.removePanel(PD_THREAD); } catch (e) {} finally { PD.thrQuiet = false; } }
-    return false;
-  }
+  // screen, so the one in place goes, quietly.
+  if (d.narrow() || frameEl.classList.contains('pd-own') || d.popWindow('po-chat')) { pdThreadInClose(true); return false; }
   if (PO_PANEL.parentNode !== PD.els['po-chat'] || !PO_PANEL.contains(frameEl)) return false;
-  const src = '/session?id=' + encodeURIComponent(o.room) + '&embed=1&side=1'
-    + (o.tid ? '&thread=' + encodeURIComponent(o.tid) : '&thread=&tmid=' + encodeURIComponent(o.mid))
-    + (o.msg ? '&msg=' + encodeURIComponent(o.msg) : '') + (o.part ? '&part=' + encodeURIComponent(o.part) : '');
+  if (o.tab) return pdThreadTab(o);
   const title = o.title || 'Thread';
-  const had = PD.rt.get(PD_THREAD);
+  const had = PD.thrIn;
   if (had) {
     const f = had.el.querySelector('iframe');
     const same = had.room === o.room && (o.tid ? had.tid === o.tid : !had.tid && had.mid === o.mid);
     if (same && f && f.contentWindow) {
       if (o.msg) { try { f.contentWindow.postMessage({ ensemble: 'goto-msg', msg: o.msg, part: o.part || '', hl: inboxHlSec() }, location.origin); } catch (e) {} }
     } else if (f) {
-      // Another chat's thread goes from that chat (it is told, as by its ×).
+      // Another chat's thread goes from that chat (it is told, as by its Back).
       if (had.room !== o.room) pdThreadTell(had.room, 'thread-closed');
       try { f.contentWindow?.edStoreNow(); } catch (e) {}
-      f.setAttribute('src', src);
+      f.setAttribute('src', pdThreadSrc(o));
     }
-    Object.assign(had, { room: o.room, tid: o.tid || '', mid: o.tid ? '' : o.mid, wcAlias:'' });
-    pdThreadSetTitle(title);
-    // A restore at the chat's load leaves the panel where it is, unseen if so.
-    if (!o.restore) { try { d.reveal(PD_THREAD); } catch (e) {} }
-    pdThreadAim(o);
-    return true;
+    Object.assign(had, { room: o.room, tid: o.tid || '', mid: o.tid ? '' : o.mid, wcAlias: '', title });
+    had.el.dataset.room = o.room;
+  } else {
+    const el = pdThreadEl(o, 'pd-thread-in');
+    PD.thrIn = { kind: 'thread', room: o.room, tid: o.tid || '', mid: o.tid ? '' : o.mid, el, title, wcAlias: '' };
+    PD.els['po-chat'].appendChild(el);
   }
-  const el = document.createElement('div');
-  el.className = 'pd-chat pd-chat-x pd-thread';
-  el.dataset.room = o.room;
-  // Not iframe.dp-session / .po-session: balloon links (sendGotoMsg) go to the chat.
-  el.innerHTML = `<iframe class="po-thread" data-room="${esc(o.room)}" src="${esc(src)}" title="Thread" allow="clipboard-read; clipboard-write; microphone"></iframe>`;
-  PD.rt.set(PD_THREAD, { kind: 'thread', room: o.room, tid: o.tid || '', mid: o.tid ? '' : o.mid, el, title });
-  // Dock sizes a panel docked at an edge by its least width (or a quarter of
-  // the dock): while it is added, the thread's least width is its default.
-  const kept = (d.slots ? d.slots() : []).includes(PD_THREAD);
-  const where = kept ? undefined : pdFits(PD_THREAD_W) ? 'right' : { kind: 'stack', stack: 'po-chat' };
-  let res = null;
-  PD.thrAdding = true;
-  try { res = d.addPanel({ id: PD_THREAD, title, el, closable: true }, where); } catch (e) { res = null; } finally { PD.thrAdding = false; }
-  if (res !== 'added') { PD.rt.delete(PD_THREAD); return res === 'exists'; }
-  // Back in the chat's own stack after a reload: the chat stays in front.
-  if (o.restore && d.frontOf && d.frontOf('po-chat') === PD_THREAD) { PD.thrRestoring = true; try { d.activate('po-chat'); } catch (e) {} finally { PD.thrRestoring = false; } }
-  pdToolsFit();
-  pdThreadAim(o);
+  pdThreadInSync();
+  // A restore at the chat's load leaves the tab where it is, unseen if so.
+  if (!o.restore) { try { d.reveal('po-chat'); } catch (e) {} }
+  barTabsSync();
+  pdThreadAim(o, 'po-chat');
+  // Back in place by itself (the project shown again, a reload): a box on
+  // this chat's main conversation, now under its thread, is the thread's.
+  if (o.restore && WC.target?.kind === 'po' && WC.target.room === o.room && pdThreadInShown()) {
+    const t = wcPanelTarget('po-chat');
+    if (t && wcValid(t)) wcChoose(t, false);
+  }
   return true;
 }
-// The PO chats of a room are told about their thread's panel (thread-closed,
+// A thread as a tab of its own, after the last tab of the project's stack
+// (as a task's): shown when it is open already.
+function pdThreadTab(o) {
+  const d = PD.dock;
+  if (!d || !o || !o.room || (!o.tid && !o.mid)) return false;
+  // Open in place already or as a tab under another key (its balloon's).
+  const found = pdThreadFind({ room: o.room, thread: o.tid || '', mid: o.tid ? '' : o.mid });
+  const id = found && found[0] !== 'po-chat' ? found[0] : pdThreadTabId(o.room, o.tid, o.mid);
+  if (PD.rt.has(id)) {
+    const f = PD.rt.get(id).el.querySelector('iframe');
+    if (o.msg && f?.contentWindow) { try { f.contentWindow.postMessage({ ensemble: 'goto-msg', msg: o.msg, part: o.part || '', hl: inboxHlSec() }, location.origin); } catch (e) {} }
+    if (!o.restore) { try { d.reveal(id); } catch (e) {} pdThreadAim(o, id); }
+    return true;
+  }
+  const title = o.title || 'Thread';
+  const el = pdThreadEl(o);
+  PD.rt.set(id, { kind: 'thread', room: o.room, tid: o.tid || '', mid: o.tid ? '' : o.mid, el, title, wcAlias: '' });
+  const kept = (d.slots ? d.slots() : []).includes(id);
+  let where;
+  if (!kept) {
+    const end = pdPoStackLast();
+    if (!o.restore && d.frontOf('po-chat') !== end) { try { d.activate(end); } catch (e) {} }
+    where = { kind: 'stack', stack: end };
+  }
+  let res = null;
+  PD.tabAdding = true;
+  try { res = d.addPanel({ id, title, el, closable: true }, where); } catch (e) { res = null; } finally { PD.tabAdding = false; }
+  if (res !== 'added') { PD.rt.delete(id); return res === 'exists'; }
+  pdThreadsRemember();
+  pdToolsFit();
+  if (!o.restore) { pdWsSeen(id); pdWsCap(id); pdThreadAim(o, id); }
+  return true;
+}
+// The thread tabs open, for the next visit (the workspace keeps those put away).
+function pdThreadsRemember() {
+  const l = [...PD.rt.values()].filter(e => e.kind === 'thread').map(e => ({ room: e.room, tid: e.tid || '', mid: e.tid ? '' : e.mid || '', title: e.title || '' }));
+  try { if (l.length) localStorage.setItem(PD_THREADS_KEY, JSON.stringify(l)); else localStorage.removeItem(PD_THREADS_KEY); } catch (e) {}
+}
+function pdThreadsSaved() {
+  try {
+    const l = JSON.parse(localStorage.getItem(PD_THREADS_KEY) || '[]');
+    return Array.isArray(l) ? l.filter(x => x && typeof x.room === 'string' && x.room && (typeof x.tid === 'string' && x.tid || typeof x.mid === 'string' && x.mid)) : [];
+  } catch (e) { return []; }
+}
+// The PO chats of a room are told about their thread in place (thread-closed,
 // thread-again, thread-is: session.html).
 function pdThreadTell(roomId, what, extra) {
   PO_PANEL.querySelectorAll('iframe.po-session').forEach(f => {
@@ -16308,30 +16420,32 @@ function pdThreadTell(roomId, what, extra) {
     try { f.contentWindow.postMessage(Object.assign({ ensemble: what }, extra || {}), location.origin); } catch (e) {}
   });
 }
-function pdThreadSetTitle(title) {
-  const e = PD.rt.get(PD_THREAD);
+function pdThreadSetTitle(id, e, title) {
   if (!e || !title || e.title === title) return;
   e.title = title;
-  try { PD.dock.setTitle(PD_THREAD, title); } catch (err) {}
+  if (id === 'po-chat') barTabsSync();
+  else { try { PD.dock.setTitle(id, title); } catch (err) {} pdThreadsRemember(); }
+  if (WC.target?.kind === 'thread' && pdThreadIs(e, WC.target)) wcSync();
 }
-// Another PO shown: the panel is that chat's, so the last one's thread goes
-// quietly (its chat keeps it open, for when it is shown again) and the chat
-// now shown brings its own back, if it had one.
+// Another PO shown: the thread in place is that chat's, so the last one's
+// goes quietly (its chat keeps it open, for when it is shown again) and the
+// chat now shown brings its own back, if it had one.
 function pdThreadFollow(roomId, frame) {
-  const e = PD.rt.get(PD_THREAD);
   if (PD.thrRoom === roomId) return;
   const first = PD.thrRoom === undefined;
   PD.thrRoom = roomId;
-  if (e && e.room !== roomId) { PD.thrQuiet = true; try { PD.dock.removePanel(PD_THREAD); } catch (err) {} finally { PD.thrQuiet = false; } }
+  if (PD.thrIn && PD.thrIn.room !== roomId) pdThreadInClose(true);
   if (!first && frame && frame.contentWindow) { try { frame.contentWindow.postMessage({ ensemble: 'thread-again' }, location.origin); } catch (err) {} }
 }
-// The thread's page names its thread: the panel's tab follows; a thread
-// started on a balloon has its id once its first reply is in. from: the
-// thread that page was opened for ({asked, tmid}); one the panel no longer
-// shows (another thread opened in it, its word late) changes nothing (#363).
-function pdThreadTitle(roomId, title, thread, from) {
-  const e = PD.rt.get(PD_THREAD);
-  if (!e || e.room !== roomId) return;
+// The thread's page names its thread: its tab (or the thread ▾) follows; a
+// thread started on a balloon has its id once its first reply is in. src:
+// the page that says so; from: the thread that page was opened for ({asked,
+// tmid}); one its holder no longer shows (another thread opened in it, its
+// word late) changes nothing (#363).
+function pdThreadTitle(roomId, title, thread, from, src) {
+  const h = pdThreadHolders().find(([, e]) => e.room === roomId && e.el.querySelector('iframe')?.contentWindow === src);
+  if (!h) return;
+  const [id, e] = h;
   if (from && (from.asked ? from.asked !== e.tid && from.asked !== e.wcAlias
     : !from.tmid || (from.tmid !== e.mid && 'm:' + from.tmid !== e.wcAlias && thread !== e.tid))) return;
   if (thread && e.tid !== thread) {
@@ -16357,10 +16471,11 @@ function pdThreadTitle(roomId, title, thread, from) {
       try { sessionStorage.setItem('cd-workspace-compose-target', JSON.stringify(WC.target)); } catch (err) {}
     }
     e.tid = thread; e.mid = '';
-    pdThreadTell(roomId, 'thread-is', { thread });
+    if (id === 'po-chat') pdThreadTell(roomId, 'thread-is', { thread });
+    else pdThreadsRemember();
     wcSync();
   }
-  pdThreadSetTitle(title);
+  pdThreadSetTitle(id, e, title);
 }
 // A panel added at runtime was taken out of the dock (its ×, ⋯ › Close, a
 // middle click, Ctrl+F4, or removePanel): disposed here.
@@ -16368,10 +16483,10 @@ function pdRuntimeRemoved(id) {
   const e = PD.rt.get(id);
   if (!e) return;
   if (e.kind === 'thread') {
-    if (WC.target?.kind === 'thread' && WC.target.room === e.room) wcChoose({kind:'po',room:e.room});
     try { e.el.querySelector('iframe')?.contentWindow?.edStoreNow(); } catch (err) {}
     PD.rt.delete(id); e.el.innerHTML = '';
-    if (!PD.thrQuiet) pdThreadTell(e.room, 'thread-closed');
+    if (WC.target?.kind === 'thread' && pdThreadIs(e, WC.target) && !pdThreadFind(WC.target)) wcToMain();
+    pdThreadsRemember();
   }
   else if (e.kind === 'file') wsPanelRemoved(id); else pdChatRemoved(id);
   // Closed, not put away (#386): its pin goes with it.
@@ -16464,6 +16579,8 @@ function pdRuntimeRestore() {
   const hold = HUB_PHASE !== 'ready';
   const held = pdRestorePanels(wsPanelsSaved(), pdChatsSaved(), hold);
   if (held.ctxs.length || held.rooms.length) PD_HOLD = held;
+  // The thread tabs of the last visit (#393), each in its kept place.
+  for (const x of pdThreadsSaved()) pdThreadTab({ room: x.room, tid: x.tid || '', mid: x.tid ? '' : x.mid, title: x.title || '', restore: true });
   // Warm: the phase is asked again until 'ready' even with nothing held, since a
   // put-away panel whose task is not listed yet is kept only while it is not (#386).
   if (hold) pdRestoreHeld();
@@ -16490,8 +16607,8 @@ function pdRuntimeRestore() {
 // a window when it can. A pinned one stays open in every context. The state
 // is static/workspace.js's (PdWorkspace), kept in cd-pd-ctx. A panel, or a
 // screen, whose context the list does not say yet (a task just made shows in
-// the project list a poll later) is left alone. A thread panel (thread:po)
-// follows its PO chat, not this.
+// the project list a poll later) is left alone. A thread's tab is its chat's
+// (#393); the thread in place follows its PO chat, not this.
 const PD_WS = PdWorkspace.load((() => { try { return localStorage.getItem(PdWorkspace.KEY); } catch (e) { return null; } })());
 let pdWsSaveT = 0;
 function pdWsSave(now) {
@@ -16513,10 +16630,15 @@ function pdWsHere() {
   const pj = poDockProject();
   return pj ? pj.id : '';
 }
-// Whose a panel is (pdWsCtxOfTask's terms); '' while not known, null for one
-// that is no context's (a thread).
+// Whose a panel is (pdWsCtxOfTask's terms); '' while not known. A thread's
+// tab is its chat's: a PO chat's is its project's (#393).
 function pdWsOwner(e) {
   if (e.kind === 'chat') return pdWsCtxOfTask(e.room);
+  if (e.kind === 'thread') {
+    if (!PROJECTS) return '';
+    const pj = (PROJECTS.projects || []).find(p => p.poRoomId && p.poRoomId === e.room);
+    return pj ? pj.id : pdWsCtxOfTask(e.room);
+  }
   const ctx = e.kind === 'file' && e.v && e.v.ctx;
   if (!ctx) return null;
   if (ctx.kind === 'task') return pdWsCtxOfTask(ctx.sid);
@@ -16530,7 +16652,9 @@ function pdPanelProject(e) {
 }
 function pdWsItem(id, e) {
   const out = (() => { try { return !!PD.dock.isOut(id); } catch (err) { return false; } })();
-  const it = e.kind === 'chat' ? { id, kind: 'chat', room: e.room } : { id, kind: 'file', path: e.path, ctx: e.v.ctx };
+  const it = e.kind === 'chat' ? { id, kind: 'chat', room: e.room }
+    : e.kind === 'thread' ? { id, kind: 'thread', room: e.room, tid: e.tid || '', mid: e.tid ? '' : e.mid || '', title: e.title || '' }
+    : { id, kind: 'file', path: e.path, ctx: e.v.ctx };
   if (out) it.out = true;
   else {
     // Not a tab of the dock (review 3): floating, or a window the browser
@@ -16567,7 +16691,7 @@ function pdWsFit(here) {
 function pdWsOpen() {
   const open = [];
   for (const [id, e] of PD.rt) {
-    if (e.kind !== 'chat' && e.kind !== 'file') continue;
+    if (e.kind !== 'chat' && e.kind !== 'file' && e.kind !== 'thread') continue;
     open.push({ item: pdWsItem(id, e), owner: pdWsOwner(e) || null });
   }
   return open;
@@ -16585,6 +16709,7 @@ function pdWsBringBack(it) {
     if (!ALL_ROWS.some(r => r.roomId === it.room)) return HUB_PHASE === 'ready' ? null : false;
     return pdChatOpen(it.room, { restore: true }) ? true : null;
   }
+  if (it.kind === 'thread') return pdThreadTab({ room: it.room, tid: it.tid, mid: it.mid, title: it.title, restore: true }) ? true : null;
   const ctx = it.ctx;
   const ok = ctx.kind === 'task' ? !!(ctx.sid && (rowBySid(ctx.sid) || ALL_ROWS.some(r => r.roomId === ctx.sid)))
     : !!(ctx.projectId && projectById(ctx.projectId));
@@ -16767,7 +16892,7 @@ function pdTabExtra(p) {
     return pid ? ldpSwatch(pid, 'ldp-ico pd-tab-ico') : '';
   }
   const e = PD.rt.get(p.id);
-  if (!e || (e.kind !== 'chat' && e.kind !== 'file')) return '';
+  if (!e || (e.kind !== 'chat' && e.kind !== 'file' && e.kind !== 'thread')) return '';
   // This context's own (not PD.pid: an Unassigned task keeps the last
   // project's dock, yet a pinned file of that project is another's there).
   const pid = pdPanelProject(e);
@@ -17112,8 +17237,9 @@ function pdShown(id) {
       pdWakeChat(rt.el.querySelector('iframe.dp-session'));
       // #386: a task's tab shown is that task open (its tools beside it).
       if (rt.kind === 'chat') pdTabShown(rt.room);
-      // Brought to the front by the person: the box is its chat's (issue 57).
-      if (rt.kind === 'chat') wcFront(id);
+      // Brought to the front by the person: the box is its chat's (issue 57),
+      // a thread's tab its thread's (#393).
+      if (rt.kind === 'chat' || rt.kind === 'thread') wcFront(id);
       barCrumbs();
     }
     pdTabTips();
@@ -24536,6 +24662,8 @@ function barTabsSync() {
   const front = !!head && PD.dock.frontOf('po-chat') === 'po-chat';
   if (grp) grp.classList.toggle('on', front);
   body.classList.toggle('bt-thr', on && !!thrBarRoom());
+  pdThreadInSync();
+  if (on) { const nm = document.getElementById('thr-switch-name'), l = thrBarLabel(); if (nm.textContent !== l) nm.textContent = l; }
   if (!head) return;
   head.classList.add('bt-head');
   const r = document.getElementById('bar-tabs').getBoundingClientRect();
@@ -24565,7 +24693,143 @@ if (window.ResizeObserver) new ResizeObserver(() => barTabsSync()).observe(docum
 document.getElementById('bar-grp').addEventListener('click', (e) => {
   if (!document.body.classList.contains('bar-tabs') || e.target.closest('#proj-switch, #thr-switch')) return;
   pdReveal('po-chat');
+  // As a click on a tab: the box is the conversation's (its thread in place).
+  wcFront('po-chat', true);
 });
+// The chat page in the project's tab: the PO's, or the task in no project
+// that is the top level (its chat in the middle).
+function thrBarFrame() {
+  if (pdMid()) {
+    const r = rowBySid(SELECTED_SID), act = pdById('detail-panel')._panes?.activity;
+    return (r && act && act.querySelector(`iframe.dp-session[data-room="${CSS.escape(r.roomId)}"]`)) || null;
+  }
+  return PO_PANEL.querySelector('iframe.po-session:not([hidden])');
+}
+// What thread ▾ names: the thread shown in place, else Main.
+function thrBarLabel() {
+  if (pdMid()) { try { const t = thrBarFrame()?.contentWindow?.sideNow?.(); if (t) return t.title || 'Thread'; } catch (e) {} return 'Main'; }
+  return PD.thrIn && pdThreadInShown() ? PD.thrIn.title || 'Thread' : 'Main';
+}
+function thrBarShownId() {
+  if (pdMid()) { try { const t = thrBarFrame()?.contentWindow?.sideNow?.(); return t ? t.tid || 'm:' + t.mid : ''; } catch (e) { return ''; } }
+  return PD.thrIn && pdThreadInShown() ? PD.thrIn.tid || 'm:' + PD.thrIn.mid : '';
+}
+// "today", else how many days ago ("2 d").
+function thrAge(ts) {
+  if (!ts) return '';
+  const d0 = new Date(); d0.setHours(0, 0, 0, 0);
+  const t = new Date(ts * 1000); t.setHours(0, 0, 0, 0);
+  const n = Math.round((d0 - t) / 86400000);
+  return n <= 0 ? 'today' : n + ' d';
+}
+// The thread ▾ menu: the conversation's threads, latest first, after Main.
+function thrMenuHtml(list, name, err) {
+  const cur = thrBarShownId();
+  const item = (id, title, age) => `<button type="button" class="pm-item${id === cur ? ' on' : ''}" role="menuitem" data-thr-pick="${esc(id)}">`
+    + `<span class="pm-name">${esc(title)}</span>${age ? `<span class="tm-age">${esc(age)}</span>` : ''}</button>`;
+  return `<div class="pm-head">${esc(name ? name + ' threads, latest first' : 'Threads, latest first')}</div>`
+    + item('', 'Main conversation', '')
+    + (list ? list.length ? list.map(t => item(t.id, t.title || 'A thread', thrAge(t.updatedAt || t.lastAt))).join('') : '<p class="pm-none">No threads yet.</p>'
+      : `<p class="pm-none">${err ? 'The threads could not be read.' : 'Reading the threads…'}</p>`)
+    + `<div class="pm-rule"></div><div class="pm-head tm-tip">Ctrl/⌘-click: open as a new tab</div>`;
+}
+function thrMenuName() {
+  const r = barTopTask();
+  if (r) return pdRowTitle(r);
+  const pj = poDockProject();
+  return pj ? pj.name || '' : '';
+}
+function closeThrMenu(back) {
+  const m = $('#thr-menu');
+  const was = !m.hidden;
+  m.hidden = true;
+  $('#thr-switch').setAttribute('aria-expanded', 'false');
+  if (was && back) $('#thr-switch').focus();
+}
+async function openThrMenu(focusFirst) {
+  closeCreateMenu(); closeMeMenu(); closeProjMenu();
+  const m = $('#thr-menu'), b = $('#thr-switch'), room = thrBarRoom();
+  if (!room) return;
+  const name = thrMenuName();
+  const place = () => {
+    const r = b.getBoundingClientRect(), vw = document.documentElement.clientWidth, top = Math.round(r.bottom + 6);
+    m.style.top = top + 'px';
+    m.style.maxHeight = Math.max(160, Math.round(window.innerHeight - top - 8)) + 'px';
+    const w = m.getBoundingClientRect().width;
+    m.style.left = Math.round(Math.max(8, Math.min(r.left, vw - w - 8))) + 'px';
+  };
+  m.innerHTML = thrMenuHtml(null, name);
+  m.dataset.room = room;
+  m.hidden = false;
+  place();
+  b.setAttribute('aria-expanded', 'true');
+  const focus = () => { const f = m.querySelector('.pm-item.on') || m.querySelector('.pm-item'); if (f && (focusFirst || document.activeElement === b || m.contains(document.activeElement))) f.focus(); };
+  focus();
+  let list = null, err = false;
+  try {
+    const r = await fetch('/api/room/channel?id=' + encodeURIComponent(room) + '&threads=1&n=40&lite=1', { cache: 'no-store' });
+    const d = r.ok || r.status === 409 ? await r.json() : null;
+    // A task's chat is not threaded (409 not_threaded): Main alone.
+    if (d && d.error === 'not_threaded') list = [];
+    else if (d && Array.isArray(d.threadList)) list = d.threadList.filter(t => t && t.id && t.id !== 'team:activity' && !t.archived);
+    else err = !d || !d.pending;
+    if (!list && d && d.pending) list = [];
+  } catch (e) { err = true; }
+  if (m.hidden || m.dataset.room !== room) return;
+  const had = m.contains(document.activeElement);
+  m.innerHTML = thrMenuHtml(list, name, err);
+  place();
+  if (had || focusFirst) focus();
+}
+// A pick: plain, the thread shows in place (the chat's own sideOpen, so the
+// chat keeps it as its last thread); Ctrl/⌘, as a new tab; Main, back.
+function thrPick(id, tab) {
+  const room = $('#thr-menu').dataset.room || thrBarRoom();
+  const title = $('#thr-menu').querySelector(`[data-thr-pick="${CSS.escape(id)}"] .pm-name`)?.textContent || '';
+  closeThrMenu();
+  if (!room) return;
+  const f = thrBarFrame(), w = f && f.dataset.room === room ? f.contentWindow : null;
+  if (!id) {
+    if (!pdMid() && PD.thrIn) pdThreadInClose(false);
+    else { try { w?.sideClose?.(); } catch (e) {} }
+    pdReveal('po-chat');
+    wcFront('po-chat', true);
+    return;
+  }
+  if (tab) { pdThreadTab({ room, tid: id, mid: '', title }); return; }
+  try { w?.sideOpen?.({ tid: id, mid: '' }); } catch (e) {}
+  pdReveal('po-chat');
+}
+$('#thr-switch').addEventListener('click', (ev) => {
+  ev.stopPropagation();
+  if (!$('#thr-menu').hidden) { closeThrMenu(); return; }
+  openThrMenu(false);
+});
+$('#thr-switch').addEventListener('keydown', (ev) => {
+  if (ev.key === 'ArrowDown' && $('#thr-menu').hidden) { ev.preventDefault(); openThrMenu(true); }
+});
+$('#thr-menu').addEventListener('click', (ev) => {
+  const it = ev.target.closest('[data-thr-pick]');
+  if (it) thrPick(it.dataset.thrPick, ev.ctrlKey || ev.metaKey);
+});
+$('#thr-menu').addEventListener('auxclick', (ev) => {
+  const it = ev.button === 1 && ev.target.closest('[data-thr-pick]');
+  if (it && it.dataset.thrPick) { ev.preventDefault(); thrPick(it.dataset.thrPick, true); }
+});
+$('#thr-menu').addEventListener('keydown', (ev) => {
+  const items = [...$('#thr-menu').querySelectorAll('.pm-item')];
+  const i = items.indexOf(document.activeElement);
+  const go = j => { const it = items[Math.max(0, Math.min(items.length - 1, j))]; if (it) it.focus(); };
+  if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); closeThrMenu(true); }
+  else if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') { go(ev.key === 'ArrowDown' ? i + 1 : (i < 0 ? items.length - 1 : i - 1)); ev.preventDefault(); }
+  else if (ev.key === 'Home' || ev.key === 'End') { go(ev.key === 'Home' ? 0 : items.length - 1); ev.preventDefault(); }
+  else if (ev.key === 'Tab') closeThrMenu();
+});
+document.addEventListener('click', (ev) => {
+  if (!ev.target.closest('#thr-switch') && !ev.target.closest('#thr-menu')) closeThrMenu();
+});
+window.addEventListener('blur', () => closeThrMenu());
+window.addEventListener('resize', () => closeThrMenu());
 // A task in no project shown in the middle on a computer: the top level of
 // the bar (ENSEMBLE / the task ▾ / thread ▾), with no PO.
 function barTopTask() {
@@ -25692,8 +25956,10 @@ window.addEventListener('message', (ev) => {
     }
   }
   if (d && d.type === 'thread-title' && d.roomId && ev.origin === location.origin) pdThreadTitle(String(d.roomId), String(d.title || ''), String(d.thread || ''),
-    d.asked === undefined ? null : { asked: String(d.asked || ''), tmid: String(d.tmid || '') });
+    d.asked === undefined ? null : { asked: String(d.asked || ''), tmid: String(d.tmid || '') }, ev.source);
   if (d && d.type === 'thread-back' && d.roomId && ev.origin === location.origin) {
+    // Back on the thread in place: Main conversation (#393).
+    if (PD.thrIn && PD.thrIn.el.querySelector('iframe')?.contentWindow === ev.source) { pdThreadInClose(false); return; }
     const cid = pdChatId(String(d.roomId));
     try { PD.dock.reveal(PD.rt.has(cid) ? cid : 'po-chat'); } catch (e) {}
     if (WC.target?.kind === 'thread') wcToMain();
