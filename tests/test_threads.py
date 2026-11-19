@@ -1412,6 +1412,42 @@ class Endpoints(tp._World):
         self.assertIsNot(fresh, first)
         self.assertIn("sid-1:4", fresh["by_mid"])
 
+    def test_a_build_reads_the_room_as_it_was_asked_for(self):
+        # P417: a room poll pops the messages of the room it handed over (a
+        # delta) while the build runs: the build still files the room's cards
+        # (it filed none, and a thread's card was drawn in the main chat).
+        chatroom.post_message(self.rid, "claude", "A card?", to="user", ask_audience="user",
+                              structured_asks=dashboard.asks.validated(
+                                  [{"question": "Brakes?", "options": [{"label": "Yes"}, {"label": "No"}]}], []))
+        self.add("sid-1", tp.turn("assistant", "One more thing.", time.time()))
+        room = chatroom.get_room(self.rid)
+        held = [m["id"] for m in room["messages"] if m.get("asks")]
+        self.assertEqual(len(held), 1)
+        entered, release = threading.Event(), threading.Event()
+        original, seen = threads.balloons, []
+
+        def slow_balloons(*args, **kwargs):
+            entered.set()
+            release.wait(5)
+            return original(*args, **kwargs)
+
+        real_cards = threads.room_cards
+
+        def cards(r):
+            out = real_cards(r)
+            seen.append([c["id"] for c in out])
+            return out
+        spy = mock.patch.object(threads, "room_cards", cards)
+        spy.start()
+        self.addCleanup(spy.stop)
+        with mock.patch.object(threads, "balloons", side_effect=slow_balloons):
+            threads.ready(self.rid, room)
+            self.assertTrue(entered.wait(2))
+            room.pop("messages")        # as the room endpoint's delta does
+            release.set()
+            self.settle()
+        self.assertEqual(seen, [held])
+
     def test_warm_rebuild_reply_has_no_progress(self):
         self.add("sid-1", tp.turn("assistant", "One more thing.", time.time()))
         entered, release = threading.Event(), threading.Event()

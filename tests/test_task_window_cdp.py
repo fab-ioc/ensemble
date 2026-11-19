@@ -118,7 +118,7 @@ async function main() {
   // The three ways the main window goes to another project, each by clicks.
   const SWITCH = {
     left: async (pid) => { await front('inbox'); await click(`document.querySelector('#ld-projs .ldp-row[data-ldp-proj="${pid}"]')`); },
-    switcher: async (pid) => { await click(`document.getElementById('proj-switch')`); await p.until(`!document.getElementById('proj-menu').hidden`, 5000);
+    switcher: async (pid) => { await click(`document.querySelector('#proj-switch .caret')`); await p.until(`!document.getElementById('proj-menu').hidden`, 5000);
       await click(`[...document.querySelectorAll('#proj-menu .pm-item[data-proj="${pid}"]')].find(b => !b.classList.contains('pm-set') && b.getBoundingClientRect().width > 0)`); },
     inbox: async (pid) => { await front('inbox'); await click(`document.querySelector('#ld-projs .ldp-row[data-ldp="all"]')`); await sleep(400);
       const L = `LD_INBOX.querySelector('.ibx-row a.ibx-link[data-room="${A.poOf[pid]}"]')`;

@@ -1415,6 +1415,11 @@ def ready(room_id: str, room: dict) -> dict | None:
         _BUILDING.add(room_id)
         if hit is None:
             progress.set_progress("thread:" + room_id, "Reading conversations")
+    # The room as it is now (P417): the caller goes on with it while the build
+    # runs, and a room poll pops its messages (a delta) or cuts them to a
+    # window: an index built from that filed no card in a thread, and the
+    # chat drew a thread's cards in the main chat, the Inbox landing there.
+    room = {**room, "messages": list(room.get("messages") or [])}
 
     def run():
         try:

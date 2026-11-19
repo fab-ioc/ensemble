@@ -700,6 +700,17 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   body.bar-tabs.bt-thr #thr-switch { display: inline-flex; min-width: 0; flex: 0 1 auto; max-width: 260px; color: var(--fg); font-size: var(--fs-300); }
   .ldp-ico.bt-hash { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; margin-right: 6px; border-radius: var(--r-200); background: var(--c-neutral-bg); color: var(--c-neutral-fg); font-size: var(--fs-100); font-weight: 600; }
   #thr-switch-name { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  /* #396 (P403): the project's crumb in the group is a breadcrumb's: its name
+     (icon + name, .pj-nm) and its ▾ are two hit areas, each lit on its own;
+     one button, one focus stop. Elsewhere (a phone, the breadcrumb of a
+     project without a PO) the button is whole and .pj-nm is not a box. */
+  .pj-nm { display: contents; }
+  body.bar-tabs #proj-switch { padding: 0; gap: 1px; }
+  body.bar-tabs #proj-switch:hover { background: transparent; }
+  body.bar-tabs #proj-switch .pj-nm { display: inline-flex; align-items: center; min-width: 0; height: 100%; padding: 0 var(--s-100) 0 10px; border-radius: var(--r-200) 0 0 var(--r-200); }
+  body.bar-tabs #proj-switch .caret { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 22px; height: 100%; border-radius: 0 var(--r-200) var(--r-200) 0; }
+  body.bar-tabs #proj-switch .pj-nm:hover, body.bar-tabs #proj-switch .caret:hover { background: var(--hover); }
+  body.bar-tabs #proj-switch[aria-expanded="true"] .caret { background: var(--hover); }
   /* thread ▾ (#393): the conversation's threads, latest first, after Main. */
   #thr-menu { max-height: 60vh; overflow-y: auto; width: 300px; max-width: calc(100vw - 16px); box-sizing: border-box; }
   #thr-menu .pm-item { justify-content: space-between; }
@@ -5060,9 +5071,12 @@ window.DOC_LISTENERS_PAUSED = false;
     <!-- #393: on a computer the project and its thread are the first tab
          (.bar-grp, underlined while the conversation is in front; a click on
          it brings the conversation to the front): project ▾ / thread ▾. -->
+    <!-- #396 (P403): in the group, the project's name and its ▾ are two hit
+         areas of one button (one focus stop): in a thread the name goes back
+         to the main conversation, ▾ always opens the menu (projSwitchClick). -->
     <span class="bar-grp" id="bar-grp">
     <button id="proj-switch" class="bar-btn" data-noun-title="Switch {project}, or change this {project}'s settings" title="Switch project, or change this project's settings" aria-haspopup="true" aria-expanded="false" aria-controls="proj-menu">
-      <span id="proj-switch-ico" aria-hidden="true"></span><span id="proj-switch-name" data-noun="All {projects}">All projects</span><span class="caret">▾</span>
+      <span class="pj-nm"><span id="proj-switch-ico" aria-hidden="true"></span><span id="proj-switch-name" data-noun="All {projects}">All projects</span></span><span class="caret">▾</span>
     </button>
     <span class="bar-sep bar-thr-sep" aria-hidden="true">/</span>
     <button id="thr-switch" class="bar-btn" type="button" title="Threads of this conversation (Ctrl/⌘-click one: open it as a new tab)" aria-haspopup="true" aria-expanded="false" aria-controls="thr-menu">
@@ -16480,6 +16494,21 @@ function pdThreadInClose(quiet) {
   if (!quiet) pdThreadTell(e.room, 'thread-closed');
   barTabsSync();
 }
+// P417 (#396): the PO chat framed by frameEl landed a link on a balloon of its
+// channel: the thread shown in place over it goes, the chat is told (Main).
+function pdThreadInLeave(room, frameEl) {
+  const e = PD.thrIn;
+  if (!e || e.room !== room || !frameEl || !PO_PANEL.contains(frameEl) || !frameEl.classList.contains('po-session')) return false;
+  pdThreadInClose(false);
+  return true;
+}
+// P414 (#396): the PO chat framed by frameEl is under the thread in place
+// (a landing there is not seen).
+function pdChatCovered(frameEl) {
+  const e = PD.thrIn;
+  return !!e && !!frameEl && !frameEl.hidden && frameEl.classList.contains('po-session')
+    && PO_PANEL.contains(frameEl) && !e.el.hidden && pdThreadInShown();
+}
 function pdThreadPanel(frameEl, o) {
   const d = PD.dock;
   if (!d || !pdPanelsOn() || !o || !o.room || (!o.tid && !o.mid)) return false;
@@ -25244,6 +25273,7 @@ function barTabsSync() {
   body.classList.toggle('bt-thr', on && !!thrBarRoom());
   pdThreadInSync();
   if (on) { const nm = document.getElementById('thr-switch-name'), l = thrBarLabel(); if (nm.textContent !== l) nm.textContent = l; }
+  projSwitchTip();
   if (!head) return;
   // The tabs drawn in the bar: the stack the conversation leaves, once it
   // floats or goes to a window, is the one that holds them (barTabsHead).
@@ -25424,6 +25454,18 @@ async function openThrMenu(focusFirst) {
   place();
   if (had || focusFirst) focus();
 }
+// Back to the main conversation of the project's tab (thread ▾ → Main
+// conversation, or the project's name clicked in a thread, #396): the thread
+// in place closes (a task in no project: its chat's own side column), the
+// conversation comes to the front with the Send box on it.
+function thrMain(room) {
+  room = room || thrBarRoom();
+  const f = thrBarFrame(), w = room && f && f.dataset.room === room ? f.contentWindow : null;
+  if (!pdMid() && PD.thrIn) pdThreadInClose(false);
+  else { try { w?.sideClose?.(); } catch (e) {} }
+  pdReveal('po-chat');
+  wcFront('po-chat', true);
+}
 // A pick: plain, the thread shows in place (the chat's own sideOpen, so the
 // chat keeps it as its last thread); Ctrl/⌘, as a new tab; Main, back.
 function thrPick(id, tab) {
@@ -25432,13 +25474,7 @@ function thrPick(id, tab) {
   closeThrMenu();
   if (!room) return;
   const f = thrBarFrame(), w = f && f.dataset.room === room ? f.contentWindow : null;
-  if (!id) {
-    if (!pdMid() && PD.thrIn) pdThreadInClose(false);
-    else { try { w?.sideClose?.(); } catch (e) {} }
-    pdReveal('po-chat');
-    wcFront('po-chat', true);
-    return;
-  }
+  if (!id) { thrMain(room); return; }
   if (tab) { pdThreadTab({ room, tid: id, mid: '', title }); return; }
   try { w?.sideOpen?.({ tid: id, mid: '' }); } catch (e) {}
   pdReveal('po-chat');
@@ -25765,10 +25801,35 @@ function openProjMenu(focusFirst) {
   else if (first && (focusFirst || !phoneNow())) first.focus();
   else { m.setAttribute('tabindex', '-1'); m.focus({ preventScroll: true }); }
 }
+// #396 (P403): in the bar's group (body.bar-tabs) the name and the ▾ differ,
+// as in a breadcrumb. The name (or Enter, the button focused): a thread shown
+// → the main conversation; the conversation not in front → to the front;
+// already in front on Main → the menu, as before. The ▾: always the menu.
+// Elsewhere the whole button is the menu.
+function projSwitchName() {
+  if (!document.body.classList.contains('bar-tabs')) return '';
+  if (thrBarRoom() && thrBarShownId()) return 'main';
+  return document.getElementById('bar-grp').classList.contains('on') ? '' : 'front';
+}
+// The name's tooltip says where it goes; none, the button's (the switcher's).
+function projSwitchTip() {
+  const nm = document.querySelector('#proj-switch .pj-nm');
+  if (!nm) return;
+  const go = projSwitchName();
+  const t = go === 'main' ? 'Back to the main conversation' : go === 'front' ? 'Show the conversation' : '';
+  if ((nm.getAttribute('title') || '') !== t) { if (t) nm.setAttribute('title', t); else nm.removeAttribute('title'); }
+  // The keyboard: Enter is the name, ArrowDown the menu.
+  const b = document.getElementById('proj-switch'), d = t ? t + ' (Enter); the menu: Arrow down' : '';
+  if ((b.getAttribute('aria-description') || '') !== d) { if (d) b.setAttribute('aria-description', d); else b.removeAttribute('aria-description'); }
+}
 $('#proj-switch').addEventListener('click', (ev) => {
   ev.stopPropagation();
-  if (!$('#proj-menu').hidden) { closeProjMenu(); return; }
-  openProjMenu(false);
+  const open = !$('#proj-menu').hidden;
+  const go = ev.target.closest('.caret') ? '' : projSwitchName();
+  if (open) closeProjMenu();
+  if (go === 'main') thrMain();
+  else if (go === 'front') { pdReveal('po-chat'); wcFront('po-chat', true); }
+  else if (!open) openProjMenu(false);
 });
 $('#proj-switch').addEventListener('keydown', (ev) => {
   if (ev.key === 'ArrowDown' && $('#proj-menu').hidden) { ev.preventDefault(); openProjMenu(true); }

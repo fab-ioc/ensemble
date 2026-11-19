@@ -6472,6 +6472,10 @@ function landPending() {
     if (!(LAST_ITEMS || []).some(m => m.id === GOTO)) {
       // An older message of the chat: ask for the channel back to it first.
       if (THR_ASKED !== GOTO) { renderThreaded(true); return; }
+      // Its answer still on the way: it draws, then lands (P414, #396).
+      if (THR_FETCHING) return;
+      // A page read for a different link has not decided this one yet.
+      if (THR_VIEW?.uptoFor !== GOTO) { renderThreaded(true); return; }
       thrNotShown(THR_VIEW);
       const h = embedHost(); if (h) h.postMessage({ type:'goto-taken', roomId:ROOM }, location.origin);
       return;
@@ -6563,6 +6567,9 @@ function landPending() {
       return;
     }
     GOTO = ''; THR_ASKED = '';
+    landOverThread();
+    // Done only where one sees it (P414, #396): not under a thread in place.
+    if (landCovered()) { GOTO_PART = ''; gotoFail(mid, 'The linked message is in the main conversation, under the thread shown.'); return; }
     const part = GOTO_PART;
     GOTO_PART = '';
     unwrapMarks(box);
@@ -6601,6 +6608,21 @@ function landPending() {
     landKeepSet(el);
     gotoDone(mid, true);
   } finally { _landing = false; }
+}
+// P417 (#396): a balloon landed on in the channel is shown: a thread the
+// dashboard shows in place over this chat goes (as thread ▾ → Main), so an
+// Inbox row, or a link, to a message of the main chat lands where one sees it
+// from a thread too. A thread beside the channel (its side column) stays.
+function landOverThread() {
+  if (typeof THREADED === 'undefined' || !THREADED || THREAD_MODE || !window.frameElement) return;
+  const host = dashboardHost();
+  try { host?.pdThreadInLeave?.(ROOM, window.frameElement); } catch (e) {}
+}
+// Covered by the dashboard (a thread in place over this chat): a landing
+// here is not seen (P414, #396).
+function landCovered() {
+  if (typeof THREAD_MODE !== 'undefined' && THREAD_MODE || !window.frameElement) return false;
+  try { return !!dashboardHost()?.pdChatCovered?.(window.frameElement); } catch (e) { return false; }
 }
 // #394: the balloon a link landed on stays where it is on screen while the
 // reader has not scrolled it away or asked for the latest: the chat shown
@@ -7228,7 +7250,9 @@ document.addEventListener('click', e => {
 // ``top``: nothing comes before the items (a thread from its start): an
 // older row goes in above them (#379 review 2: a card asked before the
 // thread's first reply).
-function withHubRows(items, room, hub, top = false) {
+// bottom: the view has entries after it (a link's window): a row newer than
+// its last entry is not drawn at its end, where it is not (P414, #396).
+function withHubRows(items, room, hub, top = false, bottom = false) {
   if (!hub && room === ROOM_OBJ && roomHasOlder() && items.length) {
     const first = items.find(m => m.ts), oldest = (room.messages || [])[0];
     if (first && oldest && first.ts < (oldest.ts || 0)) setTimeout(() => loadOlder(), 0);
@@ -7241,7 +7265,9 @@ function withHubRows(items, room, hub, top = false) {
   if (!rows.length) return items;
   if (!items.length) return rows;
   const out = items.slice();
+  const lastTs = bottom ? (items.findLast(m => m.ts) || {}).ts || 0 : 0;
   for (const r of rows) {
+    if (lastTs && (r.ts || 0) > lastTs) continue;
     const first = out.find(m => m.ts);
     if ((!first || r.ts < first.ts) && !top && !(r.noticeKind === 'external' && !r.typed)) continue;
     let at = out.length;
@@ -7698,6 +7724,8 @@ let THR_VIEW = null, THR_FROM = '', THR_OLDER = [], THR_UP = null, THR_AFTER = 0
 let THR_GEN = 0;           // the pages' start: a response asked before thrRestart is not drawn (#266)
 let THR_LATEST_MID = '', THR_MISSING = null, THR_REPAIR_TIMER = 0, THR_REPAIRING = false, THR_FORCE_DRAW = false;
 let THR_ANY = null, THR_ANY_MISSING = null, THR_ANY_TIMER = 0;
+// The newest item the chat's first read found (P414, #396): not news.
+let THR_ANY_BASE = null;
 // Newest items already reread for once: another reread would not show them (#273).
 const THR_ANY_TRIED = new Set();
 const THR_AUTO_OPENED = new Set();
@@ -7881,6 +7909,11 @@ function thrAnyWatch(d) {
   if (THREAD_MODE || !THR_DRAWN || !d?.latestAnyMid) return;
   THR_ANY = { mid: d.latestAnyMid, thread: d.latestAnyThread || '', role: d.latestAnyRole || '' };
   const a = THR_ANY;
+  // The chat as it was at load (P414, #396): its newest reply sitting in a
+  // thread is normal, not a row held back. No reread (it replaced a link's
+  // fetch of older pages), and no thread opened over the chat by itself.
+  if (THR_ANY_BASE === null) THR_ANY_BASE = a.mid;
+  if (a.mid === THR_ANY_BASE) { THR_ANY_MISSING = null; return; }
   // A link window or the Threads list is an intentional subset. Its
   // newest item need not be in that view; do not discard the selection.
   if (chatFiltered() || GOTO || THR_AFTER || THR_LIST) { THR_ANY_MISSING = null; return; }
@@ -7907,7 +7940,9 @@ function thrAnyWatch(d) {
     chatCatchup('thread-summary', a.mid);
     Promise.resolve(renderThreaded(true)).then(() => {
       if (THR_ANY?.mid !== a.mid || thrAnyShown(a)) return;
-      if (a.thread) {
+      // Beside the chat only: in the dashboard it would show in place over
+      // it, which nothing the reader did asked for (P414, #396).
+      if (a.thread && !(dashboardHost() && window.frameElement)) {
         sideOpen({ tid: a.thread, msg: a.mid });
         chatCatchup('thread-open', a.mid);
       } else chatCatchup('unresolved', a.mid);
@@ -8024,10 +8059,11 @@ async function renderThreaded(force) {
   if (THR_FETCHING) { if (force) THR_AGAIN = true; return; }
   THR_FETCHING = true;
   const roomTs = roomLatestTs(ROOM_OBJ), gen = THR_GEN;
-  let asked = false;
+  let asked = false, uptoFor = '';
   try {
     asked = !!thrUptoId();
     const url = thrUrl(force ? '' : THR_SIG), pre = THR_PRE;
+    uptoFor = asked ? THR_ASKED : '';
     THR_PRE = null;
     const r = pre && pre.url === url ? await pre.p.catch(() => pollFetch(url, null, 90000)) : await pollFetch(url, null, 90000);
     let d = await r.json();
@@ -8104,6 +8140,7 @@ async function renderThreaded(force) {
       threadHead();
     }
     if (asked || !THR_FROM) { THR_OLDER = []; THR_HUB = new Map(); }
+    if (asked) d.uptoFor = uptoFor;
     THR_VIEW = d;
     THR_LATEST_MID = d.latestMid || THR_LATEST_MID;
     THR_FROM = ((d.items || [])[0] || {}).mid || '';
@@ -8113,6 +8150,8 @@ async function renderThreaded(force) {
     // #402: a link to a step lands on the reply holding it, its steps open, the step marked.
     const st = d.uptoStep;
     if (st && st.mid && st.owner && GOTO === st.mid) {
+      // The hub resolved this step to its owner before deciding uptoAt.
+      d.uptoFor = st.owner;
       GOTO = st.owner; THR_ASKED = st.owner;
       if (!barePart(GOTO_PART)) GOTO_PART = (GOTO_PART ? 'inbox,' : '') + 'step:' + st.mid;
       STEPS_OPEN.add(st.owner);
@@ -8141,8 +8180,10 @@ function thrDraw(roomTs, d = THR_VIEW) {
     items.forEach(m => { if (m.from === 'user' && m.text) m.text = stripRefBlocks(m.text); });
     if (!THREAD_MODE) {
       // A question card in a thread is drawn there, not in the chat (#379).
+      // A channel drawn from its start: a card asked before its first
+      // message (a PO's first question) goes above it, not nowhere (P417).
       const inThread = (d && d.cardThreads) || {};
-      items = withHubRows(items, ROOM_OBJ, THR_HUB).filter(m => !inThread[m.id]);
+      items = withHubRows(items, ROOM_OBJ, THR_HUB, !THR_BEFORE, !!THR_AFTER).filter(m => !inThread[m.id]);
     } else if (THR_HUB.size) {
       // The thread's own cards (the hub's hubRows), among its balloons by
       // time; one older than its first, above it when the view starts there.
@@ -8152,7 +8193,10 @@ function thrDraw(roomTs, d = THR_VIEW) {
     // channel was asked to reach it (else landPending asks first). A PO's
     // message is among the hub's rows, never in a thread (#262); a card is
     // in its thread when the hub placed it there (#379).
-    if (!THREAD_MODE && GOTO && THR_ASKED === GOTO && !items.some(m => m.id === GOTO)) thrNotShown(d);
+    // Only the answer to that ask says so (its uptoAt): a view held from
+    // before it (a page above drawn meanwhile) has not looked (P414, #396).
+    if (!THREAD_MODE && GOTO && THR_ASKED === GOTO && d && d.uptoFor === GOTO && d.uptoAt !== undefined
+        && !items.some(m => m.id === GOTO)) thrNotShown(d);
     document.body.classList.toggle('po-thread-channel', !THREAD_MODE);
     const earlier = $('#earlier-threads'); if (earlier) earlier.hidden = !!THREAD_MODE || !THR_BEFORE;
     CHAT_DRAWN = THR_DRAWN = true;
