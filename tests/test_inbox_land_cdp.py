@@ -27,6 +27,7 @@ import time
 import unittest
 from http.server import ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import quote
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -200,9 +201,19 @@ async function main() {
     out.firstAfter = await ev(BAR);
     out.firstStill = await ev(seen(PO + '?.contentDocument', A.cardOld));
     out.firstNote = await chat(`(() => { const n = document.querySelector('.goto-note, #goto-note'); return n && n.offsetParent ? n.textContent : ''; })()`);
-    // A second press, for comparison: a card newer than the window the first
-    // landed in (a row past its end was drawn there, then pushed away).
+    // A second press starts an upto read for a newer card. While that read
+    // waits, a page above may redraw the held answer for the first card.
+    // It must not decide the second link from that first answer.
+    await chat(`(() => { const real = pollFetch; window.__pollFetch = real;
+      pollFetch = (url, ...args) => url.includes('&upto=' + encodeURIComponent(${JSON.stringify(A.cardM)}))
+        ? new Promise(resolve => { window.__releaseSecond = () => resolve(real(url, ...args)); })
+        : real(url, ...args); return 0; })()`);
     const t2 = await pressRow(A.cardM, 'second press');
+    await until(`!!${PO}?.contentWindow?.__releaseSecond`, 'second press: upto read held');
+    out.staleSafe = await chat(`(() => { thrDraw(roomLatestTs(ROOM_OBJ), THR_VIEW);
+      return GOTO === ${JSON.stringify(A.cardM)} && THR_ASKED === GOTO && !!THR_FETCHING
+        && !document.querySelector('.goto-note:not([hidden])'); })()`);
+    await chat('window.__releaseSecond(); pollFetch = window.__pollFetch; 0');
     await until(mainShows(A.cardM), 'the second press: Main on its card', 100).catch(async e => {
       const dbg = await chat(`({ goto: GOTO, asked: THR_ASKED, after: THR_AFTER, before: THR_BEFORE, fetching: THR_FETCHING,
         has: (LAST_ITEMS || []).some(m => m.id === ${JSON.stringify(A.cardM)}), n: (LAST_ITEMS || []).length,
@@ -227,6 +238,12 @@ async function main() {
     out.covered = await done(A.cardM);
     out.coveredBar = await ev(BAR);
     await ev(`pdThreadInLeave = window.__leave; 0`);
+    // A #402 step belongs to a reply in a thread. Its first channel answer
+    // already knows the reply is there; no second upto read is needed.
+    await send('Page.navigate', {url:A.base+'/session?room='+encodeURIComponent(A.po)+'&msg='+encodeURIComponent(A.step)}, s);
+    await until(`typeof THR_DRAWN !== 'undefined' && THR_DRAWN && TS?.tid === ${JSON.stringify(A.thread)}`, 'step link in its thread', 120);
+    out.stepLink = await ev(`({ tid: TS?.tid, reads: performance.getEntriesByType('resource')
+      .map(e => e.name).filter(n => n.includes('/api/room/channel?') && n.includes('&upto=')) })`);
     out.errors = errors;
     console.log(JSON.stringify(out));
   } finally { c.close(); ch.kill(); }
@@ -279,6 +296,12 @@ class InboxLand(unittest.TestCase):
             if role == 'assistant': msg['stop_reason'] = 'end_turn'
             return {'type':role,'timestamp':stamp,'sessionId':sid,'message':msg}
 
+        def interim(text, offset):
+            stamp = time.strftime('%Y-%m-%dT%H:%M:%S', time.gmtime(at + offset)) + '.000Z'
+            return {'type':'assistant','timestamp':stamp,'sessionId':sid,
+                    'message':{'role':'assistant','stop_reason':'tool_use','content':[
+                        {'type':'text','text':text}, {'type':'tool_use','id':'step-tool','name':'Bash','input':{}}]}}
+
         def card(text, offset):
             with mock.patch.object(chatroom, '_now', lambda: at + offset):
                 m = chatroom.post_message(cls.po, 'claude', text, to='user', structured_asks=dashboard.asks.validated(
@@ -290,7 +313,9 @@ class InboxLand(unittest.TestCase):
         lines = [turn('user', 'The topic.', 1), turn('assistant', 'The topic\'s reply.', 2)]
         for i in range(60):
             lines += [turn('user', f'Main note {i}.', 10 + 2 * i), turn('assistant', f'Main answer {i}.', 11 + 2 * i)]
-        lines += [turn('user', 'More on the topic.', 301), turn('assistant', 'The thread\'s last word.', 302)]
+        lines += [turn('user', 'More on the topic.', 301),
+                  interim('Checking the thread answer.', 301.5),
+                  turn('assistant', 'The thread\'s last word.', 302)]
         (transcript / f'{sid}.jsonl').write_text(''.join(json.dumps(x)+'\n' for x in lines), encoding='utf-8')
         threads.note_send(cls.po, '', '', [], False, 'The topic.', now=at + 1, new=True)
         cls.cardOld = card('An old question for the main chat?', 0.5)
@@ -300,12 +325,16 @@ class InboxLand(unittest.TestCase):
         filed = (built or {}).get('cards', {})
         assert (filed.get(cls.cardOld), filed.get(cls.cardM)) == (None, None), built
         cls.thread = f'm:{sid}:0'
+        view = threads.thread_view(cls.po, chatroom.get_room(cls.po, public=False), tid=cls.thread)
+        reply = next(m for m in view['items'] if m['text'] == 'The thread\'s last word.')
+        cls.step = reply['steps'][0]['mid']
         cls.server = ThreadingHTTPServer(('127.0.0.1', 0), dashboard.Handler)
         cls.server.daemon_threads = True; cls.server.handle_error = lambda *a: None
         threading.Thread(target=cls.server.serve_forever, daemon=True).start()
         args = {**chrome_profile.node_args(), 'tmp':cls.tmp.name,
                 'base':f'http://127.0.0.1:{cls.server.server_address[1]}',
                 'proj':cls.proj, 'po':cls.po, 'cardOld':cls.cardOld, 'cardM':cls.cardM, 'thread':cls.thread,
+                'step':cls.step,
                 'shots':os.environ.get('ENSEMBLE_SHOTS', '')}
         script = base / 'inbox_land_cdp.js'; script.write_text(CDP_JS, encoding='utf-8')
         result = subprocess.run([NODE,str(script),json.dumps(args)],capture_output=True,encoding='utf-8',timeout=300)
@@ -341,6 +370,15 @@ class InboxLand(unittest.TestCase):
 
     def test_a_row_newer_than_a_links_window_lands(self):
         self.assertLess(self.got['secondSeenMs'], 1500, self.got)
+
+    def test_a_held_window_does_not_decide_the_next_link(self):
+        self.assertTrue(self.got['staleSafe'], self.got)
+
+    def test_a_step_in_a_thread_opens_from_the_first_answer(self):
+        g = self.got['stepLink']
+        self.assertEqual(g['tid'], self.thread, g)
+        self.assertEqual(len(g['reads']), 1, g)
+        self.assertIn('upto=' + quote(self.step, safe=''), g['reads'][0])
 
     def test_a_a_main_row_over_a_thread_lands_in_main(self):
         g = self.got

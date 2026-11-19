@@ -8150,6 +8150,8 @@ async function renderThreaded(force) {
     // #402: a link to a step lands on the reply holding it, its steps open, the step marked.
     const st = d.uptoStep;
     if (st && st.mid && st.owner && GOTO === st.mid) {
+      // The hub resolved this step to its owner before deciding uptoAt.
+      d.uptoFor = st.owner;
       GOTO = st.owner; THR_ASKED = st.owner;
       if (!barePart(GOTO_PART)) GOTO_PART = (GOTO_PART ? 'inbox,' : '') + 'step:' + st.mid;
       STEPS_OPEN.add(st.owner);
