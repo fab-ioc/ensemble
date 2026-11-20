@@ -23,7 +23,8 @@ holds the three cards of tests.test_asks.THREE, a task chat one card.
 * The Inbox's Reply on a task chat's card and on a thread's card aims the
   workspace box at that chat.
 * A switch of the workspace box to another chat drops the aim at once (also
-  a late repaint told for the old chat); an option or Close pressed on the
+  a late repaint told for the old chat), and so does the box's own fallback
+  when its chat stops being a target (popped out); an option or Close pressed on the
   aimed card in its (guest) chat drops it at once, the words staying in the box.
 Screenshots go to $ENSEMBLE_SHOTS when it is set."""
 from __future__ import annotations
@@ -273,6 +274,26 @@ async function main() {
           wcReplyPaint({ room: ${JSON.stringify(A.po)}, thread: '', mid: ${JSON.stringify(A.backup.mid)}, n: ${A.backup.n}, question: 'Turn on the nightly backup?' });
           r.late = { line: ${wcLine}, reply: WC.reply };
           return r; })()`);
+      }],
+      // Aimed at a PO card, the PO chat stops being a target (popped out): wcSync
+      // falls back to the task chat and drops the aim at once, before the box's
+      // page loads (checked in the same task as the fallback).
+      ['fallback', async P => {
+        const doc = `${PO}.contentDocument`;
+        await P.ev(`PD.dock.reveal('po-chat'); 0`);
+        await sleep(600);
+        await P.ev(`(() => { ${cardIn(doc, '/nightly backup/')}.querySelector('.qa-reply').click(); return 1; })()`);
+        const before = await P.until(`${wcLine}`, 'aimed', 5000).catch(() => null);
+        await sleep(300);
+        const r = await P.ev(`(() => { const r = { before: ${JSON.stringify(before)}, kindBefore: WC.target && WC.target.kind };
+          const pop = PD.dock.popWindow;
+          PD.dock.popWindow = id => id === 'po-chat' || pop.call(PD.dock, id);
+          try { wcSync(); r.now = { line: ${wcLine}, reply: WC.reply, aimed: ${aimedIn(doc)}, kind: WC.target && WC.target.kind }; }
+          finally { PD.dock.popWindow = pop; }
+          return r; })()`);
+        await P.ev(`(() => { WC.popped.clear(); wcChoose({ kind: 'po', room: ${JSON.stringify(A.po)} }); return 1; })()`);
+        await sleep(600);
+        return r;
       }],
       // Aimed at a card, words typed, then an option pressed on that card in its chat:
       // the box drops the aim at once and keeps the words.
@@ -574,6 +595,12 @@ class ReplyOnCards(unittest.TestCase):
         self.assertEqual(r["aimedBefore"], ["Turn on the nightly backup?"], r)
         self.assertEqual(r["now"], {"line": None, "reply": None, "aimed": [], "kind": "task"}, r)
         self.assertEqual(r["late"], {"line": None, "reply": None}, "a repaint told for the chat left is ignored")
+
+    def test_a_fallback_drops_the_aim_at_once(self):
+        r = self.step("ws1440", "fallback")
+        self.assertEqual(r["before"], "reply to “Turn on the nightly backup?”", r)
+        self.assertEqual(r["kindBefore"], "po", r)
+        self.assertEqual(r["now"], {"line": None, "reply": None, "aimed": [], "kind": "task"}, r)
 
     def test_an_option_in_the_chat_drops_the_aim_at_once(self):
         r = self.step("ws1440", "settle")

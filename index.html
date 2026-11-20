@@ -16145,6 +16145,7 @@ function wcSync() {
     if (wcKey(next) !== wcKey(WC.target)) {
       if (wcBase(next) !== WC.base) { wcLeaveFrame(f); WC.base = ''; }
       WC.target = next;
+      wcReplyPaint(null);   // #408: as in wcChoose, the old chat's card is not the fallback's
       try { sessionStorage.setItem('cd-workspace-compose-target', JSON.stringify(next)); } catch (e) {}
     }
   } else WC.restoring = false;
