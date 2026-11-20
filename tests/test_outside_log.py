@@ -27,7 +27,7 @@ from sources.fake import FakeSource
 from tests.test_outside_deliver import _World
 
 SID = "made-up"
-OPTEN, DOCK, ALT = "proj-opten", "proj-dock", "proj-alt"
+MAPLE, DOCK, ALT = "proj-maple", "proj-dock", "proj-alt"
 
 
 def msg(n: int, at: float, channel: str = "C000TEST01", name: str = "made-up-one",
@@ -52,7 +52,7 @@ class _Log(_World):
         outside.set_source(SID, type="fake", mode="on", settings={"account": "made-up"})
         outside.remove_source("slack")     # the world's own, for the tools only
 
-    def routed(self, n: int, to: str = OPTEN, decide: bool = False, **kw) -> str:
+    def routed(self, n: int, to: str = MAPLE, decide: bool = False, **kw) -> str:
         m = msg(n, self.now - 60, **kw)
         e = {"key": m.key, "message": m.to_dict(), "readAt": self.now, "decideOnly": decide}
         route.record(SID, [(e, {"to": to, "how": route.BY_CHANNEL, "why": "channel #made-up-one"})],
@@ -85,7 +85,7 @@ class Rows(_Log):
         self.assertEqual([r["key"] for r in got["rows"]], [c, b, a], "newest first")
         ra = self.row(a)
         self.assertEqual((ra["who"], ra["where"], ra["toName"], ra["how"], ra["why"], ra["noMatch"]),
-                         ("Made-up Person", "#made-up-one", "opten", "channel",
+                         ("Made-up Person", "#made-up-one", "maple", "channel",
                           "channel #made-up-one", False))
         self.assertEqual(ra["text"], "message 1 about made-up things")
         self.assertEqual((ra["sourceLabel"], ra["canSend"], ra["rule"]), ("Made-up source", True, "offer"))
@@ -100,7 +100,7 @@ class Rows(_Log):
         b = self.nomatch(2)
         c = self.routed(3, to=DOCK)
         keys = lambda **kw: {r["key"] for r in olog.rows(**kw)["rows"]}   # noqa: E731
-        self.assertEqual(keys(project_id=OPTEN), {a})
+        self.assertEqual(keys(project_id=MAPLE), {a})
         self.assertEqual(keys(project_id=DOCK), {c})
         self.assertEqual(keys(no_match=True), {b})
         self.assertEqual(keys(source_id=SID), {a, b, c})
@@ -109,10 +109,10 @@ class Rows(_Log):
         self.assertEqual(olog.rows(limit=1)["total"], 3)
         # A moved message shows for the initiative it left too, with the move.
         olog.send_elsewhere(SID, a, DOCK)
-        self.assertEqual(keys(project_id=OPTEN), {a})
+        self.assertEqual(keys(project_id=MAPLE), {a})
         self.assertEqual(keys(project_id=DOCK), {a, c})
         self.assertEqual([r["key"] for r in olog.recent_for(DOCK)], [c, a])
-        self.assertEqual(olog.recent_for(OPTEN), [], "an initiative's page lists what it has now")
+        self.assertEqual(olog.recent_for(MAPLE), [], "an initiative's page lists what it has now")
 
     def test_small_talk_is_never_listed(self):
         m = msg(5, self.now)
@@ -130,51 +130,51 @@ class Rows(_Log):
 class SendElsewhere(_Log):
     def test_before_it_was_typed_the_first_po_never_sees_it(self):
         a = self.routed(1, thread="1")
-        self.assertEqual(self.queued(), [(a, OPTEN)])
+        self.assertEqual(self.queued(), [(a, MAPLE)])
         res = olog.send_elsewhere(SID, a, DOCK)
-        self.assertEqual(res["message"], "Sent to Dock. Opten's PO had not been given it.")
+        self.assertEqual(res["message"], "Sent to Dock. Maple's PO had not been given it.")
         self.assertEqual(self.queued(), [(a, DOCK)])
         self.tick()
-        self.assertEqual(self.typed_keys("pty-opten"), 0)
+        self.assertEqual(self.typed_keys("pty-maple"), 0)
         self.assertEqual(self.typed_keys("pty-dock"), 1)
         self.assertIn(od.msg_id(a), self.typed("pty-dock")[0])
-        self.assertEqual(self.notices(self.opten), [])
-        self.assertEqual(quiet_reports.pending(self.opten), [])
+        self.assertEqual(self.notices(self.maple), [])
+        self.assertEqual(quiet_reports.pending(self.maple), [])
         # Its thread's memory follows the move.
         self.assertEqual(route.thread_memory(SID)["C000TEST01:1"]["to"], DOCK)
         r = res["row"]
         self.assertEqual((r["to"], r["toName"]), (DOCK, "Dock"))
         [ev] = r["events"]
-        self.assertEqual(ev["text"], "Moved from opten to Dock by you (opten's PO had not been "
+        self.assertEqual(ev["text"], "Moved from maple to Dock by you (maple's PO had not been "
                                      "given it)")
 
     def test_a_held_message_taken_back_cannot_be_read_by_the_first_po(self):
         a = self.routed(1)
         st = od._load()
-        st["wakes"][self.opten] = [self.now - 60] * od.WAKES_PER_HOUR
+        st["wakes"][self.maple] = [self.now - 60] * od.WAKES_PER_HOUR
         od._save(st)
         self.tick()                                 # held: kept for the read tool
-        self.assertIn(od.msg_id(a), {r["id"] for r in od.records(OPTEN)})
+        self.assertIn(od.msg_id(a), {r["id"] for r in od.records(MAPLE)})
         olog.send_elsewhere(SID, a, DOCK)
-        self.assertEqual(od.records(OPTEN), [])
+        self.assertEqual(od.records(MAPLE), [])
 
     def test_after_it_was_typed_the_first_po_is_told_quietly(self):
         a = self.routed(1)
         self.tick()
-        self.assertEqual(self.typed_keys("pty-opten"), 1)
+        self.assertEqual(self.typed_keys("pty-maple"), 1)
         res = olog.send_elsewhere(SID, a, DOCK)
-        self.assertEqual(res["message"], "Sent to Dock. Opten's PO is told quietly.")
+        self.assertEqual(res["message"], "Sent to Dock. Maple's PO is told quietly.")
         self.now += 15
         self.tick()
-        self.assertEqual(self.typed_keys("pty-opten"), 1, "the first PO is not woken for it")
+        self.assertEqual(self.typed_keys("pty-maple"), 1, "the first PO is not woken for it")
         self.assertEqual(self.typed_keys("pty-dock"), 1)
-        moved = [n for n in self.notices(self.opten) if n.get("movedTo")]
+        moved = [n for n in self.notices(self.maple) if n.get("movedTo")]
         self.assertEqual(len(moved), 1)
         self.assertIn("Moved by the CEO to Dock", moved[0]["text"])
-        [q] = quiet_reports.pending(self.opten)
+        [q] = quiet_reports.pending(self.maple)
         self.assertIn("moved by the CEO to Dock", q["line"])
         # Its read tool says so.
-        got = self.ok(self.opten, "ensemble_read_outside")
+        got = self.ok(self.maple, "ensemble_read_outside")
         [m] = [x for x in got["messages"] if x["id"] == od.msg_id(a)]
         self.assertEqual(m["movedAway"], "the CEO sent it to Dock: it is not yours")
 
@@ -212,8 +212,8 @@ class SendElsewhere(_Log):
         a = self.routed(1)
         self.tick()
         olog.send_elsewhere(SID, a, DOCK)
-        with self.assertRaisesRegex(olog.Refused, "opten has this message already"):
-            olog.send_elsewhere(SID, a, OPTEN)
+        with self.assertRaisesRegex(olog.Refused, "maple has this message already"):
+            olog.send_elsewhere(SID, a, MAPLE)
 
     def test_refused_for_a_no_match_message_and_an_unknown_initiative(self):
         b = self.nomatch(2)
@@ -231,14 +231,14 @@ class SendElsewhere(_Log):
         with self.assertRaisesRegex(olog.Refused, "no longer kept whole"):
             olog.send_elsewhere(SID, a, DOCK)
         self.assertFalse(self.row(a)["canSend"])
-        self.assertEqual(self.queued(), [(a, OPTEN)], "nothing changed")
+        self.assertEqual(self.queued(), [(a, MAPLE)], "nothing changed")
 
     def test_decide_only_changes_where_it_belongs_but_delivers_nothing(self):
         a = self.routed(1, decide=True)
         res = olog.send_elsewhere(SID, a, DOCK)
         self.assertIn("Decide only", res["message"])
         self.tick()
-        self.assertEqual((self.typed_keys("pty-opten"), self.typed_keys("pty-dock")), (0, 0))
+        self.assertEqual((self.typed_keys("pty-maple"), self.typed_keys("pty-dock")), (0, 0))
         self.assertEqual(self.row(a)["to"], DOCK)
 
     def test_a_message_whose_decision_was_forgotten_still_moves(self):
@@ -250,27 +250,27 @@ class SendElsewhere(_Log):
         mem["messages"].pop(a)
         route._save_memory(SID, mem, self.now)
         res = olog.send_elsewhere(SID, a, DOCK)
-        self.assertEqual(res["message"], "Sent to Dock. Opten's PO had not been given it.")
+        self.assertEqual(res["message"], "Sent to Dock. Maple's PO had not been given it.")
         self.assertEqual(self.queued(), [(a, DOCK)])
         r = res["row"]
         self.assertEqual(r["to"], DOCK)
-        self.assertEqual(r["events"][0]["text"], "Moved from opten to Dock by you (opten's PO had "
+        self.assertEqual(r["events"][0]["text"], "Moved from maple to Dock by you (maple's PO had "
                                                  "not been given it)")
 
     def test_the_work_items_a_message_names_move_with_it(self):
-        route.set_initiative(OPTEN, {"addItems": ["ABC-1", "ABC-2"]}, {"kind": "ceo"}, now=self.now)
+        route.set_initiative(MAPLE, {"addItems": ["ABC-1", "ABC-2"]}, {"kind": "ceo"}, now=self.now)
         m = Message(key="fake:example:C000TEST01:77", source="slack",
                     place=Place(id="C000TEST01", name="made-up-one", kind="channel"),
                     author=Author(id="U000TEST02", name="Made-up Person"), at=self.now - 60,
                     text="ABC-1 is ready, ABC-3 comes next")
         e = {"key": m.key, "message": m.to_dict(), "readAt": self.now, "decideOnly": False}
-        route.record(SID, [(e, {"to": OPTEN, "how": route.BY_CHANNEL, "why": "channel #made-up-one"})],
+        route.record(SID, [(e, {"to": MAPLE, "how": route.BY_CHANNEL, "why": "channel #made-up-one"})],
                      now=self.now)
         items = lambda pid: [(i["key"], i["from"]) for r in route.one_table()["rows"]   # noqa: E731
                              if r["projectId"] == pid for i in r["items"]]
-        self.assertEqual(items(OPTEN), [("ABC-1", "ceo"), ("ABC-2", "ceo"), ("ABC-3", "routed")])
+        self.assertEqual(items(MAPLE), [("ABC-1", "ceo"), ("ABC-2", "ceo"), ("ABC-3", "routed")])
         olog.send_elsewhere(SID, m.key, DOCK, now=self.now + 60)
-        self.assertEqual(items(OPTEN), [("ABC-2", "ceo")])
+        self.assertEqual(items(MAPLE), [("ABC-2", "ceo")])
         self.assertEqual(items(DOCK), [("ABC-1", "send elsewhere"), ("ABC-3", "send elsewhere")])
         # The thread's next message naming ABC-1 now goes to Dock by its item.
         n = Message(key="fake:example:C000TEST01:78", source="slack", place=m.place, author=m.author,
@@ -286,7 +286,7 @@ class SendElsewhere(_Log):
         # The model deciding the DM's next message sees where the CEO sent
         # this one (#11).
         a = self.routed(1, kind="dm", name="", channel="D000TEST01")
-        self.assertEqual(self.went("place D000TEST01"), [OPTEN])
+        self.assertEqual(self.went("place D000TEST01"), [MAPLE])
         olog.send_elsewhere(SID, a, DOCK)
         self.assertEqual(self.went("place D000TEST01"), [DOCK])
         nxt = msg(2, self.now + 60, channel="D000TEST01", name="", kind="dm")
@@ -301,7 +301,7 @@ class SendElsewhere(_Log):
         olog.send_elsewhere(SID, b, DOCK)
         self.assertEqual(route.thread_memory(SID)["D000TEST01:2"]["to"], DOCK)
         self.assertEqual(self.went("thread D000TEST01:2"), [DOCK])
-        self.assertEqual(self.went("place D000TEST01"), [OPTEN])
+        self.assertEqual(self.went("place D000TEST01"), [MAPLE])
 
     def test_a_routing_refusal_comes_back_as_words_not_an_error(self):
         a = self.routed(1)
@@ -312,65 +312,65 @@ class SendElsewhere(_Log):
     def test_a_team_po_being_started_does_not_get_a_message_moved_meanwhile(self):
         a = self.routed(1)
         st = od._load()
-        st["resuming"][self.opten] = {"at": self.now, "key": "", "items": [[a, OPTEN]]}
+        st["resuming"][self.maple] = {"at": self.now, "key": "", "items": [[a, MAPLE]]}
         od._save(st)
         res = olog.send_elsewhere(SID, a, DOCK)
-        self.assertEqual(res["message"], "Sent to Dock. Opten's PO had not been given it.")
+        self.assertEqual(res["message"], "Sent to Dock. Maple's PO had not been given it.")
         self.assertEqual(self.queued(), [(a, DOCK)])
         # Nothing is left for its line: the start record goes, as when its
         # messages leave the queue some other way.
-        self.assertNotIn(self.opten, od._load()["resuming"])
-        self.assertEqual(self.notices(self.opten), [])
+        self.assertNotIn(self.maple, od._load()["resuming"])
+        self.assertEqual(self.notices(self.maple), [])
 
-    def _stopped_opten_started_for(self, n: int) -> str:
-        """opten's PO is stopped; a look starts it with message n's line."""
-        self.ptys.pop("pty-opten")
-        chatroom.patch_participant(self.opten, "claude", {"sessionId": "sess-opten"})
+    def _stopped_maple_started_for(self, n: int) -> str:
+        """maple's PO is stopped; a look starts it with message n's line."""
+        self.ptys.pop("pty-maple")
+        chatroom.patch_participant(self.maple, "claude", {"sessionId": "sess-maple"})
         a = self.routed(n)
         self.tick()
         [(rid, _, key)] = self.launcher.calls
-        self.assertEqual((rid, key), (self.opten, f"outside:{od.msg_id(a)}"))
+        self.assertEqual((rid, key), (self.maple, f"outside:{od.msg_id(a)}"))
         return a
 
     def test_a_po_whose_start_fails_after_the_move_is_never_typed_it_later(self):
-        a = self._stopped_opten_started_for(1)
+        a = self._stopped_maple_started_for(1)
         res = olog.send_elsewhere(SID, a, DOCK)
-        self.assertEqual(res["message"], "Sent to Dock. Opten's PO is told quietly.")
+        self.assertEqual(res["message"], "Sent to Dock. Maple's PO is told quietly.")
         self.assertEqual(self.queued(), [(a, DOCK)])
         # The start fails after the move: the held line is dropped, so no
-        # later start of opten's PO carries it in.
-        self.launcher.held[self.opten]["state"] = "failed"
+        # later start of maple's PO carries it in.
+        self.launcher.held[self.maple]["state"] = "failed"
         self.now += 15
         self.tick()
-        self.assertNotIn(self.opten, self.launcher.held)
-        self.assertNotIn(self.opten, od._load()["resuming"])
+        self.assertNotIn(self.maple, self.launcher.held)
+        self.assertNotIn(self.maple, od._load()["resuming"])
         self.assertEqual(self.queued(), [], "the Dock copy was typed to Dock")
         self.assertEqual(self.typed_keys("pty-dock"), 1)
 
     def test_a_start_still_under_way_keeps_its_line_and_counts_as_given(self):
-        a = self._stopped_opten_started_for(1)
+        a = self._stopped_maple_started_for(1)
         olog.send_elsewhere(SID, a, DOCK)
         self.now += 15
         self.tick()
-        # Nothing is queued for opten any more, but its start is under way:
+        # Nothing is queued for maple any more, but its start is under way:
         # its record stays until the start ends.
-        self.assertIn(self.opten, od._load()["resuming"])
-        self.assertIn(self.opten, self.launcher.held)
-        self.launcher.typed_in(self.opten)
+        self.assertIn(self.maple, od._load()["resuming"])
+        self.assertIn(self.maple, self.launcher.held)
+        self.launcher.typed_in(self.maple)
         self.now += 15
         self.tick()
-        self.assertNotIn(self.opten, od._load()["resuming"])
-        # It was typed to opten's PO with its start: moving it back is refused.
-        self.assertTrue(od.was_given(a, OPTEN))
-        with self.assertRaisesRegex(olog.Refused, "opten has this message already"):
-            olog.send_elsewhere(SID, a, OPTEN)
+        self.assertNotIn(self.maple, od._load()["resuming"])
+        # It was typed to maple's PO with its start: moving it back is refused.
+        self.assertTrue(od.was_given(a, MAPLE))
+        with self.assertRaisesRegex(olog.Refused, "maple has this message already"):
+            olog.send_elsewhere(SID, a, MAPLE)
 
     def test_an_initiative_whose_po_room_was_typed_it_is_not_given_it_again(self):
-        # Alt is led from opten's PO room: opten's PO was typed the message,
+        # Alt is led from maple's PO room: maple's PO was typed the message,
         # so delivery would skip it for Alt without a word.
         a = self.routed(1)
         self.tick()
-        self.assertEqual(self.typed_keys("pty-opten"), 1)
+        self.assertEqual(self.typed_keys("pty-maple"), 1)
         self.assertTrue(od.was_given(a, ALT))
         olog.send_elsewhere(SID, a, DOCK)
         with self.assertRaisesRegex(olog.Refused, "Alt has this message already"):
@@ -380,7 +380,7 @@ class SendElsewhere(_Log):
     def test_with_one_initiative_a_routed_message_offers_no_send(self):
         a = self.routed(1)
         b = self.nomatch(2)
-        with mock.patch.object(route, "initiatives", return_value={OPTEN: "opten"}):
+        with mock.patch.object(route, "initiatives", return_value={MAPLE: "maple"}):
             got = {r["key"]: r["canSend"] for r in olog.rows()["rows"]}
         self.assertEqual(got, {a: False, b: True})
 
@@ -423,16 +423,16 @@ class MakeRule(_Log):
         h = route.history(SID, DOCK)[0]
         self.assertEqual(h["by"], {"kind": "ceo"})
         self.assertEqual(res["row"]["events"][-1]["text"], "Rule made: #made-up-one goes to Dock")
-        self.assertEqual(res["row"]["to"], OPTEN, "the message itself stays where it is")
+        self.assertEqual(res["row"]["to"], MAPLE, "the message itself stays where it is")
         self.assertEqual(res["row"]["rule"], "#made-up-one is in Dock's row")
         with self.assertRaisesRegex(olog.Refused, "in Dock's row already"):
             olog.make_rule(SID, a, DOCK)
         self.assertEqual(len(route.history(SID, DOCK)), 2)
 
     def test_a_channel_in_another_row_is_refused_with_the_tables_words(self):
-        route.set_row(SID, OPTEN, {"channels": ["made-up-one"]}, {"kind": "ceo"})
+        route.set_row(SID, MAPLE, {"channels": ["made-up-one"]}, {"kind": "ceo"})
         a = self.routed(1)
-        with self.assertRaisesRegex(olog.Refused, "already in opten's row"):
+        with self.assertRaisesRegex(olog.Refused, "already in maple's row"):
             olog.make_rule(SID, a, DOCK)
 
     def test_a_loose_section_not_applied_yet_is_left_alone(self):
@@ -465,7 +465,7 @@ class PageApi(_Log):
     def test_the_view_and_an_action_through_the_api(self):
         a = self.routed(1)
         self.handler._outside_get("/api/outside/messages",
-                                  types.SimpleNamespace(query=f"source={SID}&project={OPTEN}"))
+                                  types.SimpleNamespace(query=f"source={SID}&project={MAPLE}"))
         code, body = self.sent[-1]
         self.assertEqual((code, [r["key"] for r in body["rows"]]), (200, [a]))
         self.handler._outside_post("/api/outside/messages",
@@ -488,14 +488,14 @@ class PageApi(_Log):
         self.handler._outside_post("/api/outside/messages",
                                    {"action": "move", "source": SID, "key": a, "to": DOCK})
         self.assertEqual(self.sent[-1][0], 403)
-        self.assertEqual(self.queued(), [(a, OPTEN)])
+        self.assertEqual(self.queued(), [(a, MAPLE)])
 
     def test_correcting_without_delivering_is_gone(self):
         a = self.routed(1)
         self.handler._outside_post("/api/outside/routing/correct",
                                    {"source": SID, "key": a, "to": DOCK})
         self.assertEqual(self.sent[-1][0], 404)
-        self.assertEqual(self.row(a)["to"], OPTEN)
+        self.assertEqual(self.row(a)["to"], MAPLE)
 
     def test_an_unknown_action_is_refused(self):
         self.handler._outside_post("/api/outside/messages", {"action": "drop", "source": SID})

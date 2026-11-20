@@ -94,6 +94,8 @@ LINK_MAX = 300
 WHY_MAX = 120
 KEEP_S = 30 * 86400                 # how long a PO can read a message it was given
 KEEP_PER_PROJECT = 300
+PRUNE_S = 3600                      # how often an idle hub ages kept messages out
+_LAST_PRUNE = 0.0
 KEEP_TYPED_S = outside.KEEP_DONE_S  # a key typed into a room is remembered this long
 NO_PO_DROP_S = 4 * 86400            # a message for a project with no PO waits this long
 BACKLOG_MAX_AGE_S = 4 * 86400       # a message waiting for its PO is given up after this long
@@ -215,14 +217,26 @@ def msg_id(key: str) -> str:
     return "os-" + hashlib.sha1(key.encode("utf-8")).hexdigest()[:8]
 
 
-def _load_read() -> dict:
+def _load_read(fresh: bool = True) -> dict:
+    """The messages kept for the read tool, by project. ``fresh``: only those
+    kept less than KEEP_S ago (#409: none is read past it, even before
+    ``_keep`` has taken it out of the file)."""
     d = _load_json(_read_file())
+    since = time.time() - KEEP_S if fresh else None
     out = {}
     for pid, recs in (d.get("projects") or {}).items():
         if isinstance(recs, dict):
             out[pid] = {i: r for i, r in recs.items() if isinstance(r, dict)
-                        and isinstance(r.get("message"), dict)}
+                        and isinstance(r.get("message"), dict)
+                        and (since is None or _num(r.get("keptAt")) >= since)}
     return out
+
+
+def _num(v) -> float:
+    try:
+        return float(v or 0)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _keep(items: list[dict], now: float, **fields) -> None:
@@ -230,7 +244,7 @@ def _keep(items: list[dict], now: float, **fields) -> None:
     ``typedAt``), and forget what is older than KEEP_S. Writes only when
     something changed."""
     with _LOCK:
-        projects = _load_read()
+        projects = _load_read(fresh=False)
         changed = False
         for it in items:
             recs = projects.setdefault(it["to"], {})
@@ -906,6 +920,14 @@ def maybe_tick() -> None:
                 _drop(decided, "read in decide-only mode, never delivered", now)
     except Exception as e:      # noqa: BLE001 — the look goes on
         _log(f"decide-only items not aged out: {e!r}")
+    global _LAST_PRUNE
+    if now - _LAST_PRUNE >= PRUNE_S:
+        _LAST_PRUNE = now
+        try:
+            if _read_file().exists():
+                _keep([], now)      # what was kept KEEP_S ago leaves the file, idle or not
+        except Exception as e:      # noqa: BLE001 — the look goes on
+            _log(f"kept messages not aged out: {e!r}")
     try:
         if not outside.queue_due() and not _load_json(_state_file()).get("typing"):
             return
