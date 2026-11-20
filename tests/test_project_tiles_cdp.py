@@ -128,10 +128,10 @@ async function main() {
       }
     }
     await ev(`localStorage.setItem('cd-theme', 'light'); cdTheme.apply(); ptileLook('flat'); 0`);
-    // Chosen in Settings › Preferences: the hub keeps it.
-    await ev(`openSettings('prefs'); 0`); await sleep(300);
+    // Chosen in Settings › Appearance and Saved: the hub keeps it.
+    await ev(`openSettings('appearance'); 0`); await sleep(300);
     out.before = await ev(`[...document.querySelectorAll('#pref-ptiles button')].map(b => [b.dataset.val, b.getAttribute('aria-pressed')])`);
-    await ev(`document.querySelector('#pref-ptiles button[data-val="glossy"]').click(); 0`);
+    await ev(`document.querySelector('#pref-ptiles button[data-val="glossy"]').click(); document.getElementById('ap-save').click(); 0`);
     await until(`fetch('/api/settings').then(r => r.json()).then(j => j.projectIcons === 'glossy')`, 'saved');
     out.clicked = await ev(`document.documentElement.dataset.ptiles`);
     // A fresh page with no cache of its own draws the hub's choice.
@@ -139,22 +139,24 @@ async function main() {
     await load();
     await until(`document.documentElement.dataset.ptiles === 'glossy'`, 'reloaded glossy');
     out.reloaded = await ev(measure);
-    await ev(`openSettings('prefs'); 0`); await sleep(300);
+    await ev(`openSettings('appearance'); 0`); await sleep(300);
     out.after = await ev(`[...document.querySelectorAll('#pref-ptiles button')].map(b => [b.dataset.val, b.getAttribute('aria-pressed')])`);
     // Another device sets Flat; this page takes it when it comes back to the front.
     await ev(`fetch('/api/settings', {method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({projectIcons: 'flat'})}).then(r => r.ok)`);
     await ev(`document.dispatchEvent(new Event('visibilitychange')); 0`);
     await until(`document.documentElement.dataset.ptiles === 'flat'`, 'other device');
     out.otherDevice = await ev(`document.documentElement.dataset.ptiles`);
-    // Two quick clicks whose saves would cross: the first one's PUT is held back. The last click wins
-    // on the page and in the hub.
-    await ev(`openSettings('prefs'); 0`); await sleep(300);
+    // Glossy is saving (its PUT held back) when Flat is chosen: Flat stays previewed, and a
+    // second Save makes it the hub's. The last choice wins on the page and in the hub.
+    await ev(`openSettings('appearance'); 0`); await sleep(300);
     await ev(`(() => { const real = api; window.api = async (url, opts) => {
       if (opts && opts.method === 'PUT' && String(opts.body).includes('glossy')) await new Promise(r => setTimeout(r, 600));
       return real(url, opts); }; 0; })()`);
-    await ev(`document.querySelector('#pref-ptiles button[data-val="glossy"]').click();
+    await ev(`document.querySelector('#pref-ptiles button[data-val="glossy"]').click(); document.getElementById('ap-save').click();
       document.querySelector('#pref-ptiles button[data-val="flat"]').click(); 0`);
-    await sleep(1500);
+    await sleep(1200);
+    await ev(`document.getElementById('ap-save').click(); 0`);
+    await sleep(800);
     out.quick = await ev(`fetch('/api/settings').then(r => r.json()).then(j => ({ hub: j.projectIcons,
       look: document.documentElement.dataset.ptiles, prefs: PREFS.projectIcons,
       pressed: [...document.querySelectorAll('#pref-ptiles button[aria-pressed="true"]')].map(b => b.dataset.val) }))`);

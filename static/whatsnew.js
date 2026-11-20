@@ -52,6 +52,12 @@
     item.hidden = !showing(info);
     item.classList.toggle('quiet', showing(info) && !!info.skipped);
     item.querySelector('.me-upd-tag').textContent = info && info.skipped ? 'skipped' : 'Update available';
+    // Settings › About's head line says the same (#407, P437).
+    const about = el('about-upd');
+    if (about) {
+      about.hidden = !showing(info);
+      about.querySelector('.ab-upd-tag').textContent = info && info.skipped ? 'skipped' : 'Update available';
+    }
     // An Install now press under way owns the dialog until it has an answer.
     if (!dialog.open || pressing) return;
     if (showing(info)) { if (!said) paint(); }

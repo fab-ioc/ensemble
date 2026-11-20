@@ -247,6 +247,24 @@ class HeadScript(unittest.TestCase):
         """)
         self.assertEqual(r["storage"]["cd-accent"], "#333333")
 
+    def test_a_read_older_than_another_tabs_save_is_dropped(self):
+        # #407: another tab saved (its 'cd-saved' marker and caches are written) and
+        # this page has not handled the storage event yet when its older read answers.
+        r = self.run_head({"cd-theme": "dim", "cd-accent": "#111111"}, scenario="""
+            localStorage.setItem('cd-saved', '1'); localStorage.setItem('cd-theme', 'fjord');
+            localStorage.setItem('cd-accent', '#333333');
+            held[0].answer({ theme: 'dim', accent: '#111111' }); await tick();
+            out.after = cdTheme.fresh(cdTheme.ticket());
+        """)
+        self.assertEqual(r["storage"]["cd-theme"], "fjord")
+        self.assertEqual(r["storage"]["cd-accent"], "#333333")
+        self.assertTrue(r["out"]["after"])
+        # The same read with no Save meanwhile is taken.
+        r = self.run_head({"cd-theme": "dim"}, scenario="""
+            held[0].answer({ theme: 'paper', accent: '#111111' }); await tick();
+        """)
+        self.assertEqual(r["storage"]["cd-theme"], "paper")
+
     def test_saves_go_one_at_a_time_newest_last(self):
         r = self.run_head({"cd-accent": "#111111"}, scenario="""
             held[0].answer({ theme: 'light', accent: '#111111' }); await tick();
@@ -285,11 +303,13 @@ class HeadScript(unittest.TestCase):
 class IndexWiring(unittest.TestCase):
     def test_choice_is_saved_on_the_hub(self):
         src = PAGES["index.html"]
-        i = src.index("function setAccent(")
+        # #407: Settings › Appearance's Save sends the accent with the other changed choices.
+        i = src.index("async function apSave(")
         block = src[i:src.index("\n}\n", i)]
-        self.assertIn("cdTheme.chooseAccent(color)", block)
-        self.assertIn("cdTheme.saveAccent(color)", block)
-        self.assertIn("color || 'default'", block)
+        self.assertIn("cdTheme.noteAccent()", block)
+        self.assertNotIn("chooseAccent", block)          # the cache waits for the hub
+        self.assertIn("cdTheme.saveAccent(d.accent, hub)", block)
+        self.assertIn("d.accent || 'default'", block)
         self.assertNotIn("fetch(", block)               # saves go through the head's queue
         self.assertNotIn("function accentFgFor(", src)   # one copy, in the head
 

@@ -2,7 +2,7 @@
 light and dark.
 
 In headless Chrome over CDP, against a hub in a thread (the hub, the page and
-the Chrome launch are tests/test_settings_themes_page.py's):
+the Chrome launch are tests/test_appearance_page_cdp.py's):
 
 * the Prefer row heads the section: three buttons, Claude / Codex / Balanced,
   Balanced pressed on a fresh hub, inside the panel and the screen, finger-sized
@@ -27,7 +27,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import usage  # noqa: E402
-from tests import test_settings_themes_page as browser  # noqa: E402
+from tests import test_appearance_page_cdp as browser  # noqa: E402
 from tests.test_agent_models import _pool_source  # noqa: E402
 from tests.test_top_bar import CDP_JS as TOP_BAR_JS, CHROME, NODE  # noqa: E402
 
@@ -119,11 +119,11 @@ class PreferInSettings(unittest.TestCase):
         with mock.patch.object(browser, "CDP_JS", script), \
                 mock.patch.dict(usage._STATE, {"state": "ready", "checkedAt": 1.0,
                                                "sources": {"codex": source}}):
-            browser.SettingsScrollsAndThemeSubmenu.setUpClass.__func__(cls)
+            browser.AppearancePage.setUpClass.__func__(cls)
 
     @classmethod
     def tearDownClass(cls):
-        browser.SettingsScrollsAndThemeSubmenu.tearDownClass.__func__(cls)
+        browser.AppearancePage.tearDownClass.__func__(cls)
 
     def test_the_row_heads_the_section_and_fits(self):
         for name, g in self.got.items():

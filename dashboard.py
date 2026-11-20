@@ -2406,6 +2406,11 @@ _SETTINGS_DEFAULTS = {
     # every chat on a computer as a log (every message on the left, one thin
     # line between items) with author colours; a phone is unchanged.
     "chatLog": "off",
+    # #407 (GitHub issue 64): Settings › Appearance › Chat › Send box.
+    # "workspace" keeps one shared send box at the foot of the workspace on a
+    # computer; "pane" gives every open chat pane its own box, aimed at it.
+    # A phone always has one box.
+    "sendBox": "workspace",
 }
 # An accent is an opaque colour a primary button can be painted with: #rgb or
 # #rrggbb, a CSS colour name, rgb(r g b) or hsl(h s% l%) (commas or spaces).
@@ -2489,6 +2494,7 @@ _SETTINGS_ALLOWED_VALUES = {
     "openMode": {"window", "tab"},
     "projectIcons": {"flat", "glossy"},
     "chatLog": {"off", "on"},
+    "sendBox": {"workspace", "pane"},
     "theme": {"", "light", "dark", "dim", "paper", "contrast", "fjord", "intellij-dark", "system"},
     "taskAgentTools": TASK_AGENT_TOOLS_VALUES,
     "editor": {""} | {eid for eid, _label in EDITORS} | {EDITOR_CUSTOM},
