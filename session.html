@@ -1239,16 +1239,20 @@
   .qa-ol { min-width:0; overflow-wrap:anywhere; }
   .qa-oa { min-width:0; overflow-wrap:anywhere; }
   .qa-od { flex:1 1 100%; min-width:0; padding-bottom:var(--s-100); color:var(--fg-muted); font-size:var(--fs-200); font-weight:400; overflow-wrap:anywhere; cursor:auto; }
-  .qa-cm { display:flex; flex-wrap:wrap; align-items:flex-end; gap:var(--s-200); margin-top:var(--s-200); }
-  /* A comment grows with its text as the message box does (ED-242). */
-  .qa-cm textarea { flex:1 1 200px; min-width:0; max-width:100%; box-sizing:border-box; min-height:32px; max-height:40vh;
-    field-sizing:content; overflow-y:auto; resize:none; padding:var(--s-100) var(--s-200); background:var(--surface); color:var(--fg); border:1px solid var(--border-strong);
-    border-radius:var(--r-200); font:inherit; }
   .qa-send { flex:0 0 auto; min-height:32px; padding:0 var(--s-300); background:var(--surface); border:1px solid var(--border-strong);
     border-radius:var(--r-200); color:var(--fg); font:inherit; cursor:pointer; }
   .qa-send:hover { background:var(--hover); }
-  .qa-opt:focus-visible, .qa-send:focus-visible, .qa-cm textarea:focus-visible { outline:none;
+  .qa-opt:focus-visible, .qa-send:focus-visible, .qa-reply:focus-visible { outline:none;
     box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  /* #408: Reply, at the end of an open card's row, aims the send box at the card;
+     aimed, it says so and the card is marked (the drawing P423). */
+  .qa-reply { flex:0 0 auto; margin-left:auto; display:inline-flex; align-items:center; gap:var(--s-100); min-height:30px; padding:0 var(--s-200) 0 10px;
+    background:none; border:0; border-left:1px solid var(--border); border-radius:0; color:var(--fg-subtle); font:inherit; font-size:13px; font-weight:500; white-space:nowrap; cursor:pointer; }
+  .qa-reply:hover { background:var(--hover); color:var(--fg); }
+  .qa-reply .g { font-size:14px; }
+  .qa-reply.on { color:var(--selected-fg); font-size:var(--fs-200); border-left-color:color-mix(in srgb, var(--accent) 30%, var(--border)); }
+  .qa-reply.on:hover { background:none; color:var(--selected-fg); }
+  .msg .qa.aimed { background:var(--selected-bg); border-color:color-mix(in srgb, var(--accent) 45%, var(--border)); box-shadow:inset 2px 0 0 var(--accent); }
   .qa-note { margin-top:var(--s-100); color:var(--fg-muted); font-size:var(--fs-200); overflow-wrap:anywhere; }
   .qa-done { margin-top:var(--s-200); color:var(--fg-muted); overflow-wrap:anywhere; }
   .qa-done strong { color:var(--fg); }
@@ -1471,28 +1475,15 @@
   html.menu-room body.workspace-compose #compose { background:var(--surface); }
   #compose-target { display:flex; align-items:center; gap:var(--s-100); align-self:flex-start; padding:var(--s-050) var(--s-100); border:1px solid var(--border); border-radius:var(--r-200); background:var(--selected-bg); color:var(--selected-fg); font-size:var(--fs-200); }
   #compose-target[hidden], #thread-reply[hidden] { display:none; }
-  /* P409: the open card the message answers, with ▾ (another card, or none) and × (a plain message). */
-  #compose-answers { position:relative; display:flex; align-items:center; gap:var(--s-050); align-self:flex-start; min-width:0; max-width:100%; box-sizing:border-box;
-    padding:var(--s-050) var(--s-050) var(--s-050) var(--s-100); border:1px solid var(--border); border-radius:var(--r-200);
-    background:var(--selected-bg); color:var(--selected-fg); font-size:var(--fs-200); }
-  #compose-answers[hidden], #answers-menu[hidden] { display:none; }
-  #compose-answers .ca-l { flex:0 0 auto; }
-  #compose-answers .ca-q { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  #compose-answers > button { flex:0 0 auto; border:0; background:transparent; color:inherit; font:inherit; cursor:pointer; min-width:24px; min-height:24px; border-radius:var(--r-100); }
-  #compose-answers > button:hover { background:var(--hover); }
-  #compose-answers > button:focus-visible { outline:none; box-shadow:0 0 0 2px var(--focus-ring); }
-  /* In #compose, not in #editor (which scrolls, so would clip it): placed over the chip by answersMenuPlace(). */
-  #answers-menu { position:absolute; z-index:70; left:0; bottom:100%; width:max-content; min-width:240px; max-width:min(420px, calc(100vw - 2 * var(--s-400)));
-    max-height:min(320px, 50vh); overflow-y:auto; padding:var(--s-100) 0; background:var(--surface-overlay); border:1px solid var(--border); border-radius:var(--r-200); box-shadow:var(--e-200); }
-  #answers-menu button { display:flex; align-items:baseline; gap:var(--s-200); width:100%; min-height:var(--touch-min); padding:var(--s-100) var(--s-300);
-    text-align:left; border:0; border-radius:0; background:transparent; color:var(--fg); font:inherit; font-size:var(--fs-200); cursor:pointer; }
-  #answers-menu button:hover { background:var(--hover); }
-  #answers-menu button[aria-checked="true"] { background:var(--selected-bg); color:var(--selected-fg); }
-  #answers-menu button:focus-visible { outline:none; box-shadow:inset 0 0 0 2px var(--focus-ring); }
-  #answers-menu .am-ck { flex:0 0 1em; }
-  #answers-menu .am-q { flex:1 1 auto; min-width:0; overflow-wrap:anywhere; }
-  #answers-menu .am-age { flex:0 0 auto; margin-left:auto; color:var(--fg-muted); }
-  #answers-menu hr { margin:var(--s-100) 0; border:0; border-top:1px solid var(--border); }
+  /* #408: the To line names the card the box is aimed at: "· reply to “…”", and × drops the link (the text stays). */
+  #compose-reply { display:inline-flex; align-items:center; gap:var(--s-100); min-width:0; }
+  #compose-reply[hidden] { display:none; }
+  #compose-reply .cr-re { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--selected-fg); }
+  #compose-reply-x { flex:0 0 auto; display:inline-flex; align-items:center; justify-content:center; width:20px; height:20px; min-width:0; min-height:0; padding:0;
+    border:0; border-radius:var(--r-200); background:transparent; color:var(--fg-subtle); font:inherit; font-size:14px; cursor:pointer; }
+  #compose-reply-x:hover { background:var(--hover); color:var(--fg); }
+  #compose-reply-x:focus-visible { outline:none; box-shadow:0 0 0 2px var(--focus-ring); }
+  @media (pointer:coarse) { #compose-reply-x { width:var(--touch-min); height:var(--touch-min); font-size:18px; } }
   /* The person's balloon that answers a card from the box: "Answers ‹question› ↑" over its words. */
   .msg .via-card { display:block; margin-bottom:var(--s-050); color:var(--fg-subtle); font-size:var(--fs-200); overflow-wrap:anywhere; }
   #compose-target button { border:0; background:transparent; color:inherit; font:inherit; cursor:pointer; min-width:24px; min-height:24px; }
@@ -1757,8 +1748,7 @@
     .ed-refs a.ref-chip { overflow: hidden; }   /* its label is cut, never past the edge */
     button, select, .agent .ah { min-height: var(--touch-min); }
     button { min-width: var(--touch-min); }
-    .qa-opt, .qa-send, .qa-undo { min-height: var(--touch-min); }
-    .qa-cm textarea { min-height: var(--touch-min); font-size: var(--fs-400); }
+    .qa-opt, .qa-send, .qa-undo, .qa-reply { min-height: var(--touch-min); }
     #promptcard .pc-x, #cmt-tray .cmt-item-x, #livetail .lt-more { min-width: var(--touch-min); }
     #cmdpanel .cp-key, #cmdpanel .cp-type input, #slashpop .sl-opt { min-height: var(--touch-min); }
     #slashpop .sl-src { display:none; }
@@ -2004,12 +1994,10 @@
     <div id="compose">
       <div id="compose-size" role="separator" aria-orientation="horizontal" aria-label="Message box height" title="Drag to resize. Double-click for the automatic height." tabindex="0" hidden></div>
       <div id="slashpop" role="listbox" aria-label="Commands" hidden></div>
-      <div id="answers-menu" role="menu" aria-label="Which card this message answers" hidden></div>
-      <div id="compose-destination">To: <a href="#" id="compose-destination-link">Chat</a><input type="text" id="compose-thread-name" maxlength="80" placeholder="Name (optional)" aria-label="Name of the new thread (optional; empty: its first words)" autocomplete="off" hidden></div>
+      <div id="compose-destination">To: <a href="#" id="compose-destination-link">Chat</a><input type="text" id="compose-thread-name" maxlength="80" placeholder="Name (optional)" aria-label="Name of the new thread (optional; empty: its first words)" autocomplete="off" hidden><span id="compose-reply" hidden><span aria-hidden="true">·</span><span class="cr-re"></span><button type="button" id="compose-reply-x" aria-label="Drop the reply link" title="Drop the reply link: the text stays, sent as a plain message">&times;</button></span></div>
       <div class="dim" id="hint" role="status">Loading conversation. Send will be available shortly.</div>
       <div id="editor">
         <div id="compose-target" hidden><span></span><button type="button" aria-label="Send to main chat" title="Send to main chat">&times;</button></div>
-        <div id="compose-answers" hidden><span class="ca-l">Answers:</span><span class="ca-q"></span><button type="button" id="compose-answers-pick" aria-haspopup="menu" aria-expanded="false" aria-controls="answers-menu" aria-label="Answer another card, or none" title="Answer another card, or none">&#9662;</button><button type="button" id="compose-answers-x" aria-label="Send as a plain message" title="Send this message as a plain message, not an answer">&times;</button></div>
         <div class="ed-head">
           <div id="att-chips" class="att-chips" hidden></div>
           <textarea id="input" placeholder="Message the agents — @codex or @claude to direct it · #18 links a task · Ctrl+Enter sends"></textarea>
@@ -4137,7 +4125,7 @@ function askCardHtml(m, a, total, P) {
     const on = multi ? picked.has(o.label) : !!chosen && o.label === chosen;
     const label = cardText(o.label, m.id, a.n), words = cardWords(o.label, m.id, a.n);
     const tip = multi ? (got ? (on ? 'You picked it' : 'Answered') : `Tick or untick “${words}”${o.detail ? ': ' + cardWords(o.detail, m.id, a.n) : ''}. Nothing is sent until Send.`)
-      : got ? (on ? 'Your answer' : 'Answered') : `Answer “${words}”${o.detail ? ': ' + cardWords(o.detail, m.id, a.n) : ''}, with your comment if you wrote one. Sent once.`;
+      : got ? (on ? 'Your answer' : 'Answered') : `Answer “${words}”${o.detail ? ': ' + cardWords(o.detail, m.id, a.n) : ''}. Sent once.`;
     return `<div class="qa-optw${multi ? ' ck' : ''}${on ? ' on' : ''}${got ? ' off' : ''}">`
       + `<button type="button" class="qa-opt${o.recommended ? ' rec' : ''}${on ? ' on' : ''}" data-ask="${esc(key)}" data-opt="${esc(o.label)}"${multi ? ' data-tick="1"' : ''}`
       + `${got ? ' disabled' : ''} ${multi ? 'role="checkbox" aria-checked' : 'aria-pressed'}="${on}"${label.words === words ? '' : ` aria-label="${esc(words)}"`} title="${esc(tip)}">`
@@ -4175,12 +4163,16 @@ function askCardHtml(m, a, total, P) {
       + (got.undone ? ' · taken back' : '')
       + `${got.comment ? `<span class="qa-dc">${cardTextHtml(got.comment, m.id, a.n)}</span>` : ''}</div></div>`;
   }
-  const open = a.kind === 'open';
-  const aside = ''; // An open card never ages out or closes when attention moves on.
-  return `<div class="qa" data-ask="${esc(key)}">${head}${aside}${opts ? `<div class="qa-opts" role="group" aria-label="${esc('Answer: ' + hubUrlWords(a.question, m.id, a.n))}">${opts}</div>` : ''}`
-    + `<div class="qa-cm"><textarea rows="1" data-ask="${esc(key)}" aria-label="${esc((open ? 'Your answer to: ' : 'Comment on: ') + hubUrlWords(a.question, m.id, a.n))}" placeholder="${open ? 'Your answer' : 'Comment (optional)'}" title="${open ? `${MOD_ENTER} sends` : `Goes with the answer you press, or alone with Send comment (${MOD_ENTER})`}"></textarea>`
-    + (multi ? askMultiSendHtml(key, picked.size, !!(ASK_DRAFT.get(key) || '').trim())
-      : `<button type="button" class="qa-send" data-ask="${esc(key)}" title="${open ? 'Send your answer' : 'Send your comment alone'} (${MOD_ENTER})">${open ? 'Send' : 'Send comment'}</button>`) + `</div></div>`;
+  // #408: no comment field. The row ends with Reply, which aims the send box
+  // at this question; aimed, the card is marked and Reply says so.
+  const aimed = replyKey() === key;
+  return `<div class="qa${aimed ? ' aimed' : ''}" data-ask="${esc(key)}">${head}<div class="qa-opts" role="group" aria-label="${esc('Answer: ' + hubUrlWords(a.question, m.id, a.n))}">${opts}`
+    + `${multi ? askMultiSendHtml(key, picked.size) : ''}${replyBtnHtml(key, aimed)}</div></div>`;
+}
+// A card's Reply (#408): "↩ Reply", or "Replying in the box ↓" while the box is aimed at it.
+function replyBtnHtml(key, on) {
+  return `<button type="button" class="qa-reply${on ? ' on' : ''}" data-ask="${esc(key)}" aria-pressed="${on}" title="${on ? 'The send box answers this question: type, then Send' : 'Answer in the send box: Send answers this question'}">`
+    + (on ? 'Replying in the box ↓' : '<span class="g" aria-hidden="true">↩</span> Reply') + '</button>';
 }
 // A pick-any card's ticks (P409), "mid:n" → the labels ticked, until sent.
 const ASK_TICKS = new Map();
@@ -4188,14 +4180,12 @@ const askTicks = key => ASK_TICKS.get(key) || new Set();
 // What an answer picked: its list, else its "A; B" option split back.
 const askPicked = got => Array.isArray(got && got.options) ? got.options.map(String)
   : (got && got.option ? String(got.option).split('; ').filter(Boolean) : []);
-// Its Send: "Send (n)" with ticks; with none, "Send comment" for a comment
-// alone, else Send, off.
-function askMultiSendHtml(key, n, comment) {
-  const [label, tip] = n ? [`Send (${n})`, `Send the ${n} you ticked${comment ? ' with your comment' : ''} (${MOD_ENTER})`]
-    : comment ? ['Send comment', `Send your comment alone (${MOD_ENTER})`] : ['Send', 'Tick the options to send, or write a comment'];
-  return `<button type="button" class="qa-send${n ? ' primary' : ''}" data-ask="${esc(key)}" data-multi="1"${!n && !comment ? ' disabled' : ''} title="${esc(tip)}">${label}</button>`;
+// Its Send: "Send (n)" with ticks; with none, Send, off.
+function askMultiSendHtml(key, n) {
+  const [label, tip] = n ? [`Send (${n})`, `Send the ${n} you ticked`] : ['Send', 'Tick the options to send'];
+  return `<button type="button" class="qa-send${n ? ' primary' : ''}" data-ask="${esc(key)}" data-multi="1"${!n ? ' disabled' : ''} title="${esc(tip)}">${label}</button>`;
 }
-// A tick or a comment changed: the card's ticks and its Send redrawn in place.
+// A tick changed: the card's ticks and its Send redrawn in place.
 function askMultiPaint(key) {
   const sel = '"' + String(key).replace(/["\\]/g, '\\$&') + '"';
   const ticks = askTicks(key);
@@ -4209,7 +4199,7 @@ function askMultiPaint(key) {
     const old = card.querySelector('.qa-send[data-multi]');
     if (!old) return;
     const t = document.createElement('div');
-    t.innerHTML = askMultiSendHtml(key, ticks.size, !!(ASK_DRAFT.get(key) || '').trim());
+    t.innerHTML = askMultiSendHtml(key, ticks.size);
     const neu = t.firstElementChild;
     syncAttrs(old, neu);
     if (old.textContent !== neu.textContent) old.textContent = neu.textContent;
@@ -4232,50 +4222,12 @@ function askBodyHtml(m, P, md, bar) {
     return `<div class="text md">${h}</div>${bar ? bar(m) : ''}`;
   });
 }
-// The draft comments ("mid:n" → text), kept across a redraw that replaces a
-// balloon and, per room in sessionStorage like the message box's draft,
-// across a reload, until sent or emptied (#191).
-const ASK_DRAFT_KEY = () => 'cd-askdraft:' + (ROOM || location.pathname + location.search);
-function askDraftsLoad(store = sessionStorage) {
-  try {
-    const d = JSON.parse(store.getItem(ASK_DRAFT_KEY()) || 'null');
-    return new Map(d && typeof d === 'object' ? Object.entries(d).filter(([k, v]) => typeof v === 'string' && v) : []);
-  } catch (e) { return new Map(); }
-}
-function askDraftsSave(map = ASK_DRAFT, store = sessionStorage) {
-  try {
-    const d = Object.fromEntries([...map].filter(([k, v]) => typeof v === 'string' && v));
-    if (Object.keys(d).length) store.setItem(ASK_DRAFT_KEY(), JSON.stringify(d));
-    else store.removeItem(ASK_DRAFT_KEY());
-  } catch (e) {}
-}
-const ASK_DRAFT = (() => { try { return askDraftsLoad(); } catch (e) { return new Map(); } })();
-function askDraftSet(key, text) {
-  if (text) ASK_DRAFT.set(key, text); else ASK_DRAFT.delete(key);
-  askDraftsSave();
-}
-const ASK_COMPOSING = new Set(), ASK_AFTER_COMPOSE = new Map();
-function askRestoreDrafts(box) {
-  box.querySelectorAll('.qa-cm textarea[data-ask]').forEach(ta => {
-    const d = ASK_DRAFT.get(ta.dataset.ask);
-    if (d && !ta.value) ta.value = d;
-  });
-  // An ask answered (here or on another device) keeps no draft; one still
-  // being sent from here keeps it until the hub has taken it.
-  let gone = false;
-  box.querySelectorAll('.qa.done[data-ask]').forEach(c => { if (!ASK_LOCAL.has(c.dataset.ask) && ASK_DRAFT.delete(c.dataset.ask)) gone = true; });
-  if (gone) askDraftsSave();
-}
-function askSyncDraft(key) {
-  const ta = [...document.querySelectorAll('.qa-cm textarea[data-ask]')].find(x => x.dataset.ask === key);
-  if (ta) askDraftSet(key, ta.value);
-}
-// What a key in a card's comment does: Ctrl+Enter (⌘+Enter on a Mac) is its
+// What a key in a field of the box's does (the new thread's name): Ctrl+Enter (⌘+Enter on a Mac) is
 // Send, as in the message box; Enter alone, or with Shift or Alt, types.
 const askKeyAction = e => e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey ? 'send' : null;
 const MOD_ENTER = (typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || '')) ? '⌘+Enter' : 'Ctrl+Enter';
 // A redraw keeps the card being typed in (#191). The element with focus in a
-// card (its comment, an answer, Send) and every element around it up to the
+// card (an answer, Send, Reply) and every element around it up to the
 // balloon stay the same nodes; only what is around them is replaced by the
 // new markup, so focus, caret, selection, scroll and an IME composition all
 // stay. old: the balloon on screen; neu: its new markup's element. false
@@ -4285,7 +4237,7 @@ function askFocusSel(el) {
   const k = el.dataset && el.dataset.ask;
   if (!k) return '';
   const q = v => '"' + String(v).replace(/["\\]/g, '\\$&') + '"';
-  if (el.matches('.qa-cm textarea')) return `.qa-cm textarea[data-ask=${q(k)}]`;
+  if (el.matches('.qa-reply')) return `.qa-reply[data-ask=${q(k)}]`;
   if (el.matches('.qa-send')) return `.qa-send[data-ask=${q(k)}]`;
   if (el.matches('.qa-opt')) return `.qa-opt[data-ask=${q(k)}][data-opt=${q(el.dataset.opt || '')}]`;
   return '';
@@ -4351,7 +4303,7 @@ async function askUndo(b) {
   try {
     const r = await postOk('/api/room/ask/undo', { roomId: ROOM, mid: key.slice(0, cut), n: +key.slice(cut + 1) });
     if (r && r.points) pointsChanged(r.points, ptTicket());
-    // A message typed in the box as the card's answer (P409): taken back,
+    // A message typed in the box as the card's answer (P409, #408): taken back,
     // its words go back in the box when it is empty.
     // Its card is open again here at once, in its place among the open
     // cards as they are now, before the words are back under its chip (P409).
@@ -4359,11 +4311,9 @@ async function askUndo(b) {
     if (was && ROOM_OBJ && Array.isArray(ROOM_OBJ.openCards) && !ROOM_OBJ.openCards.some(x => x.mid === was.mid && x.n === was.n))
       ROOM_OBJ.openCards = ROOM_OBJ.openCards.concat([was]).sort(openCardOrder);
     if (r && r.withdrawn && typeof BOX_SENT_CARDS !== 'undefined') BOX_SENT_CARDS.delete(key);
-    if (r && r.withdrawn && typeof r.text === 'string' && r.text && !$('#input').value.trim() && !(ED.points || []).length) {
-      $('#input').value = r.text; SEND_KEY = ''; edHeadInput(); fitSendInput();
-      ANSWER_PICK = { mid: key.slice(0, cut), n: +key.slice(cut + 1) };
-    }
-    try { answersPaint(); } catch (e2) {}
+    // #408: its words go back in the box when it is empty, aimed at the card again.
+    if (r && r.withdrawn && typeof r.text === 'string' && r.text)
+      replyGiveBack({ mid: key.slice(0, cut), n: +key.slice(cut + 1), question: (was && was.question) || askQuestionOf(key) }, r.text, r.points);
     pointsNote(r && r.withdrawn ? 'Taken back before it was read: the question is open again.'
       : 'It was read already: the agent is told to ignore that answer.');
   } catch (e) {
@@ -4411,17 +4361,15 @@ async function askSend(key, option, post) {
   const m = (LAST_ITEMS || []).find(x => x && x.id === mid);
   const a = m && asksOf(m)[n];
   if (!a || askAnswer(m, a, POINTS)) return null;
-  askSyncDraft(key);
-  const comment = (ASK_DRAFT.get(key) || '').trim();
+  const comment = '';     // #408: a comment is a Reply in the box now
   // A pick-any card sends its ticks, in the card's order (P409).
   const options = a.multi ? a.options.map(o => o.label).filter(l => askTicks(key).has(l)) : null;
   if (options) option = options.join('; ');
-  if (!option && !comment) { pointsNote(a.kind === 'open' ? 'Write your answer first.' : a.multi ? 'Tick the options to send, or write a comment first.' : 'Pick an answer, or write a comment first.'); return null; }
+  if (!option) { pointsNote(a.multi ? 'Tick the options to send first.' : 'Pick an answer first.'); return null; }
   ASK_LOCAL.set(key, { option, comment, pending: true, ...(options ? { options } : {}) });
   if (LAST_ITEMS) renderBubbles(LAST_ITEMS);
   try {
     const r = await post('/api/room/ask', { roomId: ROOM, mid, n, option, comment, to: SOLO_MODE ? '' : m.from, ...(options ? { options } : {}) });
-    askDraftSet(key, '');
     if (options) ASK_TICKS.delete(key);
     if (option && r && !r.duplicate) askUndoOffer(key);
     if (r && r.points) pointsChanged(r.points, ptTicket());
@@ -4430,7 +4378,6 @@ async function askSend(key, option, post) {
     // The hub's points first: a kept answer is recorded, its card settled.
     if (e && e.points) pointsChanged(e.points, ptTicket());
     if (e && e.kept) {
-      askDraftSet(key, '');
       pointsNote('Your answer is kept but not delivered yet: Retry it in the chat.');
       setTimeout(refresh, 400);
     } else if (sendUnconfirmed(e)) {
@@ -4452,7 +4399,7 @@ function askClick(e) {
   const b = w ? w.querySelector('.qa-opt') : e.target.closest && e.target.closest('.qa-opt, .qa-send');
   return askPress(b);
 }
-// An option or Send pressed: by a click, or Ctrl/⌘+Enter in the card's comment.
+// An option or Send pressed.
 function askPress(b) {
   if (!b || b.disabled) return false;
   if (b.dataset.tick) {
@@ -4464,12 +4411,6 @@ function askPress(b) {
     return true;
   }
   const key = b.dataset.ask, option = b.classList.contains('qa-opt') ? b.dataset.opt : '';
-  askSyncDraft(key);
-  if (ASK_COMPOSING.has(key)) {
-    ASK_AFTER_COMPOSE.set(key, option);
-    pointsNote('Finishing your text before sending.');
-    return true;
-  }
   askSend(key, option, postOk);
   return true;
 }
@@ -4844,7 +4785,7 @@ function boxAnswerStrip(m) {
   const b = boxAnswerOf(m);
   if (!b) return null;
   const part = 'ask:' + b.n;
-  return { text: b.text, html: `<span class="via-card">Answers <a class="card-jump" href="${esc(refHref(ROOM, b.mid, part))}" data-ref-room="${esc(ROOM)}" data-ref-msg="${esc(b.mid)}" data-ref-part="${esc(part)}">${esc(b.question)} ↑</a></span>` };
+  return { text: b.text, html: `<span class="via-card">Replies to <a class="card-jump" href="${esc(refHref(ROOM, b.mid, part))}" data-ref-room="${esc(ROOM)}" data-ref-msg="${esc(b.mid)}" data-ref-part="${esc(part)}">${esc(b.question)} ↑</a></span>` };
 }
 // ---- A task's older messages fold under its latest -------------------------
 // Between two of the person's own messages, what belongs to one task (its
@@ -5730,7 +5671,6 @@ function renderBubbles(items, opt = {}) {
   patchChildren(box, rows);
   try { fillNowLines(); } catch (e) {}
   if (tlist) ageTick(box);
-  askRestoreDrafts(box);
   focus();
   showAskLine(items);
   MD_CACHE = used;
@@ -5782,7 +5722,7 @@ function pointsChanged(pv, ticket) {
   POINT_REFS.refresh();      // the chips' stages and cards: asked again when drawn
   POINTS = pointMaps(pv);
   pointsTell(pv);
-  try { answersPaint(); } catch (e) {}
+  try { replyPaint(); } catch (e) {}
   if (LAST_ITEMS) renderBubbles(LAST_ITEMS);
 }
 // The page framing this chat hears of every change to the points, with each
@@ -6303,7 +6243,9 @@ let _landing = false;
 // takes carries as it is (a frame's goto-msg, a thread's or a tab's &part=).
 // It lands near the top, takes the whole balloon's highlight for the Inbox
 // highlight setting (the hub's inboxHighlightSec, 1–30 s) and the focus.
-const IBX_PART = /^inbox(?:,|$)/;
+const IBX_PART = /^inbox(?:\+reply)?(?:,|$)/;
+// #408: "inbox+reply,ask:0": the Inbox's Reply, landing with the box aimed at that card.
+const replyPart = p => /^inbox\+reply,/.test(String(p || ''));
 const ibxPart = p => IBX_PART.test(String(p || ''));
 const barePart = p => String(p || '').replace(IBX_PART, '');
 let IBX_HL_MS = 3500;
@@ -6592,6 +6534,9 @@ function landPending() {
       LANDED.el = el;   // the node with the focus: a redraw replacing it hands the focus on (ibxMark)
       landKeepSet(el);
       gotoDone(mid, true);
+      // The Inbox's Reply: the box aimed at the card, the caret in it (which keeps the focus).
+      const card = replyPart(part) && sub && sub.matches('.qa:not(.done)') ? sub : null;
+      if (card) { LANDED.el = null; replyPress(card); }
       return;
     }
     const at = partOf(el, part) || el;   // the whole balloon when it has no such passage
@@ -7075,11 +7020,13 @@ function composePlaceholder(isPo, solo) {
   if (!st.hint0) st.hint0 = { placeholder: input.placeholder, title: input.title };
   let thread = false;
   try { thread = THREAD_MODE || !!SHARED_THREAD; } catch (e) {}
-  if (!st.who && !thread) { input.placeholder = st.hint0.placeholder; input.title = st.hint0.title; return; }
+  if (!st.who && !thread && !replyAimLive()) { input.placeholder = st.hint0.placeholder; input.title = st.hint0.title; return; }
   const w = st.who || {};
   const who = w.isPo ? 'the PO' : w.solo ? 'the agent' : 'the agents';
   const direct = w.solo ? '' : ' — @codex or @claude to direct it ·';
-  const head = thread ? 'Reply in thread' : `Message ${who}`;
+  let aimed = false;
+  try { aimed = !!replyAimLive(); } catch (e) {}
+  const head = aimed ? 'Your reply' : thread ? 'Reply in thread' : `Message ${who}`;
   input.placeholder = `${head}…`;
   input.title = `${head}${direct || ' —'} #18 links a task · Ctrl+Enter sends`;
 }
@@ -7617,12 +7564,13 @@ $('#compose-thread-name').addEventListener('keydown', e => {
 });
 $('#new-thread').addEventListener('click', () => {
   NEW_THREAD = !NEW_THREAD;
+  if (NEW_THREAD) REPLY_AIM = null;     // #408: a new thread answers no card
   composerDestinationPaint();
   $('#input').focus();
 });
 function composerDestinationPaint() {
   newThreadPaint();
-  try { answersPaint(); } catch (e) {}
+  try { replyPaint(); } catch (e) {}
   const link = $('#compose-destination-link');
   if (!link) return;
   if (NEW_THREAD) { link.textContent = 'a new thread'; return; }
@@ -10151,117 +10099,182 @@ async function sendResuming(text, to, key, attachments, now, box = false) {
   // From a thread's box (#210): the hub tells the PO which thread. A thread
   // with no point of its own (a task's, or one started on a balloon) goes
   // with its first message's link, so the PO knows what it answers.
+  // #408: the box aimed at a card (its Reply): this message is the card's answer.
+  const aim = box && text ? replyAimLive() : null;
   const target = THREAD_MODE ? (THREAD || ('m:' + THREAD_MID)) : SHARED_THREAD?.thread;
   if (THREADED && target) {
     body.thread = target;
     body.also = !!($('#thr-also') && $('#thr-also').checked);
     const t = THREAD_MODE ? THR_INFO : SHARED_THREAD?.info;
-    if (t && !(t.points || []).length && t.root && text) body.text = msgLink(t.root) + '\n\n' + text;
+    if (!aim && t && !(t.points || []).length && t.root && text) body.text = msgLink(t.root) + '\n\n' + text;
   } else if (box && THREADED && NEW_THREAD) {
     body.newThread = true;     // #367: the box's thread icon
     let name = ($('#compose-thread-name')?.value || '').trim();
     if (WORKSPACE_COMPOSE) try { name = window.parent.wcThreadName?.() ?? name; } catch (e) {}
     if (name) body.threadName = name;     // issue 51: named as it starts
   }
-  // P409: the box's chip names an open card: this message is its answer.
-  const card = box && !body.thread && !body.newThread && text ? answerTarget() : null;
-  if (card) {
-    body.answers = { mid: card.mid, n: card.n };
+  if (aim && !body.newThread) {
+    body.answers = { mid: aim.mid, n: aim.n };
     // Kept now for its Undo: a poll may close the card before the hub answers.
-    BOX_SENT_CARDS.set(card.mid + ':' + card.n, card);
+    const c = ((ROOM_OBJ && ROOM_OBJ.openCards) || []).find(x => x.mid === aim.mid && x.n === aim.n);
+    BOX_SENT_CARDS.set(aim.mid + ':' + aim.n, c || { mid: aim.mid, n: aim.n, question: aim.question, ts: 0 });
   }
+  REPLY_SENT = body.answers ? aim.mid + ':' + aim.n : '';
   if (attachments && attachments.length) body.attachments = attachments;
   return postOk('/api/room/resume', body);
 }
-// ---- P409: the box answers the open card ----------------------------------
-// While the chat has an open card, the box names the newest one: the message
-// sent is its answer (the hub records it on the card and types the agent
-// "Re “<question>”: <text>", as the card's Comment would). ▾ picks another
-// open card, or none; × sends this message as a plain one. Either choice
-// lasts for this message only.
-var ANSWER_PICK = null;      // null: the newest; {mid, n}: that card; 'none': a plain message
-function answerCards() {
-  const P = POINTS || {};
-  return ((typeof ROOM_OBJ !== 'undefined' && ROOM_OBJ && ROOM_OBJ.openCards) || []).filter(c => c && c.mid
-    && !(((P.asks || {})[c.mid] || {})[c.n] || ((P.asks || {})[c.mid] || {})[String(c.n)])
-    && !ASK_LOCAL.has(c.mid + ':' + c.n));
+// ---- #408: Reply aims the box at a card -------------------------------------
+// A card's ↩ Reply aims the send box at that question: the To line says
+// "· reply to “…”" (× drops the link, the text stays), the card is marked,
+// and Send answers the card with the box's text (the hub records it as P409's
+// typed answer). Without Reply the box sends a plain message. In the
+// workspace the box is the dashboard's (index.html wcReply*): a chat there
+// (a guest, its own box hidden) has that box aimed at its card.
+var REPLY_AIM = null;        // {mid, n, question}: the card the box answers
+var REPLY_SENT = '';         // 'mid:n': the card the send in flight answers
+const replyGuest = () => document.body.classList.contains('workspace-guest');
+// Still open: not answered by the hub's points; local: nor being answered from this page.
+function replyOpen(a, local = true) {
+  if (!a || !a.mid) return false;
+  const got = ((typeof POINTS !== 'undefined' && POINTS && POINTS.asks) || {})[a.mid] || {};
+  if (got[a.n] || got[String(a.n)]) return false;
+  return !(local && ASK_LOCAL.has(a.mid + ':' + a.n));
 }
-function answerOff() { return THREAD_MODE || !!SHARED_THREAD || NEW_THREAD; }
-function answerTarget() {
-  if (answerOff() || ANSWER_PICK === 'none') return null;
-  const cs = answerCards();
-  if (ANSWER_PICK) { const c = cs.find(x => x.mid === ANSWER_PICK.mid && x.n === ANSWER_PICK.n); if (c) return c; }
-  return cs[0] || null;
+// The card the box answers now, if still open: in a guest, the workspace box's.
+function replyAimLive() {
+  if (replyGuest()) {
+    let w = null;
+    try { w = window.parent.wcReplyNow?.() || null; } catch (e) {}
+    return w && w.room === ROOM && replyOpen(w) ? w : null;
+  }
+  return replyOpen(REPLY_AIM) ? REPLY_AIM : null;
 }
-function answersPaint() {
-  const chip = $('#compose-answers');
-  if (!chip) return;
-  const c = answerTarget();
-  chip.hidden = !c;
-  if (!c) { answersMenuClose(false); return; }
-  const q = String(c.question || '').replace(/\s+/g, ' ').trim();
-  const qe = chip.querySelector('.ca-q');
-  setText(qe, q);
-  qe.title = q;
-  chip.dataset.mid = c.mid; chip.dataset.n = String(c.n);
-  const many = answerCards().length > 1;
-  $('#compose-answers-pick').title = many ? 'Answer another card, or none' : 'Answer no card: a plain message';
-  if (!$('#answers-menu').hidden) answersMenuFill();
+function replyKey() { const a = replyAimLive(); return a ? a.mid + ':' + a.n : ''; }
+// The question cut short on a word, for the To line ("Pick the default theme for…").
+function replyShort(q, max = 28) {
+  q = String(q || '').replace(/\s+/g, ' ').trim();
+  if (q.length <= max) return q;
+  const w = q.slice(0, max + 1).replace(/\s+\S*$/, '');
+  return (w.length >= max / 2 ? w : q.slice(0, max)).replace(/[\s,.;:–—-]+$/, '') + '…';
 }
-function answersMenuFill() {
-  const cur = answerTarget();
-  const cs = answerCards();
-  $('#answers-menu').innerHTML = cs.map(c => {
-    const on = !!cur && cur.mid === c.mid && cur.n === c.n;
-    const q = String(c.question || '').replace(/\s+/g, ' ').trim();
-    return `<button type="button" role="menuitemradio" aria-checked="${on}" data-mid="${esc(c.mid)}" data-n="${esc(String(c.n))}" title="${esc(q)}">`
-      + `<span class="am-ck">${on ? '✓' : ''}</span><span class="am-q">${esc(q)}</span><span class="am-age">${esc(ageShort(c.ts))}</span></button>`;
-  }).join('') + `<hr><button type="button" role="menuitemradio" aria-checked="false" data-none="1"><span class="am-ck"></span><span class="am-q">No card: a plain message</span></button>`;
+// A card's question as it reads on screen, else as the open cards have it.
+function askQuestionOf(key, card) {
+  card = card || [...document.querySelectorAll('#msgs .qa[data-ask]')].find(c => c.dataset.ask === key);
+  const q = card && card.querySelector('.qa-qt');
+  if (q) return q.textContent.replace(/\s+/g, ' ').trim();
+  const c = ((typeof ROOM_OBJ !== 'undefined' && ROOM_OBJ && ROOM_OBJ.openCards) || []).find(x => x.mid + ':' + x.n === key);
+  return c ? String(c.question || '') : '';
 }
-// Over the chip, its left edge on the chip's.
-function answersMenuPlace() {
-  const menu = $('#answers-menu'), c = $('#compose-answers').getBoundingClientRect(), box = $('#compose').getBoundingClientRect();
-  menu.style.left = Math.max(0, c.left - box.left) + 'px';
-  menu.style.bottom = Math.max(0, box.bottom - c.top + 4) + 'px';
+// This chat, as the workspace box aims at it (wcCommentLink's).
+const replyWhere = () => ({ roomId: ROOM, thread: THREAD_MODE ? THREAD : '', mid: THREAD_MODE ? THREAD_MID : '' });
+// Reply pressed on a card (or an Inbox Reply landed on it): the box aims at
+// it, the caret in the box, the card kept in view above it.
+function replyPress(card) {
+  const key = card && card.dataset.ask;
+  if (!key || card.classList.contains('done')) return;
+  const cut = key.lastIndexOf(':');
+  const aim = { mid: key.slice(0, cut), n: +key.slice(cut + 1), question: askQuestionOf(key, card) };
+  if (!replyOpen(aim)) return;
+  if (replyGuest()) {
+    let ok = false;
+    try { ok = !!window.parent.wcReplyAim?.(window, aim, replyWhere()); } catch (e) {}
+    if (ok) { replyKeepInView(key); return; }
+    // Not expected while docked: this chat's own box (hidden here) takes it. Say so.
+    console.warn('replyPress: the workspace box did not take the reply', ROOM);
+  }
+  replyAimSet(aim, true);
+  replyKeepInView(key);
 }
-function answersMenuOpen() {
-  answersMenuFill();
-  $('#answers-menu').hidden = false;
-  answersMenuPlace();
-  $('#compose-answers-pick').setAttribute('aria-expanded', 'true');
-  const on = $('#answers-menu').querySelector('[aria-checked="true"]') || $('#answers-menu button');
-  if (on) on.focus();
+// The box aimed at aim (null: at no card), its caret at the end when focus.
+// With text (an answer taken back): the words go back in the box, aimed
+// again, only when the box is empty; else nothing changes. False then.
+// points: the hub's, from that Undo (another frame's poll may lag them here).
+function replyAimSet(aim, focus, text, points) {
+  const input = $('#input');
+  if (points) try { pointsChanged(points, ptTicket()); } catch (e) {}
+  if (text) {
+    if (input.value.trim() || (ED.points || []).length) return false;
+    input.value = text; SEND_KEY = ''; edHeadInput(); fitSendInput();
+  }
+  REPLY_AIM = aim && aim.mid ? { mid: String(aim.mid), n: +aim.n, question: String(aim.question || '') } : null;
+  if (REPLY_AIM) NEW_THREAD = false;
+  composerDestinationPaint();
+  if (focus) {
+    input.focus({ preventScroll: true });
+    const end = input.value.length;
+    try { input.setSelectionRange(end, end); } catch (e) {}
+  }
+  return true;
 }
-function answersMenuClose(refocus) {
-  const menu = $('#answers-menu');
-  if (!menu || menu.hidden) return;
-  menu.hidden = true;
-  $('#compose-answers-pick').setAttribute('aria-expanded', 'false');
-  if (refocus) $('#input').focus();
+// An answer taken back: its words back in the box that sent it, aimed at the card.
+function replyGiveBack(aim, text, points) {
+  if (replyGuest()) {
+    try { if (window.parent.wcReplyAim?.(window, aim, replyWhere(), text, points)) return; } catch (e) {}
+  }
+  replyAimSet(aim, false, text, points);
 }
-$('#compose-answers-pick').addEventListener('click', () => $('#answers-menu').hidden ? answersMenuOpen() : answersMenuClose(true));
-$('#compose-answers-x').addEventListener('click', () => { ANSWER_PICK = 'none'; answersPaint(); $('#input').focus(); });
-$('#answers-menu').addEventListener('click', e => {
-  const b = e.target.closest && e.target.closest('button');
-  if (!b) return;
-  ANSWER_PICK = b.dataset.none ? 'none' : { mid: b.dataset.mid, n: +b.dataset.n };
-  answersMenuClose(true);
-  answersPaint();
-});
-$('#answers-menu').addEventListener('keydown', e => {
-  const items = [...$('#answers-menu').querySelectorAll('button')], i = items.indexOf(document.activeElement);
-  if (e.key === 'Escape') { e.preventDefault(); answersMenuClose(true); }
-  else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); const k = (i + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length; items[k] && items[k].focus(); }
-});
-document.addEventListener('pointerdown', e => { if (!e.target.closest || !e.target.closest('#compose-answers, #answers-menu')) answersMenuClose(false); }, true);
+// The To line's "· reply to “…”" and the aimed card, as REPLY_AIM is. An aim
+// whose card was answered meanwhile (an option, another device) is dropped.
+function replyPaint() {
+  if (replyGuest()) { replyAimCards(); return; }
+  if (REPLY_AIM && !replyOpen(REPLY_AIM, false)) REPLY_AIM = null;
+  const a = REPLY_AIM, span = $('#compose-reply');
+  if (span) {
+    span.hidden = !a;
+    const re = span.querySelector('.cr-re');
+    setText(re, a ? `reply to “${replyShort(a.question) || 'the question'}”` : '');
+    re.title = a ? a.question : '';
+  }
+  if (WORKSPACE_COMPOSE) try { window.parent.wcReplyPaint?.(a ? { room: ROOM, ...a } : null); } catch (e) {}
+  replyAimCards();
+  try { composePlaceholder(); } catch (e) {}
+}
+// The cards on screen marked as the aim is, in place (the focus stays).
+function replyAimCards() {
+  const k = replyKey();
+  document.querySelectorAll('#msgs .qa[data-ask]').forEach(card => {
+    const on = !card.classList.contains('done') && card.dataset.ask === k;
+    if (card.classList.contains('aimed') !== on) card.classList.toggle('aimed', on);
+    const b = card.querySelector('.qa-reply');
+    if (!b) return;
+    const t = document.createElement('div');
+    t.innerHTML = replyBtnHtml(card.dataset.ask, on);
+    const neu = t.firstElementChild;
+    syncAttrs(b, neu);
+    if (b.innerHTML !== neu.innerHTML) b.innerHTML = neu.innerHTML;
+  });
+}
+$('#compose-reply-x').addEventListener('click', () => replyAimSet(null, true));
+// The aimed card stays in view above the box: scrolled to only when out of
+// view, again once a phone's keyboard has come up and the chat is shorter.
+function replyKeepInView(key) {
+  const run = () => {
+    const box = $('#msgs'), card = [...document.querySelectorAll('#msgs .qa[data-ask]')].find(c => c.dataset.ask === key);
+    if (!box || !card) return;
+    const r = card.getBoundingClientRect(), v = box.getBoundingClientRect(), pad = 8;
+    if (r.top >= v.top && r.bottom <= v.bottom) return;
+    const down = r.bottom - v.bottom + pad, up = r.top - v.top - pad;
+    box.scrollTop += r.top < v.top || r.height > v.height ? up : down;
+    STICK = nearEnd(box);
+  };
+  run();
+  setTimeout(run, 350);
+  const vv = window.visualViewport;
+  if (vv) {
+    const once = () => { vv.removeEventListener('resize', once); run(); };
+    vv.addEventListener('resize', once);
+    setTimeout(() => vv.removeEventListener('resize', once), 1500);
+  }
+}
 // Sent: the card it answered is answered here at once (Undo for a while);
-// the next message gets the chip again, on the newest open card.
+// the box goes back to the conversation's agent (#408).
 var BOX_SENT_CARDS = new Map();     // 'mid:n' -> the open card a box send answers, as it was sent
 // The open cards' order (asks.open_cards): newest message first, then the
 // message id the other way, then a message's cards in their order.
 const openCardOrder = (a, b) => ((+b.ts || 0) - (+a.ts || 0)) || (a.mid < b.mid ? 1 : a.mid > b.mid ? -1 : 0) || (a.n - b.n);
 function answersSent(d) {
-  ANSWER_PICK = null;
+  if (REPLY_SENT && REPLY_AIM && REPLY_AIM.mid + ':' + REPLY_AIM.n === REPLY_SENT) REPLY_AIM = null;
+  REPLY_SENT = '';
   const a = d && d.answered;
   if (a && a.mid) {
     if (d.points) pointsChanged(d.points, ptTicket());
@@ -10270,10 +10283,10 @@ function answersSent(d) {
     }
     askUndoOffer(a.mid + ':' + a.n);
   }
-  answersPaint();
+    replyPaint();
   if (LAST_ITEMS) renderBubbles(LAST_ITEMS);
 }
-// ---- P409: end
+// ---- #408: end
 // A key for the message in the box, minted once per message: the same one
 // goes with every attempt to send it, and a new one with the next message.
 // (sendKey, above, is the prompt card's keystroke: not this.)
@@ -10497,7 +10510,7 @@ $('#compose').addEventListener('compositionend', e => {
 // PG_SLOP px between press and click, and it had not just come under a still
 // pointer (moved or appeared there within PG_SETTLE ms before the press).
 // Anything else does nothing. Keyboard activation (detail 0) is not a press.
-const PG_SEL = '#send, .qa-opt, .qa-send, .qa-undo, .send-retry, .send-discard, .send-hide, .pend-retry, .pend-discard, '
+const PG_SEL = '#send, .qa-opt, .qa-send, .qa-undo, .qa-reply, .send-retry, .send-discard, .send-hide, .pend-retry, .pend-discard, '
   + '.pt-btn, .pc-opt, .pc-btn, .cmt-submit, .cu-read, .am-primary[data-act], .am-item[data-act]';
 const PG_SETTLE = 400, PG_SLOP = 4, PG_HOLD = 300;
 // at: where the pointer was last (null: not over this page); any: when a press
@@ -11330,6 +11343,7 @@ function workspaceComposeThread(target) {
   micStop(true);   // P367: the words so far stay with the destination they were said to
   edStoreNow();
   SHARED_THREAD = next ? { thread:next, title:String(target.title || 'Thread'), info:target.info || null } : null;
+  REPLY_AIM = null;     // #408: another conversation: the box answers no card there
   sharedComposerYield(false);
   sharedComposerResume();
   $('#thr-also').checked = false;
@@ -11402,7 +11416,7 @@ if (WORKSPACE_COMPOSE) {
   // cut at its top (P227). While one is open the host grows the frame up by
   // the menu's height, over the chats (wcFrameRoom); the page above the box
   // is clear. Asked for as the menu opens or closes, before it is painted.
-  const MENUS = '.phone-compose-tools[open] > .phone-tools-menu, #send-menu:not([hidden]), #stop-choices:not([hidden]), #slashpop:not([hidden]), #answers-menu:not([hidden])';
+  const MENUS = '.phone-compose-tools[open] > .phone-tools-menu, #send-menu:not([hidden]), #stop-choices:not([hidden]), #slashpop:not([hidden])';
   let asked = 0;
   const menuRoom = () => {
     const top = $('#compose').getBoundingClientRect().top;
@@ -11417,7 +11431,7 @@ if (WORKSPACE_COMPOSE) {
   };
   const watch = new MutationObserver(menuRoom);
   watch.observe($('.phone-compose-tools'), {attributes:true, subtree:true, attributeFilter:['open', 'hidden']});
-  for (const id of ['#send-menu', '#stop-choices', '#slashpop', '#answers-menu']) watch.observe($(id), {attributes:true, childList:true, attributeFilter:['hidden']});
+  for (const id of ['#send-menu', '#stop-choices', '#slashpop']) watch.observe($(id), {attributes:true, childList:true, attributeFilter:['hidden']});
   addEventListener('pagehide', () => { try { window.parent.wcFrameRoom(0); } catch (e) {} });
 }
 function sharedComposerAdoptIfEmpty() {
@@ -12290,39 +12304,6 @@ function pointClick(e) {
   pointAct(b.dataset.pt, b.dataset.ptAct, postOk).then(() => { if (b.isConnected) b.disabled = false; });
   return true;
 }
-$('#msgs').addEventListener('input', e => {
-  const ta = e.target.closest && e.target.closest('.qa-cm textarea[data-ask]');
-  if (!ta) return;
-  askDraftSet(ta.dataset.ask, ta.value);
-  if (ASK_DRAFT_MULTI(ta)) askMultiPaint(ta.dataset.ask);
-  if (SEND_SIZE_FALLBACK) fitToText(ta, parseFloat(getComputedStyle(ta).minHeight) || 32);
-});
-function ASK_DRAFT_MULTI(ta) { const c = ta.closest('.qa'); return !!(c && c.querySelector('.qa-send[data-multi]')); }
-// Ctrl/⌘+Enter in a card's comment is its Send, sent once (askSend's guard;
-// a held key's repeats do nothing). Mid-composition it waits for the text.
-$('#msgs').addEventListener('keydown', e => {
-  const ta = e.target.closest && e.target.closest('.qa-cm textarea[data-ask]');
-  if (!ta || askKeyAction(e) !== 'send') return;
-  e.preventDefault();
-  if (e.repeat) return;
-  const card = ta.closest('.qa');
-  askPress(card && [...card.querySelectorAll('.qa-send')].find(b => b.dataset.ask === ta.dataset.ask));
-});
-$('#msgs').addEventListener('compositionstart', e => {
-  const ta = e.target.closest && e.target.closest('.qa-cm textarea[data-ask]');
-  if (ta) ASK_COMPOSING.add(ta.dataset.ask);
-});
-$('#msgs').addEventListener('compositionend', e => {
-  const ta = e.target.closest && e.target.closest('.qa-cm textarea[data-ask]');
-  if (!ta) return;
-  const key = ta.dataset.ask;
-  askDraftSet(key, ta.value);
-  ASK_COMPOSING.delete(key);
-  if (!ASK_AFTER_COMPOSE.has(key)) return;
-  const option = ASK_AFTER_COMPOSE.get(key);
-  ASK_AFTER_COMPOSE.delete(key);
-  setTimeout(() => { askSyncDraft(key); askSend(key, option, postOk); }, 0);
-});
 // #402: "N steps ▸" opens a reply's steps in place; "Hide it again" hides the
 // team activity a link showed. Caught first: the balloon's head folds it.
 $('#msgs').addEventListener('click', e => {
@@ -12355,6 +12336,8 @@ $('#msgs').addEventListener('click', e => {
     });
     return;
   }
+  const rp = e.target.closest && e.target.closest('.qa-reply');
+  if (rp) { replyPress(rp.closest('.qa')); return; }
   if (askClick(e)) return;
   if (pointClick(e)) return;
   const cl = e.target.closest && e.target.closest('.copy-link');
