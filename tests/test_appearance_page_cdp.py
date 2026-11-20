@@ -18,7 +18,7 @@ at a phone's:
   draft, and the cache keeps the saved accent;
 * Save races: while a save is out nothing is cached and no other tab moves;
   a choice made meanwhile survives a failure; a settings read that was out
-  before the save does not undo it;
+  before the save, in this tab or another, does not undo it;
 * a choice saved elsewhere reaches the page within 5 seconds (P434);
 * Settings still scrolls to its last section;
 * on a phone: four tiles a row, 44px swatches, the bar fixed at the bottom,
@@ -234,6 +234,24 @@ async function main() {
         await sleep(500);
         o.r3 = await evalIn(`({ stale: [window.__stale.theme, window.__stale.chatLog], theme: document.documentElement.dataset.theme, cache: localStorage.getItem('cd-theme'),
           prefs: [PREFS.theme, PREFS.chatLog], chatLogCache: localStorage.getItem('cd-chat-log'), bar: !document.getElementById('ap-bar').hidden, held: window.top.CD_SYNC_HOLD || {out: 0} })`);
+        // 4. The same in another tab: its read, out before this tab's Save, answers after it.
+        await other.evalIn(`(async () => { window.__fetch = window.fetch; window.__gate = [];
+          window.__stale = await (await window.__fetch('/api/settings', {cache: 'no-store'})).json(); window.__holdGet = true;
+          window.fetch = (u, o) => window.__holdGet && String(u).endsWith('/api/settings') && !(o && o.method)
+            ? new Promise(res => { window.__holdGet = false; window.__gate.push({ u, o, res }); }) : window.__fetch(u, o);
+          cdTheme.sync(); return 0; })()`);
+        await other.until(`window.__gate.length === 1`);
+        await evalIn(`document.querySelector('#ap-themes [data-theme="fjord"]').click(); document.getElementById('ap-save').click(); 0`);
+        await until(`window.__gate.some(g => !g.get)`);
+        await release('!g.get', `window.__fetch(g.u, g.o)`);
+        await until(`!AP.saving && !Object.keys(AP.draft).length`);
+        await other.until(`document.documentElement.dataset.theme === 'fjord'`, 4000);
+        await other.evalIn(`(() => { const g = window.__gate.shift(); g.res(new Response(JSON.stringify(window.__stale), {status: 200, headers: {'Content-Type': 'application/json'}})); return 0; })()`);
+        await sleep(600);
+        o.r4 = { stale: await other.evalIn(`window.__stale.theme`),
+          other: await other.evalIn(`({ theme: document.documentElement.dataset.theme, cache: localStorage.getItem('cd-theme'), staleTaken: PREFS.theme === window.__stale.theme })`),
+          me: await evalIn(`({ theme: document.documentElement.dataset.theme, cache: localStorage.getItem('cd-theme') })`) };
+        await other.evalIn(`window.fetch = window.__fetch; 0`);
         await evalIn(`window.fetch = window.__fetch; 0`);
       }
       // P434: a choice saved on another device shows here within 5 seconds
@@ -461,6 +479,11 @@ class AppearancePage(unittest.TestCase):
         self.assertEqual({**{k: r[k] for k in ("theme", "cache", "prefs", "chatLogCache", "bar")}, "held": r["held"]["out"]},
                          {"theme": "dim", "cache": "dim", "prefs": ["dim", "off"], "chatLogCache": "off",
                           "bar": False, "held": 0})
+        # Another tab's read that was out before the Save does not undo it there either.
+        r = g["r4"]
+        self.assertEqual(r["stale"], "dim")
+        self.assertEqual(r["other"], {"theme": "fjord", "cache": "fjord", "staleTaken": False})
+        self.assertEqual(r["me"], {"theme": "fjord", "cache": "fjord"})
 
     def test_a_choice_saved_elsewhere_arrives_within_5_seconds(self):
         for name, g in self.got.items():

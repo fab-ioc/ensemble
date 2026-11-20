@@ -115,7 +115,9 @@
   function noteAccent() { epoch++; chosen++; }
   // While Appearance's Save is out, and for any read that was already out
   // when it started, sync() adopts nothing: a stale answer would undo the
-  // save. Kept on the top page so its chats hold too.
+  // save. Kept on the top page so its chats hold too. Another tab's Save
+  // writes 'cd-saved' before its caches: a read this page had out then is
+  // older than that Save, and is dropped the same way.
   function holds() {
     try { return window.top.CD_SYNC_HOLD || (window.top.CD_SYNC_HOLD = { n: 0, out: 0 }); }
     catch (e) { return holds.own || (holds.own = { n: 0, out: 0 }); }
@@ -224,6 +226,7 @@
   applyAccent();
   if (mq && mq.addEventListener) mq.addEventListener('change', apply);
   window.addEventListener('storage', function (ev) {
+    if (ev.key === 'cd-saved') holds().n++;
     if (ev.key === 'cd-theme') apply();
     if (ev.key === 'cd-accent') { epoch++; applyAccent(); }
   });
@@ -26441,6 +26444,9 @@ async function apSave() {
     return;
   }
   if (s) PREFS = s;
+  // First, so every other tab drops a settings read it had out (older than this Save)
+  // before it sees the new caches.
+  try { localStorage.setItem('cd-saved', Date.now() + ':' + Math.random()); } catch (e) {}
   if ('theme' in d) { try { localStorage.setItem('cd-theme', d.theme); } catch (e) {} }
   if (hasAccent) { try { if (d.accent) localStorage.setItem('cd-accent', d.accent); else localStorage.removeItem('cd-accent'); } catch (e) {} }
   if ('fullNames' in d) { try { localStorage.setItem(ROW_EXPAND_HOVER_KEY, String(d.fullNames)); } catch (e) {} }
