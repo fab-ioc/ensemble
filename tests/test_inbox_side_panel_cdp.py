@@ -15,12 +15,12 @@ clicks:
 * pointing at the panel's Close this and earlier marks the rows it would close,
   as on the card; leaving it unmarks them;
 * a real click on each panel button presses the hovered card's own button
-  (Close, Close this and earlier, Done with this), and the real Close and Close
+  (Reply, Close, Close this and earlier, Done with this), and the real Close and Close
   this and earlier do what they do on the card (the row goes, with Undo; the
   card asks to confirm, its buttons in it, the panel gone);
 * a repaint while the pointer is on the card or on the panel keeps the panel,
   on the same card;
-* real Tab and Shift+Tab move from a card link through Close, Earlier and Done
+* real Tab and Shift+Tab move from a card link through Reply, Close, Earlier and Done
   with this and back; Esc and Cancel return focus to Earlier after confirmation;
 * on a touch screen (no hover) the card shows its own buttons and no panel opens;
 * the page threw nothing.
@@ -161,7 +161,7 @@ async function main() {
     // A real click on each panel button presses the hovered card's own (held here, so nothing is sent).
     await evalIn(`(() => { window.__p410 = []; window.__p410f = ev => { const b = ev.target.closest && ev.target.closest('.ibx-btn'); if (!b) return;
       const li = b.closest('li.ibx-row[data-ibx]');
-      window.__p410.push({ row: li ? li.dataset.ibx : null, inActs: !!b.closest('li.ibx-row > .ibx-acts'), key: ['ibxClose', 'ibxEarlier', 'ibxDone', 'ibxDismiss'].find(k => k in b.dataset) || '' });
+      window.__p410.push({ row: li ? li.dataset.ibx : null, inActs: !!b.closest('li.ibx-row > .ibx-acts'), key: ['ibxReply', 'ibxClose', 'ibxEarlier', 'ibxDone', 'ibxDismiss'].find(k => k in b.dataset) || '' });
       ev.preventDefault(); ev.stopImmediatePropagation(); };
       window.addEventListener('click', window.__p410f, true); return 0; })()`);
     out.clicks = [];
@@ -192,7 +192,7 @@ async function main() {
     [x, y] = await textAt(3);
     const id3 = await idOf(3);
     await move(x, y); await sleep(100); await frame();
-    [bx, by] = await btnAt(0);
+    [bx, by] = await btnAt((await evalIn(st)).labels.indexOf('Close'));
     await move(bx, by); await sleep(60); await click(bx, by); await sleep(150); await frame();
     out.close = { want: id3, gone: await evalIn(`IBX.gone.has(${JSON.stringify(id3)})`), after: await evalIn(st) };
     await evalIn(`(() => { const u = ${D}.querySelector('[data-ibx-undo="' + CSS.escape(${JSON.stringify(id3)}) + '"]'); if (u) u.click(); return !!u; })()`).then(v => { out.close.undo = v; });
@@ -200,13 +200,13 @@ async function main() {
     // Real keyboard navigation must reach the card's own buttons, even when the mouse-only panel is hidden.
     await away();
     const keyboard = `(() => { const li = ${D}.querySelector('li.ibx-row[data-ibx="' + CSS.escape(${JSON.stringify(id0)}) + '"]'), a = document.activeElement;
-      const key = a && (a.matches('a.ibx-link') ? 'link' : ['ibxClose', 'ibxEarlier', 'ibxDismiss', 'ibxGo', 'ibxCancel'].find(k => k in a.dataset) || a.tagName);
+      const key = a && (a.matches('a.ibx-link') ? 'link' : ['ibxReply', 'ibxClose', 'ibxEarlier', 'ibxDismiss', 'ibxGo', 'ibxCancel'].find(k => k in a.dataset) || a.tagName);
       const acts = li.querySelector(':scope > .ibx-acts');
       return { key, shown: +getComputedStyle(acts).opacity, display: getComputedStyle(acts).display, panel: document.querySelectorAll('.ibx-side').length }; })()`;
     await evalIn(`(() => { const li = ${D}.querySelector('li.ibx-row[data-ibx="' + CSS.escape(${JSON.stringify(id0)}) + '"]'); li.scrollIntoView({ block: 'nearest' }); li.querySelector('a.ibx-link').focus(); return 0; })()`);
     out.keyboard = { steps: [await evalIn(keyboard)] };
-    for (const back of [false, false, false, true, true, true]) { await tab(back); out.keyboard.steps.push(await evalIn(keyboard)); }
-    await tab(); await tab(); // Earlier, reached from the link again.
+    for (const back of [false, false, false, false, true, true, true, true]) { await tab(back); out.keyboard.steps.push(await evalIn(keyboard)); }
+    await tab(); await tab(); await tab(); // Earlier (after Reply and Close), reached from the link again.
     out.keyboard.beforeConfirm = await evalIn(keyboard);
     await evalIn('document.activeElement.click(), 0'); await frame();
     out.keyboard.confirm = await evalIn(`({ id: IBX.confirm, focus: document.activeElement.dataset.ibxGo !== undefined })`);
@@ -217,7 +217,7 @@ async function main() {
     await evalIn(`${D}.querySelector('[data-ibx-cancel]').click(), 0`); await frame();
     out.keyboard.afterCancel = await evalIn(keyboard);
     await evalIn(`(() => { const li = ${D}.querySelector('li.ibx-row[data-ibx="' + CSS.escape(${JSON.stringify(id1)}) + '"]'); li.querySelector('a.ibx-link').focus(); return 0; })()`);
-    await tab();
+    await tab(); await tab(); // Reply, then Close.
     out.keyboard.shortRow = await evalIn(`({ close: document.activeElement.dataset.ibxClose === ${JSON.stringify(id1)}, panel: document.querySelectorAll('.ibx-side').length })`);
     await evalIn('document.activeElement.blur(), 0');
     // A touch screen: no hover. The card shows its buttons; neither a touch nor the mouse opens a panel.
@@ -270,8 +270,9 @@ class SidePanelInChrome(close.CloseInChrome):
         self.assertEqual(o["gap"], 8, o)
         self.assertTrue(o["outInbox"], o)
         self.assertEqual(o["shown"], 0, o)
-        self.assertEqual(o["labels"][0], "Close", o)
-        self.assertRegex(o["labels"][1], r"^Close this and earlier \d+$")
+        self.assertEqual(o["labels"][0], "↩ Reply", o)
+        self.assertEqual(o["labels"][1], "Close", o)
+        self.assertRegex(o["labels"][2], r"^Close this and earlier \d+$")
         self.assertEqual(o["labels"][-1], "Done with this", o)
 
     def test_straight_down_onto_the_next_card_moves_the_panel(self):
@@ -314,8 +315,8 @@ class SidePanelInChrome(close.CloseInChrome):
 
     def test_each_panel_button_presses_the_card_s_own(self):
         cl = self.got["clicks"]
-        self.assertEqual([x["label"].split(" ")[0] for x in cl], ["Close", "Close", "Done"], cl)
-        want = ["ibxClose", "ibxEarlier", ("ibxDone", "ibxDismiss")]
+        self.assertEqual([x["label"].split(" ")[0] for x in cl], ["↩", "Close", "Close", "Done"], cl)
+        want = ["ibxReply", "ibxClose", "ibxEarlier", ("ibxDone", "ibxDismiss")]
         for x, w in zip(cl, want):
             self.assertEqual(len(x["got"]), 1, x)
             g = x["got"][0]
@@ -327,7 +328,7 @@ class SidePanelInChrome(close.CloseInChrome):
     def test_real_tab_shift_tab_and_confirm_return_focus_to_the_card(self):
         k = self.got["keyboard"]
         self.assertEqual([x["key"] for x in k["steps"]],
-                         ["link", "ibxClose", "ibxEarlier", "ibxDismiss", "ibxEarlier", "ibxClose", "link"], k)
+                         ["link", "ibxReply", "ibxClose", "ibxEarlier", "ibxDismiss", "ibxEarlier", "ibxClose", "ibxReply", "link"], k)
         self.assertTrue(all(x["shown"] == 1 and x["display"] == "flex" and x["panel"] == 0 for x in k["steps"]), k)
         self.assertEqual(k["beforeConfirm"]["key"], "ibxEarlier", k)
         self.assertTrue(k["confirm"]["id"] and k["confirm"]["focus"], k)

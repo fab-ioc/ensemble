@@ -127,7 +127,7 @@ async function main() {
       const row = `document.querySelector('#ld-ibx-body .ibx-row[data-stage="answer"]')`;
       await p.hover(row); await sleep(150);
       // Done with this comes with the Needs you items (attention), which may be a poll behind the rows.
-      await p.until(`${row}.querySelectorAll('.ibx-acts .ibx-btn').length === 3 && document.querySelectorAll('.ibx-side .ibx-side-btn').length === 3`, 10000).catch(() => null);
+      await p.until(`${row}.querySelectorAll('.ibx-acts .ibx-btn').length === 4 && document.querySelectorAll('.ibx-side .ibx-side-btn').length === 4`, 10000).catch(() => null);
       // With a mouse its actions are in the side panel just right of the card, out of the Inbox (P410).
       out.acts = await p.evalIn(`(() => { const c = ${row}.getBoundingClientRect(), ib = document.getElementById('ld-ibx-body').getBoundingClientRect();
         return [...document.querySelectorAll('.ibx-side .ibx-side-btn')].map(b => { const x = b.getBoundingClientRect(); return x.left > c.right && x.left >= ib.right - 0.5 && x.top >= c.top - 0.5; }); })()`);
@@ -296,7 +296,7 @@ class EveryOpenCardIsARowInChrome(unittest.TestCase):
 
     def test_a_closed_card_waiting_on_undo_is_not_counted(self):
         g = self.got["past"]
-        self.assertEqual(g["acts"], [True] * 3, "Close, Close this and earlier and Done with this, in the side panel right of the card")
+        self.assertEqual(g["acts"], [True] * 4, "Reply, Close, Close this and earlier and Done with this, in the side panel right of the card")
         c, u = g["closing"], g["undone"]
         self.assertEqual(self.chips(c), {"All": ("13", False), "opTen": ("9", False), "Motors": ("4", False)})
         self.assertEqual(self.chips(u), self.chips(g["all"]))
