@@ -5809,6 +5809,11 @@ def _origin_sender_info(text: str, origin: str) -> dict:
         return _input_sender_info(text, {"kind": "human"})
     if origin == "hub":
         return _input_sender_info(text)
+    if origin == NOTICE_EXTERNAL:
+        # An outside line typed by outside_deliver: the source it names.
+        m = _OUTSIDE_HEAD.match((text or "").lstrip())
+        label = outside_deliver.label_of(m.group(1)) if m else ""
+        return _input_sender_info(text, {"kind": origin, **({"senderLabel": label} if label else {})})
     return _input_sender_info(text, {"kind": origin})
 
 
@@ -5923,7 +5928,8 @@ HUB_INPUT_KINDS = (
 # A message from another project's PO (po_messages.wake_line): the project's
 # name varies, so it is matched here rather than listed above.
 _PO_MESSAGE_HEAD = re.compile(r"\[from the (?P<fromProject>.+?) PO\] (?P<poKind>bug|question|answer|info): ")
-# An outside message (outside_deliver.wake_line): "[slack] …", the source's kind.
+# An outside message (outside_deliver.wake_line): "[slack] …", the source's
+# kind. Read only for a line whose origin is outside (_origin_sender_info).
 _OUTSIDE_HEAD = re.compile(r"\[([a-z]+)\] ")
 _REPORT_HEAD = re.compile(r"\[report\] (?P<reportKind>.+?) from task '(?P<taskTitle>.*?)' "
                           r"\((?P<taskId>[^\s,()]+), (?P<reporter>[^()]*?)\): ")
@@ -5944,11 +5950,9 @@ def hub_input_kind(text: str) -> dict:
     m = _PO_MESSAGE_HEAD.match(s)
     if m:
         return {"kind": "pomsg", **m.groupdict()}
-    m = _OUTSIDE_HEAD.match(s)
-    if m and m.group(1) in outside_deliver.KINDS:
-        # An outside message typed into its initiative's PO (outside_deliver):
-        # outside people's words, never the person's.
-        return {"kind": NOTICE_EXTERNAL, "senderLabel": outside_deliver.label_of(m.group(1))}
+    # An outside message ("[slack] …", outside_deliver) is told by who typed
+    # it (its provenance: _origin_sender_info, the input journal), never by
+    # its words: the person's own "[slack] hi" is the person's (P439).
     return {"kind": "human"}
 
 
@@ -6342,7 +6346,8 @@ def notify_sender_refusal(sender) -> str:
         return "The sender label holds a bracket."
     low = " ".join(sender.lower().split())
     if low in _NOTIFY_RESERVED or low == operator_name().strip().lower() \
-            or hub_input_kind(f"[{sender}] x")["kind"] != "human" or low.startswith("from the"):
+            or hub_input_kind(f"[{sender}] x")["kind"] != "human" or low.startswith("from the") \
+            or sender in outside_deliver.KINDS:
         return "The sender label is one the hub or the person goes by."
     return ""
 

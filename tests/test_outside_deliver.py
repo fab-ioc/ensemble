@@ -187,7 +187,8 @@ class Typed(_World):
     def test_an_idle_po_is_typed_one_line_once(self):
         it = item(1, text="Round 2 is ready\nmore below", addressed=True)
         self.put(it)
-        self.assertEqual(self.tick(), [self.opten])
+        with mock.patch.object(dashboard, "_type_input", wraps=dashboard._type_input) as typing:
+            self.assertEqual(self.tick(), [self.opten])
         oid = od.msg_id(it["key"])
         [line] = self.typed("pty-opten")
         self.assertEqual(line, f'[slack] Made-up Person in #made-up (you are asked): "Round 2 is ready" '
@@ -204,9 +205,10 @@ class Typed(_World):
         self.assertEqual(self.tick(), [])
         self.assertEqual(self.put(it), [])
         self.assertEqual(len(self.typed("pty-opten")), 1)
-        # The line is hub input, never the person's words.
-        self.assertEqual(dashboard.hub_input_kind(line), {"kind": "external", "senderLabel": "Slack"})
-        self.assertFalse(dashboard.typed_by_person(line))
+        # The line is the source's by who typed it (its provenance), never by
+        # its words: the same words from the person are the person's (P439).
+        self.assertEqual(typing.call_args.args[2], {"kind": "external", "senderLabel": "Slack"})
+        self.assertEqual(dashboard.hub_input_kind(line), {"kind": "human"})
 
     def test_a_busy_po_is_typed_when_idle(self):
         self.idle["pty-opten"] = False
@@ -277,7 +279,8 @@ class Typed(_World):
         self.tick()
         lines = self.typed("pty-opten")
         self.assertEqual([ln.split(" ", 1)[0] for ln in lines], ["[slack]", "[jira]"])
-        self.assertEqual(dashboard.hub_input_kind(lines[1]), {"kind": "external", "senderLabel": "Jira"})
+        info = dashboard._origin_sender_info(lines[1], od.NOTICE_KIND)
+        self.assertEqual((info["kind"], info["senderLabel"]), ("external", "Jira"))
 
     def test_a_project_without_a_po_waits_then_is_dropped(self):
         self.put(item(1, to="proj-lonely"))
@@ -448,6 +451,8 @@ class StoppedPo(_World):
         self.assertTrue(text.startswith('[slack] Made-up Person in #made-up: "hello"'), text)
         self.assertEqual(key, f"outside:{oid}")
         self.assertEqual(self.launcher.origins, ["external"])
+        info = dashboard._origin_sender_info(text, "external")
+        self.assertEqual((info["senderType"], info["senderLabel"]), ("external", "Slack"))
         # Still queued while it comes up; a look meanwhile starts nothing more.
         self.now += 30
         self.tick()
@@ -651,6 +656,30 @@ class ThroughTheHub(_World):
         with self.assertRaises(urllib.error.HTTPError) as e:
             urllib.request.urlopen(req, timeout=10)
         self.assertEqual(e.exception.code, 401)
+
+
+class LabelledBySender(unittest.TestCase):
+    """P439: a person's own "[slack] …" is the person's; only a line the hub
+    typed from an outside source is labelled as that source."""
+
+    def test_the_persons_slack_prefix_is_their_own(self):
+        for text in ("[slack] hi team", "[jira] ABC-1 looks done", "[outside] note"):
+            self.assertEqual(dashboard.hub_input_kind(text), {"kind": "human"}, text)
+            self.assertTrue(dashboard.typed_by_person(text))
+            info = dashboard._origin_sender_info(text, "human")
+            self.assertEqual(info["kind"], "human", text)
+            self.assertEqual(info["senderType"], "person", text)
+
+    def test_a_typed_outside_line_is_its_sources(self):
+        info = dashboard._origin_sender_info("[slack] Sam in #made-up: \"hi\"", "external")
+        self.assertEqual((info["kind"], info["senderType"], info["senderLabel"]),
+                         ("external", "external", "Slack"))
+        info = dashboard._origin_sender_info("no prefix", "external")
+        self.assertEqual(info["senderLabel"], "Outside sender")
+
+    def test_a_program_cannot_notify_as_a_source_kind(self):
+        for kind in od.KINDS:
+            self.assertTrue(dashboard.notify_sender_refusal(kind), kind)
 
 
 if __name__ == "__main__":
