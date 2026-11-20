@@ -288,7 +288,8 @@ class IndexWiring(unittest.TestCase):
         # #407: Settings › Appearance's Save sends the accent with the other changed choices.
         i = src.index("async function apSave(")
         block = src[i:src.index("\n}\n", i)]
-        self.assertIn("cdTheme.chooseAccent(d.accent)", block)
+        self.assertIn("cdTheme.noteAccent()", block)
+        self.assertNotIn("chooseAccent", block)          # the cache waits for the hub
         self.assertIn("cdTheme.saveAccent(d.accent, hub)", block)
         self.assertIn("d.accent || 'default'", block)
         self.assertNotIn("fetch(", block)               # saves go through the head's queue

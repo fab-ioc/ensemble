@@ -137,6 +137,22 @@
   // finished save, and sync() takes the hub's accent only when it did not move
   // while the reply was out and every choice has been saved.
   var epoch = 0, chosen = 0, saved = 0, saving = false, queued = null;
+  // Appearance's Save counts its accent as chosen (a reply already out does
+  // not undo it) but stores nothing until the hub has it: no other tab
+  // repaints with a choice that may yet fail.
+  function noteAccent() { epoch++; chosen++; }
+  // While Appearance's Save is out, and for any read that was already out
+  // when it started, sync() adopts nothing: a stale answer would undo the
+  // save. Kept on the top page so its chats hold too.
+  function holds() {
+    try { return window.top.CD_SYNC_HOLD || (window.top.CD_SYNC_HOLD = { n: 0, out: 0 }); }
+    catch (e) { return holds.own || (holds.own = { n: 0, out: 0 }); }
+  }
+  function holdSync() {
+    var h = holds(), done = false;
+    h.n++; h.out++;
+    return function () { if (done) return; done = true; h.out--; h.n++; };
+  }
   function chooseAccent(color) {
     try { if (color) localStorage.setItem('cd-accent', color); else localStorage.removeItem('cd-accent'); } catch (e) {}
     epoch++; chosen++;
@@ -178,11 +194,12 @@
   // Adopt the hub's choices, which another device may have changed. If the hub
   // has none yet, hand it this browser's so a choice made before is kept.
   function sync() {
-    var at = epoch;
+    var at = epoch, hold = holds().n;
     fetch('/api/settings', { cache: 'no-store' })
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (s) {
-        if (!s) return;
+        var h = holds();
+        if (!s || h.n !== hold || h.out) return;
         // The page's own settings read from this answer (session.html's Chat as a log, #401).
         try { window.dispatchEvent(new CustomEvent('cd-settings', { detail: s })); } catch (e) {}
         // The hub's word for a board (static/noun.js): kept for the next load,
@@ -229,6 +246,7 @@
   window.cdTheme = { apply: apply, sync: sync, stored: stored, scheme: SCHEME, themes: Object.keys(SCHEME),
                      applyAccent: applyAccent, storedAccent: storedAccent, rgbOf: rgbOf, put: put,
                      chooseAccent: chooseAccent, saveAccent: saveAccent, cached: cached,
+                     noteAccent: noteAccent, holdSync: holdSync,
                      cachedAccent: cachedAccent, previewOf: previewOf, preview: preview };
   apply();
   applyAccent();

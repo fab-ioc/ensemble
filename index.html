@@ -109,6 +109,22 @@
   // finished save, and sync() takes the hub's accent only when it did not move
   // while the reply was out and every choice has been saved.
   var epoch = 0, chosen = 0, saved = 0, saving = false, queued = null;
+  // Appearance's Save counts its accent as chosen (a reply already out does
+  // not undo it) but stores nothing until the hub has it: no other tab
+  // repaints with a choice that may yet fail.
+  function noteAccent() { epoch++; chosen++; }
+  // While Appearance's Save is out, and for any read that was already out
+  // when it started, sync() adopts nothing: a stale answer would undo the
+  // save. Kept on the top page so its chats hold too.
+  function holds() {
+    try { return window.top.CD_SYNC_HOLD || (window.top.CD_SYNC_HOLD = { n: 0, out: 0 }); }
+    catch (e) { return holds.own || (holds.own = { n: 0, out: 0 }); }
+  }
+  function holdSync() {
+    var h = holds(), done = false;
+    h.n++; h.out++;
+    return function () { if (done) return; done = true; h.out--; h.n++; };
+  }
   function chooseAccent(color) {
     try { if (color) localStorage.setItem('cd-accent', color); else localStorage.removeItem('cd-accent'); } catch (e) {}
     epoch++; chosen++;
@@ -150,11 +166,12 @@
   // Adopt the hub's choices, which another device may have changed. If the hub
   // has none yet, hand it this browser's so a choice made before is kept.
   function sync() {
-    var at = epoch;
+    var at = epoch, hold = holds().n;
     fetch('/api/settings', { cache: 'no-store' })
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (s) {
-        if (!s) return;
+        var h = holds();
+        if (!s || h.n !== hold || h.out) return;
         // The page's own settings read from this answer (session.html's Chat as a log, #401).
         try { window.dispatchEvent(new CustomEvent('cd-settings', { detail: s })); } catch (e) {}
         // The hub's word for a board (static/noun.js): kept for the next load,
@@ -201,6 +218,7 @@
   window.cdTheme = { apply: apply, sync: sync, stored: stored, scheme: SCHEME, themes: Object.keys(SCHEME),
                      applyAccent: applyAccent, storedAccent: storedAccent, rgbOf: rgbOf, put: put,
                      chooseAccent: chooseAccent, saveAccent: saveAccent, cached: cached,
+                     noteAccent: noteAccent, holdSync: holdSync,
                      cachedAccent: cachedAccent, previewOf: previewOf, preview: preview };
   apply();
   applyAccent();
@@ -26173,7 +26191,7 @@ const ACCENT_CHOICES = [
 // page drops the preview. AP.draft holds only the keys touched, each kept only
 // while it differs from what is saved. var: read by inboxHlSec and the Full
 // names switch, which may run before this line.
-var AP = { draft: {}, saving: false, built: false, ready: false };
+var AP = { draft: {}, saving: false, touched: null, built: false, ready: false };
 // What the hub keeps, and what the frames (chats) read from the preview.
 const AP_HUB = ['theme', 'accent', 'chatLog', 'poTeamActivity', 'sendBox', 'projectIcons', 'inboxHighlightSec'];
 const AP_FRAME = ['theme', 'accent', 'chatLog', 'poTeamActivity'];
@@ -26206,6 +26224,7 @@ function apSet(k, v) {
   // While a save is out "saved" is about to change: keep the choice even if it
   // is today's saved value, so it is not lost when the save lands (apSave prunes).
   if (!AP.saving && apSame(k, v, apSaved(k))) delete AP.draft[k]; else AP.draft[k] = v;
+  if (AP.touched) AP.touched.add(k);
   apApply(); apRender();
 }
 // Drop the draft keys that are now what is saved (another device saved them,
@@ -26380,6 +26399,7 @@ function apRender() {
 }
 function apCancel() {
   const had = Object.keys(AP.draft).length > 0;
+  if (AP.touched) for (const k of AP_ORDER) AP.touched.add(k);   // a failed save puts none back
   AP.draft = {};
   if (had || window.CD_PREVIEW) apApply();
   apRender();
@@ -26390,27 +26410,31 @@ async function apSave() {
   if (!keys.length) return;
   const hub = {};
   for (const k of AP_HUB) if (k !== 'accent' && k in d) hub[k] = d[k];
-  const hasAccent = 'accent' in d, prevAccent = apSaved('accent');
-  AP.saving = true; apRender();
+  const hasAccent = 'accent' in d;
+  // AP.touched: the keys chosen (or cancelled) while the save is out, which a
+  // failed save must not put back.
+  AP.saving = true; AP.touched = new Set(); apRender();
+  // No sync adopts the hub's word while this is out, nor a read already out.
+  const release = cdTheme.holdSync();
   let s = null, err = null;
   try {
     if (hasAccent) {
-      // The head script's accent bookkeeping: a sync that was out does not undo it.
-      cdTheme.chooseAccent(d.accent);
+      // The head's accent bookkeeping (a reply already out does not undo it);
+      // the cache is written only once the hub has it, so no other tab moves first.
+      cdTheme.noteAccent();
       s = await cdTheme.saveAccent(d.accent, hub);
       if (!s) s = await api('/api/settings');    // a newer save took this one's place
     } else if (Object.keys(hub).length) {
       s = await api('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(hub) });
     }
   } catch (e) { err = e; }
-  AP.saving = false;
+  const touched = AP.touched;
+  AP.saving = false; AP.touched = null;
   if (err) {
-    if (hasAccent) {
-      try { if (prevAccent) localStorage.setItem('cd-accent', prevAccent); else localStorage.removeItem('cd-accent'); } catch (e) {}
-      cdTheme.applyAccent();
-    }
-    // The preview stays: put back any choice that was pruned while the save was out.
-    for (const k of keys) if (!apHas(k) && !apSame(k, d[k], apSaved(k))) AP.draft[k] = d[k];
+    release();
+    // The preview stays: put back a key that left the draft while the save was
+    // out, unless it was chosen again meanwhile (that later choice stands).
+    for (const k of keys) if (!apHas(k) && !touched.has(k)) AP.draft[k] = d[k];
     apPrune();
     toast('Appearance not saved: ' + err.message, 5000, 'err');
     apApply(); apRender();
@@ -26418,12 +26442,14 @@ async function apSave() {
   }
   if (s) PREFS = s;
   if ('theme' in d) { try { localStorage.setItem('cd-theme', d.theme); } catch (e) {} }
+  if (hasAccent) { try { if (d.accent) localStorage.setItem('cd-accent', d.accent); else localStorage.removeItem('cd-accent'); } catch (e) {} }
   if ('fullNames' in d) { try { localStorage.setItem(ROW_EXPAND_HOVER_KEY, String(d.fullNames)); } catch (e) {} }
+  release();
   // A choice made while the save was out stays in the draft.
   for (const k of keys) if (apHas(k) && apSame(k, AP.draft[k], d[k])) delete AP.draft[k];
   apPrune();
   apCaches(); apApply();
-  cdTheme.apply();
+  cdTheme.apply(); cdTheme.applyAccent();
   renderPrefs(); apRender();
   toast('Appearance saved');
   if (hasAccent && s && s.accent !== undefined && s.accent !== (d.accent || 'default')) {

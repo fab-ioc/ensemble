@@ -15,7 +15,10 @@ at a phone's:
   while the preview differs, and names what is previewed;
 * Save writes every change to the hub in one go and the caches after it;
   Cancel, Esc and another tab drop the preview; a failed save keeps the
-  draft and puts the accent back;
+  draft, and the cache keeps the saved accent;
+* Save races: while a save is out nothing is cached and no other tab moves;
+  a choice made meanwhile survives a failure; a settings read that was out
+  before the save does not undo it;
 * a choice saved elsewhere reaches the page within 5 seconds (P434);
 * Settings still scrolls to its last section;
 * on a phone: four tiles a row, 44px swatches, the bar fixed at the bottom,
@@ -191,6 +194,48 @@ async function main() {
       await evalIn(`window.fetch = window.__fetch; document.getElementById('ap-save').click(); 0`);
       await until(`!AP.saving && !Object.keys(AP.draft).length`);
       o.customSaved = (await evalIn(hub)).accent;
+      if (name === 'desktop') {
+        // Save races, with the PUT (and one sync read) held until the test lets them go.
+        const look = `({ draft: Object.keys(AP.draft), accent: document.documentElement.style.getPropertyValue('--accent'), cache: localStorage.getItem('cd-accent'), bar: !document.getElementById('ap-bar').hidden, saving: AP.saving })`;
+        const otherAccent = `document.documentElement.style.getPropertyValue('--accent')`;
+        await evalIn(`window.__fetch = window.fetch; window.__gate = []; window.__holdGet = false;
+          window.fetch = (u, o) => (o && o.method === 'PUT') || (window.__holdGet && String(u).endsWith('/api/settings') && !(o && o.method))
+            ? new Promise(res => { if (!(o && o.method)) window.__holdGet = false; window.__gate.push({ u, o, res, get: !(o && o.method) }); })
+            : window.__fetch(u, o); 0`);
+        const release = (pick, how) => evalIn(`(() => { const i = window.__gate.findIndex(g => ${pick}); const g = window.__gate.splice(i, 1)[0]; g.res(${how}); return 0; })()`);
+        // 1. Saved rebeccapurple; preview #6E5DC6, Save, and while the PUT is out choose
+        //    rebeccapurple again; the PUT fails: the later choice stands. Meanwhile no other tab moves.
+        await evalIn(`document.querySelector('#ap-accents [data-color="#6E5DC6"]').click(); document.getElementById('ap-save').click(); 0`);
+        await until(`window.__gate.length === 1`);
+        await sleep(400);
+        o.r1Pending = { me: await evalIn(look), other: await other.evalIn(otherAccent) };
+        await evalIn(`(() => { const inp = document.getElementById('accent-input'); inp.focus(); inp.value = 'rebeccapurple'; inp.dispatchEvent(new Event('input', {bubbles: true})); inp.blur(); return 0; })()`);
+        o.r1Chosen = await evalIn(look);
+        await release('!g.get', `new Response('{}', {status: 500})`);
+        await until(`!AP.saving`); await sleep(400);
+        o.r1Failed = { me: await evalIn(look), other: await other.evalIn(otherAccent), hub: (await evalIn(hub)).accent };
+        // 2. The same Save succeeding: other tabs move only once the hub has it.
+        await evalIn(`document.querySelector('#ap-accents [data-color="#6E5DC6"]').click(); document.getElementById('ap-save').click(); 0`);
+        await until(`window.__gate.length === 1`);
+        await sleep(400);
+        o.r2Pending = { cache: (await evalIn(look)).cache, other: await other.evalIn(otherAccent) };
+        await release('!g.get', `window.__fetch(g.u, g.o)`);
+        await until(`!AP.saving && !Object.keys(AP.draft).length`);
+        o.r2Other = await other.until(`document.documentElement.style.getPropertyValue('--accent') === '#6E5DC6'`, 4000);
+        // 3. A settings read out before a Save answers after it with the old theme and
+        //    Chat as a log: it does not undo the Save.
+        await evalIn(`(async () => { window.__stale = await (await window.__fetch('/api/settings', {cache: 'no-store'})).json(); window.__holdGet = true; cdTheme.sync(); return 0; })()`);
+        await until(`window.__gate.some(g => g.get)`);
+        await evalIn(`document.querySelector('#ap-themes [data-theme="dim"]').click(); document.querySelector('#pref-chat-log [data-val="off"]').click(); document.getElementById('ap-save').click(); 0`);
+        await until(`window.__gate.some(g => !g.get)`);
+        await release('!g.get', `window.__fetch(g.u, g.o)`);
+        await until(`!AP.saving && !Object.keys(AP.draft).length`);
+        await release('g.get', `new Response(JSON.stringify(window.__stale), {status: 200, headers: {'Content-Type': 'application/json'}})`);
+        await sleep(500);
+        o.r3 = await evalIn(`({ stale: [window.__stale.theme, window.__stale.chatLog], theme: document.documentElement.dataset.theme, cache: localStorage.getItem('cd-theme'),
+          prefs: [PREFS.theme, PREFS.chatLog], chatLogCache: localStorage.getItem('cd-chat-log'), bar: !document.getElementById('ap-bar').hidden, held: window.top.CD_SYNC_HOLD || {out: 0} })`);
+        await evalIn(`window.fetch = window.__fetch; 0`);
+      }
       // P434: a choice saved on another device shows here within 5 seconds
       // (a page in the background waits for its next look at the front).
       await c.send('Target.closeTarget', { targetId: other.targetId });
@@ -390,10 +435,32 @@ class AppearancePage(unittest.TestCase):
                 self.assertEqual(c["cache"], "#6E5DC6")
                 f = g["failed"]
                 self.assertEqual(f["draft"], ["accent"])
-                self.assertEqual(f["cache"], "#6E5DC6", "the saved accent's cache is put back")
+                self.assertEqual(f["cache"], "#6E5DC6", "the cache keeps the saved accent")
                 self.assertEqual(f["accent"], "rebeccapurple", "the preview stays")
                 self.assertTrue(f["bar"])
                 self.assertEqual(g["customSaved"], "rebeccapurple")
+
+    def test_save_races(self):
+        g = self.got["desktop"]
+        # While the PUT is out nothing is cached and no other tab moves.
+        self.assertEqual(g["r1Pending"]["me"]["cache"], "rebeccapurple")
+        self.assertEqual(g["r1Pending"]["me"]["accent"], "#6E5DC6")
+        self.assertEqual(g["r1Pending"]["other"], "rebeccapurple")
+        self.assertEqual(g["r1Chosen"]["accent"], "rebeccapurple")
+        # It fails: the choice made meanwhile (the old saved colour) stands.
+        self.assertEqual(g["r1Failed"]["me"], {"draft": [], "accent": "rebeccapurple", "cache": "rebeccapurple",
+                                               "bar": False, "saving": False})
+        self.assertEqual(g["r1Failed"]["other"], "rebeccapurple")
+        self.assertEqual(g["r1Failed"]["hub"], "rebeccapurple")
+        # It succeeds: other tabs move only after the hub has it.
+        self.assertEqual(g["r2Pending"], {"cache": "rebeccapurple", "other": "rebeccapurple"})
+        self.assertLess(g["r2Other"], 4000)
+        # A read that was out before the Save does not undo it.
+        r = g["r3"]
+        self.assertEqual(r["stale"], ["dark", "on"])
+        self.assertEqual({**{k: r[k] for k in ("theme", "cache", "prefs", "chatLogCache", "bar")}, "held": r["held"]["out"]},
+                         {"theme": "dim", "cache": "dim", "prefs": ["dim", "off"], "chatLogCache": "off",
+                          "bar": False, "held": 0})
 
     def test_a_choice_saved_elsewhere_arrives_within_5_seconds(self):
         for name, g in self.got.items():
