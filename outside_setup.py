@@ -1212,14 +1212,19 @@ def apply_text(text: str, by: dict | None = None, check_only: bool = False,
 # The file: apply it, write its problems, the watcher
 # ---------------------------------------------------------------------------
 
-def write_first() -> str:
-    """Write the file from today's table when there is none. Returns its text."""
+def write_first(expect_hash: str | None = None) -> str:
+    """Write the file from today's table when there is none. Returns its text.
+    With ``expect_hash`` (Ask the hub's Apply of a change made from the text
+    the file would be written with, #410), nothing is written and Changed is
+    raised when today's text is not that one any more."""
     with _LOCK:
         p = setup_path()
         text = _read_text(p)
         if text is not None:
             return text
         text = first_text()
+        if expect_hash is not None and text_hash(text) != expect_hash:
+            raise Changed("the routing changed since this was made from it")
         durable.write_text(p, text)
         st = load_state()
         # Written from the table, so it is what applies now.

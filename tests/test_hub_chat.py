@@ -281,6 +281,7 @@ class HubChatSettings(unittest.TestCase):
     setUp = HubChatTest.setUp
     last = HubChatTest.last
     change = HubChatTest.change
+    row = HubChatTest.row
 
     def settings(self, changes: dict, words="Changed it.") -> str:
         return f"SETTINGS: {words}\n<<<SETTINGS\n{json.dumps(changes)}\nSETTINGS>>>"
@@ -458,6 +459,40 @@ class HubChatSettings(unittest.TestCase):
         hub_chat.apply(a["id"])
         self.assertEqual(self.last()["state"], "applied", self.last())
         self.assertIn("- Slack: on", setup.setup_path().read_text(encoding="utf-8"))
+
+    def test_asking_carries_no_per_source_table_over(self):
+        """Review 2: reading the routing to ask (and to show a turn) never
+        runs the carry-over of an old per-source table: no write."""
+        self._no_outside()
+        outside.set_source("slack", type="slack", mode="on", settings={"reader": "connector"})
+        old = outside.root() / "routing-slack.json"
+        old.write_text(json.dumps({"rows": {ALPHA: {"channels": ["made-up-one"], "topic": "made-up pricing"}},
+                                   "history": []}))
+        before = sorted(p.name for p in outside.root().iterdir())
+        self.answer = "REPLY: The theme follows the system."
+        hub_chat.ask("What is the theme?")
+        with route.reading_only():
+            first = setup.first_text()
+        self.answer = self.change(first + "\n## Beta\nTopic: made-up boats\n", "Beta gets boats.")
+        hub_chat.ask("Beta is about boats")
+        hub_chat.view()
+        self.assertEqual(sorted(p.name for p in outside.root().iterdir()), before)
+
+    def test_a_stale_routing_change_with_no_setup_file_writes_nothing(self):
+        """Review 2: made from the text the file would be written with, then
+        the routing changed: Apply is stale and writes no file."""
+        self._no_outside()
+        self.answer = self.change(setup.first_text() + "\n## Beta\nTopic: made-up boats\n", "Beta gets boats.")
+        a = hub_chat.ask("Beta is about boats")["turns"][-1]
+        self.assertEqual(a["state"], "proposed", a)
+        route.set_initiative(ALPHA, {"topic": "made-up kites"}, {"kind": "ceo"})
+        self.assertEqual(self.last()["state"], "stale")
+        before = sorted(p.name for p in outside.root().iterdir())
+        hub_chat.apply(a["id"])
+        self.assertEqual(self.last()["state"], "stale")
+        self.assertFalse(setup.setup_path().exists(), "nothing written")
+        self.assertEqual(sorted(p.name for p in outside.root().iterdir()), before)
+        self.assertIn("made-up kites", json.dumps(self.row(ALPHA)))
 
     def test_parse_settings(self):
         self.assertEqual(hub_chat.parse('SETTINGS: x\n<<<SETTINGS\n{"theme": "dark"}\nSETTINGS>>>'),

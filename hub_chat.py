@@ -81,14 +81,19 @@ def _outside_text() -> str:
     there is none: asking writes nothing (a Settings question on a hub with
     no outside source set up leaves no outside/ folder; #410 review 1)."""
     text = outside_setup._read_text(outside_setup.setup_path())
-    return text if text is not None else outside_setup.first_text()
+    if text is not None:
+        return text
+    with route.reading_only():          # no per-source table carried over by a read
+        return outside_setup.first_text()
 
 
 def _outside_apply(text: str, base_hash: str) -> dict:
-    """Apply a change made from the setup file, writing the file first when
-    the change was made from the text it would be written with."""
+    """Apply a change made from the setup file. When it was made from the
+    text the file would be written with, the file is written first, and only
+    if that text is still the one it was made from (else stale, nothing
+    written)."""
     if not outside_setup.setup_path().exists():
-        outside_setup.write_first()
+        outside_setup.write_first(expect_hash=base_hash)
     return outside_setup.apply_new_text(text, base_hash, outside_setup.HUB_CHAT_BY)
 
 
@@ -275,12 +280,13 @@ def _answer_turn(ask_id: str) -> dict:
         return _hub_turn(ask_id, "error", "The question was cleared before it was answered.")
     key = "outside"
     kind = KINDS[key]
-    current = kind["read"]()
-    base = kind["hash"](current)
-    try:
-        context = kind["context"]()[:NOW_CHARS]
-    except Exception:
-        context = "(could not be read)"
+    with route.reading_only():          # asking writes nothing under outside/ (#410)
+        current = kind["read"]()
+        base = kind["hash"](current)
+        try:
+            context = kind["context"]()[:NOW_CHARS]
+        except Exception:
+            context = "(could not be read)"
     import outside_model
     run = RUN or outside_model.RUN
     try:
@@ -301,7 +307,8 @@ def _answer_turn(ask_id: str) -> dict:
         return _hub_turn(ask_id, "reply", (got["text"] + "\n\n" if got["text"] else "")
                          + "The setup file already says this; nothing to change.")
     try:
-        res = kind["check"](new)
+        with route.reading_only():
+            res = kind["check"](new)
         check = {"problems": [x["text"] for x in res["problems"]], "changes": res["changes"],
                  "failed": res["failed"] or res["lookupFailed"]}
     except Exception as e:
