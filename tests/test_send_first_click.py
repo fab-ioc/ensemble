@@ -82,28 +82,14 @@ async function main() {
           await ev("edAddLast(); const ta=document.querySelector('.ed-text'); ta.value='Question one\\nQuestion two'; ta.dispatchEvent(new Event('input',{bubbles:true})); ta.focus(); 0");
           await pressClick('#send');
           out.push({kind:'points',sent:await ev('window.__sent')});
-          await ev("(()=>{const who=ROOM_OBJ.participants.find(p=>p.kind==='agent'&&!/^reviewer/i.test(p.role||'')).identity; const text='Ask: What should happen?'; renderBubbles([{id:'qa1',from:who,text,asks:parseAsks(text),askAudience:'user'}]); const ta=document.querySelector('.qa-cm textarea'); ta.value='Please proceed.'; ta.dispatchEvent(new Event('input',{bubbles:true})); document.querySelector('.qa-send').scrollIntoView();})()");
-          await pressClick('.qa-send');
-          out.push({kind:'quick-answer',asked:await ev('window.__asked')});
-          await ev(`(() => {
-            window.__asked=[];
-            const who=ROOM_OBJ.participants.find(p=>p.kind==='agent'&&!/^reviewer/i.test(p.role||'')).identity;
-            const text='Ask: Your composed answer?';
-            renderBubbles([{id:'qa-ime',from:who,text,asks:parseAsks(text),askAudience:'user'}]);
-            const ta=document.querySelector('.qa-cm textarea');
-            ta.value='Composed'; ta.dispatchEvent(new Event('input',{bubbles:true}));
-            ta.focus(); ta.dispatchEvent(new CompositionEvent('compositionstart',{bubbles:true}));
-          })()`);
-          await pressClick('.qa-send');
-          const qaImeBefore=await ev('window.__asked.length');
-          await ev(`(() => {
-            const ta=document.querySelector('.qa-cm textarea');
-            ta.value='Composed final answer';
-            ta.dispatchEvent(new CompositionEvent('compositionend',{bubbles:true}));
-            ta.dispatchEvent(new Event('input',{bubbles:true}));
-          })()`);
-          await sleep(80);
-          out.push({kind:'quick-answer-ime',before:qaImeBefore,asked:await ev('window.__asked')});
+          // #408: a card's ↩ Reply aims the send box at it; one click on Send answers it once.
+          // Its send is taken out of __sent, so the counts the later cases expect stay.
+          await ev("(()=>{const who=ROOM_OBJ.participants.find(p=>p.kind==='agent'&&!/^reviewer/i.test(p.role||'')).identity; const text='Ask: What should happen?'; renderBubbles([{id:'qa1',from:who,text,asks:parseAsks(text),askAudience:'user'}]); document.querySelector('.qa-reply').scrollIntoView(); window.__n0=window.__sent.length; window.__asked=[];})()");
+          await pressClick('.qa-reply');
+          const qaFocus=await ev('document.activeElement.id');
+          await c.send('Input.insertText',{text:'Please proceed.'},s);
+          await pressClick('#send');
+          out.push({kind:'quick-answer',focus:qaFocus,asked:await ev('window.__asked'),sent:await ev('window.__sent.splice(window.__n0)')});
           await ev("ROOM_SENDS=[{key:'retry-test',text:'Please retry',state:'failed',error:'offline'}]; renderBubbles(LAST_ITEMS || []); document.querySelector('.send-retry').scrollIntoView(); 0");
           await pressClick('.send-retry');
           out.push({kind:'retry',sent:await ev('window.__sent')});
@@ -363,7 +349,7 @@ class SendFirstClick(unittest.TestCase):
 
     def test_one_click_sends_once(self):
         for case in self.got:
-            if case['kind'] in ('poll', 'points', 'quick-answer', 'quick-answer-ime', 'retry', 'empty', 'selection-bar', 'chip-card', 'upload-wait', 'touch-tap', 'ctrl-enter', 'cmd-enter', 'in-flight', 'in-flight-failure', 'ime', 'drag-cancel-keyboard', 'touch-cancel-keyboard', 'index-send'):
+            if case['kind'] in ('poll', 'points', 'quick-answer', 'retry', 'empty', 'selection-bar', 'chip-card', 'upload-wait', 'touch-tap', 'ctrl-enter', 'cmd-enter', 'in-flight', 'in-flight-failure', 'ime', 'drag-cancel-keyboard', 'touch-cancel-keyboard', 'index-send'):
                 continue
             with self.subTest(width=case['width'], kind=case['kind']):
                 self.assertGreater(case.get('before', {}).get('inputH', case.get('inputH', 0)), 44, case)
@@ -378,14 +364,16 @@ class SendFirstClick(unittest.TestCase):
                     self.assertEqual(case['flyAfter'], '', case)
 
     def test_other_send_controls(self):
-        cases = {c['kind']: c for c in self.got if c['kind'] in ('poll', 'points', 'quick-answer', 'quick-answer-ime', 'retry', 'empty', 'selection-bar', 'chip-card', 'upload-wait', 'touch-tap', 'ctrl-enter', 'cmd-enter', 'in-flight', 'in-flight-failure', 'ime', 'drag-cancel-keyboard', 'touch-cancel-keyboard', 'index-send')}
+        cases = {c['kind']: c for c in self.got if c['kind'] in ('poll', 'points', 'quick-answer', 'retry', 'empty', 'selection-bar', 'chip-card', 'upload-wait', 'touch-tap', 'ctrl-enter', 'cmd-enter', 'in-flight', 'in-flight-failure', 'ime', 'drag-cancel-keyboard', 'touch-cancel-keyboard', 'index-send')}
         self.assertEqual(len(cases['poll']['sent']), 2, cases['poll'])
         self.assertEqual(len(cases['points']['sent']), 3, cases['points'])
         self.assertIn('## Points', cases['points']['sent'][-1]['text'])
-        self.assertEqual(len(cases['quick-answer']['asked']), 1, cases['quick-answer'])
-        self.assertEqual(cases['quick-answer-ime']['before'], 0, cases['quick-answer-ime'])
-        self.assertEqual(len(cases['quick-answer-ime']['asked']), 1, cases['quick-answer-ime'])
-        self.assertEqual(cases['quick-answer-ime']['asked'][0]['comment'], 'Composed final answer', cases['quick-answer-ime'])
+        qa = cases['quick-answer']
+        self.assertEqual(qa['focus'], 'input', qa)
+        self.assertEqual(qa['asked'], [], qa)
+        self.assertEqual(len(qa['sent']), 1, qa)
+        self.assertEqual(qa['sent'][0]['answers'], {'mid': 'qa1', 'n': 0}, qa)
+        self.assertIn('Please proceed.', qa['sent'][0]['text'], qa)
         self.assertEqual(cases['retry']['sent'][-1]['key'], 'retry-test')
         self.assertIn('Write a message', cases['empty']['hint'])
         self.assertTrue(cases['selection-bar']['open'], cases['selection-bar'])
