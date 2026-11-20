@@ -19322,7 +19322,7 @@ function ibxSideHide() {
   }
   for (const frame of IBX_SIDE.frames) {
     frame.removeEventListener('pointerdown', ibxSideDismiss, true);
-    frame.removeEventListener('scroll', ibxSideDismiss, true);
+    for (const t of ['wheel', 'touchmove', 'keydown']) frame.removeEventListener(t, ibxSideFrameScroll, true);
   }
   if (IBX_SIDE.el) IBX_SIDE.el.remove();
   Object.assign(IBX_SIDE, { el: null, id: '', sig: '', doc: null, frames: [], obs: null, pt: null });
@@ -19436,13 +19436,15 @@ function ibxSideOpen(li) {
     doc.defaultView.addEventListener('resize', ibxSideHide);
     doc.defaultView.addEventListener('blur', ibxSideDismiss);
   }
-  // Pointer events inside a chat iframe do not bubble to this document.
+  // Pointer events inside a chat iframe do not bubble to this document. Its scroll events do not tell the reader's
+  // scroll from the chat's own (a new message): the reader's wheel, touch and keys close it; a scrollbar drag
+  // starts with a press.
   for (const frame of doc.querySelectorAll('iframe')) {
     try {
       const child = frame.contentDocument;
       if (!child) continue;
       child.addEventListener('pointerdown', ibxSideDismiss, true);
-      child.addEventListener('scroll', ibxSideDismiss, true);
+      for (const t of ['wheel', 'touchmove', 'keydown']) child.addEventListener(t, ibxSideFrameScroll, { capture: true, passive: true });
       IBX_SIDE.frames.push(child);
     } catch (e) {} // A cross-origin frame still closes after the pointer leaves it.
   }
@@ -19501,6 +19503,8 @@ function ibxSideCheck() {
 function ibxSidePress(ev) { if (IBX_SIDE.el && !IBX_SIDE.el.contains(ev.target)) ibxSideDismiss(); }
 function ibxSideKeyDown(ev) { if (ev.key === 'Escape') ibxSideDismiss(); }
 function ibxSideScroll() { ibxSideDismiss(); }
+const IBX_SIDE_SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' ']);
+function ibxSideFrameScroll(ev) { if (ev.type !== 'keydown' || IBX_SIDE_SCROLL_KEYS.has(ev.key)) ibxSideDismiss(); }
 function ibxSideWire(box) {
   if (!box || box._ibxSide) return;
   box._ibxSide = true;

@@ -166,7 +166,7 @@ async function main() {
       if (mode === 'poll') {
         const n = await evalIn('window.__polls');
         await evalIn('ibxPoll(), 0');
-        await until(`window.__polls > ${n}`);
+        await until(`window.__polls > ${n} && !IBX.busy`); // the poll has painted and finished
       } else await evalIn("IBX.ldSig = ''; ibxPolledPaint(); 0"); // the 30-second timer's paint path
       const paintSide = await evalIn('!!IBX_SIDE.el');
       const chat = await chatAt();
@@ -192,6 +192,22 @@ async function main() {
     out.scroll.after = await evalIn('!!IBX_SIDE.el');
     await move(wx + 3, wy); await sleep(100);
     out.scroll.moved = await evalIn('!!IBX_SIDE.el');
+    // The chat scrolling itself (a new message) under a still pointer keeps the panel; the reader's wheel there
+    // closes it at once, before the grace.
+    await move(wx + 6, wy); await sleep(700);
+    out.auto = { opened: await evalIn('!!IBX_SIDE.el') };
+    out.auto.how = await evalIn(`(() => { const f = [...document.querySelectorAll('iframe')]
+      .find(f => { const r = f.getBoundingClientRect(); return r.width > 400 && r.height > 200; });
+      const d = f && f.contentDocument; if (!d) return 'none';
+      const sc = [...d.querySelectorAll('*')].find(e => e.scrollHeight > e.clientHeight + 20 && /auto|scroll/.test(getComputedStyle(e).overflowY));
+      if (sc) { sc.scrollTop = sc.scrollTop > 10 ? 0 : sc.scrollHeight; return 'scrollTop'; }
+      (d.body.firstElementChild || d.body).dispatchEvent(new Event('scroll')); return 'event'; })()`);
+    await frame(); await frame(); await sleep(150);
+    out.auto.after = await evalIn('!!IBX_SIDE.el');
+    const chat2 = await chatAt();
+    await c.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: chat2[0], y: chat2[1], deltaX: 0, deltaY: 120 }, sessionId);
+    await sleep(50);
+    out.auto.wheel = await evalIn('!!IBX_SIDE.el');
     // A background paint for a different project must not be held under the old copy.
     await move(5, 5); await sleep(500);
     const [sx, sy] = await at(ids.long);
@@ -279,6 +295,13 @@ class HoverSteadyInChrome(close.CloseInChrome):
                 self.assertTrue(d['paintSide'], d)
                 self.assertTrue(d['chat'], d)
                 self.assertFalse(d['after'], d)
+
+    def test_chat_auto_scroll_keeps_panel_and_a_wheel_there_closes_it(self):
+        a = self.got['auto']
+        self.assertTrue(a['opened'], a)
+        self.assertNotEqual(a['how'], 'none', a)
+        self.assertTrue(a['after'], a)
+        self.assertFalse(a['wheel'], a)
 
     def test_scroll_closes_panel_at_once(self):
         self.assertTrue(self.got['scroll']['opened'])
