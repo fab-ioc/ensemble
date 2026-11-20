@@ -259,9 +259,24 @@ def clean(text, n: int = 0) -> str:
     to ``n`` characters when given. Double quotes become single and ``|``
     becomes ``/``: a line's excerpts are quoted and its entries split by
     ``|``, so a message cannot close its excerpt and add an entry."""
-    s = "".join(ch if unicodedata.category(ch)[0] != "C" else " " for ch in str(text or ""))
-    s = " ".join(s.split()).replace("[", "(").replace("]", ")").replace('"', "'").replace("|", "/")
+    # NFKC first: a fullwidth "［report］" is read as "[report]" (P439).
+    s = unicodedata.normalize("NFKC", str(text or ""))
+    s = "".join(ch if unicodedata.category(ch)[0] != "C" else " " for ch in s)
+    s = " ".join(s.split()).translate(_UNSQUARE).replace('"', "'").replace("|", "/")
     return s if not n or len(s) <= n else s[:n - 1].rstrip() + "…"
+
+
+# Square brackets and the brackets that look like them become round, so no
+# outside word reads as a hub line's prefix ("[report]", "[from the X PO]",
+# "[point P1]", "[due]", "[handover]" …).
+_UNSQUARE = str.maketrans({**{c: "(" for c in "[【〔〖〘〚⟦⟬⁅⦋⦍⦏⌈⌊"},
+                           **{c: ")" for c in "]】〕〗〙〛⟧⟭⁆⦌⦎⦐⌉⌋"}})
+
+
+def _no_square(line: str, prefix: str) -> str:
+    """The line with nothing square after its own ``[kind] `` prefix: a last
+    guard, whatever a part held."""
+    return prefix + line[len(prefix):].translate(_UNSQUARE)
 
 
 def first_line(text, n: int = EXCERPTS[0]) -> str:
@@ -354,11 +369,11 @@ def wake_line(parts: list[dict]) -> tuple[str, list[dict]]:
 
     def one(p: dict, n: int) -> str:
         why = f" · why here: {p['why']}" if p["why"] else ""
-        return f"{prefix}{_bit(p, n)}{why} · read it whole: {TOOL} id={p['id']}"
+        return _no_square(f"{prefix}{_bit(p, n)}{why} · read it whole: {TOOL} id={p['id']}", prefix)
 
     def many(told: list[dict], n: int) -> str:
         bits = " | ".join(f"({k}) {_bit(p, n)} {p['id']}" for k, p in enumerate(told, 1))
-        return f"{prefix}{len(told)} new: {bits} — read each with {TOOL} id=…"
+        return _no_square(f"{prefix}{len(told)} new: {bits} — read each with {TOOL} id=…", prefix)
 
     told = list(same)
     while len(told) > 1:
