@@ -325,10 +325,11 @@ class OldBaselines(unittest.TestCase):
 
 
 class MergeAndHubStart(unittest.TestCase):
-    def facts(self, merged_at, report="", in_hub=True):
+    def facts(self, merged_at, report="", in_hub=True, hub_repo=True):
         t = _task(merged=True, mergedAt=merged_at, commits=0,
                   report=10, reportKind="completed", reportText=report)
         with mock.patch.object(digest, "_STARTED", 200), \
+                mock.patch.object(digest, "hub_repo", return_value=hub_repo), \
                 mock.patch.object(digest, "in_running_hub", return_value=in_hub):
             return digest.plain_facts(PROJECT, [t],
                                       [{"id": t["id"], "label": t["label"],
@@ -351,6 +352,16 @@ class MergeAndHubStart(unittest.TestCase):
         facts = self.facts(100, in_hub=None)
         self.assertIn("not known to be in the running hub", facts)
         self.assertNotIn("so the work is live", facts)
+
+    def test_another_projects_merge_keeps_the_hub_start_wording(self):
+        # P439: trading or documents projects are not the hub's code; their
+        # merged work is told against the hub's start, as before.
+        facts = self.facts(100, in_hub=False, hub_repo=False)
+        self.assertIn("this hub process started after the merge, so the work is live", facts)
+        self.assertNotIn("running hub", facts)
+        facts = self.facts(300, in_hub=False, hub_repo=False)
+        self.assertIn("merge is newer than this hub process, so a restart is needed", facts)
+        self.assertNotIn("running hub", facts)
 
     def test_git_merge_supersedes_old_not_merged_report(self):
         facts = self.facts(100, "Commits are on main. Not merged. UI ready.")
@@ -443,10 +454,11 @@ class LiveMeansInTheRunningHub(unittest.TestCase):
         for real in (Path("/Users/fab/ensemble"), Path.home() / ".ensemble"):
             self.assertNotIn(real.resolve(), [self.top, *self.top.parents])
         self.hub, self.project = self.top / "hub", self.top / "project"
-        for repo in (self.hub, self.project):
-            repo.mkdir()
-            self.git(repo, "init", "-q", "-b", "main")
+        self.hub.mkdir()
+        self.git(self.hub, "init", "-q", "-b", "main")
         self.hub_head = self.commit(self.hub, "hub.py")
+        # The project is a clone of the hub's code (the hub's own project).
+        self.git(self.top, "clone", "-q", str(self.hub), str(self.project))
         self.commit(self.project, "base.txt")
         self.git(self.project, "checkout", "-q", "-b", "sess/work")
         self.work = self.commit(self.project, "work.txt")
@@ -455,13 +467,16 @@ class LiveMeansInTheRunningHub(unittest.TestCase):
         saved = dict(digest._HUB_CODE)
         self.addCleanup(digest._HUB_CODE.update, saved)
         digest._in_code.cache_clear()
+        digest._roots.cache_clear()
+        self.addCleanup(digest._roots.cache_clear)
 
-    def facts(self):
+    def facts(self, code=None):
         t = _task(merged=True, mergedAt=100, commits=0, sha=self.work, head=self.work[:7])
+        project = {**PROJECT, "code": str(code or self.project)}
         with mock.patch.object(digest, "_STARTED", 200):      # the hub started after the merge
-            return digest.plain_facts(PROJECT, [t], [], 0)
+            return digest.plain_facts(project, [t], [], 0)
 
-    def test_merged_work_in_another_repo_is_never_live(self):
+    def test_merged_work_in_another_clone_is_never_live(self):
         self.assertEqual(digest.note_hub_code(str(self.hub)),
                          {"root": str(self.hub), "head": self.hub_head})
         self.assertIs(digest.in_running_hub(self.work), False)
@@ -474,7 +489,7 @@ class LiveMeansInTheRunningHub(unittest.TestCase):
         # The hub's checkout gets the work after the hub started: still not live.
         digest.note_hub_code(str(self.hub))
         self.git(self.hub, "fetch", "-q", str(self.project), "main")
-        self.git(self.hub, "merge", "-q", "--allow-unrelated-histories", "-m", "m", "FETCH_HEAD")
+        self.git(self.hub, "merge", "-q", "-m", "m", "FETCH_HEAD")
         self.assertIs(digest.in_running_hub(self.work), False)
         # Started again from that HEAD: live.
         digest.note_hub_code(str(self.hub))
@@ -486,7 +501,24 @@ class LiveMeansInTheRunningHub(unittest.TestCase):
         plain.mkdir()
         self.assertEqual(digest.note_hub_code(str(plain)), {"root": "", "head": ""})
         self.assertIsNone(digest.in_running_hub(self.work))
-        self.assertNotIn("is live", self.facts())
+        # Nothing is known to be the hub's code: today's wording.
+        self.assertFalse(digest.hub_repo(str(self.project)))
+        self.assertNotIn("running hub", self.facts())
+
+    def test_a_project_that_is_not_the_hubs_code_keeps_todays_wording(self):
+        # P439: an unrelated repository (a trading project) is not checked
+        # against the running hub.
+        other = self.top / "trading"
+        other.mkdir()
+        self.git(other, "init", "-q", "-b", "main")
+        self.commit(other, "algo.py")
+        digest.note_hub_code(str(self.hub))
+        self.assertTrue(digest.hub_repo(str(self.hub)))
+        self.assertTrue(digest.hub_repo(str(self.project)))
+        self.assertFalse(digest.hub_repo(str(other)))
+        facts = self.facts(other)
+        self.assertIn("this hub process started after the merge, so the work is live", facts)
+        self.assertNotIn("running hub", facts)
 
     def test_the_prompt_does_not_tie_live_to_the_hubs_start_time(self):
         self.assertNotIn("live after this hub has started", " ".join(digest._PROMPT.split()))

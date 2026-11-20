@@ -601,7 +601,18 @@ def plain_facts(project: dict, tasks: list[dict], changes: list[dict], since: fl
             # both "merged" and "not started", and must not be left to guess.
             if t["merged"]:
                 c = f"work merged into {t['base']} (branch {t['branch']}, nothing left to merge)"
-                c += "; " + _live_words(t.get("sha", ""))
+                if hub_repo(project.get("code") or ""):
+                    # The hub's own code: live only when the running hub has it.
+                    c += "; " + _live_words(t.get("sha", ""))
+                else:
+                    # Any other project (trading, documents): the hub's start
+                    # against the merge, as before.
+                    merged_at = float(t.get("mergedAt") or 0)
+                    if _STARTED and merged_at:
+                        if merged_at > _STARTED:
+                            c += "; merge is newer than this hub process, so a restart is needed to load it"
+                        else:
+                            c += "; this hub process started after the merge, so the work is live"
             elif t["commits"]:
                 c = f"{t['commits']} commit(s) on {t['branch']} not yet in {t['base']}"
             else:
@@ -842,6 +853,29 @@ def in_running_hub(sha: str) -> bool | None:
     if not (root and head):
         return None
     return bool(sha) and _in_code(root, head, sha)
+
+
+@lru_cache(maxsize=256)
+def _roots(path: str) -> frozenset:
+    """The root commits of the repository at ``path`` (empty when it is not one)."""
+    out = _d._git_out(path, "rev-list", "--max-parents=0", "HEAD") if path else ""
+    return frozenset(x for x in out.split() if x)
+
+
+def hub_repo(code: str) -> bool:
+    """Whether a project's repository at ``code`` is the hub's own code: the
+    hub's checkout or a clone of it (they share a root commit). Only such a
+    project's merged work is checked against the running hub (P439)."""
+    root = _HUB_CODE["root"]
+    if not (root and code):
+        return False
+    try:
+        if Path(code).resolve() == Path(root).resolve():
+            return True
+    except OSError:
+        return False
+    mine = _roots(root)
+    return bool(mine) and bool(mine & _roots(str(code)))
 
 
 def _live_words(sha: str) -> str:
