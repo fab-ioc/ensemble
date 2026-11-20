@@ -100,7 +100,7 @@ const vm = require('vm');
 const { code, fixtures } = JSON.parse(require('fs').readFileSync(0, 'utf8'));
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const ctx = { esc, attSplit: t => ({ paths: [], words: t }), stripRefBlocks: t => t, withPathAbbrevs: (t, f) => f(),
-  ROOM: 'room-po', SOLO_MODE: true, pointsChanged: () => {}, pointsNote: () => {}, URL };
+  ROOM: 'room-po', SOLO_MODE: true, pointsChanged: () => {}, pointsNote: () => {}, URL, replyKey: () => '' };
 // The card's words (#238, tests/test_card_text.py): plain here.
 ctx.cardTextHtml = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); ctx.hubUrlWords = s => String(s ?? ''); ctx.cardText = s => ({ html: ctx.cardTextHtml(s), links: [] }); ctx.cardWords = s => String(s ?? '');
 vm.createContext(ctx);
@@ -262,7 +262,8 @@ class TheMarker(unittest.TestCase):
         self.assertEqual(len(re.findall(r'class="qa-opt[ "]', b)), 4, "two options, then Yes and No; the open ask has none")
         self.assertIn('class="qa-opt rec"', b)
         self.assertIn('<span class="lz lz-neutral">recommended</span>', b)
-        self.assertEqual(b.count("<textarea"), 3)
+        self.assertEqual(b.count("<textarea"), 0, "#408: no comment field; Reply aims the send box")
+        self.assertEqual(b.count('class="qa-reply"'), 3)
         self.assertIn("Three things need you", b)
         self.assertIn("I carry on with the tests", b)
         self.assertNotIn("**Ask", b, "the ask's own lines are its card")
@@ -276,13 +277,13 @@ class TheMarker(unittest.TestCase):
         self.assertIn("You answered:", a)
         self.assertIn("<strong>30 days</strong>", a)
         self.assertIn("and tell me the size", a)
-        self.assertEqual(a.count("<textarea"), 2)
+        self.assertEqual(a.count('class="qa-reply"'), 2, "the answered card has no Reply")
         self.assertIn('aria-pressed="true"', a)
         self.assertEqual(self.o["approvedOpen"], [1, 2], "a thumbs up answers the ask that had a recommendation")
 
     def test_words_and_age_leave_cards_open(self):
         self.assertEqual(self.o["settledOpen"], 3)
-        self.assertEqual(self.o["settledBody"].count("<textarea"), 3, "the cards still answer")
+        self.assertEqual(self.o["settledBody"].count('class="qa-reply"'), 3, "the cards still answer")
         self.assertEqual(self.o["ages"], [3, 3, 3], "6 days, 8 days, unknown time: open until answered (issue 11)")
         self.assertEqual(self.o["doneOpen"], 3, "workflow does not close a card")
 
@@ -703,7 +704,7 @@ async function main() {
       await sleep(400);
       const look = () => evalIn(`(() => ({ cards: document.querySelectorAll('#msgs .qa').length, done: [...document.querySelectorAll('#msgs .qa')].map(c => c.classList.contains('done')),
         scrollX: document.documentElement.scrollWidth - innerWidth,
-        inside: [...document.querySelectorAll('#msgs .qa, #msgs .qa-opt, #msgs .qa-cm textarea')].every(e => { const r = e.getBoundingClientRect(), b = e.closest('.msg').getBoundingClientRect(); return r.left >= b.left - 1 && r.right <= b.right + 1; }),
+        inside: [...document.querySelectorAll('#msgs .qa, #msgs .qa-opt, #msgs .qa-reply')].every(e => { const r = e.getBoundingClientRect(), b = e.closest('.msg').getBoundingClientRect(); return r.left >= b.left - 1 && r.right <= b.right + 1; }),
         heights: [...document.querySelectorAll('#msgs .qa:not(.done) .qa-opt, #msgs .qa:not(.done) .qa-send')].map(e => Math.round(e.getBoundingClientRect().height)),
         labels: [...document.querySelectorAll('#msgs .qa')].map(c => [...c.querySelectorAll('.qa-opt')].map(b => b.dataset.opt)),
         coarse: matchMedia('(pointer: coarse)').matches }))()`);
@@ -711,9 +712,8 @@ async function main() {
       await evalIn(`document.querySelector('#msgs .qa').scrollIntoView({ block: 'start' }); 0`);
       await sleep(200);
       await shot(`asks-${w}-open`);
-      // A comment typed, a redraw, then the option: both go, once.
-      await evalIn(`(() => { const ta = document.querySelectorAll('#msgs .qa')[${n}].querySelector('textarea'); ta.value = 'from the ${w} page'; ta.dispatchEvent(new Event('input', { bubbles: true })); renderBubbles(LAST_ITEMS); 0 })()`);
-      o.kept = await evalIn(`document.querySelectorAll('#msgs .qa')[${n}].querySelector('textarea').value`);
+      // A redraw, then the option: it goes, once.
+      await evalIn(`renderBubbles(LAST_ITEMS); 0`);
       await evalIn(`[...document.querySelectorAll('#msgs .qa')[${n}].querySelectorAll('.qa-opt')].find(b => b.dataset.opt === ${JSON.stringify(opt)}).click(); 0`);
       await until(`document.querySelectorAll('#msgs .qa')[${n}].classList.contains('done') && !document.querySelectorAll('#msgs .qa')[${n}].classList.contains('busy')`);
       await sleep(300);
@@ -833,15 +833,15 @@ class InChrome(ChromePage):
                 if w == "390" and o["before"]["coarse"]:
                     self.assertTrue(all(h >= 44 for h in o["before"]["heights"]), o["before"]["heights"])
 
-    def test_a_click_sends_the_option_and_the_comment_once(self):
+    def test_a_click_sends_the_option_once(self):
         self.assertEqual([k for _, k in self.sent], ["ask:po-sid:1:0", "ask:po-sid:1:1"])
-        self.assertIn("Re “Which retention for old transcripts?”: 30 days\n\nfrom the 1280 page", self.sent[0][0])
-        self.assertIn("Re “Turn on the nightly backup?”: Yes\n\nfrom the 390 page", self.sent[1][0])
+        self.assertTrue(self.sent[0][0].startswith("Re “Which retention for old transcripts?”: 30 days"), self.sent[0][0])
+        self.assertTrue(self.sent[1][0].startswith("Re “Turn on the nightly backup?”: Yes"), self.sent[1][0])
+        self.assertNotIn("page", self.sent[0][0] + self.sent[1][0])
         self.assertEqual(set(self.led["asks"]["po-sid:1"]), {"0", "1"})
 
     def test_the_card_settles_and_another_device_sees_it(self):
         o = self.got["1280"]
-        self.assertEqual(o["kept"], "from the 1280 page", "a redraw keeps the comment")
         self.assertEqual(o["after"]["done"], [True, False, False])
         self.assertTrue(o["card"]["disabled"])
         self.assertEqual(o["card"]["pressed"], ["30 days"])
