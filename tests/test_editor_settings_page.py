@@ -1,7 +1,7 @@
 """#286 in a real page: Settings › Editor.
 
 In headless Chrome over CDP, against a hub in a thread (the hub, the page and
-the Chrome launch are tests/test_settings_themes_page.py's), with IntelliJ
+the Chrome launch are tests/test_appearance_page_cdp.py's), with IntelliJ
 IDEA and VS Code the only editors "installed" (a fake finder):
 
 * the Editor tab lists Automatic, the editors found, and Other command…,
@@ -24,7 +24,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 import dashboard  # noqa: E402
-from tests import test_settings_themes_page as browser  # noqa: E402
+from tests import test_appearance_page_cdp as browser  # noqa: E402
 from tests.test_top_bar import CDP_JS as TOP_BAR_JS, CHROME, NODE  # noqa: E402
 
 CDP_JS = TOP_BAR_JS[:TOP_BAR_JS.index("// What the bar shows")] + r"""
@@ -103,11 +103,11 @@ class EditorInSettings(unittest.TestCase):
                 mock.patch.object(type(b), "_locate_editor", lambda _s, eid: FOUND.get(eid)), \
                 mock.patch.object(type(b), "_locate_command", lambda _s, cmd: None), \
                 mock.patch.object(type(b), "load_editor_map", lambda _s: {"java": "idea", "python": "pycharm", "default": "code"}):
-            browser.SettingsScrollsAndThemeSubmenu.setUpClass.__func__(cls)
+            browser.AppearancePage.setUpClass.__func__(cls)
 
     @classmethod
     def tearDownClass(cls):
-        browser.SettingsScrollsAndThemeSubmenu.tearDownClass.__func__(cls)
+        browser.AppearancePage.tearDownClass.__func__(cls)
 
     def test_the_editor_tab_offers_what_is_installed(self):
         g = self.got["before"]

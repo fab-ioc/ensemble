@@ -23,7 +23,7 @@ project with long titles. Checked:
   raised copy is Dock's; the tab's own tooltip is
   dropped while the setting is on; a click on the raised copy of a tab behind
   another brings it to the front; its x closes it;
-* the setting off (Settings > Preferences): nothing shows whole and the tab's
+* the setting off (Settings > Appearance, saved): nothing shows whole and the tab's
   tooltip is back;
 * a phone (390x844, touch) raises nothing and has no sideways scroll;
 * the page threw nothing meanwhile.
@@ -438,6 +438,7 @@ async function main() {
       // ---- the setting off
       await away(p);
       await p.evalIn(`(() => { const c = document.getElementById('pref-full-names'); c.checked = false; c.dispatchEvent(new Event('change')); return 0; })()`);
+      await p.evalIn(`apSave().then(() => 0)`);   // #407: Settings › Appearance previews; Save keeps it
       o.off = { stored: await p.evalIn(`localStorage.getItem('cd-switcher-full-names')`), sw: await p.evalIn(`document.getElementById('sw-hover-names').checked`) };
       pt = await p.evalIn(TAB('po-chat'));
       o.off.poTab = (await hover(p, pt.x, pt.y)).at450;
@@ -447,6 +448,7 @@ async function main() {
       const d2 = rows.find(r => r.proj === P[A.delta]);
       o.off.delta = (await hover(p, d2.cx, d2.cy)).at450;
       await p.evalIn(`(() => { const c = document.getElementById('pref-full-names'); c.checked = true; c.dispatchEvent(new Event('change')); return 0; })()`);
+      await p.evalIn(`apSave().then(() => 0)`);
       // A Workspace file is a Dock panel when the Dock is available.
       await p.evalIn(`document.querySelector('#po-dock .dk-tab[data-dk-tab=${JSON.stringify(ftab.id)}]').scrollIntoView({inline:'nearest'}), 0`);
       const fileX = await p.evalIn(`(() => { const t = document.querySelector('#po-dock .dk-tab[data-dk-tab=${JSON.stringify(ftab.id)}]');

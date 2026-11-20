@@ -300,6 +300,24 @@ async function main() {
     await ev(`(()=>{const win=PD.dock.popWindow(${JSON.stringify(ptab)}),d=win.document.querySelector('iframe.po-thread').contentDocument,i=d.getElementById('input');i.value='Closed popped window draft';i.dispatchEvent(new Event('input',{bubbles:true}));win.close();return 0})()`);
     await until(`!PD.dock.popWindow(${JSON.stringify(ptab)})`,'thread window closed');
     out.closedPopDraft=await ev(`JSON.parse(sessionStorage.getItem('cd-draft:'+${JSON.stringify(A.po)}+':thread:'+${JSON.stringify(out.promotedFrom.tid)}))?.head||''`);
+    // #407: Settings › Appearance › Send box "A send box under each chat":
+    // no workspace box; the PO chat and the task chat each send from their own.
+    await ev(`pdChatOpen(${JSON.stringify(A.task)});0`);
+    await until(`!!${TASK}?.contentDocument?.getElementById('compose')`,'task pane for pane mode');
+    await ev(`apSet('sendBox','pane');0`);
+    await until(`document.getElementById('workspace-compose').hidden && !${PO}.contentDocument.body.classList.contains('workspace-guest') && !${TASK}.contentDocument.body.classList.contains('workspace-guest')`,'own send boxes');
+    const own = async (frame, name) => ev(`(async()=>{const f=${frame},d=f.contentDocument,w=f.contentWindow,old=w.postOk;let body,count=0;
+      w.postOk=async(path,b)=>{if(path==='/api/room/resume'){body=b;count++}return {}};
+      try{const i=d.getElementById('input');i.value=${JSON.stringify('Own probe ')}+${JSON.stringify(name)};i.dispatchEvent(new Event('input',{bubbles:true}));d.getElementById('send').click();
+        for(let n=0;n<80&&!body;n++)await new Promise(r=>setTimeout(r,50));
+        return {shown:getComputedStyle(d.getElementById('compose')).display!=='none',room:body?.roomId||'',count};}
+      finally{w.postOk=old}})()`);
+    out.paneBox=await ev(`({workspace:!document.getElementById('workspace-compose').hidden, mode:document.documentElement.dataset.sendBox})`);
+    out.panePO=await own(PO,'PO'); out.paneTask=await own(TASK,'task');
+    await snap('pane-send-boxes-1728x1117');
+    await ev(`apCancel();0`);
+    await until(`document.documentElement.dataset.sendBox==='workspace' && !document.getElementById('workspace-compose').hidden`,'workspace box back');
+    out.paneCancel=await ev(`({workspace:!document.getElementById('workspace-compose').hidden, cache:localStorage.getItem('cd-send-box')})`);
     console.log(JSON.stringify(out));
   } finally { c.close(); ch.kill(); }
 }
@@ -455,6 +473,11 @@ class SharedComposer(unittest.TestCase):
         self.assertEqual(g['closedPopDraft'], 'Closed popped window draft')
         self.assertEqual(g['closedTarget']['target'], 'Motors PO')
         self.assertEqual(g['poReload'], 'PO draft')
+        # #407: one send box under each chat.
+        self.assertEqual(g['paneBox'], {'workspace':False,'mode':'pane'})
+        self.assertEqual(g['panePO'], {'shown':True,'room':self.po,'count':1})
+        self.assertEqual(g['paneTask'], {'shown':True,'room':self.task,'count':1})
+        self.assertEqual(g['paneCancel'], {'workspace':True,'cache':'workspace'})
         for key in ('threeDesktop','threeMedium'):
             box = g[key]
             self.assertTrue(box['shown'] and box['editor'], box)

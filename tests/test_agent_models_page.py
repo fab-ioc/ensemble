@@ -1,7 +1,7 @@
 """#145 in a real page: Settings' Agent models rows, on a desktop and at 390 px.
 
 In headless Chrome over CDP, against a hub in a thread (the hub, the page and
-the Chrome launch are tests/test_settings_themes_page.py's):
+the Chrome launch are tests/test_appearance_page_cdp.py's):
 
 * the section has a select for Claude's model, Codex's model and Codex's
   reasoning effort, each with its label; the options are the agent's own
@@ -35,7 +35,7 @@ sys.path.insert(0, str(ROOT))
 
 import agent_models  # noqa: E402
 import usage  # noqa: E402
-from tests import test_settings_themes_page as browser  # noqa: E402
+from tests import test_appearance_page_cdp as browser  # noqa: E402
 from tests.test_agent_models import CACHE, _pool_source  # noqa: E402
 from tests.test_top_bar import CDP_JS as TOP_BAR_JS, CHROME, NODE  # noqa: E402
 
@@ -217,11 +217,11 @@ class AgentModelsInSettings(unittest.TestCase):
                 mock.patch.object(agent_models, "codex_own", return_value={"model": "gpt-6-astra", "effort": "high"}), \
                 mock.patch.object(agent_models, "claude_own", return_value={"model": "claude-fable-5-1[1m]"}), \
                 mock.patch.dict(usage._STATE, {"state": "ready", "checkedAt": 1.0, "sources": {"codex": source}}):
-            browser.SettingsScrollsAndThemeSubmenu.setUpClass.__func__(cls)
+            browser.AppearancePage.setUpClass.__func__(cls)
 
     @classmethod
     def tearDownClass(cls):
-        browser.SettingsScrollsAndThemeSubmenu.tearDownClass.__func__(cls)
+        browser.AppearancePage.tearDownClass.__func__(cls)
 
     def test_labelled_model_and_task_tool_selects(self):
         for name, g in self.got.items():
@@ -267,7 +267,7 @@ class AgentModelsInSettings(unittest.TestCase):
             with self.subTest(name):
                 self.assertFalse(g["first"]["oldField"])
                 self.assertTrue(g["first"]["presets"], "the New session dialog still suggests models")
-                self.assertEqual(g["first"]["headings"][-1], "This instance")
+                self.assertEqual(g["first"]["headings"][-1], "About")
                 self.assertLess(g["first"]["headings"].index("Agent models"),
                                 g["first"]["headings"].index("Preferences"))
 

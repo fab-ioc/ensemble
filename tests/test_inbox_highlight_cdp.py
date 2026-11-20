@@ -14,7 +14,7 @@ busy task chat (a task's ask, folded team talk). Checked, at 1440x900 and on a
   message is unmarked, the ask's whole message (its card in it) is marked;
 * an Inbox link to a task's ask (the task panel) and to a folded task message;
 * session.html?…&part=inbox opened by itself;
-* Settings › Preferences › Inbox highlight set to 1.5 in its field: the hub
+* Settings › Appearance › Inbox highlight set to 1.5 in its field and Saved: the hub
   keeps 1.5, the next landing is present at 0.3 s and gone after 1.5 s;
 * the hub clamps the setting to 1–30 s;
 * the pages threw nothing.
@@ -179,19 +179,20 @@ async function main() {
       o.foldedBefore = await p.evalIn(`(() => { const d = ${DOC(A.taskAsk)}; return !!d && !!d.querySelector('.msg-fold[data-mid="${A.folded}"]'); })()`);
       o.folded = await series(p, tag + '-folded', A.folded, 3500, () => p.evalIn(`openMsgLink(${JSON.stringify(A.task)}, ${JSON.stringify(A.folded)}, 'inbox'); 0`));
       if (!mobile) {
-        // (h) the setting, typed in Settings › Preferences
-        await p.evalIn(`openSettings('prefs'); 0`);
+        // (h) the setting, typed in Settings › Appearance and saved
+        await p.evalIn(`openSettings('appearance'); 0`);
         await p.until(`document.getElementById('pref-inbox-hl').getClientRects().length > 0`, 10000);
         await p.click(`document.getElementById('pref-inbox-hl')`);
         await p.evalIn(`(() => { const i = document.getElementById('pref-inbox-hl'); i.select(); return 0; })()`);
         await c.send('Input.insertText', { text: '1.5' }, await p.sid());
         await p.evalIn(`document.getElementById('pref-inbox-hl').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); 0`);
+        await p.click(`document.getElementById('ap-save')`);
         await p.until('PREFS && PREFS.inboxHighlightSec === 1.5', 10000).catch(() => null);
         await p.shot('desk-setting');
         o.setting = await p.evalIn(`(async () => ({ prefs: PREFS.inboxHighlightSec, field: document.getElementById('pref-inbox-hl').value,
           hub: (await (await fetch('/api/settings', { cache: 'no-store' })).json()).inboxHighlightSec,
           open: !document.getElementById('settings-panel').hidden,
-          row: (() => { const i = document.getElementById('pref-inbox-hl'), r = i.closest('.pref-row'), h = r && r.previousElementSibling;
+          row: (() => { const i = document.getElementById('pref-inbox-hl'), r = i.parentElement, h = r.querySelector('h5');
             return { label: r ? r.querySelector('label').textContent.trim() : '', unit: r ? r.textContent.includes('seconds') : false, head: h ? h.textContent.trim() : '', min: i.min, max: i.max }; })() }))()`);
         await p.evalIn(`closeSettings(); 0`);
         await p.evalIn(`(() => { const b = (${DOC(A.answer)}).getElementById('msgs'); b.scrollTop = b.scrollHeight; return 0; })()`);

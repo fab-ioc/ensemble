@@ -12,7 +12,7 @@ from unittest.mock import patch
 from urllib.parse import parse_qsl, urlsplit
 
 import feedback
-from tests import test_settings_themes_page as browser
+from tests import test_appearance_page_cdp as browser
 from tests.test_top_bar import CDP_JS as BASE_JS, NODE, CHROME
 
 ISSUE = "https://github.com/fab-ioc/ensemble/issues/"
@@ -206,11 +206,11 @@ class FeedbackDonePage(unittest.TestCase):
                  patch.object(feedback, 'run', fake_run), patch.object(feedback, 'gh_login', lambda: MODE["login"]),
                  patch.object(feedback, 'DEFAULT_RELAY', ''), patch.object(feedback.urllib.request, 'build_opener', lambda *a: Opener())]
         with stubs[0], stubs[1], stubs[2], stubs[3], stubs[4], stubs[5]:
-            browser.SettingsScrollsAndThemeSubmenu.setUpClass.__func__(cls)
+            browser.AppearancePage.setUpClass.__func__(cls)
 
     @classmethod
     def tearDownClass(cls):
-        browser.SettingsScrollsAndThemeSubmenu.tearDownClass.__func__(cls)
+        browser.AppearancePage.tearDownClass.__func__(cls)
 
     def each(self):
         return [(w, self.got[w]) for w in ('1440', '390')]

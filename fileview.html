@@ -37,8 +37,22 @@
 (function () {
   var SCHEME = { light: 'light', dark: 'dark', dim: 'dark', paper: 'light', contrast: 'light', fjord: 'dark', 'intellij-dark': 'dark' };
   var mq = window.matchMedia ? matchMedia('(prefers-color-scheme: dark)') : null;
-  function stored() {
+  // #407: Settings › Appearance previews a choice before it is saved. The top
+  // page holds the draft in window.CD_PREVIEW ({theme, accent, chatLog, ...});
+  // every frame reads it before its own cache, so a preview stores nothing,
+  // moves no other tab, and Cancel only has to clear it.
+  function previewOf(key) {
+    try {
+      var p = window.top.CD_PREVIEW;
+      return p && Object.prototype.hasOwnProperty.call(p, key) ? p[key] : undefined;
+    } catch (e) { return undefined; }
+  }
+  function cached() {
     try { return localStorage.getItem('cd-theme') || 'light'; } catch (e) { return 'light'; }
+  }
+  function stored() {
+    var p = previewOf('theme');
+    return typeof p === 'string' && p ? p : cached();
   }
   function apply() {
     var pref = stored();
@@ -54,8 +68,12 @@
   // accent is picked from the accent itself, so a primary button stays
   // readable in every theme (dark themes put dark text on their pale accent).
   var ink = null;
-  function storedAccent() {
+  function cachedAccent() {
     try { return localStorage.getItem('cd-accent') || ''; } catch (e) { return ''; }
+  }
+  function storedAccent() {
+    var p = previewOf('accent');
+    return typeof p === 'string' ? p : cachedAccent();
   }
   // [r, g, b] of an opaque CSS colour, or null when the browser does not take
   // it or it is see-through (no text colour is sure to read on that).
@@ -115,11 +133,17 @@
   }
   // Saves reach the hub one at a time and only the newest waiting one is sent,
   // so the hub ends on the last choice. Resolves with the hub's settings, or
-  // with null when a newer save took this one's place.
-  function saveAccent(color) {
+  // with null when a newer save took this one's place. `extra` rides along in
+  // the same write (Appearance's Save sends every changed key at once).
+  function saveAccent(color, extra) {
     return new Promise(function (resolve, reject) {
-      if (queued) queued.resolve(null);
-      queued = { want: color || 'default', chosen: chosen, resolve: resolve, reject: reject };
+      var more = {}, k;
+      if (queued) {
+        for (k in queued.extra) more[k] = queued.extra[k];
+        queued.resolve(null);
+      }
+      for (k in (extra || {})) more[k] = extra[k];
+      queued = { want: color || 'default', extra: more, chosen: chosen, resolve: resolve, reject: reject };
       pump();
     });
   }
@@ -127,7 +151,10 @@
     if (saving || !queued) return;
     var job = queued;
     queued = null; saving = true;
-    put({ accent: job.want }).then(function (r) {
+    var body = {}, k;
+    for (k in job.extra) body[k] = job.extra[k];
+    body.accent = job.want;
+    put(body).then(function (r) {
       return r.json().catch(function () { return null; }).then(function (b) {
         if (!r.ok) throw new Error(r.status + ' ' + (b ? JSON.stringify(b) : ''));
         return b;
@@ -153,7 +180,7 @@
           try { window.dispatchEvent(new CustomEvent('cd-noun')); } catch (e) {}
         }
         if (typeof s.theme === 'string') {
-          var local = stored();
+          var local = cached();
           if (s.theme && s.theme !== local) {
             try { localStorage.setItem('cd-theme', s.theme); } catch (e) {}
             apply();
@@ -164,7 +191,7 @@
         // A hub from before the accent was synced sends none: leave it be.
         var settled = at === epoch && !saving && !queued && saved === chosen;
         if (typeof s.accent === 'string' && settled) {
-          var mine = storedAccent(), want = s.accent === 'default' ? '' : s.accent;
+          var mine = cachedAccent(), want = s.accent === 'default' ? '' : s.accent;
           if (s.accent && want !== mine) {
             try {
               if (want) localStorage.setItem('cd-accent', want); else localStorage.removeItem('cd-accent');
@@ -176,9 +203,22 @@
         }
       }).catch(function () {});
   }
+  // Start (an object) or end (null) a preview, on this page and every frame in
+  // it: each repaints, and a page's own readers (Chat as a log, ...) hear
+  // 'cd-preview' and read previewOf() again.
+  function preview(p) {
+    try { window.top.CD_PREVIEW = p || null; } catch (e) {}
+    (function tell(w) {
+      try { w.dispatchEvent(new w.CustomEvent('cd-preview')); } catch (e) {}
+      for (var i = 0; i < w.frames.length; i++) {
+        try { tell(w.frames[i]); } catch (e) {}
+      }
+    })(window);
+  }
   window.cdTheme = { apply: apply, sync: sync, stored: stored, scheme: SCHEME, themes: Object.keys(SCHEME),
                      applyAccent: applyAccent, storedAccent: storedAccent, rgbOf: rgbOf, put: put,
-                     chooseAccent: chooseAccent, saveAccent: saveAccent };
+                     chooseAccent: chooseAccent, saveAccent: saveAccent, cached: cached,
+                     cachedAccent: cachedAccent, previewOf: previewOf, preview: preview };
   apply();
   applyAccent();
   if (mq && mq.addEventListener) mq.addEventListener('change', apply);
@@ -186,6 +226,7 @@
     if (ev.key === 'cd-theme') apply();
     if (ev.key === 'cd-accent') { epoch++; applyAccent(); }
   });
+  window.addEventListener('cd-preview', function () { apply(); applyAccent(); });
   document.addEventListener('visibilitychange', function () { if (!document.hidden) sync(); });
   sync();
 })();

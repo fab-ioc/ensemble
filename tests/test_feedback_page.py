@@ -4,7 +4,7 @@ import unittest
 from unittest.mock import patch
 
 import feedback
-from tests import test_settings_themes_page as browser
+from tests import test_appearance_page_cdp as browser
 from tests.test_top_bar import CDP_JS as BASE_JS, NODE, CHROME
 
 
@@ -59,11 +59,11 @@ class FeedbackPage(unittest.TestCase):
         # The default relay is live: a Send here must never reach it (it files real issues), so the relay is "down".
         offline = patch.object(feedback.urllib.request, 'build_opener', side_effect=feedback.urllib.error.URLError('test: no network'))
         with patch.object(browser, 'CDP_JS', SCRIPT), patch.object(feedback, 'output', return_value=''), patch.object(feedback, 'identities', return_value=['Alice']), offline:
-            browser.SettingsScrollsAndThemeSubmenu.setUpClass.__func__(cls)
+            browser.AppearancePage.setUpClass.__func__(cls)
 
     @classmethod
     def tearDownClass(cls):
-        browser.SettingsScrollsAndThemeSubmenu.tearDownClass.__func__(cls)
+        browser.AppearancePage.tearDownClass.__func__(cls)
 
     def test_preview_scrub_images_fallback_edit_and_entries(self):
         self.assertNotIn('Alice', self.got['preview']['title'] + self.got['preview']['body'])

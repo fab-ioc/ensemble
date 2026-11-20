@@ -20,8 +20,22 @@
 (function () {
   var SCHEME = { light: 'light', dark: 'dark', dim: 'dark', paper: 'light', contrast: 'light', fjord: 'dark', 'intellij-dark': 'dark' };
   var mq = window.matchMedia ? matchMedia('(prefers-color-scheme: dark)') : null;
-  function stored() {
+  // #407: Settings › Appearance previews a choice before it is saved. The top
+  // page holds the draft in window.CD_PREVIEW ({theme, accent, chatLog, ...});
+  // every frame reads it before its own cache, so a preview stores nothing,
+  // moves no other tab, and Cancel only has to clear it.
+  function previewOf(key) {
+    try {
+      var p = window.top.CD_PREVIEW;
+      return p && Object.prototype.hasOwnProperty.call(p, key) ? p[key] : undefined;
+    } catch (e) { return undefined; }
+  }
+  function cached() {
     try { return localStorage.getItem('cd-theme') || 'light'; } catch (e) { return 'light'; }
+  }
+  function stored() {
+    var p = previewOf('theme');
+    return typeof p === 'string' && p ? p : cached();
   }
   function apply() {
     var pref = stored();
@@ -37,8 +51,12 @@
   // accent is picked from the accent itself, so a primary button stays
   // readable in every theme (dark themes put dark text on their pale accent).
   var ink = null;
-  function storedAccent() {
+  function cachedAccent() {
     try { return localStorage.getItem('cd-accent') || ''; } catch (e) { return ''; }
+  }
+  function storedAccent() {
+    var p = previewOf('accent');
+    return typeof p === 'string' ? p : cachedAccent();
   }
   // [r, g, b] of an opaque CSS colour, or null when the browser does not take
   // it or it is see-through (no text colour is sure to read on that).
@@ -98,11 +116,17 @@
   }
   // Saves reach the hub one at a time and only the newest waiting one is sent,
   // so the hub ends on the last choice. Resolves with the hub's settings, or
-  // with null when a newer save took this one's place.
-  function saveAccent(color) {
+  // with null when a newer save took this one's place. `extra` rides along in
+  // the same write (Appearance's Save sends every changed key at once).
+  function saveAccent(color, extra) {
     return new Promise(function (resolve, reject) {
-      if (queued) queued.resolve(null);
-      queued = { want: color || 'default', chosen: chosen, resolve: resolve, reject: reject };
+      var more = {}, k;
+      if (queued) {
+        for (k in queued.extra) more[k] = queued.extra[k];
+        queued.resolve(null);
+      }
+      for (k in (extra || {})) more[k] = extra[k];
+      queued = { want: color || 'default', extra: more, chosen: chosen, resolve: resolve, reject: reject };
       pump();
     });
   }
@@ -110,7 +134,10 @@
     if (saving || !queued) return;
     var job = queued;
     queued = null; saving = true;
-    put({ accent: job.want }).then(function (r) {
+    var body = {}, k;
+    for (k in job.extra) body[k] = job.extra[k];
+    body.accent = job.want;
+    put(body).then(function (r) {
       return r.json().catch(function () { return null; }).then(function (b) {
         if (!r.ok) throw new Error(r.status + ' ' + (b ? JSON.stringify(b) : ''));
         return b;
@@ -136,7 +163,7 @@
           try { window.dispatchEvent(new CustomEvent('cd-noun')); } catch (e) {}
         }
         if (typeof s.theme === 'string') {
-          var local = stored();
+          var local = cached();
           if (s.theme && s.theme !== local) {
             try { localStorage.setItem('cd-theme', s.theme); } catch (e) {}
             apply();
@@ -147,7 +174,7 @@
         // A hub from before the accent was synced sends none: leave it be.
         var settled = at === epoch && !saving && !queued && saved === chosen;
         if (typeof s.accent === 'string' && settled) {
-          var mine = storedAccent(), want = s.accent === 'default' ? '' : s.accent;
+          var mine = cachedAccent(), want = s.accent === 'default' ? '' : s.accent;
           if (s.accent && want !== mine) {
             try {
               if (want) localStorage.setItem('cd-accent', want); else localStorage.removeItem('cd-accent');
@@ -159,9 +186,22 @@
         }
       }).catch(function () {});
   }
+  // Start (an object) or end (null) a preview, on this page and every frame in
+  // it: each repaints, and a page's own readers (Chat as a log, ...) hear
+  // 'cd-preview' and read previewOf() again.
+  function preview(p) {
+    try { window.top.CD_PREVIEW = p || null; } catch (e) {}
+    (function tell(w) {
+      try { w.dispatchEvent(new w.CustomEvent('cd-preview')); } catch (e) {}
+      for (var i = 0; i < w.frames.length; i++) {
+        try { tell(w.frames[i]); } catch (e) {}
+      }
+    })(window);
+  }
   window.cdTheme = { apply: apply, sync: sync, stored: stored, scheme: SCHEME, themes: Object.keys(SCHEME),
                      applyAccent: applyAccent, storedAccent: storedAccent, rgbOf: rgbOf, put: put,
-                     chooseAccent: chooseAccent, saveAccent: saveAccent };
+                     chooseAccent: chooseAccent, saveAccent: saveAccent, cached: cached,
+                     cachedAccent: cachedAccent, previewOf: previewOf, preview: preview };
   apply();
   applyAccent();
   if (mq && mq.addEventListener) mq.addEventListener('change', apply);
@@ -169,6 +209,7 @@
     if (ev.key === 'cd-theme') apply();
     if (ev.key === 'cd-accent') { epoch++; applyAccent(); }
   });
+  window.addEventListener('cd-preview', function () { apply(); applyAccent(); });
   document.addEventListener('visibilitychange', function () { if (!document.hidden) sync(); });
   sync();
 })();
@@ -2993,35 +3034,8 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   }
   #me-menu .me-rule { height: 1px; background: var(--border); margin: var(--s-100) 0; }
   #me-menu .me-item.on { background: var(--selected-bg); color: var(--selected-fg); font-weight: 500; }
-  /* Theme and Accent share a swatch-and-tick list. A flyout to the left of the menu (the avatar is at the
-     right edge); a phone gets it as a nested list under the item instead. */
-  .me-sub-wrap { position: relative; }
-  .me-sub .me-cur { margin-left: auto; color: var(--fg-muted); font-size: var(--fs-100); }
-  .me-sub .me-chev { color: var(--fg-muted); }
-  .me-sub .me-chev::before { content: '\203A'; }
-  .theme-list { display: flex; flex-direction: column; }
-  .theme-list[hidden] { display: none; }
-  #me-menu .theme-list.me-flyout {
-    position: absolute; top: calc(-1 * var(--s-100)); right: calc(100% + var(--s-100)); z-index: 61;
-    min-width: 200px; padding: var(--s-100); background: var(--surface-overlay);
-    border: 1px solid var(--border); border-radius: var(--r-300); box-shadow: var(--e-200);
-  }
-  .theme-opt { display: flex; align-items: center; gap: var(--s-200); width: 100%;
-    padding: 7px 10px; border: 0; border-radius: var(--r-200); background: transparent;
-    color: var(--fg); font: inherit; font-size: var(--fs-200); text-align: left; cursor: pointer; }
-  .theme-opt:hover { background: var(--hover); }
-  .theme-opt.on { background: var(--selected-bg); color: var(--selected-fg); font-weight: 500; }
-  .theme-opt .theme-tick { margin-left: auto; visibility: hidden; }
-  .theme-opt.on .theme-tick { visibility: visible; }
-  .theme-opt .theme-tick::before { content: '\2713'; }
-  /* A swatch: the theme's ground with its accent as a dot; ringed so a pale
-     ground shows on a pale menu. Colours are set per theme in THEME_INFO. */
-  .theme-sw { flex: 0 0 auto; width: 18px; height: 18px; border-radius: 50%;
-    border: 1px solid var(--border); display: inline-flex;
-    align-items: center; justify-content: center; }
-  .theme-sw i { width: 8px; height: 8px; border-radius: 50%; display: block; }
-  #me-accents { max-height: calc(100dvh - var(--mm-top, var(--top-h)) - 2 * var(--s-800)); overflow-y: auto; }
-  .accent-custom { padding: var(--s-200); color: var(--fg-muted); font-size: var(--fs-200); }
+  /* #407: Appearance… names what is in effect (Light, or Fjord · Violet) at its right. */
+  #me-menu .me-cur { margin-left: auto; padding-left: var(--s-300); color: var(--fg-muted); font-size: var(--fs-100); white-space: nowrap; }
   /* Attention states map onto the semantic six — they are not new colour.
      Danger means wrong or destructive; a task waiting on a reply is not
      wrong, it is warning. waiting_for_you used to be the accent, i.e. the
@@ -3262,6 +3276,93 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     font-size: var(--fs-300); font-weight: 600; color: var(--fg);
   }
   #settings-panel h4 + .sp-sub { margin-top: var(--s-300); padding-top: 0; border-top: 0; }
+  #settings-panel .sp-dlg { grid-template-rows: auto minmax(0, 1fr) auto; }
+  /* #407 (P424): Settings › Appearance, as drawn (Documents/P424 Appearance/drawing.html).
+     Labels are normal-case and bold over their control; two short sections share a row. */
+  #settings-appearance .ap-lead { margin-top: 0; }
+  #settings-appearance .ap-label { display: block; margin: var(--s-300) 0 var(--s-100); font-size: var(--fs-200); font-weight: 600; color: var(--fg); }
+  #settings-appearance .ap-label .cfg-hint { font-weight: 400; }
+  #settings-appearance .cfg-hint { margin-top: 6px; }
+  #settings-appearance span.cfg-hint { margin: 0; }
+  #settings-appearance .ap-row2 { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s-400); }
+  #settings-appearance .ap-row2 .ap-label { margin-top: 0; }
+  #settings-appearance .ap-row2 > div > .sp-sub { margin-top: var(--s-400); }
+  #settings-appearance .ap-co { display: none; color: var(--fg-muted); font-size: var(--fs-200); }
+  #settings-appearance .seg button { display: inline-flex; align-items: center; gap: var(--s-200); font-size: var(--fs-200); }
+  #settings-appearance .ap-check { margin-top: var(--s-200); }
+  #settings-appearance .ap-check label { display: inline-flex; align-items: center; gap: var(--s-100); font-size: var(--fs-200); cursor: pointer; }
+  #settings-appearance .ap-stays { margin-top: var(--s-400); padding: var(--s-200); background: var(--surface-sunken); border-radius: var(--r-200); }
+  #settings-appearance .ap-stays b { color: var(--fg-subtle); }
+  /* Theme tiles: a small chat in the theme's own tokens (set inline by apTiles).
+     --page-accent is the page's accent, for the ring and tick of the chosen one. */
+  #settings-appearance .ap-tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px 12px; --page-accent: var(--accent); }
+  #settings-appearance .ap-tile { position: relative; display: block; min-width: 0; padding: 0; border: 0; background: transparent; color: var(--fg-subtle); font: inherit; text-align: left; cursor: pointer; }
+  #settings-appearance .ap-tile .ap-tn { display: block; margin-top: var(--s-100); font-size: var(--fs-100); line-height: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #settings-appearance .ap-tile[aria-checked="true"] .ap-tn { color: var(--selected-fg); font-weight: 600; }
+  #settings-appearance .ap-tile:focus-visible { outline: none; }
+  #settings-appearance .ap-tile:focus-visible > :is(.ap-mc, .ap-sys) { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  #settings-appearance .ap-mc { position: relative; display: block; height: 70px; border-radius: var(--r-200); overflow: hidden; background: var(--bg); border: 1px solid var(--border); }
+  #settings-appearance .ap-tile:hover .ap-mc { border-color: var(--border-strong); }
+  #settings-appearance .ap-tile[aria-checked="true"] > :is(.ap-mc, .ap-sys) { box-shadow: 0 0 0 2px var(--page-accent); }
+  #settings-appearance .ap-mc .t { display: flex; gap: 4px; align-items: center; height: 12px; padding: 0 5px; background: var(--surface); border-bottom: 1px solid var(--border); }
+  #settings-appearance .ap-mc .t i { width: 12px; height: 3px; border-radius: 2px; background: var(--fg-muted); }
+  #settings-appearance .ap-mc .t i:first-child { width: 16px; background: var(--fg); }
+  #settings-appearance .ap-mc :is(.a, .l, .u, .c, .p) { position: absolute; display: block; }
+  #settings-appearance .ap-mc .a { left: 6px; top: 18px; width: 10px; height: 10px; border-radius: 50%; background: var(--agent-claude-bg); }
+  #settings-appearance .ap-mc .l { left: 20px; height: 3px; border-radius: 2px; background: var(--fg); }
+  #settings-appearance .ap-mc .l1 { top: 21px; width: 55%; }
+  #settings-appearance .ap-mc .l2 { top: 27px; width: 35%; background: var(--fg-muted); }
+  #settings-appearance .ap-mc .u { right: 6px; top: 34px; width: 44%; height: 11px; border-radius: 6px; background: var(--surface-sunken); border: 1px solid var(--border); }
+  #settings-appearance .ap-mc .c { left: 5px; right: 5px; bottom: 5px; height: 13px; border-radius: 4px; background: var(--surface); border: 1px solid var(--border); }
+  #settings-appearance .ap-mc .p { right: 7px; bottom: 7px; width: 20px; height: 9px; border-radius: 3px; background: var(--accent); }
+  #settings-appearance .ap-sys { position: relative; display: block; height: 70px; border-radius: var(--r-200); overflow: hidden; }
+  #settings-appearance .ap-sys > .ap-mc { position: absolute; inset: 0; height: auto; }
+  #settings-appearance .ap-sys > .ap-mc.right { clip-path: inset(0 0 0 50%); }
+  #settings-appearance .ap-ck { position: absolute; right: -5px; top: -5px; z-index: 2; display: none; width: 16px; height: 16px; border-radius: 50%;
+    align-items: center; justify-content: center; background: var(--page-accent); color: var(--accent-fg); font-size: 10px; font-weight: 700; box-shadow: 0 0 0 2px var(--surface); }
+  #settings-appearance .ap-tile[aria-checked="true"] .ap-ck { display: flex; }
+  /* Accent swatches: Theme default shows the theme's own accent, half and half. */
+  #settings-appearance .ap-accs { display: flex; flex-wrap: wrap; gap: 10px; }
+  #settings-appearance .ap-acc { position: relative; width: 58px; padding: 0; border: 0; background: transparent; color: var(--fg-subtle); font: inherit; font-size: var(--fs-100); line-height: 13px; text-align: center; cursor: pointer; }
+  #settings-appearance .ap-acc b { display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; margin: 0 auto var(--s-100); border-radius: 50%; background: var(--c); border: 1px solid var(--border); color: #FFFFFF; font-weight: 700; }
+  #settings-appearance .ap-acc b.def { background: linear-gradient(135deg, var(--c) 50%, var(--surface-sunken) 50%); }
+  #settings-appearance .ap-acc[aria-checked="true"] { color: var(--fg); font-weight: 600; }
+  #settings-appearance .ap-acc[aria-checked="true"] b { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--c); }
+  #settings-appearance .ap-acc[aria-checked="true"] b:not(.def)::after { content: '\2713'; color: var(--fg-on, #FFFFFF); }
+  #settings-appearance .ap-acc:focus-visible { outline: none; }
+  #settings-appearance .ap-acc:focus-visible b { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  #settings-appearance .ap-custom { display: flex; align-items: center; gap: var(--s-200); margin-top: var(--s-200); }
+  #settings-appearance .ap-custom .ap-label { margin: 0; white-space: nowrap; }
+  #settings-appearance #accent-input { width: 190px; flex: 0 0 auto; }
+  /* Send box: two option cards, each with a sketch of the workspace. */
+  #settings-appearance .ap-opts { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s-300); }
+  #settings-appearance .ap-opt { display: block; padding: var(--s-200); border: 1px solid var(--border-strong); border-radius: var(--r-300); background: var(--surface); color: var(--fg); font: inherit; text-align: left; cursor: pointer; }
+  #settings-appearance .ap-opt:hover { background: var(--hover); }
+  #settings-appearance .ap-opt[aria-checked="true"] { border-color: var(--accent); background: var(--selected-bg); }
+  #settings-appearance .ap-opt:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  #settings-appearance .ap-ot { display: flex; align-items: center; gap: 6px; margin-top: 6px; font-size: var(--fs-200); font-weight: 600; }
+  #settings-appearance .ap-opt[aria-checked="true"] .ap-ot { color: var(--selected-fg); }
+  #settings-appearance .ap-rd { flex: 0 0 auto; width: 12px; height: 12px; border-radius: 50%; border: 1.5px solid var(--border-strong); background: var(--surface); box-sizing: border-box; }
+  #settings-appearance .ap-opt[aria-checked="true"] .ap-rd { border: 4px solid var(--accent); }
+  #settings-appearance .ap-sk { display: grid; gap: 4px; height: 66px; padding: 5px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--r-200); box-sizing: border-box; }
+  #settings-appearance .ap-sk-one { grid-template-rows: minmax(0, 1fr) 14px; }
+  #settings-appearance .ap-panes { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; min-height: 0; }
+  #settings-appearance .ap-panes i { position: relative; display: block; padding: 4px; background: var(--surface); border: 1px solid var(--border); border-radius: 3px; }
+  #settings-appearance .ap-panes i::before, #settings-appearance .ap-panes i::after { content: ''; display: block; height: 3px; margin-bottom: 4px; border-radius: 2px; background: var(--fg-muted); width: 70%; }
+  #settings-appearance .ap-panes i::after { width: 45%; margin-left: auto; }
+  #settings-appearance .ap-sk b { display: block; height: 14px; padding: 0 4px; border: 1px solid var(--border-strong); border-radius: 3px; background: var(--surface); color: var(--fg-muted); font-size: 8px; font-weight: 400; line-height: 12px; box-sizing: border-box; overflow: hidden; }
+  #settings-appearance .ap-sk-each .ap-panes i b { position: absolute; left: 4px; right: 4px; bottom: 4px; height: 12px; }
+  /* The bar under the page (the dialog's third row). */
+  #settings-panel .ap-bar { display: flex; align-items: center; gap: var(--s-200); padding: 10px var(--s-600); border-top: 1px solid var(--border-strong); background: var(--surface-overlay); }
+  #settings-panel .ap-bar[hidden] { display: none; }
+  #settings-panel .ap-what { flex: 1; min-width: 0; font-size: var(--fs-300); color: var(--fg-subtle); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #settings-panel .ap-what b { color: var(--fg); font-weight: 600; }
+  #settings-panel .ap-saved { font-size: var(--fs-100); color: var(--fg-muted); }
+  /* About: the version, and the update when there is one. */
+  #settings-runtime .ab-head { margin: 0 0 var(--s-300); font-size: var(--fs-300); color: var(--fg); }
+  #settings-runtime .ab-upd-tag { padding: 0 6px; border-radius: var(--r-100); background: var(--c-discovery-bg);
+    color: var(--c-discovery-fg); font-size: var(--fs-100); font-weight: 600; line-height: 16px; text-transform: uppercase; letter-spacing: .05em; }
+  #settings-runtime .ab-link { padding: 0; border: 0; background: none; color: var(--link, var(--accent)); font: inherit; text-decoration: underline; cursor: pointer; }
   #accent-input {
     width: 100%; min-width: 0; padding: var(--s-200);
     border: 1px solid var(--border); border-radius: var(--r-200);
@@ -3958,18 +4059,41 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     #settings-panel .sp-pages label:has(> input[type="checkbox"])[hidden] { display: none; }
     #settings-panel .sp-pages input[type="checkbox"] { width: 20px; height: 20px; margin: 0; }
     #settings-models .pref-row, #settings-models .cfg-hint { max-width: none; }
-    .me-item, .pm-item, .fm-item, .wf-item, .pr-item, .ov-menu button, .theme-opt, .cm-item { min-height: var(--touch-min); }
+    .me-item, .pm-item, .fm-item, .wf-item, .pr-item, .ov-menu button, .cm-item { min-height: var(--touch-min); }
     .pm-find { height: var(--touch-min); font-size: 16px; }   /* 16px: a phone does not zoom into it */
     /* Create's menu: the width of the screen less the gutters, under the bar. */
     #create-menu { left: var(--s-200); right: var(--s-200) !important; min-width: 0; max-width: none; }
     .cm-key { display: none; }
-    /* Appearance lists nest inside the menu. When unfolded the menu can outgrow
-       a short screen: it scrolls (desktop flyouts must not be clipped, so only here). */
+    /* The menu can outgrow a short screen: it scrolls. */
     #me-menu { max-height: calc(100dvh - var(--mm-top, var(--top-h)) - var(--s-300)); overflow-y: auto; overscroll-behavior: contain; }
-    #me-menu .theme-list.me-flyout { position: static; min-width: 0; padding: 0 0 0 var(--s-300);
-      background: transparent; border: 0; box-shadow: none; }
-    #me-accents { max-height: none; overflow: visible; }
-    #accent-input { min-height: var(--touch-min); }
+    /* #407: Appearance on a phone (P424 drawing): one column, tiles four to a row
+       at 58px, 44px swatches, a row that a phone has no use for says
+       "Computer only", and the bar is fixed at the foot of the screen. */
+    #settings-appearance .ap-desk { display: none; }
+    #settings-appearance .ap-tiles { gap: var(--s-200) 10px; }
+    #settings-appearance .ap-mc, #settings-appearance .ap-sys { height: 58px; }
+    #settings-appearance .ap-accs { gap: var(--s-200) 0; }
+    #settings-appearance .ap-acc { width: 25%; font-size: var(--fs-200); line-height: 15px; }
+    #settings-appearance .ap-acc b { width: 44px; height: 44px; }
+    #settings-appearance .ap-custom { display: block; }
+    #settings-appearance #accent-input { width: 100%; font-size: 16px; }   /* 16px: a phone does not zoom into it */
+    #settings-appearance .ap-row2 { grid-template-columns: minmax(0, 1fr); gap: 0; }
+    #settings-appearance .ap-pc { display: flex; align-items: center; justify-content: space-between; min-height: var(--touch-min); }
+    #settings-appearance .ap-pc .ap-label { margin: 0; font-weight: 400; font-size: var(--fs-300); }
+    #settings-appearance .ap-pc .ap-ctl { display: none; }
+    #settings-appearance .ap-co { display: inline; }
+    #settings-appearance .ap-cell { display: flex; align-items: center; justify-content: space-between; gap: var(--s-200); min-height: var(--touch-min); }
+    #settings-appearance .ap-cell .ap-label { margin: 0; font-weight: 400; font-size: var(--fs-300); }
+    #settings-appearance .seg button { padding: 0 var(--s-400); }
+    #settings-appearance #pref-inbox-hl { font-size: 16px; }
+    #settings-panel .ap-bar {
+      position: fixed; left: 0; right: 0; bottom: 0; z-index: 2;
+      padding: var(--s-200) var(--s-400) calc(var(--s-200) + env(safe-area-inset-bottom, 0px));
+      box-shadow: 0 -4px 10px rgba(9,30,66,.08);
+    }
+    #settings-panel .ap-bar .ap-saved { display: none; }
+    #settings-panel .ap-bar .rm-btn { height: var(--touch-min); font-size: var(--fs-400); padding: 0 var(--s-400); }
+    #settings-panel .sp-dlg.ap-differs .sp-pages { padding-bottom: calc(68px + var(--s-800)); }
     /* The action bar and its menu, as the shared block's (pointer: coarse) rule. */
     .am-btn, .am-item, .theme-dd-item .star, .theme-dd-item .name { min-height: var(--touch-min); }
     .am-btn { height: auto; min-width: var(--touch-min); }
@@ -4269,14 +4393,14 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .dk-tab-wrap > .dk-tab-extra:has(> .pd-tab-ico, > .pd-pin) { display: contents; }
   .dk-tab-wrap > .dk-tab-extra > .pd-tab-ico { order: -1; --pt: 15px; margin: 0 -3px 0 0; align-self: center; font-size: 9px; }
   .dk-tab-wrap:has(> .dk-tab-extra > .pd-tab-ico) { padding-left: var(--s-200); }
-  .dk-tab-wrap:has(> .dk-tab-extra > .pd-tab-ico) > .dk-tab { padding-left: var(--s-150, 6px); }
+  .dk-tab-wrap:has(> .dk-tab-extra > .pd-tab-ico) > .dk-tab { padding-left: 6px; }
   .dk-tab-wrap > .dk-tab-extra > .pd-ico-cur { display: none; }
   .dk-tab-wrap:has(> .dk-tab-extra > .pd-ico-cur):not(:has(> .dk-tab-extra > .pd-tab-ico:not(.pd-ico-cur))) { padding-left: 0; }
   .dk-tab-wrap:has(> .dk-tab-extra > .pd-ico-cur):not(:has(> .dk-tab-extra > .pd-tab-ico:not(.pd-ico-cur))) > .dk-tab { padding-left: var(--s-300); }
   body.dk-popwin .dk-tab-wrap > .dk-tab-extra > .pd-ico-cur, .dk-float .dk-tab-wrap > .dk-tab-extra > .pd-ico-cur { display: grid; }
   body.dk-popwin .dk-tab-wrap > .dk-tab-extra > .pd-ico-cur.ldp-pic, .dk-float .dk-tab-wrap > .dk-tab-extra > .pd-ico-cur.ldp-pic { display: block; }
   body.dk-popwin .dk-tab-wrap:has(> .dk-tab-extra > .pd-ico-cur), .dk-float .dk-tab-wrap:has(> .dk-tab-extra > .pd-ico-cur) { padding-left: var(--s-200); }
-  body.dk-popwin .dk-tab-wrap:has(> .dk-tab-extra > .pd-ico-cur) > .dk-tab, .dk-float .dk-tab-wrap:has(> .dk-tab-extra > .pd-ico-cur) > .dk-tab { padding-left: var(--s-150, 6px); }
+  body.dk-popwin .dk-tab-wrap:has(> .dk-tab-extra > .pd-ico-cur) > .dk-tab, .dk-float .dk-tab-wrap:has(> .dk-tab-extra > .pd-ico-cur) > .dk-tab { padding-left: 6px; }
   .dk-tab-wrap.on:has(> .dk-tab-extra > .pd-tab-ico) { background: var(--selected-bg); }
   .pd-pin { width: 16px; height: 16px; flex: none; display: inline-flex; align-items: center; justify-content: center; padding: 0; border: 0;
     border-radius: var(--r-100, 3px); background: none; color: var(--fg-subtlest, var(--fg-subtle)); cursor: pointer; visibility: hidden; }
@@ -5172,27 +5296,16 @@ window.DOC_LISTENERS_PAUSED = false;
 <!-- The search's results (#161): tasks, past sessions, messages. -->
 <div id="find-pop" role="listbox" aria-label="Search results" hidden></div>
 <div id="me-menu" hidden>
-  <!-- Theme: a submenu; its list is built from cdTheme.themes (themeListHtml), so a theme added to the head script shows here by itself. -->
-  <div class="me-sub-wrap">
-    <button class="me-item me-sub" id="me-theme-btn" role="menuitem" aria-haspopup="menu" aria-expanded="false" aria-controls="me-themes">Theme <span class="me-cur" id="me-theme-cur"></span><span class="me-chev" aria-hidden="true"></span></button>
-    <div class="theme-list me-flyout" id="me-themes" role="menu" aria-label="Theme" hidden></div>
-  </div>
-  <div class="me-sub-wrap">
-    <button class="me-item me-sub" id="me-accent-btn" role="menuitem" aria-haspopup="menu" aria-expanded="false" aria-controls="me-accents">Accent <span class="me-cur" id="me-accent-cur"></span><span class="me-chev" aria-hidden="true"></span></button>
-    <div class="theme-list me-flyout" id="me-accents" role="menu" aria-label="Accent" hidden>
-      <div id="me-accent-options" role="group" aria-label="Colours"></div>
-      <label class="accent-custom">Custom colour
-        <input type="text" id="accent-input" placeholder="#xxxxxx or color name" spellcheck="false" autocomplete="off">
-      </label>
-    </div>
-  </div>
+  <!-- #407 (P437): one row for every look choice; it names what is in effect and opens Settings › Appearance. -->
+  <button class="me-item" id="me-appearance" data-me="appearance">Appearance…<span class="me-cur" id="me-appearance-cur"></span></button>
+  <button class="me-item" data-me="settings">Settings</button>
   <div class="me-rule"></div>
-  <!-- Phone only: the plan chip has no room in the bar there, so its tray opens from here. -->
   <!-- What's new (#339): shown while an update is available; quiet once it is skipped. -->
   <button class="me-item me-upd" id="me-whatsnew" data-me="whatsnew" hidden><span class="me-upd-dot" aria-hidden="true"></span>What's new<span class="me-upd-tag">Update available</span></button>
+  <!-- Phone only: the plan chip has no room in the bar there, so its tray opens from here. -->
   <button class="me-item me-phone" data-me="usage">Plan allowance</button>
   <button class="me-item" data-me="feedback">Send feedback…</button>
-  <button class="me-item" data-me="settings">Settings</button>
+  <button class="me-item" data-me="about">About Ensemble</button>
 </div>
 <div id="proj-menu" role="dialog" aria-label="Switch project" data-noun-aria-label="Switch {project}" hidden></div>
 <!-- #393: the threads of the conversation in the project's tab (thrMenuOpen). -->
@@ -5369,6 +5482,80 @@ window.DOC_LISTENERS_PAUSED = false;
       <option value="fable"></option>
     </datalist>
   </div>
+  <!-- #407 (P424): every look choice in one place. A choice previews at once
+       (cdTheme.preview: this page, its frames, nothing stored) and Save keeps
+       it; the one Settings page with a Save. Drawn by apRender; the moved rows
+       keep their ids and storage. -->
+  <div class="settings-section" id="settings-appearance">
+    <h4>Appearance</h4>
+    <p class="cfg-hint ap-lead">Try anything: the whole dashboard shows it at once, behind this window too. Save keeps it on every device; Cancel puts back what you had.</p>
+    <h5 class="sp-sub">Colours</h5>
+    <span class="ap-label" id="ap-theme-label">Theme</span>
+    <div class="ap-tiles" id="ap-themes" role="radiogroup" aria-labelledby="ap-theme-label"></div>
+    <p class="cfg-hint ap-desk">Each tile is a small chat drawn in that theme&#39;s own colours and its own accent.</p>
+    <span class="ap-label" id="ap-accent-label">Accent</span>
+    <div class="ap-accs" id="ap-accents" role="radiogroup" aria-labelledby="ap-accent-label"></div>
+    <div class="ap-custom">
+      <label class="ap-label" for="accent-input">Custom colour</label>
+      <input type="text" id="accent-input" placeholder="#xxxxxx or color name" spellcheck="false" autocomplete="off">
+      <span class="cfg-hint ap-desk">previews as you type a valid colour</span>
+    </div>
+    <h5 class="sp-sub">Chat</h5>
+    <div class="ap-row2">
+      <!-- #401 (P412): Chat as a log, one choice for the hub; off by default. -->
+      <div class="ap-pc">
+        <span class="ap-label" id="pref-chat-log-label">Chat as a log</span>
+        <span class="ap-co">Computer only</span>
+        <span class="ap-ctl"><span class="seg pref-seg" id="pref-chat-log" role="group" aria-labelledby="pref-chat-log-label">
+          <button type="button" data-val="off" aria-pressed="true">Off</button>
+          <button type="button" data-val="on" aria-pressed="false">On</button>
+        </span> <span class="cfg-hint">computer only</span></span>
+      </div>
+      <!-- #402 (issue 60, P422): the PO chat with only you and the PO in it. -->
+      <div class="ap-cell">
+        <span class="ap-label" id="pref-po-team-label">Team activity in the PO chat</span>
+        <span class="seg pref-seg" id="pref-po-team" role="group" aria-labelledby="pref-po-team-label">
+          <button type="button" data-val="shown" aria-pressed="true">Shown</button>
+          <button type="button" data-val="hidden" aria-pressed="false">Hidden</button>
+        </span>
+      </div>
+    </div>
+    <!-- GitHub issue 64: one send box for the workspace, or one under each chat pane (settings.sendBox). -->
+    <div class="ap-pc ap-sb">
+      <span class="ap-label" id="ap-send-box-label">Send box <span class="cfg-hint ap-desk">· computer only</span></span>
+      <span class="ap-co">Computer only</span>
+      <div class="ap-ctl ap-opts" id="ap-send-box" role="radiogroup" aria-labelledby="ap-send-box-label">
+        <button type="button" class="ap-opt" role="radio" data-val="workspace" aria-checked="true">
+          <span class="ap-sk ap-sk-one" aria-hidden="true"><span class="ap-panes"><i></i><i></i></span><b>To: a chat ▾</b></span>
+          <span class="ap-ot"><span class="ap-rd" aria-hidden="true"></span>One for the workspace <span class="cfg-hint">(default)</span></span>
+        </button>
+        <button type="button" class="ap-opt" role="radio" data-val="pane" aria-checked="false">
+          <span class="ap-sk ap-sk-each" aria-hidden="true"><span class="ap-panes"><i><b></b></i><i><b></b></i></span></span>
+          <span class="ap-ot"><span class="ap-rd" aria-hidden="true"></span>One under each chat</span>
+        </button>
+      </div>
+    </div>
+    <div class="ap-row2">
+      <div>
+        <h5 class="sp-sub">Lists</h5>
+        <!-- #370 (P356): how a project without an icon of its own is drawn, one choice for the hub. -->
+        <span class="ap-label" id="pref-ptiles-label" data-noun="{Project} icons">Project icons</span>
+        <span class="seg pref-seg" id="pref-ptiles" role="group" aria-labelledby="pref-ptiles-label">
+          <button type="button" data-val="flat" aria-pressed="true"><span class="ptile pt-demo pt-flat" data-k="progress" data-i="E" aria-hidden="true"></span>Flat</button>
+          <button type="button" data-val="glossy" aria-pressed="false"><span class="ptile pt-demo pt-gloss" data-k="progress" data-i="E" aria-hidden="true"></span>Glossy</button>
+        </span> <span class="cfg-hint">one per hub</span>
+        <!-- #337: the Tasks list's Full names switch (#170); this browser's, as that one was. -->
+        <div class="ap-check"><label><input type="checkbox" id="pref-full-names" checked> Show full names on hover</label> <span class="cfg-hint">· this browser</span></div>
+      </div>
+      <div>
+        <h5 class="sp-sub">Inbox</h5>
+        <!-- #343 (P317): how long a message opened from the Inbox stays marked in its chat. -->
+        <label class="ap-label" for="pref-inbox-hl">Inbox highlight</label>
+        <input type="number" id="pref-inbox-hl" min="1" max="30" step="0.5" placeholder="3.5" autocomplete="off"> <span class="cfg-hint">seconds, 1–30</span>
+      </div>
+    </div>
+    <p class="cfg-hint ap-stays"><b>Stays where it is:</b> Diff Unified / Side by side and Changes Folders (their own bars), Terminal colours and Chat in terminal colours (a task&#39;s ⋯ menu), Wrap (each file tab), Words › Call a board (Preferences: it changes words, not looks).</p>
+  </div>
   <div class="settings-section" id="settings-prefs">
     <h4>Preferences</h4>
     <h5 class="sp-sub">You</h5>
@@ -5378,48 +5565,6 @@ window.DOC_LISTENERS_PAUSED = false;
              autocomplete="off" spellcheck="false" maxlength="60">
     </div>
     <p class="cfg-hint">Used in the collaboration briefing, so agents address you by name instead of “the human.” Empty = your git <code>user.name</code>.</p>
-    <!-- #337: the Tasks list's Full names switch (#170), which a computer's list
-         no longer shows since #322; this browser's, as that one was. -->
-    <h5 class="sp-sub">Lists</h5>
-    <div class="pref-row"><label><input type="checkbox" id="pref-full-names" checked> Show full names on hover</label></div>
-    <p class="cfg-hint">A name cut short in the left panel or a list shows whole while the pointer rests on it. Kept in this browser.</p>
-    <!-- #370 (P356): how a project without an icon of its own is drawn, one choice for the hub. -->
-    <div class="pref-row" style="margin-top: 14px;">
-      <span class="pref-label" id="pref-ptiles-label" data-noun="{Project} icons">Project icons</span>
-      <div class="seg pref-seg" id="pref-ptiles" role="group" aria-labelledby="pref-ptiles-label">
-        <button type="button" data-val="flat" aria-pressed="true"><span class="ptile pt-demo pt-flat" data-k="progress" data-i="E" aria-hidden="true"></span>Flat</button>
-        <button type="button" data-val="glossy" aria-pressed="false"><span class="ptile pt-demo pt-gloss" data-k="progress" data-i="E" aria-hidden="true"></span>Glossy</button>
-      </div>
-    </div>
-    <p class="cfg-hint" data-noun="{A project} without an icon of its own shows as a tile in its colour with its initials, flat or glossy, in every list. An icon uploaded in its settings takes the tile&#39;s place. One choice for this hub, so every device shows the same.">A project without an icon of its own shows as a tile in its colour with its initials, flat or glossy, in every list. An icon uploaded in its settings takes the tile's place. One choice for this hub, so every device shows the same.</p>
-    <!-- #401 (P412): Chat as a log, one choice for the hub; off by default. -->
-    <h5 class="sp-sub">Chat</h5>
-    <div class="pref-row" style="margin-top: 14px;">
-      <span class="pref-label" id="pref-chat-log-label">Chat as a log</span>
-      <div class="seg pref-seg" id="pref-chat-log" role="group" aria-labelledby="pref-chat-log-label">
-        <button type="button" data-val="off" aria-pressed="true">Off</button>
-        <button type="button" data-val="on" aria-pressed="false">On</button>
-      </div>
-    </div>
-    <p class="cfg-hint">Every message on the left, one thin line between any two items, “answers Pn” inside its message, and each task’s agents in its own colour. A computer only; a phone is unchanged. Off by default.</p>
-    <!-- #402 (issue 60, P422): the PO chat with only you and the PO in it. -->
-    <h5 class="sp-sub">PO chat</h5>
-    <div class="pref-row" style="margin-top: 14px;">
-      <span class="pref-label" id="pref-po-team-label">Team activity in the PO chat</span>
-      <div class="seg pref-seg" id="pref-po-team" role="group" aria-labelledby="pref-po-team-label">
-        <button type="button" data-val="shown" aria-pressed="true">Shown</button>
-        <button type="button" data-val="hidden" aria-pressed="false">Hidden</button>
-      </div>
-    </div>
-    <p class="cfg-hint">Hides hub lines, task rows, reports and “answers Pn”. Shown by default.</p>
-    <!-- #343 (P317): how long a message opened from the Inbox stays marked in its chat. -->
-    <h5 class="sp-sub">Inbox</h5>
-    <div class="pref-row" style="margin-top: 14px;">
-      <label class="pref-label" for="pref-inbox-hl">Inbox highlight</label>
-      <span><input type="number" id="pref-inbox-hl" min="1" max="30" step="0.5"
-             placeholder="3.5" autocomplete="off"> <span class="pref-label">seconds</span></span>
-    </div>
-    <p class="cfg-hint">A message opened from the Inbox is highlighted in its chat at full strength, then fades out, gone this long after it is shown. 1 to 30 seconds.</p>
     <h5 class="sp-sub">Stalls and restarts</h5>
     <div class="pref-row" style="margin-top: 14px;">
       <span class="pref-label">Call an agent stalled after</span>
@@ -5535,8 +5680,12 @@ window.DOC_LISTENERS_PAUSED = false;
     </div>
     <p class="cfg-hint" id="prune-auto-hint" role="status"></p>
   </div>
+  <!-- #407 (P437): About, opened by the account menu's About Ensemble. The head line
+       names the version (renderRuntimeConfig) and, while an update is available,
+       the menu's What's new (whatsnew.js render). -->
   <div class="settings-section" id="settings-runtime">
-    <h4>This instance</h4>
+    <h4>About</h4>
+    <p class="ab-head"><span id="about-ver">Ensemble</span><span id="about-upd" hidden> · <span class="ab-upd-tag">Update available</span> · <button type="button" class="ab-link" id="about-whatsnew">What&#39;s new</button></span></p>
     <dl class="cfg-grid"></dl>
     <p class="cfg-hint">Read-only. Override with <code>ENSEMBLE_*</code> env vars at start time — see the README.</p>
     <!-- #331: what the move check at hub start could not repair; shown only when there is something. -->
@@ -5547,6 +5696,12 @@ window.DOC_LISTENERS_PAUSED = false;
     </div>
   </div>
   </div>
+  </div>
+  <!-- #407: Appearance's bar, only while a choice there differs from what is saved (apRender). -->
+  <div class="ap-bar" id="ap-bar" hidden>
+    <span class="ap-what" id="ap-what" role="status"></span>
+    <button type="button" class="rm-btn" id="ap-cancel">Cancel</button>
+    <button type="button" class="rm-btn primary" id="ap-save">Save</button>
   </div>
 </div>
 </div>
@@ -9352,10 +9507,6 @@ function renderPrefs() {
   if (rotInput && document.activeElement !== rotInput) {
     rotInput.value = PREFS.poRotateTokens ?? 150000;
   }
-  const inboxHlInput = document.getElementById('pref-inbox-hl');
-  if (inboxHlInput && document.activeElement !== inboxHlInput) {
-    inboxHlInput.value = inboxHlSec();
-  }
   const idleAlertInput = document.getElementById('pref-idle-alert');
   if (idleAlertInput && document.activeElement !== idleAlertInput) {
     idleAlertInput.value = PREFS.idleAlertMin ?? 20;
@@ -9386,23 +9537,6 @@ function renderPrefs() {
       b.classList.toggle('active', b.dataset.val === value);
       b.setAttribute('aria-pressed', String(b.dataset.val === value));
     });
-  }
-  const ptSeg = document.getElementById('pref-ptiles');
-  if (ptSeg) {
-    const value = ptileLook(PREFS.projectIcons);
-    ptSeg.querySelectorAll('button').forEach(b => {
-      b.classList.toggle('active', b.dataset.val === value);
-      b.setAttribute('aria-pressed', String(b.dataset.val === value));
-    });
-  }
-  const clSeg = document.getElementById('pref-chat-log');
-  if (clSeg) {
-    const value = PREFS.chatLog === 'on' ? 'on' : 'off';
-    clSeg.querySelectorAll('button').forEach(b => {
-      b.classList.toggle('active', b.dataset.val === value);
-      b.setAttribute('aria-pressed', String(b.dataset.val === value));
-    });
-    chatLogLocal(value);
   }
   const paceSeg = document.getElementById('pref-pace-week');
   if (paceSeg) {
@@ -9439,17 +9573,8 @@ function renderPrefs() {
       b.classList.toggle('active', b.dataset.val === value);
     });
   }
-  // #402: Team activity in the PO chat. Every open PO chat (an iframe, a
-  // pop-out) reads the copy in localStorage at once (its storage event).
-  const poTeamSeg = document.getElementById('pref-po-team');
-  if (poTeamSeg) {
-    const value = PREFS.poTeamActivity === 'hidden' ? 'hidden' : 'shown';
-    poTeamSeg.querySelectorAll('button').forEach(b => {
-      b.classList.toggle('active', b.dataset.val === value);
-      b.setAttribute('aria-pressed', String(b.dataset.val === value));
-    });
-    try { if (localStorage.getItem('cd-po-team') !== value) localStorage.setItem('cd-po-team', value); } catch (e) {}
-  }
+  // Settings › Appearance (#407): the saved look's caches, a preview on top, and the page's controls.
+  apCaches(); apLook(); apRender();
   const readerSeg = document.getElementById('pref-reader-tasks');
   if (readerSeg) {
     const value = PREFS.readerForTasks === true ? 'on' : 'off';
@@ -10372,6 +10497,9 @@ function renderRuntimeConfig() {
     ['log', tildeify(c.logFile)],
     ['pid', c.pid != null ? String(c.pid) : ''],
   ];
+  // #407 (P437): About's head line names the version.
+  const ver = document.getElementById('about-ver');
+  if (ver) ver.textContent = c.version ? `Ensemble ${c.version}` : 'Ensemble';
   const grid = document.querySelector('#settings-runtime .cfg-grid');
   if (grid) {
     grid.innerHTML = rows.map(([k, v, placeholder]) => {
@@ -16092,7 +16220,8 @@ function wcSync() {
   const box = document.getElementById('workspace-compose');
   const f = document.getElementById('workspace-compose-frame');
   if (PD.dock) for (const id of WC.popped.keys()) if (!PD.dock.popWindow(id)) WC.popped.delete(id);
-  const on = !!(PD.dock && document.body.classList.contains('po-dock') && !PD.dock.narrow() && window.innerWidth >= 768);
+  const on = !!(PD.dock && document.body.classList.contains('po-dock') && !PD.dock.narrow() && window.innerWidth >= 768)
+    && document.documentElement.dataset.sendBox !== 'pane';   // #407: one under each chat instead
   if (!on) {
     box.hidden = true;
     if (WC.base) { wcLeaveFrame(f); f.removeAttribute('src'); WC.base = ''; }
@@ -18796,7 +18925,7 @@ function ptileVars(force) {
   try { ProjectColour.tileVars(root); } catch (e) {}
 }
 window.addEventListener('cd-theme', () => ptileVars(true));
-// Settings › Preferences › Project icons (the hub's projectIcons, #370): Flat or Glossy.
+// Settings › Appearance › Project icons (the hub's projectIcons, #370): Flat or Glossy.
 // localStorage['cd-ptiles'] is only its first-paint cache, as cd-theme is the theme's.
 function ptileLook(v) {
   const look = v === 'glossy' ? 'glossy' : 'flat';
@@ -18805,6 +18934,10 @@ function ptileLook(v) {
   return look;
 }
 try { ptileLook(localStorage.getItem('cd-ptiles')); } catch (e) { ptileLook('flat'); }
+// Send box (#407, GitHub issue 64): one for the workspace, or one under each
+// chat; localStorage['cd-send-box'] is the hub's sendBox's first-paint cache.
+try { document.documentElement.dataset.sendBox = localStorage.getItem('cd-send-box') === 'pane' ? 'pane' : 'workspace'; }
+catch (e) { document.documentElement.dataset.sendBox = 'workspace'; }
 ptileVars();
 // Another device may have changed it: the page takes the hub's choice when it comes back to the front.
 document.addEventListener('visibilitychange', () => {
@@ -23865,12 +23998,13 @@ Object.defineProperties(window, {
   SW_EXPAND_TIMER: { configurable: true, get: () => ROW_EXPAND_TIMER },
   SW_EXPAND_LAST: { configurable: true, get: () => ROW_EXPAND_LAST, set: v => { ROW_EXPAND_LAST = v; } },
 });
-$('#pref-full-names').checked = ROW_EXPAND_NAMES;
-for (const id of ['#sw-hover-names', '#pref-full-names']) $(id).addEventListener('change', ev => {
+// The Tasks list's own switch saves at once; Settings › Appearance has the same
+// choice with a preview and Save (#407), and this one replaces its draft.
+$('#sw-hover-names').addEventListener('change', ev => {
   ROW_EXPAND_NAMES = ev.target.checked;
-  $('#sw-hover-names').checked = $('#pref-full-names').checked = ROW_EXPAND_NAMES;
   try { localStorage.setItem(ROW_EXPAND_HOVER_KEY, String(ROW_EXPAND_NAMES)); } catch (e) {}
   if (!ROW_EXPAND_NAMES) { rowExpandHide(); pdHostDocs().forEach(rowExpandRetitleAll); }
+  if (AP) { delete AP.draft.fullNames; apRender(); }
 });
 function swRender() {
   const el = SW_EL;
@@ -25965,38 +26099,8 @@ function themeChoices() {
   list.push({ name: 'system', label: 'Match system', bg: 'linear-gradient(90deg, #F7F8F9 50%, #1D2125 50%)', dot: '#8590A2' });
   return list;
 }
-function appearanceListHtml(choices, attribute) {
-  return choices.map(t =>
-    '<button type="button" class="theme-opt" role="menuitemradio" data-' + attribute + '="' + esc(t.name) + '">'
-    + '<span class="theme-sw" aria-hidden="true" style="background:' + esc(t.bg) + '">' + (t.dot ? '<i style="background:' + esc(t.dot) + '"></i>' : '') + '</span>'
-    + '<span class="theme-name">' + esc(t.label) + '</span><span class="theme-tick" aria-hidden="true"></span></button>').join('');
-}
-function themeListHtml() { return appearanceListHtml(themeChoices(), 'appearance'); }
-function renderThemeLists() {
-  $('#me-themes').innerHTML = themeListHtml();
-  markAppearance();
-}
-function setAppearanceSubmenu(button, open) {
-  document.querySelectorAll('#me-menu .me-sub').forEach(b => {
-    const on = b === button && open;
-    const list = document.getElementById(b.getAttribute('aria-controls'));
-    list.hidden = !on;
-    b.setAttribute('aria-expanded', on ? 'true' : 'false');
-  });
-}
-function markAppearance() {
-  const pref = window.cdTheme ? cdTheme.stored() : 'light';
-  document.querySelectorAll('#me-themes .theme-opt').forEach(b => {
-    const on = b.dataset.appearance === pref;
-    b.classList.toggle('on', on);
-    b.setAttribute('aria-checked', on ? 'true' : 'false');
-  });
-  const cur = themeChoices().find(t => t.name === pref);
-  const c = document.getElementById('me-theme-cur');
-  if (c) c.textContent = cur ? cur.label : '';
-  markAccent(window.cdTheme ? cdTheme.storedAccent() : '');
-}
 async function setAppearance(pref) {
+  if (AP && AP.draft) { delete AP.draft.theme; apApply(); }
   try { localStorage.setItem('cd-theme', pref); } catch (e) {}
   if (window.cdTheme) cdTheme.apply();
   try {
@@ -26007,8 +26111,6 @@ async function setAppearance(pref) {
     });
   } catch (e) { toast('theme not saved to the hub: ' + e.message, 4000, 'err'); }
 }
-window.addEventListener('cd-theme', markAppearance);
-queueMicrotask(renderThemeLists);
 
 // A phone drawing the page wider than its screen looks like a desktop page
 // (#295): Safari's Request Desktop Website, its page zoom, anything that zooms
@@ -26057,71 +26159,332 @@ function wideBanner() {
 // from the hub; this marks the swatches and records a new choice. Writing
 // localStorage moves every open page in this browser at once, through the
 // storage event; the hub moves every other browser at its next sync.
-// The one preset list: adding a colour here adds its menu row automatically.
+// The one preset list: adding a colour here adds its swatch in Settings › Appearance.
 const ACCENT_CHOICES = [
   ['', 'Theme default'], ['#0055CC', 'Deep blue'], ['#1F845A', 'Green'],
   ['#1D7AFC', 'Bright blue'], ['#6E5DC6', 'Violet'], ['#943D73', 'Magenta'],
   ['#C25D3C', 'Terracotta'], ['#44546F', 'Neutral'],
 ];
-function renderAccentList() {
-  $('#me-accent-options').innerHTML = appearanceListHtml(
-    ACCENT_CHOICES.map(([name, label]) => ({ name, label, bg: name || 'var(--accent)' })), 'color');
-  markAccent(window.cdTheme ? cdTheme.storedAccent() : '');
-}
-function markAccent(color) {
-  color = color || '';
-  const options = $('#me-accent-options');
-  const known = ACCENT_CHOICES.find(([c]) => c.toLowerCase() === color.toLowerCase());
-  let custom = options.querySelector('[data-custom]');
-  if (!known && window.cdTheme && cdTheme.rgbOf(color)) {
-    if (!custom) {
-      options.insertAdjacentHTML('beforeend', appearanceListHtml([{name: color, label: 'Custom colour', bg: color}], 'color'));
-      custom = options.lastElementChild;
-      custom.dataset.custom = 'true';
+// ---- Settings › Appearance (#407: P424, P426, P433, P434) -------------------
+// Every look choice on one page. A click previews at once (cdTheme.preview:
+// this page and its frames repaint, nothing is stored, no other tab moves);
+// Save sends every changed choice to the hub in one write and only then
+// writes the first-paint caches; Cancel, Esc, closing Settings or leaving the
+// page drops the preview. AP.draft holds only the keys touched, each kept only
+// while it differs from what is saved. var: read by inboxHlSec and the Full
+// names switch, which may run before this line.
+var AP = { draft: {}, saving: false, built: false, ready: false };
+// What the hub keeps, and what the frames (chats) read from the preview.
+const AP_HUB = ['theme', 'accent', 'chatLog', 'poTeamActivity', 'sendBox', 'projectIcons', 'inboxHighlightSec'];
+const AP_FRAME = ['theme', 'accent', 'chatLog', 'poTeamActivity'];
+// The bar's order. fullNames is this browser's (the Tasks list's switch).
+const AP_ORDER = ['theme', 'accent', 'chatLog', 'poTeamActivity', 'sendBox', 'projectIcons', 'fullNames', 'inboxHighlightSec'];
+const apHas = k => Object.prototype.hasOwnProperty.call(AP.draft, k);
+function apLocal(key, fallback) { try { const v = localStorage.getItem(key); return v == null ? fallback : v; } catch (e) { return fallback; } }
+function apIsPreset(c) { return ACCENT_CHOICES.some(([x]) => x.toLowerCase() === String(c || '').toLowerCase()); }
+// What is saved: the hub's settings once loaded, this browser's cache before.
+function apSaved(k) {
+  const P = PREFS;
+  switch (k) {
+    case 'theme': return window.cdTheme ? cdTheme.cached() : 'light';
+    case 'accent': {
+      const a = window.cdTheme ? cdTheme.cachedAccent() : '';
+      return a && cdTheme.rgbOf(a) ? a : '';
     }
-    custom.dataset.color = color;
-    custom.querySelector('.theme-sw').style.background = color;
-  } else if (custom) custom.remove();
-  options.querySelectorAll('.theme-opt').forEach(s => {
-    const on = s.dataset.color.toLowerCase() === color.toLowerCase();
-    s.classList.toggle('on', on);
-    s.setAttribute('aria-checked', on ? 'true' : 'false');
-  });
-  const own = themeChoices().find(t => t.name === document.documentElement.dataset.theme) || themeChoices()[0];
-  const def = options.querySelector('[data-color=""] .theme-sw');
-  if (def) def.style.background = own.dot;
-  $('#me-accent-cur').textContent = known ? known[1] : 'Custom';
-  const inp = $('#accent-input');
-  if (inp && document.activeElement !== inp) inp.value = color;
+    case 'chatLog': return (P ? P.chatLog : apLocal('cd-chat-log', 'off')) === 'on' ? 'on' : 'off';
+    case 'poTeamActivity': return (P ? P.poTeamActivity : apLocal('cd-po-team', 'shown')) === 'hidden' ? 'hidden' : 'shown';
+    case 'sendBox': return (P ? P.sendBox : apLocal('cd-send-box', 'workspace')) === 'pane' ? 'pane' : 'workspace';
+    case 'projectIcons': return (P ? P.projectIcons : apLocal('cd-ptiles', 'flat')) === 'glossy' ? 'glossy' : 'flat';
+    case 'inboxHighlightSec': return inboxHlSec(true);
+    case 'fullNames': return apLocal(ROW_EXPAND_HOVER_KEY, 'true') !== 'false';
+  }
+  return undefined;
 }
-let _accentSave = null;
-// "" is the theme's own accent, saved on the hub as "default". Typing saves
-// once it pauses, not on every key.
-function setAccent(color, typing = false) {
-  if (!window.cdTheme) return;
-  cdTheme.chooseAccent(color);
-  clearTimeout(_accentSave);
-  // The head script sends saves one at a time, newest last, and a reply that
-  // was on its way does not undo this choice.
-  const save = async () => {
-    const want = color || 'default';
-    try {
-      const s = await cdTheme.saveAccent(color);
-      if (!s) return;                      // a newer choice took this save's place
-      PREFS = s;
-      if (s.accent !== undefined && s.accent !== want) {
-        toast('this colour shows here only: the hub keeps an opaque hex, colour name, rgb() or hsl()', 5000, 'err');
+const apSame = (k, a, b) => k === 'accent' ? String(a || '').toLowerCase() === String(b || '').toLowerCase() : a === b;
+const apCur = k => apHas(k) ? AP.draft[k] : apSaved(k);
+function apSet(k, v) {
+  // While a save is out "saved" is about to change: keep the choice even if it
+  // is today's saved value, so it is not lost when the save lands (apSave prunes).
+  if (!AP.saving && apSame(k, v, apSaved(k))) delete AP.draft[k]; else AP.draft[k] = v;
+  apApply(); apRender();
+}
+// Drop the draft keys that are now what is saved (another device saved them,
+// or this page's Save did). True when one went.
+function apPrune() {
+  let gone = false;
+  for (const k of Object.keys(AP.draft)) if (apSame(k, AP.draft[k], apSaved(k))) { delete AP.draft[k]; gone = true; }
+  return gone;
+}
+// Show the draft: the frames' keys through the preview, the rest on this page.
+function apApply() {
+  const p = {};
+  for (const k of AP_FRAME) if (apHas(k)) p[k] = AP.draft[k];
+  const any = Object.keys(p).length > 0;
+  if (window.cdTheme && (any || window.CD_PREVIEW)) cdTheme.preview(any ? p : null);
+  apLook();
+}
+function apLook() {
+  const root = document.documentElement;
+  root.dataset.ptiles = apCur('projectIcons');
+  const names = apCur('fullNames');
+  if (names !== ROW_EXPAND_NAMES) {
+    ROW_EXPAND_NAMES = names;
+    const sw = document.getElementById('sw-hover-names');
+    if (sw) sw.checked = names;
+    if (!names) { try { rowExpandHide(); pdHostDocs().forEach(rowExpandRetitleAll); } catch (e) {} }
+  }
+  const sb = apCur('sendBox');
+  if (root.dataset.sendBox !== sb) {
+    root.dataset.sendBox = sb;
+    try { wcSync(); } catch (e) {}
+  }
+}
+// The saved choices' first-paint caches; the chats read theirs at once (storage event).
+function apCaches() {
+  if (!PREFS) return;
+  chatLogLocal(apSaved('chatLog'));
+  const team = apSaved('poTeamActivity'), sb = apSaved('sendBox');
+  try { if (localStorage.getItem('cd-po-team') !== team) localStorage.setItem('cd-po-team', team); } catch (e) {}
+  try { if (localStorage.getItem('cd-send-box') !== sb) localStorage.setItem('cd-send-box', sb); } catch (e) {}
+  ptileLook(apSaved('projectIcons'));   // the cache; apLook puts a draft back on top
+}
+// Each theme's tokens, read from the page's own stylesheet (:root and
+// :root[data-theme="..."]), so a tile is drawn in that theme's colours
+// whatever theme the page shows, and a new theme draws itself.
+const AP_VARS = ['--bg', '--surface', '--surface-sunken', '--border', '--border-strong', '--fg', '--fg-muted', '--accent', '--agent-claude-bg'];
+let AP_TOKENS = null;
+function apTokens() {
+  if (AP_TOKENS) return AP_TOKENS;
+  const found = {};
+  const walk = rules => {
+    for (const r of rules) {
+      if (r.media && r.cssRules) { if (matchMedia(r.media.mediaText).matches) walk(r.cssRules); continue; }
+      if (r.cssRules && !r.selectorText) { walk(r.cssRules); continue; }
+      const m = /^:root(?:\[data-theme="([\w-]+)"\])?$/.exec(String(r.selectorText || '').trim());
+      if (!m || !r.style) continue;
+      const t = found[m[1] || ''] = found[m[1] || ''] || {};
+      for (const v of AP_VARS) {
+        const x = r.style.getPropertyValue(v).trim();
+        if (/^#[0-9a-f]{3,8}$/i.test(x)) t[v] = x;
       }
-    } catch (e) { toast('accent colour not saved to the hub: ' + e.message, 4000, 'err'); }
+    }
   };
-  if (typing) _accentSave = setTimeout(save, 600); else save();
+  for (const s of document.styleSheets) { try { walk(s.cssRules); } catch (e) {} }
+  const base = found[''] || {};
+  AP_TOKENS = {};
+  for (const n of themeChoices().map(t => t.name)) AP_TOKENS[n] = { ...base, ...(found[n] || {}) };
+  return AP_TOKENS;
 }
-window.addEventListener('cd-accent', ev => markAccent(ev.detail && ev.detail.accent));
-queueMicrotask(() => {
-  renderAccentList();
-  const c = window.cdTheme ? cdTheme.storedAccent() : '';
-  markAccent(c && cdTheme.rgbOf(c) ? c : '');
+function apMc(name, cls) {
+  const t = apTokens()[name] || {};
+  const style = Object.entries(t).map(([k, v]) => k + ':' + v).join(';');
+  return `<span class="ap-mc${cls || ''}" style="${esc(style)}"><span class="t"><i></i><i></i><i></i></span>`
+    + '<span class="a"></span><span class="l l1"></span><span class="l l2"></span><span class="u"></span><span class="c"></span><span class="p"></span></span>';
+}
+function apTilesHtml() {
+  return themeChoices().map(t =>
+    `<button type="button" class="ap-tile" role="radio" aria-checked="false" tabindex="-1" data-theme="${esc(t.name)}">`
+    + '<span class="ap-ck" aria-hidden="true">✓</span>'
+    + (t.name === 'system' ? `<span class="ap-sys">${apMc('light')}${apMc('dark', ' right')}</span>` : apMc(t.name))
+    + `<span class="ap-tn">${esc(t.label)}</span></button>`).join('');
+}
+// The presets, and a Custom swatch while the draft or the saved accent is
+// a colour of its own (so it can be chosen again after a preset was tried).
+function apSwatchesHtml(custom) {
+  const list = ACCENT_CHOICES.slice();
+  if (custom) list.push([custom, 'Custom']);
+  return list.map(([c, label]) =>
+    `<button type="button" class="ap-acc" role="radio" aria-checked="false" tabindex="-1" data-color="${esc(c)}"${c ? ` style="--c:${esc(c)}"` : ''}>`
+    + `<b${c ? '' : ' class="def"'} aria-hidden="true"></b>${esc(label)}</button>`).join('');
+}
+const apThemeLabel = v => (themeChoices().find(t => t.name === v) || { label: v }).label;
+function apAccentLabel(c) {
+  if (!c) return ACCENT_CHOICES[0][1];
+  const k = ACCENT_CHOICES.find(([x]) => x.toLowerCase() === c.toLowerCase());
+  return k ? k[1] : 'Custom';
+}
+function apWord(k, v) {
+  switch (k) {
+    case 'theme': return apThemeLabel(v);
+    case 'accent': return v && !apIsPreset(v) ? v : apAccentLabel(v);
+    case 'chatLog': return 'Chat as a log ' + v;
+    case 'poTeamActivity': return 'Team activity ' + v;
+    case 'sendBox': return v === 'pane' ? 'A send box under each chat' : 'One send box for the workspace';
+    case 'projectIcons': return v === 'glossy' ? 'Glossy icons' : 'Flat icons';
+    case 'fullNames': return 'Full names on hover ' + (v ? 'on' : 'off');
+    case 'inboxHighlightSec': return 'Inbox highlight ' + v + ' s';
+  }
+  return String(v);
+}
+// One radio of a group checked, and the only one Tab reaches.
+function apMark(group, sel, on) {
+  const all = [...group.querySelectorAll(sel)];
+  const hit = all.filter(on);
+  all.forEach(b => {
+    const yes = hit.includes(b);
+    b.setAttribute('aria-checked', String(yes));
+    b.tabIndex = yes || (!hit.length && b === all[0]) ? 0 : -1;
+  });
+}
+function apRender() {
+  if (!AP.ready) return;
+  const tiles = $('#ap-themes'), accs = $('#ap-accents');
+  if (!AP.built) { tiles.innerHTML = apTilesHtml(); AP.built = true; }
+  const theme = apCur('theme'), acc = apCur('accent') || '';
+  apMark(tiles, '.ap-tile', b => b.dataset.theme === theme);
+  const saved = apSaved('accent');
+  const custom = acc && !apIsPreset(acc) ? acc : saved && !apIsPreset(saved) ? saved : '';
+  if (accs.dataset.custom !== custom || !accs.firstElementChild) {
+    const at = accs.contains(document.activeElement) ? [...accs.children].indexOf(document.activeElement) : -1;
+    accs.innerHTML = apSwatchesHtml(custom);
+    accs.dataset.custom = custom;
+    if (at >= 0 && accs.children[Math.min(at, accs.children.length - 1)]) accs.children[Math.min(at, accs.children.length - 1)].focus();
+  }
+  // Theme default is the shown theme's own accent.
+  const own = (apTokens()[document.documentElement.dataset.theme] || {})['--accent'] || '#0C66E4';
+  const def = accs.querySelector('.ap-acc[data-color=""]');
+  if (def) def.style.setProperty('--c', own);
+  apMark(accs, '.ap-acc', b => apSame('accent', b.dataset.color, acc));
+  const inp = $('#accent-input');
+  if (inp && document.activeElement !== inp) inp.value = acc;
+  const seg = (id, v) => {
+    const s = document.getElementById(id);
+    if (s) s.querySelectorAll('button[data-val]').forEach(b => {
+      const on = b.dataset.val === v;
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-pressed', String(on));
+    });
+  };
+  seg('pref-chat-log', apCur('chatLog'));
+  seg('pref-po-team', apCur('poTeamActivity'));
+  seg('pref-ptiles', apCur('projectIcons'));
+  apMark($('#ap-send-box'), '.ap-opt', b => b.dataset.val === apCur('sendBox'));
+  $('#pref-full-names').checked = apCur('fullNames');
+  const hl = $('#pref-inbox-hl');
+  if (document.activeElement !== hl) hl.value = String(apCur('inboxHighlightSec'));
+  // The account menu's row names what is in effect.
+  const cur = $('#me-appearance-cur');
+  if (cur) cur.textContent = apThemeLabel(theme) + (acc ? ' · ' + apAccentLabel(acc) : '');
+  // The bar: only on this page, only while the preview differs from what is saved.
+  const keys = AP_ORDER.filter(apHas);
+  const panel = $('#settings-panel'), bar = $('#ap-bar');
+  bar.hidden = !keys.length || panel.hidden || SP.tab !== 'appearance';
+  panel.querySelector('.sp-dlg').classList.toggle('ap-differs', !bar.hidden);
+  $('#ap-save').disabled = AP.saving;
+  const what = keys.length
+    ? 'Previewing ' + keys.map(k => `<b>${esc(apWord(k, AP.draft[k]))}</b>`).join(' · ')
+      + ` <span class="ap-saved">(saved: ${keys.map(k => esc(apWord(k, apSaved(k)))).join(' · ')})</span>`
+    : '';
+  const w = $('#ap-what');
+  if (w.innerHTML !== what) w.innerHTML = what;
+}
+function apCancel() {
+  const had = Object.keys(AP.draft).length > 0;
+  AP.draft = {};
+  if (had || window.CD_PREVIEW) apApply();
+  apRender();
+}
+async function apSave() {
+  if (AP.saving || !window.cdTheme) return;
+  const d = { ...AP.draft }, keys = Object.keys(d);
+  if (!keys.length) return;
+  const hub = {};
+  for (const k of AP_HUB) if (k !== 'accent' && k in d) hub[k] = d[k];
+  const hasAccent = 'accent' in d, prevAccent = apSaved('accent');
+  AP.saving = true; apRender();
+  let s = null, err = null;
+  try {
+    if (hasAccent) {
+      // The head script's accent bookkeeping: a sync that was out does not undo it.
+      cdTheme.chooseAccent(d.accent);
+      s = await cdTheme.saveAccent(d.accent, hub);
+      if (!s) s = await api('/api/settings');    // a newer save took this one's place
+    } else if (Object.keys(hub).length) {
+      s = await api('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(hub) });
+    }
+  } catch (e) { err = e; }
+  AP.saving = false;
+  if (err) {
+    if (hasAccent) {
+      try { if (prevAccent) localStorage.setItem('cd-accent', prevAccent); else localStorage.removeItem('cd-accent'); } catch (e) {}
+      cdTheme.applyAccent();
+    }
+    // The preview stays: put back any choice that was pruned while the save was out.
+    for (const k of keys) if (!apHas(k) && !apSame(k, d[k], apSaved(k))) AP.draft[k] = d[k];
+    apPrune();
+    toast('Appearance not saved: ' + err.message, 5000, 'err');
+    apApply(); apRender();
+    return;
+  }
+  if (s) PREFS = s;
+  if ('theme' in d) { try { localStorage.setItem('cd-theme', d.theme); } catch (e) {} }
+  if ('fullNames' in d) { try { localStorage.setItem(ROW_EXPAND_HOVER_KEY, String(d.fullNames)); } catch (e) {} }
+  // A choice made while the save was out stays in the draft.
+  for (const k of keys) if (apHas(k) && apSame(k, AP.draft[k], d[k])) delete AP.draft[k];
+  apPrune();
+  apCaches(); apApply();
+  cdTheme.apply();
+  renderPrefs(); apRender();
+  toast('Appearance saved');
+  if (hasAccent && s && s.accent !== undefined && s.accent !== (d.accent || 'default')) {
+    toast('this colour shows here only: the hub keeps an opaque hex, colour name, rgb() or hsl()', 5000, 'err');
+  }
+}
+$('#ap-themes').addEventListener('click', ev => { const b = ev.target.closest('.ap-tile'); if (b) apSet('theme', b.dataset.theme); });
+$('#ap-accents').addEventListener('click', ev => { const b = ev.target.closest('.ap-acc'); if (b) apSet('accent', b.dataset.color); });
+const apSegPick = k => ev => { const b = ev.target.closest('button[data-val]'); if (b) apSet(k, b.dataset.val); };
+$('#pref-chat-log').addEventListener('click', apSegPick('chatLog'));
+$('#pref-po-team').addEventListener('click', apSegPick('poTeamActivity'));
+$('#pref-ptiles').addEventListener('click', apSegPick('projectIcons'));
+$('#ap-send-box').addEventListener('click', ev => { const b = ev.target.closest('.ap-opt'); if (b) apSet('sendBox', b.dataset.val); });
+$('#pref-full-names').addEventListener('change', ev => apSet('fullNames', ev.target.checked));
+(() => {
+  const hl = $('#pref-inbox-hl');
+  hl.addEventListener('input', () => {
+    const v = parseFloat(hl.value);
+    if (Number.isFinite(v) && v >= 1 && v <= 30) apSet('inboxHighlightSec', v);
+  });
+  hl.addEventListener('blur', apRender);
+  hl.addEventListener('keydown', ev => { if (ev.key === 'Enter') { ev.preventDefault(); hl.blur(); } });
+  const inp = $('#accent-input');
+  // Any colour the browser paints, opaque; empty is the theme's own.
+  inp.addEventListener('input', () => {
+    const v = inp.value.trim();
+    if (!v) apSet('accent', '');
+    else if (window.cdTheme && cdTheme.rgbOf(v)) apSet('accent', v);
+  });
+  inp.addEventListener('blur', apRender);
+})();
+// Arrow keys move the choice within a group, as radios do.
+$('#settings-appearance').addEventListener('keydown', ev => {
+  const g = ev.target.closest('[role="radiogroup"]'), r = ev.target.closest('[role="radio"]');
+  if (!g || !r || !['ArrowRight', 'ArrowLeft', 'ArrowDown', 'ArrowUp', 'Home', 'End'].includes(ev.key)) return;
+  const all = [...g.querySelectorAll('[role="radio"]')], n = all.length;
+  let i = all.indexOf(r);
+  i = ev.key === 'Home' ? 0 : ev.key === 'End' ? n - 1
+    : (i + (ev.key === 'ArrowRight' || ev.key === 'ArrowDown' ? 1 : -1) + n) % n;
+  ev.preventDefault();
+  all[i].click();
+  const again = g.querySelectorAll('[role="radio"]')[i];
+  if (again) again.focus();
 });
+$('#ap-save').addEventListener('click', () => apSave());
+$('#ap-cancel').addEventListener('click', () => apCancel());
+// The head script repaints (a preview, a sync, the OS turning dark): the page follows.
+// While a save is out its own cache writes must not prune the draft it is saving.
+window.addEventListener('cd-theme', () => { if (!AP.saving && apPrune()) apApply(); apRender(); });
+window.addEventListener('cd-accent', () => { if (!AP.saving && apPrune()) apApply(); apRender(); });
+// P434: a choice saved on another device shows here within 5 seconds.
+setInterval(() => { if (!document.hidden && window.cdTheme) cdTheme.sync(); }, 5000);
+window.addEventListener('cd-settings', ev => {
+  const s = ev.detail;
+  if (!s || !PREFS || AP.saving) return;
+  let moved = false;
+  for (const k of AP_HUB) if (k in s && s[k] !== PREFS[k]) { PREFS[k] = s[k]; moved = true; }
+  if (!moved) return;
+  apCaches(); apPrune(); apApply(); apRender();
+});
+queueMicrotask(() => { AP.ready = true; apRender(); });
 
 // Settings used to be a ⚙ of its own in the bar. It lives behind the avatar
 // now — "everything about me" in one place — which is one control fewer up
@@ -26135,6 +26498,7 @@ queueMicrotask(() => {
 // with a Back arrow (.sp-page); a link to a tab opens its page straight away.
 const SP_TAB_KEY = 'cd-settings-tab';
 const SP_ICONS = {
+  appearance: '<path d="M12 3a9 9 0 1 0 0 18c1.1 0 1.6-.9 1.2-1.8-.4-.9.2-1.9 1.2-1.9H17a4 4 0 0 0 4-4c0-5-4-9.3-9-9.3z"/><circle cx="7.5" cy="11" r="1"/><circle cx="10" cy="7" r="1"/><circle cx="15" cy="7.5" r="1"/>',
   app: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18"/>',
   notify: '<path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15z"/><path d="M10 20a2 2 0 0 0 4 0"/>',
   agents: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 10 3 2-3 2M12 15h5"/>',
@@ -26166,6 +26530,9 @@ function spShow(k, page) {
   spTabs();
   if (!spHasTab(k)) { const first = $('#sp-nav .sp-tab'); k = first ? first.dataset.tab : ''; }
   SP.tab = k;
+  // A preview lives on the Appearance page only: another page (or the
+  // phone's list) puts back what is saved.
+  if (k !== 'appearance' || (!page && isPhone())) apCancel();
   try { localStorage.setItem(SP_TAB_KEY, k); } catch (e) {}
   for (const sec of spSections()) sec.hidden = spKey(sec) !== k;
   for (const b of $('#sp-nav').querySelectorAll('.sp-tab')) {
@@ -26177,6 +26544,7 @@ function spShow(k, page) {
   $('#settings-panel .sp-dlg').classList.toggle('sp-page', !!page);
   const sec = document.getElementById('settings-' + k);
   $('#sp-title').textContent = page && isPhone() && sec && sec.querySelector('h4') ? sec.querySelector('h4').textContent : 'Settings';
+  apRender();
 }
 // tab: a section's key ('models', 'prune', …) or its id; none opens the one
 // last shown. opener: where the focus goes back to on close.
@@ -26224,6 +26592,7 @@ function closeSettings(restore = true) {
   const panel = $('#settings-panel');
   if (panel.hidden) return null;
   panel.hidden = true;
+  apCancel();                   // an unsaved preview goes with the window
   const o = SP.opener; SP.opener = null;
   const back = spReturnTo(o);
   if (restore && back) back.focus();
@@ -26313,7 +26682,6 @@ function spFromHash() {
 window.addEventListener('hashchange', spFromHash);
 if (/^#settings/.test(location.hash)) setTimeout(spFromHash, 0);
 function closeMeMenu() {
-  setAppearanceSubmenu(null, false);
   $('#me-menu').hidden = true;
   $('#me-btn').setAttribute('aria-expanded', 'false');
 }
@@ -26332,33 +26700,10 @@ $('#me-btn').addEventListener('click', (ev) => {
     m.style.right = Math.round(window.innerWidth - r.right) + 'px';
   }
 });
-$('#me-menu').addEventListener('keydown', (ev) => {
-  const b = ev.target.closest('.me-sub');
-  const open = $('#me-menu .me-sub[aria-expanded="true"]');
-  if (ev.key === 'ArrowRight' && b) {
-    setAppearanceSubmenu(b, true);
-    const f = document.getElementById(b.getAttribute('aria-controls')).querySelector('.theme-opt'); if (f) f.focus();
-    ev.preventDefault();
-  } else if (open && (ev.key === 'Escape' || (ev.key === 'ArrowLeft' && ev.target.tagName !== 'INPUT'))) {
-    setAppearanceSubmenu(null, false); open.focus(); ev.preventDefault(); ev.stopPropagation();
-  }
-});
 $('#me-menu').addEventListener('click', (ev) => {
-  const opt = ev.target.closest('.theme-opt');
-  if (opt) {
-    ev.stopPropagation();
-    if (opt.hasAttribute('data-color')) setAccent(opt.dataset.color);
-    else setAppearance(opt.dataset.appearance);
-    closeMeMenu();
-    return;
-  }
   const it = ev.target.closest('.me-item');
   if (!it) return;
   ev.stopPropagation();
-  if (it.classList.contains('me-sub')) {
-    setAppearanceSubmenu(it, it.getAttribute('aria-expanded') !== 'true');
-    return;
-  }
   if (it.dataset.me === 'usage') {        // phone: the plan chip's tray, from here
     closeMeMenu();
     $('#usage-tray').hidden = false;
@@ -26368,16 +26713,15 @@ $('#me-menu').addEventListener('click', (ev) => {
   closeMeMenu();
   if (it.dataset.me === 'feedback') { feedbackOpen(); return; }
   if (it.dataset.me === 'whatsnew') { if (window.whatsNew) whatsNew.open(); return; }
+  // #407 (P437): Appearance… and About Ensemble open their own pages.
+  if (it.dataset.me === 'appearance') { openSettings('appearance', $('#me-btn')); return; }
+  if (it.dataset.me === 'about') { openSettings('runtime', $('#me-btn')); return; }
   openSettingsPanel($('#me-btn'));
 });
+// About's head line: What's new, when an update is out (whatsnew.js shows it).
+$('#about-whatsnew').addEventListener('click', () => { if (window.whatsNew) whatsNew.open(); });
 $('#feedback-open').addEventListener('click', () => feedbackOpen());
 $('#feedback-settings-save').addEventListener('click', () => feedbackSaveSettings());
-$('#accent-input').addEventListener('input', (ev) => {
-  const v = ev.target.value.trim();
-  // Accept #rgb / #rrggbb / named colors that the browser understands.
-  if (!v) setAccent('', true);
-  else if (window.cdTheme && cdTheme.rgbOf(v)) setAccent(v, true);
-});
 document.addEventListener('click', (ev) => {
   if (ev.target.closest('#me-btn') || ev.target.closest('#me-menu')) return;
   closeMeMenu();
@@ -26795,8 +27139,10 @@ function sendGotoMsg(rid) {
     try { f.contentWindow.postMessage({ ensemble: 'goto-msg', msg: g.msg, part: g.part || '', thread: g.thread || '', tmid: g.tmid || '', hl: inboxHlSec() }, location.origin); } catch (e) {}
   }
 }
-// Settings › Preferences › Inbox highlight, seconds (the hub's inboxHighlightSec, #343).
-function inboxHlSec() {
+// Settings › Appearance › Inbox highlight, seconds (the hub's inboxHighlightSec, #343).
+// saved: what the hub keeps, not Settings › Appearance's preview.
+function inboxHlSec(saved) {
+  if (!saved && AP && Object.prototype.hasOwnProperty.call(AP.draft, 'inboxHighlightSec')) return AP.draft.inboxHighlightSec;
   const v = Number(PREFS && PREFS.inboxHighlightSec);
   return Number.isFinite(v) && v > 0 ? Math.max(1, Math.min(30, v)) : 3.5;
 }
@@ -28440,13 +28786,6 @@ if ('serviceWorker' in navigator) {
     const b = ev.target.closest('button[data-val]');
     if (b) setPref('readerForTasks', b.dataset.val === 'on');
   });
-  document.getElementById('pref-po-team')?.addEventListener('click', (ev) => {
-    const b = ev.target.closest('button[data-val]');
-    if (!b) return;
-    // At once in every open PO chat, before the hub has saved it.
-    try { localStorage.setItem('cd-po-team', b.dataset.val); } catch (e) {}
-    setPref('poTeamActivity', b.dataset.val);
-  });
   document.getElementById('pref-retention-keep')?.addEventListener('click', (ev) => {
     keepRetentionYear(ev.currentTarget);
   });
@@ -28456,27 +28795,6 @@ if ('serviceWorker' in navigator) {
     if (!b) return;
     await setPref('preferAgent', b.dataset.val);
     refreshUsage();
-  });
-  // #370: Project icons, Flat or Glossy, for the hub. Shown at once; the hub's answer settles it.
-  document.getElementById('pref-ptiles')?.addEventListener('click', async (ev) => {
-    const b = ev.target.closest('button[data-val]');
-    if (!b) return;
-    ptileLook(b.dataset.val);
-    await setPref('projectIcons', b.dataset.val);
-  });
-  // #401: Chat as a log, for the hub. This browser's chats change at once (the
-  // storage event reaches every chat frame); the hub's answer settles it: a
-  // save that failed puts the chats back to the saved choice.
-  document.getElementById('pref-chat-log')?.addEventListener('click', async (ev) => {
-    const b = ev.target.closest('button[data-val]');
-    if (!b) return;
-    chatLogLocal(b.dataset.val);
-    const saving = setPref('chatLog', b.dataset.val), n = SETPREF_N.chatLog;
-    await saving;
-    if (n === SETPREF_N.chatLog && PREFS) {
-      chatLogLocal(PREFS.chatLog === 'on' ? 'on' : 'off');
-      renderPrefs(); // The latest PUT may have failed after an earlier one succeeded.
-    }
   });
   // The week's pace (ED-164): the switch, and the head start in points.
   document.getElementById('pref-pace-week')?.addEventListener('click', async (ev) => {
@@ -28662,20 +28980,6 @@ if ('serviceWorker' in navigator) {
     taskRotInput.addEventListener('blur', commitTaskRot);
     taskRotInput.addEventListener('keydown', (ev) => {
       if (ev.key === 'Enter') { ev.preventDefault(); taskRotInput.blur(); }
-    });
-  }
-  // How long a message opened from the Inbox stays highlighted (#343; the hub clamps to 1–30).
-  const inboxHlInput = document.getElementById('pref-inbox-hl');
-  if (inboxHlInput) {
-    const commitInboxHl = () => {
-      const v = parseFloat(inboxHlInput.value);
-      if (Number.isNaN(v)) { inboxHlInput.value = inboxHlSec(); return; }
-      if (v !== inboxHlSec()) setPref('inboxHighlightSec', Math.max(1, Math.min(30, v)));
-      else inboxHlInput.value = inboxHlSec();
-    };
-    inboxHlInput.addEventListener('blur', commitInboxHl);
-    inboxHlInput.addEventListener('keydown', (ev) => {
-      if (ev.key === 'Enter') { ev.preventDefault(); inboxHlInput.blur(); }
     });
   }
   // Minutes a running agent may do nothing before its PO hears (#292).

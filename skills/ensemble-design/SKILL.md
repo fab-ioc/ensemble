@@ -78,7 +78,7 @@ his first look, and it looked nothing like the mockup.
   theme and red is "wrong" in every theme. Each theme's pairs are measured on that theme's ground.
 - **Adding a theme:** add its block to all three pages with the same token names as the Dark block,
   add its name and ground (`light` or `dark`) to the `SCHEME` map in each page's head script, add it
-  to the hub's allowed `theme` values in `dashboard.py` (the avatar menu's Theme submenu is built
+  to the hub's allowed `theme` values in `dashboard.py` (Settings › Appearance's tiles are built
   from `cdTheme.themes`, so it shows it by itself; give it a label and
   swatch colours in `THEME_INFO` in `index.html`), then measure every
   pair in §3 on it, including its `--code-*` set in `fileview.html` (see *Code* below). The ground
@@ -87,19 +87,23 @@ his first look, and it looked nothing like the mockup.
   every device agrees. `localStorage['cd-theme']` is only the first-paint cache: the head script
   applies it before first paint, then fetches the hub's value and adopts it if it differs. If the
   hub has none yet, the page hands the hub its own, so a choice made before is kept.
-- **Theme is a submenu of the avatar menu, never a flat run of rows.** One item, *Theme*, with the
-  current theme's name and a `›` at its right; it opens a list of **every** theme plus Match system
-  (`themeListHtml`, built from `cdTheme.themes`, the `SCHEME` keys the hub also allows). A row is a
-  swatch (18px circle in the theme's ground, its accent as an 8px dot, ringed `--border`), the name,
-  and a `✓` on the current one (`--selected-bg` row, `role="menuitemradio"`). On a desktop the list
-  is a flyout to the left of the menu (the avatar is at the right edge); on a phone it is a nested
-  list inside the menu, indented, never a flyout off screen. Click, or → on the item, opens it; ←
-  and Esc fold it. Choosing a row applies it at once, saves it on the hub and closes the menu.
-  **Accent** is the neighbouring submenu, with the same row renderer (`appearanceListHtml`),
-  swatches, tick, keyboard behaviour and phone nesting. Its presets come from `ACCENT_CHOICES`;
-  adding one there adds its row. Theme default restores the current theme's own accent; the
-  custom colour field keeps opaque CSS colours available, and a custom choice gets a ticked row.
-  Only one submenu opens at a time. Both choices live here, not in Settings.
+- **Every look choice is on one page: Settings › Appearance (#407).** Theme, Accent, Chat as a log,
+  PO team activity, Send box, Project icons, Full names on hover and Inbox highlight; the account
+  menu has one row, *Appearance…*, naming the theme and accent in effect (`#me-appearance-cur`), that
+  opens it (no Theme or Accent submenu, no flyout). Themes are tiles, four a row on a computer and a
+  phone, every theme in `cdTheme.themes` plus Match system, each drawn in its own theme's tokens
+  (read from the stylesheet, so a new theme draws itself); accents are swatches from
+  `ACCENT_CHOICES` plus Theme default (painted in the shown theme's own accent) and a Custom swatch
+  when the colour is not a preset, with `#accent-input` for any opaque CSS colour. Both groups are
+  `role="radiogroup"` with arrow keys, Home and End. Rows that do nothing on a phone say *Computer only*.
+- **Appearance is the one Settings page with a Save.** A click previews at once, on the page and in
+  every chat frame (`window.CD_PREVIEW` on the top page, read by each page's head script before its
+  cache), and stores nothing: no cache, no hub, no other tab moves. While the preview differs from
+  what is saved, the bar at the page's foot says *Previewing … (saved: …)* with Cancel and Save.
+  Save sends every changed key in one hub write; the caches are written only after it succeeds. A
+  failed save keeps the preview and the bar, so Save can be tried again; a choice made while a save
+  is out stays previewed. Leaving the page (another tab, closing Settings) is Cancel. A choice saved
+  on another device shows within 5 seconds (`cdTheme.sync`) unless it is being previewed here.
 - **A floating panel scrolls itself.** The page is a fixed-height shell, so a tray or panel dropped
   from the bar is `position: fixed` with a `max-height` of the room under its button and
   `overflow-y: auto`; it never relies on the page to scroll it into view (Settings lost its lower
@@ -210,7 +214,7 @@ begin with **C** — colour is load-bearing in that circle, not decorative.
 
 `--c-task-1` … `--c-task-5` (raspberry `#B34981`, teal `#047B85`, olive `#647612`, clay `#9D6044`,
 plum `#8A5A9C`), on `:root` of `session.html`, one set for every theme. Used only in **Chat as a
-log** (Settings › Preferences › Chat, the hub's `chatLog`; `<html data-chat-log="on">`, a computer
+log** (Settings › Appearance › Chat, the hub's `chatLog`; `<html data-chat-log="on">`, a computer
 only): a task's agents' labels (engineer, reviewer, another seat) take task number % 5 + 1
 (`data-tc`), the same colour in its own chat and in its PO's chat, white text. The person's label is
 `--accent`; the PO's keeps its project colour; the hub and an outside sender stay neutral.
@@ -972,7 +976,7 @@ alarm: **no colour of its own, never in the task list's Needs you group.**
   balloon's top 72px under its top (48 on a phone), marks the whole balloon `.ibx-landed` (an inset 2px
   `--accent` ring on `--selected-bg`, full strength, then a fade of min(1 s, 30%)) with the **FROM THE
   INBOX** lozenge after its time, gives it `aria-current="location"` and the focus, and drops it all
-  the Inbox highlight setting after it landed (Settings › Preferences › Inbox, 1–30 s, default 3.5).
+  the Inbox highlight setting after it landed (Settings › Appearance › Inbox, 1–30 s, default 3.5).
   The Inbox row gets no mark. Other links keep `.landed` on the passage.
 - **The bar under a balloon** (`.pt-bar`, a hairline `--border` above it): on the person's balloon
   each point and where it stands ("P12 · waiting for an answer", "P12 · answered ↓" linked to the
@@ -1427,7 +1431,8 @@ class="pref-label" for>`, never free text (Settings' *Agent models*, #145, is th
 - **What is in effect is also said in words under the select** (`.cfg-hint`, `role="status"`): a
   phone's select cuts a long choice short, and a consequence (the pool a model draws on) has no room
   in an option.
-- **A choice is saved as it is made;** there is no Save button. The select keeps the focus and
+- **A choice is saved as it is made;** there is no Save button (Settings › Appearance alone has
+  one: it previews, see *Every look choice is on one page*). The select keeps the focus and
   its place meanwhile (never disabled, never rewritten while someone is in it), so arrow keys step
   through it; choices are saved in the order they were made. A refused choice shows the hub's
   reason in the toast and the select goes back to what is saved. A value saved earlier that is no
@@ -1621,7 +1626,7 @@ self-contained component, so a later layout can host it elsewhere.
   deliberately not included. The checkbox beside the task list's filter, labelled **Full names** with the full accessible name
   **Show full names on hover**, is on by default and saves
   `cd-switcher-full-names` per browser. On `(hover: none)` there is no expansion.
-  #337 wires the same helper and setting (also in Settings > Preferences > Lists) to the left panel's
+  #337 wires the same helper and setting (also in Settings › Appearance) to the left panel's
   project, task and session rows and the Inbox title, and to cut panel tabs (Dock `.dk-tab`, workspace
   `.wst-tab`): a raised tab keeps its strip's height and type, grows leftwards near the window's
   right edge, and passes clicks, ×, right click and drag to the tab under it; while the setting is on,

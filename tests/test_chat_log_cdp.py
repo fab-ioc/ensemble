@@ -1,6 +1,6 @@
 """Chat as a log, with author colours (#401: issues 58, 63, 62; P412).
 
-Settings › Preferences › Chat › Chat as a log, the hub's ``chatLog``, off by
+Settings › Appearance › Chat › Chat as a log, the hub's ``chatLog``, off by
 default. In headless Chrome over CDP against a hub in a thread: a project
 Motors with a PO chat and two tasks, #7 (engineer and reviewer) and #9. The
 PO chat has a point the PO answered ("answers P1"), and reports from both
@@ -164,16 +164,17 @@ async function main() {
     const p = await tab(1440, 900);
     out.fresh = {};
     for (const room of [A.po, A.task7]) { await p.chat(room); if (room === A.po) await p.until(`!!document.querySelector('.rl.po[data-po-fill]')`, 'po colour'); out.fresh[room] = await p.ev(VIEW); await p.shot(`chat-log-off-${room === A.po ? 'po' : 'task7'}`); }
-    // Settings › Preferences › Chat as a log: On, with a real click. The open chat follows.
-    await dash.ev(`openSettings('prefs'); 0`); await sleep(400);
+    // Settings › Appearance › Chat as a log: On and Save, with real clicks. The open chat follows.
+    await dash.ev(`openSettings('appearance'); 0`); await sleep(400);
     out.prefBefore = await dash.ev(`[...document.querySelectorAll('#pref-chat-log button')].map(b => [b.dataset.val, b.getAttribute('aria-pressed')])`);
     out.prefLabel = await dash.ev(`document.getElementById('pref-chat-log-label').textContent`);
     out.prefRect = await dash.ev(`(() => { const h = [...document.querySelectorAll('h5.sp-sub')].find(e => e.textContent.trim() === 'Chat'), seg = document.getElementById('pref-chat-log');
-      const hint = seg.closest('.pref-row').nextElementSibling; const a = h.getBoundingClientRect(), b = (hint || seg).getBoundingClientRect(), c = seg.getBoundingClientRect();
+      const hint = seg.closest('.ap-pc'); const a = h.getBoundingClientRect(), b = (hint || seg).getBoundingClientRect(), c = seg.getBoundingClientRect();
       return {l: Math.min(a.left, b.left) - 16, t: a.top - 12, r: Math.max(c.right, b.right) + 16, b: b.bottom + 12, dpr: devicePixelRatio}; })()`);
     await dash.shot('settings-chat');
     if (A.shots) fs.writeFileSync(path.join(A.shots, 'settings-chat.json'), JSON.stringify(out.prefRect));
     await dash.click(`document.querySelector('#pref-chat-log button[data-val="on"]')`);
+    await dash.click(`document.getElementById('ap-save')`);
     await dash.until(`fetch('/api/settings').then(r => r.json()).then(j => j.chatLog === 'on')`, 'saved on');
     await p.until(`document.documentElement.dataset.chatLog === 'on'`, 'chat took on');
     out.reloads = await p.ev(`performance.getEntriesByType('navigation').length + ':' + (window.__noReload = 1)`);
@@ -240,44 +241,47 @@ async function main() {
     await ph.close();
     // Off again in Settings: the open chat goes back.
     await p.ev(`localStorage.setItem('cd-chat-log', 'on'); 0`); await p.chat(A.po);
-    await dash.ev(`openSettings('prefs'); 0`); await sleep(300);
+    await dash.ev(`openSettings('appearance'); 0`); await sleep(300);
     out.prefOn = await dash.ev(`[...document.querySelectorAll('#pref-chat-log button')].map(b => [b.dataset.val, b.getAttribute('aria-pressed')])`);
     await dash.click(`document.querySelector('#pref-chat-log button[data-val="off"]')`);
+    await dash.click(`document.getElementById('ap-save')`);
     await p.until(`document.documentElement.dataset.chatLog === 'off'`, 'chat took off');
     await dash.until(`fetch('/api/settings').then(r => r.json()).then(j => j.chatLog === 'off')`, 'saved off');
     await sleep(300);
     out.offAgain = await p.ev(VIEW);
-    // A save that fails: the open chat goes back to the saved choice (off), and so does Settings.
+    // A save that fails: no chat moves (the preview is this page's only), the cache and
+    // the hub keep off, and Settings keeps previewing On with its bar so Save can be tried again.
     await dash.ev(`window.__api = api; api = (u, o) => o && o.method === 'PUT' && u === '/api/settings' ? Promise.reject(new Error('offline')) : window.__api(u, o); 0`);
     await dash.click(`document.querySelector('#pref-chat-log button[data-val="on"]')`);
+    await dash.click(`document.getElementById('ap-save')`);
     await sleep(800);
     out.failed = {chat: await p.ev(`document.documentElement.dataset.chatLog`),
       local: await dash.ev(`localStorage.getItem('cd-chat-log')`),
       pressed: await dash.ev(`[...document.querySelectorAll('#pref-chat-log button')].map(b => [b.dataset.val, b.getAttribute('aria-pressed')])`),
-      hub: await dash.ev(`window.__api('/api/settings').then(j => j.chatLog)`)};
-    await dash.ev(`api = window.__api; 0`);
-    // On persists, then the queued Off fails: the browser must recover On.
+      hub: await dash.ev(`window.__api('/api/settings').then(j => j.chatLog)`),
+      bar: await dash.ev(`!document.getElementById('ap-bar').hidden`)};
+    await dash.ev(`api = window.__api; apCancel(); 0`);
+    // On is saving when Off is chosen: On is saved, and Off stays previewed, unsaved.
     await dash.ev(`window.__api = api; api = (u, o) => {
-      if (u === '/api/settings' && o && o.method === 'PUT') {
-        const v = JSON.parse(o.body).chatLog;
-        if (v === 'on') { const n = SETPREF_N.chatLog;
-          return new Promise(r => { window.__releaseOn = () => { window.__onWasQueued = SETPREF_N.chatLog > n; r(window.__api(u, o)); }; }); }
-        if (v === 'off') return Promise.reject(new Error('offline'));
-      }
+      if (u === '/api/settings' && o && o.method === 'PUT')
+        return new Promise(r => { window.__releaseOn = () => r(window.__api(u, o)); });
       return window.__api(u, o);
     }; 0`);
     await dash.click(`document.querySelector('#pref-chat-log button[data-val="on"]')`);
+    await dash.click(`document.getElementById('ap-save')`);
     await dash.click(`document.querySelector('#pref-chat-log button[data-val="off"]')`);
     await dash.ev(`window.__releaseOn(); 0`);
-    await dash.until(`window.__api('/api/settings').then(j => j.chatLog === 'on')`, 'queued On saved');
+    await dash.until(`window.__api('/api/settings').then(j => j.chatLog === 'on')`, 'On saved');
+    await dash.until(`!AP.saving`, 'save done');
     await sleep(700);
-    out.queuedFailed = {queued: await dash.ev(`window.__onWasQueued === true`),
+    out.whileSaving = {draft: await dash.ev(`Object.keys(AP.draft)`),
+      bar: await dash.ev(`!document.getElementById('ap-bar').hidden`),
       chat: await p.ev(`document.documentElement.dataset.chatLog`),
       local: await dash.ev(`localStorage.getItem('cd-chat-log')`),
       pressed: await dash.ev(`[...document.querySelectorAll('#pref-chat-log button')].map(b => [b.dataset.val, b.getAttribute('aria-pressed')])`),
       hub: await dash.ev(`window.__api('/api/settings').then(j => j.chatLog)`)};
     await dash.ev(`api = window.__api; 0`);
-    await dash.click(`document.querySelector('#pref-chat-log button[data-val="off"]')`);
+    await dash.click(`document.getElementById('ap-save')`);
     await dash.until(`fetch('/api/settings').then(r => r.json()).then(j => j.chatLog === 'off')`, 'reset off');
     console.log(JSON.stringify(out));
   } finally { c.close(); ch.kill(); }
@@ -485,11 +489,11 @@ class ChatLogInChrome(unittest.TestCase):
             self.assertTrue(self.label(on, 'po'))
             self.assertEqual(self.got['on'][theme].get('poFill'), 'var(--c-success-bold)', 'the PO label is in its project colour')
 
-    def test_a_failed_save_puts_the_chats_back(self):
-        self.assertEqual(self.got['failed'], {'chat': 'off', 'local': 'off', 'pressed': [['off', 'true'], ['on', 'false']], 'hub': 'off'})
+    def test_a_failed_save_moves_no_chat_and_keeps_the_preview(self):
+        self.assertEqual(self.got['failed'], {'chat': 'off', 'local': 'off', 'pressed': [['off', 'false'], ['on', 'true']], 'hub': 'off', 'bar': True})
 
-    def test_a_queued_failed_save_keeps_the_last_success(self):
-        self.assertEqual(self.got['queuedFailed'], {'queued': True, 'chat': 'on', 'local': 'on', 'pressed': [['off', 'false'], ['on', 'true']], 'hub': 'on'})
+    def test_a_choice_made_while_saving_stays_previewed(self):
+        self.assertEqual(self.got['whileSaving'], {'draft': ['chatLog'], 'bar': True, 'chat': 'on', 'local': 'on', 'pressed': [['off', 'true'], ['on', 'false']], 'hub': 'on'})
 
     def test_thread_mode_also_in_belongs_to_its_own_balloon(self):
         items = self.got['threadAfter']['items']

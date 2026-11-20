@@ -285,11 +285,12 @@ class HeadScript(unittest.TestCase):
 class IndexWiring(unittest.TestCase):
     def test_choice_is_saved_on_the_hub(self):
         src = PAGES["index.html"]
-        i = src.index("function setAccent(")
+        # #407: Settings › Appearance's Save sends the accent with the other changed choices.
+        i = src.index("async function apSave(")
         block = src[i:src.index("\n}\n", i)]
-        self.assertIn("cdTheme.chooseAccent(color)", block)
-        self.assertIn("cdTheme.saveAccent(color)", block)
-        self.assertIn("color || 'default'", block)
+        self.assertIn("cdTheme.chooseAccent(d.accent)", block)
+        self.assertIn("cdTheme.saveAccent(d.accent, hub)", block)
+        self.assertIn("d.accent || 'default'", block)
         self.assertNotIn("fetch(", block)               # saves go through the head's queue
         self.assertNotIn("function accentFgFor(", src)   # one copy, in the head
 
