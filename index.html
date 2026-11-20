@@ -3838,6 +3838,32 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   #hub-chat .hc-diff .del::before { content: '\2212'; }
   #hub-chat .hc-diff .gap { color: var(--fg-muted); }
   #hub-chat .hc-diff .sec { color: var(--fg-muted); }
+  /* #410: a Settings change, one row per setting (its name, where it is in Settings, old and new). */
+  #hub-chat .hc-ch-title { padding: var(--s-150, 6px) var(--s-300); font-size: var(--fs-200); color: var(--fg-muted); background: var(--surface-sunken); border-bottom: 1px solid var(--border); }
+  #hub-chat .hc-set { padding: var(--s-200) var(--s-300) var(--s-150, 6px); background: var(--surface); }
+  #hub-chat .hc-set + .hc-set { border-top: 1px solid var(--border); }
+  #hub-chat .hc-set .nm { font-size: var(--fs-300); font-weight: 600; }
+  #hub-chat .hc-set .where { font-size: var(--fs-200); color: var(--fg-muted); }
+  #hub-chat .hc-set .hc-diff { padding: var(--s-050) 0 0; background: transparent; }
+  #hub-chat .hc-set .hc-diff div { border-radius: 2px; }
+  /* #410: the History view: what Ask the hub applied, newest first. */
+  /* The chat and the History swap in the grid's middle and bottom rows. */
+  #hub-chat .hc-turns[hidden], #hub-chat .hc-compose[hidden], #hc-chat-foot[hidden], #hub-chat #hc-clear[hidden] { display: none; }
+  /* History is a toggle: pressed is --selected-bg, as a selection. */
+  #hub-chat #hc-hist[aria-pressed="true"] { background: var(--selected-bg); color: var(--selected-fg); border-color: var(--selected-bg); }
+  #hub-chat .hc-hist-intro { margin: 0; font-size: var(--fs-300); color: var(--fg-subtle); }
+  #hub-chat .hc-hist-filter { align-self: flex-start; font-size: var(--fs-200); }
+  #hub-chat .hc-hist-filter button { padding: 2px 10px; }
+  #hub-chat .hc-ev { border: 1px solid var(--border); border-radius: var(--r-200); padding: var(--s-200) var(--s-300); }
+  #hub-chat .hc-ev .top { display: flex; gap: var(--s-200); align-items: center; font-size: var(--fs-200); color: var(--fg-muted); }
+  #hub-chat .hc-ev .asked { margin: var(--s-050) 0 var(--s-100); font-size: var(--fs-300); overflow-wrap: anywhere; }
+  #hub-chat .hc-ev .asked i { color: var(--fg-subtle); }
+  #hub-chat .hc-ev table { border-collapse: collapse; width: 100%; font-size: var(--fs-200); }
+  #hub-chat .hc-ev td { padding: 2px 0; vertical-align: top; overflow-wrap: anywhere; }
+  #hub-chat .hc-ev td.k { color: var(--fg-subtle); padding-right: var(--s-200); width: 45%; }
+  #hub-chat .hc-ev .old { color: var(--fg-muted); text-decoration: line-through; }
+  #hub-chat .hc-ev .arrow { color: var(--fg-muted); padding: 0 4px; }
+  #hub-chat .hc-ev ul { margin: 0; padding-left: 18px; font-size: var(--fs-200); }
   #hub-chat .hc-sec { padding: var(--s-200) var(--s-300); border-top: 1px solid var(--border); font-size: var(--fs-200); color: var(--fg-subtle); }
   #hub-chat .hc-sec b { display: block; font-weight: 600; color: var(--fg); }
   #hub-chat .hc-sec ul { margin: var(--s-100) 0 0; padding-left: var(--s-400); }
@@ -4396,6 +4422,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     #hub-chat .hc-head { height: auto; min-height: var(--touch-min); padding: 0 var(--s-100) 0 var(--s-300); }
     #hub-chat .hc-x { width: var(--touch-min); height: var(--touch-min); }
     #hub-chat .rm-btn { min-height: var(--touch-min); min-width: var(--touch-min); }
+    #hub-chat .hc-hist-filter button { min-height: var(--touch-min); padding: 0 var(--s-300); }
     #hub-chat .hc-turns { padding: var(--s-300); }
     #hub-chat .hc-compose { padding: var(--s-200) var(--s-300); }
     #hub-chat .hc-in { font-size: var(--fs-400); min-height: var(--touch-min); }   /* 16px: a phone does not zoom into it */
@@ -6095,13 +6122,18 @@ window.DOC_LISTENERS_PAUSED = false;
   <div class="hc-head">
     <svg class="hc-ico" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path class="hc-tint" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" d="M6.5 3h11A2.5 2.5 0 0 1 20 5.5v8a2.5 2.5 0 0 1-2.5 2.5H11l-4.5 4v-4A2.5 2.5 0 0 1 4 13.5v-8A2.5 2.5 0 0 1 6.5 3z"/><path fill="currentColor" d="M12 5.4l1.2 2.9 2.9 1.2-2.9 1.2L12 13.6l-1.2-2.9-2.9-1.2 2.9-1.2z"/></svg>
     <h3 id="hc-title">Ask the hub</h3>
+    <button type="button" class="rm-btn" id="hc-hist" aria-pressed="false" aria-controls="hc-hist-view" title="Every change Ask the hub applied">History</button>
     <button type="button" class="rm-btn" id="hc-clear">Clear</button>
     <button type="button" class="hc-x" id="hc-close" aria-label="Close Ask the hub" title="Close (Esc)">&times;</button>
   </div>
   <div class="hc-turns" id="hc-turns" aria-live="polite"></div>
-  <div>
+  <div class="hc-turns" id="hc-hist-view" role="region" aria-label="History of what Ask the hub applied" hidden></div>
+  <div class="hc-compose" id="hc-hist-foot" hidden>
+    <button type="button" class="rm-btn" id="hc-hist-back">Back to the chat</button>
+  </div>
+  <div id="hc-chat-foot">
     <div class="hc-compose">
-      <textarea id="hc-in" class="hc-in" rows="2" placeholder="Ask for a change, e.g. take ABC-99 out of Harbour" aria-label="What you want changed" title="Ctrl+Enter sends"></textarea>
+      <textarea id="hc-in" class="hc-in" rows="2" placeholder="Ask for a change, e.g. pause Jira or check on tasks every 15 minutes" aria-label="What you want changed" title="Ctrl+Enter sends"></textarea>
       <button type="button" class="rm-btn primary" id="hc-send">Send</button>
     </div>
     <p class="hc-note" id="hc-note" role="status"></p>
@@ -27742,13 +27774,24 @@ window.closeSources = closeSources;
 
 // ---- Ask the hub (#16): one Haiku call a question; a change is shown as
 // its changed lines and the hub's check, and applied only on Apply.
-const HC = { data: null, err: '', timer: 0, clearTimer: 0, opener: null, html: '', sending: false };
+const HC = { data: null, err: '', timer: 0, clearTimer: 0, opener: null, html: '', sending: false,
+  hist: null, histErr: '', histOn: false, histFilter: 'all' };
 const HC_STATE = {
   proposed: '', applying: 'Applying…', applied: 'Applied', discarded: 'Discarded',
   stale: 'The setup file changed since this was made, so it can no longer be applied as it is.',
 };
+// A Settings change applied since the last read (here or in another tab):
+// the page takes the new settings (theme and accent, and Settings' own copy).
+function hcSettingsApplied(prev, next) {
+  if (!prev || !next) return;
+  const was = new Set(prev.turns.filter(t => t.setup === 'settings' && t.state === 'applied').map(t => t.id));
+  if (!next.turns.some(t => t.setup === 'settings' && t.state === 'applied' && !was.has(t.id))) return;
+  if (window.cdTheme) cdTheme.sync();
+  loadPrefs();
+}
 async function hcLoad() {
-  try { HC.data = await isGet('/api/hub-chat'); HC.err = ''; }
+  const prev = HC.data;
+  try { HC.data = await isGet('/api/hub-chat'); HC.err = ''; hcSettingsApplied(prev, HC.data); }
   catch (e) { HC.err = e.message; }
   if (!$('#hub-chat').hidden) hcPaint();
   hcMark();
@@ -27776,11 +27819,20 @@ function hcDiffHtml(diff) {
 function hcListHtml(title, items, cls) {
   return items && items.length ? `<div class="hc-sec${cls ? ' ' + cls : ''}"><b>${isEsc(title)}</b><ul>${items.map(x => `<li>${isEsc(x)}</li>`).join('')}</ul></div>` : '';
 }
+// #410: a Settings change: one row per setting, old (−) and new (+).
+function hcSettingsHtml(diff) {
+  const n = (diff || []).length;
+  return `<div class="hc-ch-title">Settings · ${n} change${n === 1 ? '' : 's'}</div>` + (diff || []).map(d =>
+    `<div class="hc-set"><div class="nm">${isEsc(d.name)}</div><div class="where">${isEsc(d.where)}</div>`
+    + `<div class="hc-diff"><div class="del"><span class="hc-sr">was: </span>${isEsc(d.before)}</div>`
+    + `<div class="add"><span class="hc-sr">becomes: </span>${isEsc(d.after)}</div></div></div>`).join('');
+}
 function hcChangeHtml(t) {
   const c = t.check || {}, r = t.result || {};
-  let h = '<div class="hc-change">' + hcDiffHtml(t.diff);
+  const settings = t.setup === 'settings';
+  let h = '<div class="hc-change">' + (settings ? hcSettingsHtml(t.diff) : hcDiffHtml(t.diff));
   if (t.state === 'applied') {
-    h += hcListHtml('What it changed', r.changes, '')
+    h += (settings ? '' : hcListHtml('What it changed', r.changes, ''))
       + hcListHtml(r.problems && r.problems.length === 1 ? 'A problem' : 'Problems', r.problems, 'hc-probs')
       + (r.failed ? `<div class="hc-sec hc-probs"><b>Not all applied</b>${isEsc(r.failed)}</div>` : '');
   } else if (t.state === 'proposed' || t.state === 'applying') {
@@ -27797,7 +27849,7 @@ function hcChangeHtml(t) {
   } else if (t.state === 'stale') {
     h += `<button type="button" class="rm-btn" data-hc="again" data-id="${isEsc(t.id)}">Ask again</button>`
       + `<button type="button" class="rm-btn" data-hc="discard" data-id="${isEsc(t.id)}">Discard</button>`
-      + `<span class="hc-state warn">${isEsc(r.error || HC_STATE.stale)}</span>`;
+      + `<span class="hc-state warn">${isEsc(r.error || t.staleWhy || HC_STATE.stale)}</span>`;
   } else {
     const at = t.state === 'applied' && r.at ? ' ' + isWhen(r.at) : '';
     h += `<span class="hc-state">${isEsc((HC_STATE[t.state] || t.state) + at)}</span>`;
@@ -27815,8 +27867,8 @@ function hcTurnHtml(t) {
 function hcIntroHtml() {
   const d = HC.data;
   const what = d && d.setups ? d.setups.map(x => x.label).join(', ') : 'the outside sources setup';
-  return `<div class="hc-intro">Ask in plain words for a change to ${isEsc(what)}. Haiku writes the new file; you see the lines it changes and what the hub's check says, and nothing changes until you click Apply.`
-    + '<ul><li>Send #made-up-channel to Harbour</li><li>Take ABC-99 out of Harbour</li><li>Pause Jira</li><li>What goes to Harbour now?</li></ul></div>';
+  return `<div class="hc-intro">Ask in plain words for a change to ${isEsc(what)} or to the hub's Settings. Haiku writes the change; you see the lines or the settings it changes, old and new, and what the hub's check says, and nothing changes until you click Apply. History lists what was applied.`
+    + '<ul><li>Send #made-up-channel to Harbour</li><li>Take ABC-99 out of Harbour</li><li>Pause Jira</li><li>Check on tasks every 15 minutes</li><li>Stop reviews after 3 rounds</li><li>What goes to Harbour now?</li></ul></div>';
 }
 function hcPaint() {
   hcMark();
@@ -27841,10 +27893,58 @@ function hcPaint() {
   HC.painted = true;
   if (f) { const b = box.querySelector(f); if (b) b.focus(); else $('#hc-in').focus(); }
 }
+// #410: the History view: what Ask the hub applied (Settings and routing),
+// newest first, with a filter. Clear never touches it.
+const HC_HIST_KINDS = { all: 'All', settings: 'Settings', routing: 'Routing' };
+async function hcHistLoad() {
+  try { HC.hist = await isGet('/api/hub-chat/history'); HC.histErr = ''; }
+  catch (e) { HC.histErr = e.message; }
+  if (HC.histOn) hcHistPaint();
+}
+function hcHistItemHtml(x) {
+  const tag = x.kind === 'settings' ? 'Settings' : 'Routing';
+  let h = `<div class="hc-ev"><div class="top"><span class="loz neutral">${tag}</span>${isEsc(isWhen(x.at))}</div>`;
+  if (x.ask) h += `<p class="asked"><i>Asked:</i> ${isEsc(x.ask)}</p>`;
+  if (x.kind === 'settings') {
+    h += '<table>' + (x.changes || []).map(c => `<tr><td class="k">${isEsc(c.name)}</td><td><span class="old"><span class="hc-sr">was </span>${isEsc(c.before)}</span><span class="arrow" aria-hidden="true">→</span><span class="hc-sr">, now </span>${isEsc(c.after)}</td></tr>`).join('') + '</table>';
+  } else {
+    h += '<ul>' + (x.lines || []).map(l => `<li>${isEsc(l)}</li>`).join('') + '</ul>';
+  }
+  return h + '</div>';
+}
+function hcHistPaint() {
+  const box = $('#hc-hist-view');
+  let html = '<p class="hc-hist-intro">What Ask the hub applied, newest first. Kept even after Clear.</p>'
+    + '<div class="seg hc-hist-filter" role="group" aria-label="Show">' + Object.entries(HC_HIST_KINDS).map(([k, v]) =>
+      `<button type="button" data-hcf="${k}" aria-pressed="${HC.histFilter === k}"${HC.histFilter === k ? ' class="active"' : ''}>${v}</button>`).join('') + '</div>';
+  if (!HC.hist) html += `<p class="hc-hist-intro">${isEsc(HC.histErr ? 'The history could not be read: ' + HC.histErr : 'Reading…')}</p>`;
+  else {
+    const items = (HC.hist.items || []).filter(x => HC.histFilter === 'all' || x.kind === HC.histFilter);
+    html += items.length ? items.map(hcHistItemHtml).join('')
+      : `<p class="hc-hist-intro">${HC.histFilter === 'all' ? 'Nothing applied yet.' : 'Nothing of this kind applied yet.'}</p>`;
+  }
+  const f = document.activeElement && box.contains(document.activeElement) ? document.activeElement.dataset.hcf : null;
+  box.innerHTML = html;
+  if (f) { const b = box.querySelector(`[data-hcf="${f}"]`); if (b) b.focus(); }
+}
+function hcHistShow(on) {
+  HC.histOn = !!on;
+  const b = $('#hc-hist');
+  b.setAttribute('aria-pressed', String(HC.histOn));
+  b.classList.toggle('active', HC.histOn);
+  $('#hc-turns').hidden = HC.histOn;
+  $('#hc-chat-foot').hidden = HC.histOn;
+  $('#hc-clear').hidden = HC.histOn;
+  $('#hc-hist-view').hidden = !HC.histOn;
+  $('#hc-hist-foot').hidden = !HC.histOn;
+  if (HC.histOn) { hcHistPaint(); hcHistLoad(); }
+  else { HC.html = ''; hcPaint(); }
+}
 async function hcPost(body, btn) {
   if (btn) btn.disabled = true;
   $('#hc-note').textContent = '';
-  try { HC.data = await isPost('/api/hub-chat', body); HC.err = ''; }
+  const prev = HC.data;
+  try { HC.data = await isPost('/api/hub-chat', body); HC.err = ''; hcSettingsApplied(prev, HC.data); }
   catch (e) { $('#hc-note').textContent = 'Not done: ' + e.message; if (btn) btn.disabled = false; }
   hcPaint();
   hcSchedule();
@@ -27966,6 +28066,14 @@ addEventListener('resize', () => { if (!$('#hub-chat').hidden) hcSetW(hcPrefs().
 })();
 $('#hc-close').addEventListener('click', closeHubChat);
 $('#hc-send').addEventListener('click', hcSend);
+$('#hc-hist').addEventListener('click', () => { hcHistShow(!HC.histOn); if (!HC.histOn) $('#hc-in').focus(); });
+$('#hc-hist-back').addEventListener('click', () => { hcHistShow(false); $('#hc-hist').focus(); });
+$('#hc-hist-view').addEventListener('click', ev => {
+  const b = ev.target.closest('[data-hcf]');
+  if (!b) return;
+  HC.histFilter = b.dataset.hcf;
+  hcHistPaint();
+});
 // Clear throws every turn away, open proposals too: the first click only asks
 // (the button reads "Clear all turns?" for a few seconds), the second clears.
 $('#hc-clear').addEventListener('click', ev => {

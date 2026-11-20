@@ -42,6 +42,7 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+import agent_models  # noqa: E402
 import chatroom  # noqa: E402
 import dashboard  # noqa: E402
 import hub_chat  # noqa: E402
@@ -96,6 +97,12 @@ class AskTheHubPage(unittest.TestCase):
             mock.patch.object(hub_chat, "RUN", run),
             mock.patch.object(outside, "check_now", lambda sid: None),
             mock.patch.dict(os.environ, {"CODEX_HOME": str(base / "codex")}),
+            # The hub's Settings (#410): saved in the test's own folder only.
+            mock.patch.object(dashboard.usage, "remark_codex", lambda: None),
+            mock.patch.object(agent_models, "codex_models", lambda path=None: [
+                {"id": "gpt-6-sol", "name": "gpt-6-sol", "description": "", "efforts": ["low", "medium", "high"],
+                 "defaultEffort": "medium", "pool": ""}]),
+            mock.patch.object(agent_models, "codex_own", lambda: {"model": "gpt-6-sol", "effort": ""}),
         ]
         for p in cls.patches:
             p.start()
@@ -133,6 +140,7 @@ class AskTheHubPage(unittest.TestCase):
         try:
             cls._desktop()
             cls._phone()
+            cls._settings()
             cls._docked()
             cls._docked_phone()
         finally:
@@ -252,6 +260,117 @@ class AskTheHubPage(unittest.TestCase):
           return {{ w: Math.round(d.width), vw: innerWidth, fs: getComputedStyle(document.getElementById('hc-in')).fontSize,
             sw: b.scrollWidth, cw: b.clientWidth, small: {small} }}; }})()""")
         cls._shot(p, "5 Phone")
+        # #410: the History view's controls are finger-sized too.
+        p.eval("document.getElementById('hc-hist').click(); 0")
+        p.until("HC.hist && document.querySelector('#hc-hist-view [data-hcf]')", 20)
+        g["phoneHist"] = p.eval(f"""(() => {{ const b = document.getElementById('hc-hist-view');
+          return {{ sw: b.scrollWidth, cw: b.clientWidth, small: {small} }}; }})()""")
+        cls._shot(p, "5b Phone History")
+        p.eval("document.getElementById('hc-hist-back').click(); 0")
+        p.close()
+
+    LAST = "[...document.querySelectorAll('#hc-turns .hc-h')].pop()"
+
+    @classmethod
+    def _settings(cls):
+        """#410: a Settings change (one row per setting, old and new), its
+        Apply, a stale one, and the History view."""
+        g = cls.got
+        p = cls.browser.page(1280, 860)
+        cls._open(p)
+        p.eval("openHubChat(document.getElementById('me-btn')); 0")
+        p.until("HC.data && !document.getElementById('hub-chat').hidden")
+        n = p.eval("HC.data.turns.length")
+        cls.answers.append('SETTINGS: The PO checks every 15 minutes, and a task gets at most 3 review rounds.\n'
+                           '<<<SETTINGS\n{"digestIntervalMin": 15, "reviewRoundsPerTask": 3}\nSETTINGS>>>')
+        cls._ask(p, "Check every 15 minutes and stop reviews after 3 rounds", n + 2)
+        g["setCard"] = p.eval(f"""(() => {{ const h = {cls.LAST};
+          return {{ said: h.querySelector('.hc-said').textContent, title: h.querySelector('.hc-ch-title').textContent,
+            rows: [...h.querySelectorAll('.hc-set')].map(r => [r.querySelector('.nm').textContent, r.querySelector('.where').textContent,
+              r.querySelector('.del').textContent, r.querySelector('.add').textContent]),
+            lines: h.querySelectorAll('.hc-diff > .add, .hc-diff > .del').length,
+            buttons: [...h.querySelectorAll('.hc-acts .rm-btn')].map(b => b.textContent),
+            state: h.querySelector('.hc-state').textContent }}; }})()""")
+        g["setBefore"] = dashboard.load_settings()["reviewRoundsPerTask"]
+        cls._shot(p, "11 A Settings change")
+        g["setThemes"] = {}
+        for t in THEMES:
+            p.eval(f"document.documentElement.dataset.theme = '{t}'; 0")
+            g["setThemes"][t] = p.eval("(() => {" + CONTRAST_JS + """
+              const pair = e => e ? ratio(getComputedStyle(e).color, bgOf(e)) : 0;
+              const q = s => [...document.querySelectorAll(s)].pop();
+              return { title: pair(q('#hc-turns .hc-ch-title')), name: pair(q('#hc-turns .hc-set .nm')),
+                       where: pair(q('#hc-turns .hc-set .where')), old: pair(q('#hc-turns .hc-set .del')),
+                       now: pair(q('#hc-turns .hc-set .add')) }; })()""")
+        p.eval("document.documentElement.dataset.theme = 'light'; 0")
+        g["prefsBefore"] = p.eval("PREFS && PREFS.digestIntervalMin")
+        p.eval(f"{cls.LAST}.querySelector('[data-hc=\"apply\"]').click(); 0")
+        p.until(f"HC.data && HC.data.turns[{n + 1}].state === 'applied' && /Applied/.test({cls.LAST}.querySelector('.hc-state').textContent)", 20)
+        g["setApplied"] = p.eval(f"""(() => {{ const h = {cls.LAST};
+          return {{ state: h.querySelector('.hc-state').textContent, secs: [...h.querySelectorAll('.hc-sec b')].map(b => b.textContent),
+            rows: h.querySelectorAll('.hc-set').length, buttons: [...h.querySelectorAll('.hc-acts .rm-btn')].map(b => b.textContent) }}; }})()""")
+        s = dashboard.load_settings()
+        g["setSaved"] = (s["digestIntervalMin"], s["reviewRoundsPerTask"])
+        # PO's read: the page takes the applied settings without a reload.
+        try:
+            g["prefsAfter"] = bool(p.until("PREFS && PREFS.digestIntervalMin === 15 && PREFS.reviewRoundsPerTask === 3", 10))
+        except AssertionError:
+            g["prefsAfter"] = False
+        # Stale: its own setting changed in Settings meanwhile.
+        cls.answers.append('SETTINGS: Prefer: Codex.\n<<<SETTINGS\n{"preferAgent": "codex"}\nSETTINGS>>>')
+        cls._ask(p, "Make reviews Codex", n + 4)
+        dashboard.save_settings({"preferAgent": "claude"})
+        p.eval("hcLoad(); 0")
+        p.until(f"{cls.LAST}.querySelector('[data-hc=\"again\"]')")
+        g["setStale"] = p.eval(f"""(() => {{ const h = {cls.LAST};
+          return {{ state: h.querySelector('.hc-state').textContent, buttons: [...h.querySelectorAll('.hc-acts .rm-btn')].map(b => b.textContent) }}; }})()""")
+        cls._shot(p, "12 A stale Settings change")
+        p.eval(f"{cls.LAST}.querySelector('[data-hc=\"discard\"]').click(); 0")
+        p.until(f"HC.data && HC.data.turns[{n + 3}].state === 'discarded'", 20)
+        # History: what was applied, newest first; Clear is hidden meanwhile.
+        VIEW = """(() => { const shown = id => { const e = document.getElementById(id); return !!e && getComputedStyle(e).display !== 'none' && e.getClientRects().length > 0; };
+          const v = document.getElementById('hc-hist-view');
+          return { pressed: document.getElementById('hc-hist').getAttribute('aria-pressed'),
+            turns: shown('hc-turns'), compose: shown('hc-chat-foot'), clear: shown('hc-clear'), hist: shown('hc-hist-view'), back: shown('hc-hist-foot'),
+            h: Math.round(v.getBoundingClientRect().height), focus: document.activeElement && document.activeElement.id,
+            items: [...v.querySelectorAll('.hc-ev')].map(e => [e.querySelector('.loz').textContent, (e.querySelector('.asked') || {}).textContent || '',
+              [...e.querySelectorAll('tr, li')].map(r => r.textContent)]),
+            filter: [...v.querySelectorAll('[data-hcf]')].map(b => b.textContent + (b.getAttribute('aria-pressed') === 'true' ? '*' : '')) }; })()"""
+        g["chatView"] = p.eval(VIEW)
+        p.eval("document.getElementById('hc-hist').click(); 0")
+        p.until("HC.hist && document.querySelector('#hc-hist-view .hc-ev')", 20)
+        g["hist"] = p.eval(VIEW)
+        cls._shot(p, "13 History")
+        g["histThemes"] = {}
+        for t in THEMES:
+            p.eval(f"document.documentElement.dataset.theme = '{t}'; 0")
+            g["histThemes"][t] = p.eval("(() => {" + CONTRAST_JS + """
+              const pair = e => e ? ratio(getComputedStyle(e).color, bgOf(e)) : 0;
+              const q = s => document.querySelector(s);
+              return { intro: pair(q('#hc-hist-view .hc-hist-intro')), top: pair(q('#hc-hist-view .hc-ev .top')),
+                       asked: pair(q('#hc-hist-view .hc-ev .asked')), name: pair(q('#hc-hist-view .hc-ev td.k')),
+                       old: pair(q('#hc-hist-view .hc-ev .old')), line: pair(q('#hc-hist-view .hc-ev li')) }; })()""")
+        p.eval("document.documentElement.dataset.theme = 'light'; 0")
+        p.eval("document.querySelector('#hc-hist-view [data-hcf=\"settings\"]').click(); 0")
+        g["histSettings"] = p.eval(VIEW)
+        p.eval("document.querySelector('#hc-hist-view [data-hcf=\"routing\"]').click(); 0")
+        g["histRouting"] = p.eval(VIEW)
+        p.eval("document.querySelector('#hc-hist-view [data-hcf=\"all\"]').click(); 0")
+        p.eval("document.getElementById('hc-hist-back').click(); 0")
+        g["histBack"] = p.eval(VIEW)
+        # PO's read: a theme applied from the chat repaints the page.
+        n = p.eval("HC.data.turns.length")
+        cls.answers.append('SETTINGS: Dark theme.\n<<<SETTINGS\n{"theme": "dark"}\nSETTINGS>>>')
+        cls._ask(p, "Dark theme", n + 2)
+        p.eval(f"{cls.LAST}.querySelector('[data-hc=\"apply\"]').click(); 0")
+        try:
+            g["themeAfter"] = bool(p.until("document.documentElement.dataset.theme === 'dark' "
+                                           "&& localStorage.getItem('cd-theme') === 'dark'", 10))
+        except AssertionError:
+            g["themeAfter"] = False
+        dashboard.save_settings({"theme": "light"})
+        p.eval("localStorage.setItem('cd-theme', 'light'); cdTheme.apply(); document.documentElement.dataset.theme = 'light'; 0")
+        p.eval("closeHubChat(); 0")
         p.close()
 
     PANEL = """(() => { const r = document.getElementById('hub-chat').getBoundingClientRect();
@@ -454,6 +573,74 @@ class AskTheHubPage(unittest.TestCase):
         self.assertEqual(ph["fs"], "16px")
         self.assertLessEqual(ph["sw"], ph["cw"], "nothing scrolls sideways")
         self.assertEqual(ph["small"], [], "every control is finger-sized")
+        h = self.got["phoneHist"]
+        self.assertLessEqual(h["sw"], h["cw"], "History scrolls not sideways")
+        self.assertEqual(h["small"], [], "every History control is finger-sized")
+
+    # ---- #410: the hub's own Settings, and the History
+
+    def test_a_settings_change_shows_each_setting_old_and_new(self):
+        c = self.got["setCard"]
+        self.assertEqual(c["said"], "The PO checks every 15 minutes, and a task gets at most 3 review rounds.")
+        self.assertEqual(c["title"], "Settings · 2 changes")
+        self.assertEqual(c["rows"], [
+            ["How often the PO checks on progress", "No row in Settings yet · a project's own value still wins",
+             "was: every 5 minutes", "becomes: every 15 minutes"],
+            ["Review rounds per task", "Settings › Agent models › Reviews", "was: 5 rounds", "becomes: 3 rounds"]])
+        self.assertEqual(c["lines"], 4, "no setup-file lines beside them")
+        self.assertEqual(c["buttons"], ["Apply", "Discard"])
+        self.assertEqual(c["state"], "Nothing is changed until you apply it.")
+        self.assertEqual(self.got["setBefore"], 5, "nothing saved before Apply")
+        for theme, m in self.got["setThemes"].items():
+            for k, v in m.items():
+                with self.subTest(theme=theme, what=k):
+                    self.assertGreaterEqual(v, 4.5, m)
+
+    def test_apply_saves_the_settings(self):
+        a = self.got["setApplied"]
+        self.assertRegex(a["state"], r"^Applied \d\d:\d\d$")
+        self.assertEqual(a["buttons"], [])
+        self.assertEqual(a["rows"], 2, "the rows stay, old and new")
+        self.assertNotIn("What it changed", a["secs"], "the rows already say it")
+        self.assertEqual(self.got["setSaved"], (15, 3))
+
+    def test_a_settings_apply_reloads_the_page_s_settings_and_theme(self):
+        """PO's read: after a Settings Apply the page takes the new settings
+        (Settings' own copy, the theme) without a reload."""
+        self.assertEqual(self.got["prefsBefore"], 5)
+        self.assertTrue(self.got["prefsAfter"], "PREFS has the applied values")
+        self.assertTrue(self.got["themeAfter"], "the applied theme is painted")
+
+    def test_a_stale_settings_change_names_the_setting(self):
+        s = self.got["setStale"]
+        self.assertEqual(s["state"], "Prefer was changed to Claude since this was made, so it can no longer be applied as it is.")
+        self.assertEqual(s["buttons"], ["Ask again", "Discard"])
+        self.assertEqual(dashboard.load_settings()["preferAgent"], "claude")
+
+    def test_history_lists_what_was_applied_newest_first(self):
+        c, h = self.got["chatView"], self.got["hist"]
+        self.assertEqual((c["pressed"], c["turns"], c["compose"], c["clear"], c["hist"], c["back"]),
+                         ("false", True, True, True, False, False))
+        self.assertEqual((h["pressed"], h["turns"], h["compose"], h["clear"], h["hist"], h["back"]),
+                         ("true", False, False, False, True, True), "Clear is hidden while History shows")
+        self.assertGreater(h["h"], 300, "it fills the panel")
+        self.assertEqual(h["filter"], ["All*", "Settings", "Routing"])
+        self.assertEqual([i[0] for i in h["items"]], ["Settings", "Routing"], "newest first")
+        self.assertEqual(h["items"][0][1], "Asked: Check every 15 minutes and stop reviews after 3 rounds")
+        self.assertEqual(h["items"][0][2], ["How often the PO checks on progresswas every 5 minutes→, now every 15 minutes",
+                                            "Review rounds per taskwas 5 rounds→, now 3 rounds"])
+        self.assertEqual(h["items"][1][1], "Asked: Take ABC-99 out of Harbour")
+        self.assertTrue(h["items"][1][2], "the routing lines")
+        self.assertEqual(([i[0] for i in self.got["histSettings"]["items"]], self.got["histSettings"]["filter"]),
+                         (["Settings"], ["All", "Settings*", "Routing"]))
+        self.assertEqual([i[0] for i in self.got["histRouting"]["items"]], ["Routing"])
+        b = self.got["histBack"]
+        self.assertEqual((b["pressed"], b["turns"], b["compose"], b["clear"], b["hist"], b["back"], b["focus"]),
+                         ("false", True, True, True, False, False, "hc-hist"))
+        for theme, m in self.got["histThemes"].items():
+            for k, v in m.items():
+                with self.subTest(theme=theme, what=k):
+                    self.assertGreaterEqual(v, 4.5, m)
 
     # ---- #21: docked, with its icon
 

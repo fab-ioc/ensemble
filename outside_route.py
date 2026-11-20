@@ -550,13 +550,36 @@ def _previewing() -> bool:
     return getattr(_PREVIEW, "table", None) is not None
 
 
+_NO_CARRY = threading.local()
+
+
+class reading_only:
+    """``with reading_only():`` this thread's reads of the table carry no
+    per-source table over (no write): Ask the hub reads the routing to show
+    it, and writes only on Apply (#410). Safe to nest, the same instance
+    too: each ``with`` keeps what it found on a stack of its own."""
+
+    def __init__(self):
+        self._was: list[bool] = []
+
+    def __enter__(self):
+        self._was.append(getattr(_NO_CARRY, "on", False))
+        _NO_CARRY.on = True
+        return self
+
+    def __exit__(self, *exc):
+        _NO_CARRY.on = self._was.pop()
+        return False
+
+
 def _load_one() -> dict:
     """``{rows, history, carried}`` of the one table, after carrying over any
     per-source table still there. During this thread's preview, its copy."""
     if _previewing():
         return json.loads(json.dumps(_PREVIEW.table))
     with _LOCK:
-        _carry_over()
+        if not getattr(_NO_CARRY, "on", False):
+            _carry_over()
         d = _read(_one_file())
     rows = d.get("rows") if isinstance(d.get("rows"), dict) else {}
     return {"rows": {k: _clean_row(v) for k, v in rows.items() if isinstance(k, str) and k

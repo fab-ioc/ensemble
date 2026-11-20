@@ -244,6 +244,15 @@ blue to violet ground); orange, not coral, so nothing reads as the one red.
   dock, the task panel and the PO drawer leave free; a splitter on its left edge, width and
   open/closed kept in `cd-hub-chat`); a phone shows it as a full-width sheet. The icon is pressed
   while open; an amber dot (`--c-warning-bold`) on it says a change waits for Apply.
+  A change to the hub's own Settings (#410) shows as a card of rows, not file lines: a
+  `.hc-ch-title` ("Settings · N changes"), then per setting `.hc-set` (its name as Settings shows
+  it, where it is in Settings in `--fg-muted`, and the old value on `.del` and the new on `.add`,
+  as a diff); Apply, Discard and the stale line as for a file change. **History** (`#hc-hist`, a
+  toggle in the head: pressed is `--selected-bg`) swaps the turns and the box for `#hc-hist-view`:
+  what Ask the hub applied, newest first, filtered by a `.seg` (All | Settings | Routing), each a
+  bordered `.hc-ev` with a `.loz neutral` kind tag, the time and the question; Clear is hidden
+  while it shows, and "Back to the chat" (`#hc-hist-foot`) returns. On a phone every control
+  there is 44px.
 - **The drawings and the renderer are one place:** `TOOL_GLYPH` and `toolIcon(id)` in
   `index.html`. Never draw a tool's icon again elsewhere; call `toolIcon`. Its SVG is
   `class="ti ti-<id>"`, painted in `currentColor`, and `.ti { color: var(--ti) }` gives it the

@@ -123,6 +123,7 @@ import outside_log
 import outside_items
 import outside_setup
 import hub_chat
+import hub_chat_settings
 # A task in a PO project that stopped without saying so: nudge, then tell the PO.
 import stall
 import idle
@@ -3144,6 +3145,16 @@ def save_settings(settings: dict) -> dict:
 
 
 def _save_settings_locked(settings: dict, pins: list | None = None) -> dict:
+    current = merge_settings(settings, pins)
+    _write_settings(current)
+    # The pool Codex is judged by follows the model chosen here.
+    usage.remark_codex()
+    return current
+
+
+def merge_settings(settings: dict, pins: list | None = None) -> dict:
+    """The settings as a save of ``settings`` would leave them: every check
+    and clamp the save makes, nothing written (Ask the hub's proposal, #410)."""
     current = load_settings()
     if pins is not None:
         current["pinnedProjects"] = clean_pinned_projects(pins)
@@ -3283,6 +3294,10 @@ def _save_settings_locked(settings: dict, pins: list | None = None) -> dict:
                 continue
             v = v.strip()
         current[k] = v
+    return current
+
+
+def _write_settings(current: dict) -> None:
     DASHBOARD_DIR.mkdir(parents=True, exist_ok=True)
     # A temp file of its own, and a few tries at the swap: on Windows another
     # process reading settings.json (a preflight hub) makes a replace fail.
@@ -3300,9 +3315,13 @@ def _save_settings_locked(settings: dict, pins: list | None = None) -> dict:
     finally:
         with contextlib.suppress(OSError):
             tmp.unlink()
-    # The pool Codex is judged by follows the model chosen here.
-    usage.remark_codex()
-    return current
+
+
+# Ask the hub (#410) changes Settings through this same save.
+hub_chat_settings.HUB.update(
+    load=lambda: load_settings(), merge=lambda s: merge_settings(s), save=lambda s: save_settings(s),
+    models_error=lambda s: agent_models_error(s), lock=_SETTINGS_LOCK, dir=lambda: DASHBOARD_DIR,
+    editors=[(eid, label) for eid, label in EDITORS])
 
 
 _GIT_NAME_CACHE: list = []
@@ -20011,6 +20030,13 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(403, {"error": "page_only", "message": "Only the dashboard page can show this."})
                 return
             self._send_json(200, hub_chat.view())
+            return
+        if p == "/api/hub-chat/history":
+            # What Ask the hub applied (#410): Settings and routing, newest first.
+            if not self._page_read_ok() or self._agent_peer():
+                self._send_json(403, {"error": "page_only", "message": "Only the dashboard page can show this."})
+                return
+            self._send_json(200, hub_chat.history())
             return
         if p == "/api/notify":
             # Whether this hub can notify, its key, and the devices it
