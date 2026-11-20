@@ -225,15 +225,15 @@ class SetupFileTest(unittest.TestCase):
         self.assertTrue(any(p.startswith("Alpha: Haiku read made-up-three") for p in self.problems()))
 
     def test_a_value_haiku_read_must_be_a_whole_name_in_the_section(self):
-        # "fx" is only a piece of "#fx-quotes"; "ABC-1" only a piece of "ABC-12".
-        for got in ({"slackChannels": ["fx"]}, {"workItems": ["ABC-1"]}):
+        # "kite" is only a piece of "#kite-quotes"; "ABC-1" only a piece of "ABC-12".
+        for got in ({"slackChannels": ["kite"]}, {"workItems": ["ABC-1"]}):
             self.answer = {"sections": [{"heading": "Alpha", "topic": "", **got}]}
-            self.apply("## Alpha\nRead #fx-quotes and follow ABC-12.\n")
+            self.apply("## Alpha\nRead #kite-quotes and follow ABC-12.\n")
             self.assertEqual(len(self.problems()), 1, got)
             self.assertIn("which the section does not say", self.problems()[0])
             self.assertEqual(self.row(ALPHA)["places"], {})
         self.assertTrue(setup._in_text("ABC-12", "follow ABC-12."))
-        self.assertTrue(setup._in_text("fx-quotes", "Read #fx-quotes and"))
+        self.assertTrue(setup._in_text("kite-quotes", "Read #kite-quotes and"))
 
     def test_a_topic_haiku_made_up_is_a_problem(self):
         route.set_initiative(ALPHA, {"topic": "before"}, {"kind": "ceo"}, now=WED)

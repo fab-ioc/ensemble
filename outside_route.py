@@ -314,7 +314,7 @@ def routed_sources() -> list[str]:
 
 def norm(value: str) -> str:
     """A channel as compared: no spaces round it, no leading '#', lower case.
-    So "#Prop-Pricing", "prop-pricing" and a channel's id typed in any case
+    So "#Made-Up-Pricing", "made-up-pricing" and a channel's id typed in any case
     are each one channel."""
     return str(value or "").strip().lstrip("#").strip().lower()
 

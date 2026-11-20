@@ -872,7 +872,7 @@ ROUTING_TOOLS = [
                                          "initiative's messages are about."},
                 "places": {"type": "object",
                            "description": "With set: places by source type, e.g. "
-                                          "{\"slack\": {\"channels\": [\"#prop-pricing\"]}}. A "
+                                          "{\"slack\": {\"channels\": [\"#made-up-pricing\"]}}. A "
                                           "list replaces the whole list; [] empties it."},
                 "addItems": {**_ITEM_LIST,
                              "description": "With set: work items to add: ABC-123, "

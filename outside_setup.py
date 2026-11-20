@@ -591,8 +591,8 @@ def _ask_haiku(sections: list[dict]) -> dict:
 
 
 def _in_text(value: str, text: str) -> bool:
-    """Whether ``value`` is written in ``text`` as a whole name: "fx" is
-    not in "#fx-quotes", "ABC-1" is not in "ABC-12". Case and spaces do not
+    """Whether ``value`` is written in ``text`` as a whole name: "kite" is
+    not in "#kite-quotes", "ABC-1" is not in "ABC-12". Case and spaces do not
     count; a # before it may be there or not; a full stop after it ends a
     sentence, so it may follow."""
     v = " ".join(str(value or "").split()).casefold().lstrip("#")

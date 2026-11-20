@@ -84,7 +84,7 @@ class NotSupported(Exception):
 class Place:
     """Where a message was written."""
     id: str                         # the service's id of the channel or DM
-    name: str = ""                  # shown on pages and in lines: "#prop-pricing", "DM with …"
+    name: str = ""                  # shown on pages and in lines: "#made-up-pricing", "DM with …"
     kind: str = "channel"           # one of PLACE_KINDS
 
 
