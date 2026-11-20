@@ -227,7 +227,7 @@ from the default accent, and ≥ 0.086 from each other. A sixth needs the same m
 
 `--tool-points` (Needs you, amber) · `--tool-changes` (green) · `--tool-workspace` (Files, blue) ·
 `--tool-board` (violet) · `--tool-spec` (teal) · `--tool-list` (the task list, orange) ·
-`--tool-inbox` (the Inbox, olive; #302) · `--tool-ink` (a drawing on a tile of one of them). Each tool's icon is drawn in its own colour so
+`--tool-inbox` (the Inbox, olive; #302) · `--tool-ask` (Ask the hub, magenta; #21) · `--tool-ink` (a drawing on a tile of one of them). Each tool's icon is drawn in its own colour so
 the strip can be scanned the way IntelliJ's tool windows are (#166). Like an avatar, a tool
 colour says **which**, never **what is true**: it is not a status, so it sits outside the
 semantic six, and nothing else uses these tokens but Create's menu, whose tiles take the colour
@@ -237,6 +237,13 @@ blue to violet ground); orange, not coral, so nothing reads as the one red.
 - **3:1 or better** (WCAG 1.4.11, a graphic) on `--surface` (the button), `--surface-sunken` (the
   strip) and the hovered button, in every theme; measured 4.19 to 8.6. `--tool-ink` clears 3:1
   on each colour. `py tools/make_tool_icons.py --preview DIR` prints the table.
+- **Ask the hub (#21)** is not a strip tool: its icon (a speech bubble with a spark, `.hc-ico`) sits
+  in the bar's global group before the plan chip (a phone: the end of row two, 44px), drawn in
+  `--tool-ask` (4.36 to 9.11 on the bar, its hover and the selected ground). It toggles a panel
+  docked at the right under the bar (`body.hc-docked` sets `--hc-w`, which `main`, the list's
+  dock, the task panel and the PO drawer leave free; a splitter on its left edge, width and
+  open/closed kept in `cd-hub-chat`); a phone shows it as a full-width sheet. The icon is pressed
+  while open; an amber dot (`--c-warning-bold`) on it says a change waits for Apply.
 - **The drawings and the renderer are one place:** `TOOL_GLYPH` and `toolIcon(id)` in
   `index.html`. Never draw a tool's icon again elsewhere; call `toolIcon`. Its SVG is
   `class="ti ti-<id>"`, painted in `currentColor`, and `.ti { color: var(--ti) }` gives it the

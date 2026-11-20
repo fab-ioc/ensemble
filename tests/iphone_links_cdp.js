@@ -13,7 +13,7 @@ class Cdp {
 async function main() {
   const profile=fs.mkdtempSync(path.join(A.tmp,'chrome-'));
   fs.writeFileSync(path.join(profile,'Local State'),A.chromeLocalState);
-  const ch=spawn(A.chrome,['--headless=new','--remote-debugging-port=0','--user-data-dir='+profile,'--no-first-run','--no-default-browser-check','--disable-gpu','about:blank'],{stdio:['ignore','ignore','pipe']});
+  const ch=spawn(A.chrome,['--headless=new','--use-mock-keychain','--password-store=basic','--remote-debugging-port=0','--user-data-dir='+profile,'--no-first-run','--no-default-browser-check','--disable-gpu','about:blank'],{stdio:['ignore','ignore','pipe']});
   const ws=await new Promise((ok,no)=>{let buf='';ch.stderr.on('data',d=>{buf+=d;const m=buf.match(/DevTools listening on (ws:\S+)/);if(m)ok(m[1]);});ch.on('exit',n=>no(Error('Chrome exit '+n+' '+buf)));setTimeout(()=>no(Error('DevTools timeout '+buf)),20000);});
   const c=new Cdp(ws);await c.open();
   const rows=[];

@@ -95,6 +95,10 @@ from pathlib import Path
 
 import due
 import issues
+import outside
+import outside_deliver
+import outside_items
+import outside_setup
 import board
 import points
 import po_messages
@@ -597,12 +601,7 @@ def plain_facts(project: dict, tasks: list[dict], changes: list[dict], since: fl
             # both "merged" and "not started", and must not be left to guess.
             if t["merged"]:
                 c = f"work merged into {t['base']} (branch {t['branch']}, nothing left to merge)"
-                merged_at = float(t.get("mergedAt") or 0)
-                if _STARTED and merged_at:
-                    if merged_at > _STARTED:
-                        c += "; merge is newer than this hub process, so a restart is needed to load it"
-                    else:
-                        c += "; this hub process started after the merge, so the work is live"
+                c += "; " + _live_words(t.get("sha", ""))
             elif t["commits"]:
                 c = f"{t['commits']} commit(s) on {t['branch']} not yet in {t['base']}"
             else:
@@ -630,9 +629,12 @@ _PROMPT = (
     "what the facts say about branches and merges: a task is merged only when "
     "the facts say its work is merged, and never write that work is awaiting a "
     "merge, a hub restart or a deploy unless the facts say so. Git's merged "
-    "state and the hub's start relative to that merge override any old report "
-    "wording; never ask to reconcile a report with Git. A merged task is live "
-    "after this hub has started since its merge. Lead with what "
+    "state and whether the running hub has the work override any old report "
+    "wording; never ask to reconcile a report with Git. Call a merged task live "
+    "only when the facts say the work is live (in the code the running hub was "
+    "started from); when they say it is not in the running hub, write \"merged, "
+    "not in the running hub\", and a project's main is never the running hub's "
+    "code by itself. Lead with what "
     "finished or changed since the last digest, then call out any task that "
     "needs attention and why. Name each task by its number as the facts give "
     "it (#18), its title after the number; never by a room id. Plain text, at most 8 short lines, no headings, no greeting, "
@@ -811,11 +813,56 @@ def _tick() -> None:
 
 _STARTED = 0.0
 
+# The code the running hub was started from: the Git checkout this file is in
+# and its HEAD then (both "" when it is not a checkout, e.g. the built app). A
+# project's own repo, even a clone of the hub's, is never this: its main can be
+# far ahead of what runs.
+_HUB_CODE = {"root": "", "head": ""}
+
+
+def note_hub_code(here: str = "") -> dict:
+    """Remember the hub's own checkout and HEAD, once at start."""
+    here = here or str(Path(__file__).resolve().parent)
+    root = _d._git_out(here, "rev-parse", "--show-toplevel")
+    head = _d._git_out(root, "rev-parse", "HEAD") if root else ""
+    _HUB_CODE.update(root=root if head else "", head=head)
+    return dict(_HUB_CODE)
+
+
+@lru_cache(maxsize=4096)
+def _in_code(root: str, head: str, sha: str) -> bool:
+    return _d._git_ok(root, "merge-base", "--is-ancestor", sha, head)
+
+
+def in_running_hub(sha: str) -> bool | None:
+    """Whether commit ``sha`` is in the code the running hub was started from;
+    None when that code is unknown. A commit the hub's checkout does not have
+    at all is not in it."""
+    root, head = _HUB_CODE["root"], _HUB_CODE["head"]
+    if not (root and head):
+        return None
+    return bool(sha) and _in_code(root, head, sha)
+
+
+def _live_words(sha: str) -> str:
+    """What the digest says about a merged task and the running hub."""
+    there = in_running_hub(sha)
+    if there:
+        return "the code the running hub was started from has it, so the work is live"
+    if there is None:
+        return "merged, not known to be in the running hub (its code is not a Git checkout), so not called live"
+    return (f"merged, not in the running hub (the hub runs from {_HUB_CODE['head'][:7]} "
+            f"in its own folder, which does not have this work)")
+
 
 def start_scheduler() -> None:
     """Background loop; settings and project.json are re-read every tick."""
     global _STARTED
     _STARTED = time.time()
+    try:
+        note_hub_code()
+    except Exception:       # noqa: BLE001 — unknown code: nothing is called live
+        pass
 
     def loop():
         while True:
@@ -851,6 +898,30 @@ def start_scheduler() -> None:
                 issues.maybe_tick()
             except Exception as e:
                 _log(f"issues check error: {str(e)[:200]}")
+            # Outside message sources (outside.py): each checked when due on a
+            # thread of its own. None is configured unless someone adds one.
+            try:
+                outside.maybe_tick()
+            except Exception as e:
+                _log(f"outside sources check error: {str(e)[:200]}")
+            # The outside sources setup file (outside_setup.py): written the
+            # first time, applied on a thread of its own after each save.
+            try:
+                outside_setup.tick()
+            except Exception as e:
+                _log(f"outside setup file error: {str(e)[:200]}")
+            # Outside messages routed to a PO (outside_deliver.py): typed into
+            # the PO's session, at most 6 wakes an hour per PO.
+            try:
+                outside_deliver.maybe_tick()
+            except Exception as e:
+                _log(f"outside delivery error: {str(e)[:200]}")
+            # Work items named by tasks join their rows; finished ones leave
+            # (outside_items.py), every 10 minutes on a thread of its own.
+            try:
+                outside_items.maybe_tick()
+            except Exception as e:
+                _log(f"work items error: {str(e)[:200]}")
             # A task in a PO project idle with nothing open (stall.py).
             try:
                 stall.maybe_tick()

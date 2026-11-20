@@ -429,7 +429,22 @@ def _open_ask(room: dict):
     return _d.attention.open_ask(room)
 
 
-def silence_excuse(room: dict, part: dict, ev: dict) -> str:
+def wait_open(room: dict, now: float | None = None) -> bool:
+    """Whether the owner marked a wait (``ensemble_mark_wait``, any kind) that
+    has not ended: there, before its ``until`` when it has one. A quiet owner
+    then waits on purpose, and is not silent; idle.py ends the mark and wakes
+    the PO once."""
+    mark = room.get("waitMark")
+    if not mark:
+        return False
+    try:
+        until = float(mark.get("until") or 0)
+    except (TypeError, ValueError, AttributeError):
+        return True
+    return not until or until > (time.time() if now is None else now)
+
+
+def silence_excuse(room: dict, part: dict, ev: dict, now: float | None = None) -> str:
     """"" when a quiet owner may be silent; else what excuses the quiet: a
     background run of its own, a reviewer at work, an ask waiting on the PO or
     the CEO (a completed report too), a hand-off to a teammate, a task in
@@ -437,6 +452,8 @@ def silence_excuse(room: dict, part: dict, ev: dict) -> str:
     summary of one."""
     if not room.get("launched", True):
         return "a draft"
+    if wait_open(room, now):
+        return "a marked wait"          # idle.py wakes the PO when it ends
     if room.get("status") in ("paused", "waiting_human"):
         return "paused" if room.get("status") == "paused" else "waiting on the CEO"
     if (room.get("workflow") or "") in _QUIET:
@@ -467,7 +484,7 @@ def silence_excuse(room: dict, part: dict, ev: dict) -> str:
 def silent_for(room: dict, part: dict, ev: dict, now: float) -> float:
     """How long the owner has been silent; 0 when it is not (excused, or
     nothing is known)."""
-    if silence_excuse(room, part, ev):
+    if silence_excuse(room, part, ev, now):
         return 0.0
     sign = last_sign(room, part, ev)
     return max(0.0, now - sign) if sign else 0.0

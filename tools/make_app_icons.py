@@ -81,7 +81,7 @@ def render(svg: str, work: Path) -> Image.Image:
     src.write_text(svg.replace('viewBox="0 0 512 512"', f'width="{RENDER}" height="{RENDER}" viewBox="0 0 512 512"', 1),
                    encoding="utf-8")
     png.unlink(missing_ok=True)
-    subprocess.run([browser(), "--headless=new", "--disable-gpu", "--hide-scrollbars",
+    subprocess.run([browser(), "--headless=new", "--use-mock-keychain", "--password-store=basic", "--disable-gpu", "--hide-scrollbars",
                     "--default-background-color=00000000", f"--window-size={RENDER},{RENDER}",
                     f"--user-data-dir={chrome_profile.new_profile(work)}", f"--screenshot={png}", src.as_uri()],
                    capture_output=True, encoding="utf-8", errors="replace", timeout=60)

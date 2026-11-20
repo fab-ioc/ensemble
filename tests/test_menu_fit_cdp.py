@@ -89,7 +89,7 @@ const TASKDOTS = `[...document.querySelectorAll('.dk-head.bt-head > .dk-ctl [dat
 const MORE_LOOSE = `(() => { LDP.moreLoose = true; LDP.sig = ''; ldpPaint(); return 0; })()`;
 (async () => {
   const udd = chromeProfile(A);
-  const ch = spawn(A.chrome, ['--headless=new', '--remote-debugging-port=0', '--user-data-dir=' + udd, '--no-first-run', '--no-default-browser-check',
+  const ch = spawn(A.chrome, ['--headless=new', '--use-mock-keychain', '--password-store=basic', '--remote-debugging-port=0', '--user-data-dir=' + udd, '--no-first-run', '--no-default-browser-check',
     '--disable-gpu', '--hide-scrollbars', '--window-size=1728,1117', 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] });
   const wsu = await new Promise((res, rej) => { let buf = ''; ch.stderr.on('data', d => { buf += d; const m = buf.match(/DevTools listening on (ws:\S+)/); if (m) res(m[1]); });
     ch.on('exit', c => rej(new Error('chrome exited ' + c))); setTimeout(() => rej(new Error('no devtools ' + buf)), 20000); });

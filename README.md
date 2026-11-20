@@ -290,6 +290,7 @@ Environment variables, read at start:
 | `ENSEMBLE_TOKEN` | The remote access token |
 | `ENSEMBLE_PERMISSION_MODE` | Claude's `--permission-mode` (default `bypassPermissions`; empty omits the flag) |
 | `ENSEMBLE_RESTART_ROOMS` | Rooms whose PO may restart the hub |
+| `ENSEMBLE_HOME` | A folder where this hub keeps its own data: `.ensemble`, `EnsembleProjects` and `cs` go under it instead of the home folder. `HOME` stays, so agents keep the real home and sign-ins; agents get the variable emptied. Such a hub logs under its own `.ensemble/logs`, hands its agents a status-line file under its own `.ensemble/usage`, does not install the agent skills and does not copy claude-dashboard state. Unset or equal to the home: the home folder |
 
 Each project keeps its own files in its folder: `project.json`, `ROADMAP.md`, `PO-HANDOVER.md`, and one folder per task with `task.json`, `REVIEW-LOG.md`, `TASK-HANDOVER.md` and, for a worktree task, `repo/`.
 
@@ -305,6 +306,13 @@ Each project keeps its own files in its folder: `project.json`, `ROADMAP.md`, `P
 | `chatroom.py` | Task rooms: participants, messages, who a message wakes |
 | `ensemble_tools.py` | The `ensemble_*` MCP tools and their role checks |
 | `digest.py` | The PO's progress check |
+| `outside.py` | Outside sources: when each source is read, what it has seen, where it reads from, the delivery queue and each source's health |
+| `outside_route.py` | Outside sources: each source's routing table (one row per initiative, changed by the CEO or by that initiative's own agents with `ensemble_routing`, every change kept), routing by work item (a ticket or pull request one row lists), by channel and by thread, the last few messages of each conversation (for the model), and the log of where each message went |
+| `outside_model.py` | Outside sources: routing step 3. One Haiku call per batch, with no tools, reads the messages no channel or thread decides against each initiative's topic, with each conversation's last few messages; the answer is checked against the list; small talk is dropped, "no match" is only logged |
+| `work_items.py` | Outside sources: finds the tickets (`ABC-123`) and pull requests (`<repo> <number>`, `<repo>#<number>`, a GitHub link) a text names; text in, items out, no state |
+| `outside_items.py` | Outside sources: work items that fill and empty themselves: those an initiative's tasks name join its row; a pull request merged or closed 14 days ago (read with `gh`, read only) or a ticket not seen for 30 days leaves it; every 10 minutes while a source is set up |
+| `outside_replay.py` | Outside sources: a command-line replay of saved Slack messages through the full routing, compared with a dispatch log, written as a report with the bare pull request and ticket numbers counted (run locally, never in the tests) |
+| `sources/` | The outside source types (`base.py`: what a source type provides; `fake.py`: a made-up source for tests) |
 | `rotation.py` | Handovers and fresh sessions past the token limit |
 | `notify.py`, `webpush.py` | Notifications on your devices: what notifies, the devices, Web Push encryption and signing |
 | `due.py` | What a handover's `## Due` section names for a time, typed into its idle agent then |

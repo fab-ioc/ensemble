@@ -954,6 +954,7 @@ def _summarize(room: dict, po: str | None = None, is_po: bool | None = None) -> 
         "mode": room.get("mode", ""),
         "folderMissing": room.get("folderMissing") or None,
         "dealtSince": room.get("dealtSince") or None,
+        "waitMark": room.get("waitMark") or None,  # stall.silence_excuse
         "owners": cr.owners(room),
         "participants": [
             {k: p.get(k) for k in ("identity", "kind", "agent", "model", "role",
@@ -1745,6 +1746,28 @@ def _reported(room: dict, live_agents: list[str]) -> dict | None:
             "mid": put.get("id", "")}
 
 
+def _held_po() -> dict[str, dict]:
+    """PO rooms with messages held back for them: another PO's (po_messages)
+    and outside ones (outside_deliver), one row each ``{count, since,
+    reason}``. A new dict every call: po_messages keeps its own cached."""
+    try:
+        held_po = {k: dict(v) for k, v in _d.po_messages.held_by_room().items()}
+    except Exception:
+        held_po = {}
+    try:
+        for rid, h in _d.outside_deliver.held_by_room().items():
+            o = held_po.get(rid)
+            if not o:
+                held_po[rid] = dict(h)
+            else:
+                held_po[rid] = {"count": o["count"] + h["count"],
+                                "since": min(o["since"], h["since"]),
+                                "reason": f"{o['reason']} · {h['reason']}"}
+    except Exception:
+        pass
+    return held_po
+
+
 def _items() -> list[dict]:
     now = time.time()
     _REPORTED.clear()
@@ -1765,10 +1788,7 @@ def _items() -> list[dict]:
         keys = {}
     items: list[dict] = []
     seen_now: set[tuple[str, str, str]] = set()
-    try:
-        held_po = _d.po_messages.held_by_room()
-    except Exception:
-        held_po = {}
+    held_po = _held_po()
     try:
         open_asks = _d.asks.open_by_room(rooms, now)
     except Exception:

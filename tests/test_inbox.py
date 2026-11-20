@@ -482,3 +482,53 @@ class PoFixes(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class InputSourcesRows(unittest.TestCase):
+    """Outside sources step 6: a source not working, and read again, are hub
+    rows: no room, no project, in every project's Inbox, opening the Input
+    sources panel on that source."""
+
+    def setUp(self):
+        self.w = World()
+        inbox._COLD_THREADS.clear()
+        self.addCleanup(inbox._COLD_THREADS.clear)
+        self.down, self.up = [], []
+
+    def build(self, **kw):
+        m = self.w.module()
+        m.outside = types.SimpleNamespace(down_rows=lambda now=None: list(self.down),
+                                          recovered_rows=lambda now=None: list(self.up))
+        inbox.bind(m)
+        return inbox.build(now=NOW, **kw)
+
+    def test_down_and_works_again_rows(self):
+        self.down = [{"source": "slack", "label": "Slack", "since": NOW - 900, "reason": "no connection",
+                      "text": "Slack is not being read since 10:42: no connection"}]
+        self.up = [{"source": "slack-2", "label": "Slack", "from": NOW - 3000, "at": NOW - 60,
+                    "text": "Slack is read again (not read from 09:50 to 10:40)"}]
+        rows = {r["source"]: r for r in self.build()["rows"]}
+        down, up = rows["slack"], rows["slack-2"]
+        self.assertEqual((down["kind"], down["open"], down["dismiss"]), ("waiting", "source", ""))
+        self.assertEqual(down["id"], f"outside:slack:down:{int(NOW - 900)}")
+        self.assertEqual(down["line"], "Slack is not being read since 10:42: no connection")
+        self.assertEqual((down["roomId"], down["projectId"], down["task"], down["hub"]),
+                         ("", "", "Input sources", True))
+        self.assertEqual((up["kind"], up["open"], up["dismiss"]), ("check", "source", "seen"))
+        self.assertEqual(up["since"], NOW - 60)
+
+    def test_hub_rows_show_in_every_project(self):
+        self.down = [{"source": "slack", "label": "Slack", "since": NOW - 900, "reason": "x",
+                      "text": "Slack is not being read since 10:42: x"}]
+        self.assertEqual([r["source"] for r in self.build(project_id="proj-a")["rows"]], ["slack"])
+        self.assertEqual(self.build(project_id="proj-b")["count"], 1)
+
+    def test_a_failing_frame_is_left_out(self):
+        def boom(now=None):
+            raise RuntimeError("no")
+        m = self.w.module()
+        m.outside = types.SimpleNamespace(down_rows=boom, recovered_rows=boom)
+        inbox.bind(m)
+        out = inbox.build(now=NOW, debug=True)
+        self.assertEqual(out["count"], 0)
+        self.assertIn("input sources", [e["source"] for e in out["errors"]])

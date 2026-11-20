@@ -78,7 +78,7 @@ const SEEN = `(() => {
 })()`;
 async function main() {
   const udd = chromeProfile(A);
-  const ch = spawn(A.chrome, ['--headless=new', '--remote-debugging-port=0', '--user-data-dir=' + udd, '--no-first-run', '--no-default-browser-check',
+  const ch = spawn(A.chrome, ['--headless=new', '--use-mock-keychain', '--password-store=basic', '--remote-debugging-port=0', '--user-data-dir=' + udd, '--no-first-run', '--no-default-browser-check',
     '--disable-gpu', '--hide-scrollbars', '--window-size=1440,900', '--no-proxy-server',
     '--host-resolver-rules=MAP hub.tailnet.test 127.0.0.1', 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] });
   const ws = await new Promise((res, rej) => {

@@ -117,7 +117,8 @@ ENDPOINT_MAX = 1024
 DEVICES_MAX = 20
 
 KIND_WORDS = {"question": "Question", "points": "Answers to check", "reported": "Ready for your check",
-              "could_not_start": "Could not start", "waiting": "Waiting on you"}
+              "could_not_start": "Could not start", "waiting": "Waiting on you",
+              "source_down": "Not working", "source_up": "Working again"}
 
 _LOCK = threading.RLock()
 _VAPID = None
@@ -670,6 +671,8 @@ def _msg_path(rid: str, mid: str = "", part: str = "", thread: str = "", inbox: 
 
 
 def _row_kind(row: dict) -> str:
+    if row.get("open") == "source":
+        return "source_up" if row.get("kind") == "check" else "source_down"
     if row.get("kind") == "answer":
         return "question"
     if row.get("kind") == "check":
@@ -688,6 +691,17 @@ def row_events(rows: list[dict]) -> list[dict]:
         name = r.get("project") or "Ensemble"
         base = {"projectId": r.get("projectId") or "", "project": r.get("project") or "",
                 "roomId": rid, "title": clip(f"{name} · {KIND_WORDS[kind]}", TITLE_MAX)}
+        if kind in ("source_down", "source_up"):
+            # An Input sources row (outside sources step 6): no room; a tap
+            # opens the panel on that source. Its id holds when it began, so
+            # a restart does not make it new.
+            out.append({**base, "title": clip(f"Input sources · {KIND_WORDS[kind]}", TITLE_MAX),
+                        "key": f"{r.get('id', '')}|src", "mid": "",
+                        "since": float(r.get("since") or 0),
+                        "kind": "waiting" if kind == "source_down" else "check",
+                        "body": clip(r.get("line") or "", BODY_MAX),
+                        "path": f"/?source={_q(r.get('source') or '')}"})
+            continue
         if kind == "points":
             for it in r.get("items") or []:
                 pts = ",".join(it.get("points") or [])

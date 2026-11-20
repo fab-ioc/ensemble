@@ -24,14 +24,26 @@ from pathlib import Path
 from . import themes
 
 HOME = Path.home()
+# Where this hub keeps its own data. ENSEMBLE_HOME moves ~/.ensemble, the
+# projects root and ~/cs under another folder, so a second hub (the test hub
+# of the outside sources work) keeps apart from the person's own. HOME is not
+# changed: the agents the hub starts keep the real home, and so their login
+# and their own data under ~/.claude and ~/.codex. Unset or empty: the home.
+DATA_HOME_ENV = "ENSEMBLE_HOME"
+_DATA_HOME = os.environ.get(DATA_HOME_ENV, "").strip()
+DATA_HOME = Path(os.path.expanduser(_DATA_HOME)).resolve() if _DATA_HOME else HOME
+if DATA_HOME == HOME.resolve():
+    DATA_HOME = HOME
+# True when ENSEMBLE_HOME points the hub's data away from the home.
+OWN_DATA_HOME = DATA_HOME != HOME
 # Ensemble keeps its own state in a neutral, agent-agnostic home — NOT nested
 # inside any single agent's config dir. (Agent adapters still read each agent's
 # own data, e.g. ~/.claude/projects or ~/.codex/sessions.)
-DASHBOARD_DIR = HOME / ".ensemble"
+DASHBOARD_DIR = DATA_HOME / ".ensemble"
 # The predecessor's state (~/.claude/dashboard) is copied in by
 # legacy_install.migrate() when the hub starts, never moved.
 PRESETS_DIR = DASHBOARD_DIR / "iterm-presets"   # macOS / iTerm only
-CS_ROOT = HOME / "cs"
+CS_ROOT = DATA_HOME / "cs"
 # The product name lives in ONE place; user-facing folder names derive from it,
 # so a future rename is a single edit here (plus a migration of existing
 # folders). ~/.ensemble (state) and the OS task/scripts are swept later.
@@ -39,7 +51,7 @@ APP_NAME = "Ensemble"
 # Where the user's projects live — and, under each project, its tasks/sessions.
 # Successor of CS_ROOT (~/cs). Meant to be a git repo the user backs up, so a
 # rebuilt machine recovers every project and the knowledge built inside it.
-PROJECTS_ROOT = HOME / f"{APP_NAME}Projects"
+PROJECTS_ROOT = DATA_HOME / f"{APP_NAME}Projects"
 EDITOR_MAP_FILE = DASHBOARD_DIR / "editors.json"
 ICON_CACHE_DIR = DASHBOARD_DIR / "static" / "editors"
 NUMBERED_RE = re.compile(r"^(\d+)_")

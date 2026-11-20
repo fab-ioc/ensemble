@@ -78,7 +78,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 async function launch() {
   const udd = chromeProfile(A);
   // a mouse and hover, as a computer's: headless Chrome reports neither by default
-  const ch = spawn(A.chrome, ['--headless=new', '--remote-debugging-port=0', '--user-data-dir=' + udd, '--no-first-run', '--no-default-browser-check',
+  const ch = spawn(A.chrome, ['--headless=new', '--use-mock-keychain', '--password-store=basic', '--remote-debugging-port=0', '--user-data-dir=' + udd, '--no-first-run', '--no-default-browser-check',
     '--disable-gpu', '--hide-scrollbars', '--window-size=1728,1117',
     '--blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4', 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] });
   const ws = await new Promise((res, rej) => {
