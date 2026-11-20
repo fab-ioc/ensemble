@@ -303,6 +303,7 @@ class AskTheHubPage(unittest.TestCase):
                        where: pair(q('#hc-turns .hc-set .where')), old: pair(q('#hc-turns .hc-set .del')),
                        now: pair(q('#hc-turns .hc-set .add')) }; })()""")
         p.eval("document.documentElement.dataset.theme = 'light'; 0")
+        g["prefsBefore"] = p.eval("PREFS && PREFS.digestIntervalMin")
         p.eval(f"{cls.LAST}.querySelector('[data-hc=\"apply\"]').click(); 0")
         p.until(f"HC.data && HC.data.turns[{n + 1}].state === 'applied' && /Applied/.test({cls.LAST}.querySelector('.hc-state').textContent)", 20)
         g["setApplied"] = p.eval(f"""(() => {{ const h = {cls.LAST};
@@ -310,6 +311,11 @@ class AskTheHubPage(unittest.TestCase):
             rows: h.querySelectorAll('.hc-set').length, buttons: [...h.querySelectorAll('.hc-acts .rm-btn')].map(b => b.textContent) }}; }})()""")
         s = dashboard.load_settings()
         g["setSaved"] = (s["digestIntervalMin"], s["reviewRoundsPerTask"])
+        # PO's read: the page takes the applied settings without a reload.
+        try:
+            g["prefsAfter"] = bool(p.until("PREFS && PREFS.digestIntervalMin === 15 && PREFS.reviewRoundsPerTask === 3", 10))
+        except AssertionError:
+            g["prefsAfter"] = False
         # Stale: its own setting changed in Settings meanwhile.
         cls.answers.append('SETTINGS: Prefer: Codex.\n<<<SETTINGS\n{"preferAgent": "codex"}\nSETTINGS>>>')
         cls._ask(p, "Make reviews Codex", n + 4)
@@ -352,6 +358,18 @@ class AskTheHubPage(unittest.TestCase):
         p.eval("document.querySelector('#hc-hist-view [data-hcf=\"all\"]').click(); 0")
         p.eval("document.getElementById('hc-hist-back').click(); 0")
         g["histBack"] = p.eval(VIEW)
+        # PO's read: a theme applied from the chat repaints the page.
+        n = p.eval("HC.data.turns.length")
+        cls.answers.append('SETTINGS: Dark theme.\n<<<SETTINGS\n{"theme": "dark"}\nSETTINGS>>>')
+        cls._ask(p, "Dark theme", n + 2)
+        p.eval(f"{cls.LAST}.querySelector('[data-hc=\"apply\"]').click(); 0")
+        try:
+            g["themeAfter"] = bool(p.until("document.documentElement.dataset.theme === 'dark' "
+                                           "&& localStorage.getItem('cd-theme') === 'dark'", 10))
+        except AssertionError:
+            g["themeAfter"] = False
+        dashboard.save_settings({"theme": "light"})
+        p.eval("localStorage.setItem('cd-theme', 'light'); cdTheme.apply(); document.documentElement.dataset.theme = 'light'; 0")
         p.eval("closeHubChat(); 0")
         p.close()
 
@@ -585,6 +603,13 @@ class AskTheHubPage(unittest.TestCase):
         self.assertEqual(a["rows"], 2, "the rows stay, old and new")
         self.assertNotIn("What it changed", a["secs"], "the rows already say it")
         self.assertEqual(self.got["setSaved"], (15, 3))
+
+    def test_a_settings_apply_reloads_the_page_s_settings_and_theme(self):
+        """PO's read: after a Settings Apply the page takes the new settings
+        (Settings' own copy, the theme) without a reload."""
+        self.assertEqual(self.got["prefsBefore"], 5)
+        self.assertTrue(self.got["prefsAfter"], "PREFS has the applied values")
+        self.assertTrue(self.got["themeAfter"], "the applied theme is painted")
 
     def test_a_stale_settings_change_names_the_setting(self):
         s = self.got["setStale"]

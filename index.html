@@ -27780,8 +27780,18 @@ const HC_STATE = {
   proposed: '', applying: 'Applying…', applied: 'Applied', discarded: 'Discarded',
   stale: 'The setup file changed since this was made, so it can no longer be applied as it is.',
 };
+// A Settings change applied since the last read (here or in another tab):
+// the page takes the new settings (theme and accent, and Settings' own copy).
+function hcSettingsApplied(prev, next) {
+  if (!prev || !next) return;
+  const was = new Set(prev.turns.filter(t => t.setup === 'settings' && t.state === 'applied').map(t => t.id));
+  if (!next.turns.some(t => t.setup === 'settings' && t.state === 'applied' && !was.has(t.id))) return;
+  if (window.cdTheme) cdTheme.sync();
+  loadPrefs();
+}
 async function hcLoad() {
-  try { HC.data = await isGet('/api/hub-chat'); HC.err = ''; }
+  const prev = HC.data;
+  try { HC.data = await isGet('/api/hub-chat'); HC.err = ''; hcSettingsApplied(prev, HC.data); }
   catch (e) { HC.err = e.message; }
   if (!$('#hub-chat').hidden) hcPaint();
   hcMark();
@@ -27933,7 +27943,8 @@ function hcHistShow(on) {
 async function hcPost(body, btn) {
   if (btn) btn.disabled = true;
   $('#hc-note').textContent = '';
-  try { HC.data = await isPost('/api/hub-chat', body); HC.err = ''; }
+  const prev = HC.data;
+  try { HC.data = await isPost('/api/hub-chat', body); HC.err = ''; hcSettingsApplied(prev, HC.data); }
   catch (e) { $('#hc-note').textContent = 'Not done: ' + e.message; if (btn) btn.disabled = false; }
   hcPaint();
   hcSchedule();

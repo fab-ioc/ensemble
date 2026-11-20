@@ -349,6 +349,10 @@ def propose(asked: dict) -> dict:
         changes, before = {}, {}
         for key, v in keep.items():
             name = TABLE[key]["name"]
+            if _not_claude(key, v):
+                problems.append(f"{name}: {json.dumps(v, ensure_ascii=False)} is not a Claude model; "
+                                f"it stays {show(key, get(now, key))}.")
+                continue
             one = payload({key: v})
             why = HUB["models_error"](one)
             if why:
@@ -368,6 +372,20 @@ def propose(asked: dict) -> dict:
         diff = [{"key": k, "name": TABLE[k]["name"], "where": TABLE[k]["where"],
                  "before": show(k, before[k]), "after": show(k, changes[k])} for k in changes]
     return {"changes": changes, "before": before, "diff": diff, "problems": problems, "refused": refused}
+
+
+_CLAUDE_ONLY = ("poFallbackModels.claude", "digestModel")
+
+
+def _not_claude(key: str, v) -> bool:
+    """A value for a setting that takes only a Claude model that is not one
+    ("" is the default and allowed)."""
+    if key not in _CLAUDE_ONLY or v == "":
+        return False
+    if not isinstance(v, str):
+        return True
+    import agent_models
+    return agent_models._claude_model(v) is None
 
 
 def _loosely_same(saved, v) -> bool:
@@ -403,7 +421,12 @@ def apply(changes: dict, before: dict, ask: str, text: str) -> dict:
     """Saved through the Settings save under its lock, after checking that
     none of the settings changed since (``Changed``) and that the models
     can be saved (``ValueError``). The history gets one entry. Returns
-    ``{diff, at}``."""
+    ``{diff, at}``. Only settings the chat may change are saved."""
+    changes = {k: v for k, v in (changes or {}).items() if k in TABLE}
+    bad = next((k for k, v in changes.items() if _not_claude(k, v)), None)
+    if bad:
+        raise ValueError(f"{TABLE[bad]['name']}: {json.dumps(changes[bad], ensure_ascii=False)} "
+                         f"is not a Claude model.")
     with HUB["lock"]:
         key = stale_key(before)
         if key:

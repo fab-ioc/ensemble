@@ -266,6 +266,7 @@ class HubChatTest(unittest.TestCase):
         self.assertNotIn("pending", turns[0])
         self.assertEqual(turns[1]["state"], "proposed")
         self.assertIn("restarted while", turns[1]["result"]["error"])
+        self.assertIn("look at the setup file", turns[1]["result"]["error"])
         self.assertEqual((turns[2]["kind"], turns[2]["ask"]), ("error", "t-1"))
         self.assertIn("restarted before the answer", turns[2]["text"])
 
@@ -383,6 +384,46 @@ class HubChatSettings(unittest.TestCase):
         self.answer = self.settings({"reviewRoundsPerTask": "5"})
         hub = hub_chat.ask("five rounds")["turns"][-1]
         self.assertEqual((hub["kind"], hub["text"]), ("reply", "Settings already say this; nothing to change."))
+
+    def test_a_claude_only_setting_refuses_a_model_that_is_not_claude(self):
+        """PO's read: the PO's Claude fallback and the progress check's model
+        take only a Claude model."""
+        self.answer = self.settings({"poFallbackModels.claude": "gpt-5", "digestModel": "gpt-5",
+                                     "reviewRoundsPerTask": 3})
+        hub = hub_chat.ask("fallback and digest on gpt-5, 3 rounds")["turns"][-1]
+        self.assertEqual([d["key"] for d in hub["diff"]], ["reviewRoundsPerTask"])
+        probs = hub["check"]["problems"]
+        self.assertIn("The Claude model a PO switched to Claude starts on: \"gpt-5\" is not a Claude model; "
+                      "it stays the one chosen in Settings.", probs)
+        self.assertTrue(any(p.startswith("The model the PO's progress check runs on: \"gpt-5\" is not a Claude model")
+                            for p in probs), probs)
+        self.answer = self.settings({"poFallbackModels.claude": "sonnet", "digestModel": "sonnet"})
+        hub = hub_chat.ask("fallback and digest on sonnet")["turns"][-1]
+        self.assertEqual([d["key"] for d in hub["diff"]], ["poFallbackModels.claude", "digestModel"])
+        self.assertEqual(hub["check"]["problems"], [])
+        with self.assertRaises(ValueError):
+            hs.apply({"digestModel": "gpt-5"}, {"digestModel": dashboard.load_settings()["digestModel"]}, "x", "x")
+        self.assertNotEqual(dashboard.load_settings()["digestModel"], "gpt-5")
+        self.assertFalse(hs.history_path().exists())
+
+    def test_apply_saves_only_the_settings_the_chat_may_change(self):
+        """PO's read: a key outside TABLE handed to apply is not saved."""
+        hs.apply({"theme": "dark", "backupRemote": "https://example.invalid/x.git"},
+                 {"theme": "", "backupRemote": ""}, "x", "x")
+        s = dashboard.load_settings()
+        self.assertEqual((s["theme"], s["backupRemote"]), ("dark", ""))
+        hist = json.loads(hs.history_path().read_text())["changes"]
+        self.assertEqual([c["key"] for c in hist[0]["changes"]], ["theme"])
+
+    def test_a_settings_apply_left_by_a_restart_points_at_settings(self):
+        hub_chat.path().write_text(json.dumps({"turns": [
+            {"id": "t-0", "at": WED, "role": "hub", "kind": "change", "state": "applying", "ask": "t-x",
+             "setup": "settings", "changes": {"theme": "dark"}, "diff": [], "check": {}}]}))
+        hub_chat.reset()
+        t = hub_chat.view()["turns"][0]
+        self.assertEqual(t["state"], "proposed")
+        self.assertEqual(t["result"]["error"], "The hub restarted while this was being applied: look at "
+                                               "Settings or History to see whether it was.")
 
     def test_stale_only_when_one_of_its_settings_changed(self):
         self.answer = self.settings({"preferAgent": "codex"}, "Prefer: Codex.")

@@ -156,8 +156,9 @@ def _load() -> dict:
         for t in st["turns"]:
             if t.get("state") == APPLYING:
                 t["state"] = PROPOSED
-                t["result"] = {"error": "The hub restarted while this was being applied: look at the setup "
-                                        "file to see whether it was."}
+                where = "Settings or History" if t.get("setup") == SETTINGS else "the setup file"
+                t["result"] = {"error": f"The hub restarted while this was being applied: look at {where} "
+                                        f"to see whether it was."}
                 changed = True
         if changed:
             _save(st)
