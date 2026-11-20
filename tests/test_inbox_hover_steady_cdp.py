@@ -208,6 +208,17 @@ async function main() {
     await c.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: chat2[0], y: chat2[1], deltaX: 0, deltaY: 120 }, sessionId);
     await sleep(50);
     out.auto.wheel = await evalIn('!!IBX_SIDE.el');
+    // Keyboard focus in the chat, then hover a card: Esc goes to the chat's document and must still close it.
+    await move(5, 5); await sleep(500);
+    out.esc = { focus: await evalIn(`(() => { const f = [...document.querySelectorAll('iframe')]
+      .find(f => { const r = f.getBoundingClientRect(); return r.width > 400 && r.height > 200; });
+      if (!f) return false; f.focus(); f.contentWindow.focus(); return document.activeElement === f; })()`) };
+    await move(wx, wy + 2); await sleep(700);
+    out.esc.opened = await evalIn('!!IBX_SIDE.el');
+    await c.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 }, sessionId);
+    await c.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 }, sessionId);
+    await sleep(50);
+    out.esc.after = await evalIn('!!IBX_SIDE.el');
     // A background paint for a different project must not be held under the old copy.
     await move(5, 5); await sleep(500);
     const [sx, sy] = await at(ids.long);
@@ -302,6 +313,12 @@ class HoverSteadyInChrome(close.CloseInChrome):
         self.assertNotEqual(a['how'], 'none', a)
         self.assertTrue(a['after'], a)
         self.assertFalse(a['wheel'], a)
+
+    def test_esc_with_focus_in_the_chat_closes_panel(self):
+        e = self.got['esc']
+        self.assertTrue(e['focus'], e)
+        self.assertTrue(e['opened'], e)
+        self.assertFalse(e['after'], e)
 
     def test_scroll_closes_panel_at_once(self):
         self.assertTrue(self.got['scroll']['opened'])

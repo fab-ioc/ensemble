@@ -19503,7 +19503,8 @@ function ibxSideCheck() {
 function ibxSidePress(ev) { if (IBX_SIDE.el && !IBX_SIDE.el.contains(ev.target)) ibxSideDismiss(); }
 function ibxSideKeyDown(ev) { if (ev.key === 'Escape') ibxSideDismiss(); }
 function ibxSideScroll() { ibxSideDismiss(); }
-const IBX_SIDE_SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' ']);
+// Keys typed in a focused chat: its scroll keys, and Esc, which never reaches this document's own listener.
+const IBX_SIDE_SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' ', 'Escape']);
 function ibxSideFrameScroll(ev) { if (ev.type !== 'keydown' || IBX_SIDE_SCROLL_KEYS.has(ev.key)) ibxSideDismiss(); }
 function ibxSideWire(box) {
   if (!box || box._ibxSide) return;
