@@ -4381,6 +4381,11 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
     /* Ask the hub is the whole screen, as Input sources (#21: a full-width
        sheet over the page, never docked; no splitter). */
     body.hc-docked { --hc-w: 0px; }
+    /* The desktop's PO drawer beside an open task and the docked panel
+       (above) is a desktop rule: here the drawer is the whole width, over
+       an open task too (P439). */
+    body.po-peek #po-panel, body.po-peek.detail-open #po-panel,
+    body.mid.po-peek.detail-open #po-panel { left: 0; right: 0; width: auto; }
     #hub-chat { top: 0; left: 0; width: auto; z-index: 75; border-left: 0; }
     #hub-chat .hc-split { display: none; }
     #hub-chat .hc-dlg { width: 100%; height: var(--vv-h, 100dvh); }
