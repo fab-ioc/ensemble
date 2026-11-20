@@ -19281,7 +19281,7 @@ rowExpandWire(document.getElementById('ld-ibx-body'),
 // repaint keeps it, on the same card. Touch screens keep the card's buttons (no hover: the CSS shows them).
 const IBX_SIDE_GRACE = 300;
 const IBX_SIDE_KEYS = ['ibxClose', 'ibxEarlier', 'ibxDone', 'ibxDismiss'];
-const IBX_SIDE = { box: null, el: null, id: '', sig: '', timer: 0, mark: null, doc: null, obs: null, raf: 0, pt: null, next: null, aim: 0 };
+const IBX_SIDE = { box: null, el: null, id: '', sig: '', timer: 0, watch: 0, mark: null, doc: null, frames: [], obs: null, raf: 0, pt: null, at: null, quiet: null, next: null, aim: 0 };
 function ibxSideKey(b) { return IBX_SIDE_KEYS.find(k => k in b.dataset) || ''; }
 function ibxSideRow(id) {
   const box = IBX_SIDE.box;
@@ -19303,19 +19303,44 @@ function ibxSideUnmark() {
 function ibxSideHide() {
   clearTimeout(IBX_SIDE.timer);
   IBX_SIDE.timer = 0;
+  clearInterval(IBX_SIDE.watch);
+  IBX_SIDE.watch = 0;
   ibxSideUnaim();
   cancelAnimationFrame(IBX_SIDE.raf);
   ibxSideUnmark();
   if (IBX_SIDE.obs) IBX_SIDE.obs.disconnect();
   if (IBX_SIDE.doc) {
     IBX_SIDE.doc.removeEventListener('pointermove', ibxSideTrack, true);
+    IBX_SIDE.doc.removeEventListener('pointerdown', ibxSidePress, true);
     IBX_SIDE.doc.removeEventListener('mouseout', ibxSideOut, true);
     IBX_SIDE.doc.removeEventListener('keydown', ibxSideKeyDown, true);
     IBX_SIDE.doc.removeEventListener('scroll', ibxSideScroll, true);
-    if (IBX_SIDE.doc.defaultView) IBX_SIDE.doc.defaultView.removeEventListener('resize', ibxSideHide);
+    if (IBX_SIDE.doc.defaultView) {
+      IBX_SIDE.doc.defaultView.removeEventListener('resize', ibxSideHide);
+      IBX_SIDE.doc.defaultView.removeEventListener('blur', ibxSideDismiss);
+    }
+  }
+  for (const frame of IBX_SIDE.frames) {
+    frame.removeEventListener('pointerdown', ibxSideDismiss, true);
+    frame.removeEventListener('scroll', ibxSideDismiss, true);
   }
   if (IBX_SIDE.el) IBX_SIDE.el.remove();
-  Object.assign(IBX_SIDE, { el: null, id: '', sig: '', doc: null, obs: null, pt: null });
+  Object.assign(IBX_SIDE, { el: null, id: '', sig: '', doc: null, frames: [], obs: null, pt: null });
+}
+// Dismissed (a press outside, Esc, scroll, the window losing focus): the browser then sends a move at the same
+// point once the layout changes, and the card still under the pointer would bring the panel straight back. It
+// stays shut until the pointer really moves, anywhere on the page.
+function ibxSideDismiss() {
+  const pt = IBX_SIDE.pt || IBX_SIDE.at, doc = IBX_SIDE.doc;
+  ibxSideHide();
+  if (!pt || !doc) return;
+  IBX_SIDE.quiet = pt;
+  const wake = ev => {
+    if (ev.clientX === pt.x && ev.clientY === pt.y) return;
+    doc.removeEventListener('pointermove', wake, true);
+    if (IBX_SIDE.quiet === pt) IBX_SIDE.quiet = null;
+  };
+  doc.addEventListener('pointermove', wake, true);
 }
 function ibxSideStay() { clearTimeout(IBX_SIDE.timer); IBX_SIDE.timer = 0; }
 function ibxSideLater() { if (IBX_SIDE.el && !IBX_SIDE.timer) IBX_SIDE.timer = setTimeout(ibxSideHide, IBX_SIDE_GRACE); }
@@ -19399,11 +19424,28 @@ function ibxSideOpen(li) {
   doc.body.appendChild(el);
   ibxSidePlace(li);
   if (!IBX_SIDE.el) return;
+  // A move into an iframe may update :hover without sending a final pointer
+  // event to this document. Check it while the panel is open so grace starts.
+  IBX_SIDE.watch = setInterval(ibxSideCheck, 100);
   doc.addEventListener('pointermove', ibxSideTrack, true);
+  doc.addEventListener('pointerdown', ibxSidePress, true);
   doc.addEventListener('mouseout', ibxSideOut, true);
   doc.addEventListener('keydown', ibxSideKeyDown, true);
   doc.addEventListener('scroll', ibxSideScroll, { capture: true, passive: true });
-  if (doc.defaultView) doc.defaultView.addEventListener('resize', ibxSideHide);
+  if (doc.defaultView) {
+    doc.defaultView.addEventListener('resize', ibxSideHide);
+    doc.defaultView.addEventListener('blur', ibxSideDismiss);
+  }
+  // Pointer events inside a chat iframe do not bubble to this document.
+  for (const frame of doc.querySelectorAll('iframe')) {
+    try {
+      const child = frame.contentDocument;
+      if (!child) continue;
+      child.addEventListener('pointerdown', ibxSideDismiss, true);
+      child.addEventListener('scroll', ibxSideDismiss, true);
+      IBX_SIDE.frames.push(child);
+    } catch (e) {} // A cross-origin frame still closes after the pointer leaves it.
+  }
   // A repaint draws the cards anew: the panel follows its card, or goes with it.
   if (doc.defaultView && doc.defaultView.MutationObserver) {
     IBX_SIDE.obs = new doc.defaultView.MutationObserver(() => { if (!IBX_SIDE.raf) IBX_SIDE.raf = requestAnimationFrame(ibxSideSync); });
@@ -19449,9 +19491,16 @@ function ibxSideTrack(ev) {
   ibxSideUnaim();
   if (li) ibxSideOpen(li); else ibxSideLater();
 }
-function ibxSideOut(ev) { if (!ev.relatedTarget) ibxSideLater(); }
-function ibxSideKeyDown(ev) { if (ev.key === 'Escape') ibxSideHide(); }
-function ibxSideScroll() { if (!IBX_SIDE.raf) IBX_SIDE.raf = requestAnimationFrame(ibxSideSync); }
+function ibxSideOut(ev) { if (!ev.relatedTarget || ev.relatedTarget.tagName === 'IFRAME') ibxSideLater(); }
+function ibxSideCheck() {
+  const li = ibxSideRow(IBX_SIDE.id), cp = ROW_EXPAND && ROW_EXPAND.host === li ? ROW_EXPAND.copy : null;
+  if ((li && li.matches(':hover')) || (cp && cp.matches(':hover')) || (IBX_SIDE.el && IBX_SIDE.el.matches(':hover')))
+    ibxSideStay();
+  else ibxSideLater();
+}
+function ibxSidePress(ev) { if (IBX_SIDE.el && !IBX_SIDE.el.contains(ev.target)) ibxSideDismiss(); }
+function ibxSideKeyDown(ev) { if (ev.key === 'Escape') ibxSideDismiss(); }
+function ibxSideScroll() { ibxSideDismiss(); }
 function ibxSideWire(box) {
   if (!box || box._ibxSide) return;
   box._ibxSide = true;
@@ -19460,6 +19509,8 @@ function ibxSideWire(box) {
     if (ev.pointerType !== 'mouse') return;
     const win = box.ownerDocument.defaultView;
     if (!win || !win.matchMedia('(hover: hover)').matches) return;
+    IBX_SIDE.at = { x: ev.clientX, y: ev.clientY };
+    if (IBX_SIDE.quiet) return;
     // With the panel up, ibxSideTrack (on the document) decides.
     if (IBX_SIDE.el) return;
     const li = ibxSideCard(ev.target);
