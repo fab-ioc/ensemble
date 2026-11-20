@@ -10216,7 +10216,7 @@ function replyGiveBack(aim, text, points) {
 // The To line's "· reply to “…”" and the aimed card, as REPLY_AIM is. An aim
 // whose card was answered meanwhile (an option, another device) is dropped.
 function replyPaint() {
-  if (replyGuest()) { replyAimCards(); return; }
+  if (replyGuest()) { replyGuestSettle(); replyAimCards(); return; }
   if (REPLY_AIM && !replyOpen(REPLY_AIM, false)) REPLY_AIM = null;
   const a = REPLY_AIM, span = $('#compose-reply');
   if (span) {
@@ -10225,9 +10225,24 @@ function replyPaint() {
     setText(re, a ? `reply to “${replyShort(a.question) || 'the question'}”` : '');
     re.title = a ? a.question : '';
   }
-  if (WORKSPACE_COMPOSE) try { window.parent.wcReplyPaint?.(a ? { room: ROOM, ...a } : null); } catch (e) {}
+  // The thread the box serves goes with it: the workspace drops an aim told
+  // for a chat the box no longer serves (a switch, a late repaint).
+  if (WORKSPACE_COMPOSE) try { window.parent.wcReplyPaint?.(a ? { room: ROOM, thread: (SHARED_THREAD && SHARED_THREAD.thread) || '', ...a } : null); } catch (e) {}
   replyAimCards();
   try { composePlaceholder(); } catch (e) {}
+}
+// A guest whose card the workspace box answers, settled here (an option, Close,
+// another device): the box drops its aim now, not at its own next poll.
+function replyGuestSettle() {
+  let w = null;
+  try { w = window.parent.wcReplyNow?.() || null; } catch (e) {}
+  if (w && w.room === ROOM && !replyOpen(w, false)) try { window.parent.wcReplySettled?.(w); } catch (e) {}
+}
+// The box's aim dropped when its card was settled in a chat it serves (the text stays).
+function replyDrop(mid, n) {
+  if (!REPLY_AIM || REPLY_AIM.mid !== String(mid) || REPLY_AIM.n !== +n) return;
+  REPLY_AIM = null;
+  composerDestinationPaint();
 }
 // The cards on screen marked as the aim is, in place (the focus stays).
 function replyAimCards() {

@@ -16016,6 +16016,7 @@ function wcChoose(t, focus = false) {
   if (changed) {
     if (wcBase(t) !== WC.base) { wcLeaveFrame(document.getElementById('workspace-compose-frame')); WC.base = ''; }
     WC.target = t;
+    wcReplyPaint(null);     // #408: the old chat's card is not this one's, even before the box's page loads
     try { sessionStorage.setItem('cd-workspace-compose-target', JSON.stringify(t)); } catch (e) {}
   }
   wcSync();
@@ -16306,6 +16307,10 @@ function wcReplyShort(q, max = 28) {
   return (w.length >= max / 2 ? w : q.slice(0, max)).replace(/[\s,.;:–—-]+$/, '') + '…';
 }
 function wcReplyPaint(aim) {
+  // Told for a chat the box no longer serves (a page a switch is leaving): none.
+  // A new thread's m:<mid> and the id it was promoted to are one thread.
+  const t = WC.target, th = x => { x = String(x || ''); if (!x.startsWith('m:')) return x; try { return sessionStorage.getItem('cd-thread-alias:' + t.room + ':' + x.slice(2)) || x; } catch (e) { return x; } };
+  if (aim && (!t || String(aim.room || '') !== t.room || th(aim.thread) !== th(wcThreadOf(t)))) aim = null;
   const was = WC.reply ? WC.reply.room + '/' + WC.reply.mid + ':' + WC.reply.n : '';
   WC.reply = aim && aim.mid ? {room:String(aim.room || ''), mid:String(aim.mid), n:+aim.n, question:String(aim.question || '')} : null;
   const a = WC.reply, span = document.getElementById('workspace-compose-reply'), re = span.querySelector('.wc-re');
@@ -16329,6 +16334,14 @@ function wcReplyAim(win, aim, d, text, points) {
   const put = () => { if (wcKey(WC.target) === wcKey(t)) try { f.contentWindow.replyAimSet(aim, !text, text, points); } catch (e) {} };
   if (f.contentDocument?.readyState === 'complete' && f.contentDocument.URL.includes(WC.base)) put(); else f.addEventListener('load', put, {once:true});
   return true;
+}
+// The card the box answers was settled in its chat (an option, Close): the
+// box drops the aim at once (its words stay), not at its own next poll.
+function wcReplySettled(w) {
+  const a = WC.reply;
+  if (!a || !w || a.room !== String(w.room || '') || a.mid !== String(w.mid || '') || a.n !== +w.n) return;
+  try { document.getElementById('workspace-compose-frame').contentWindow.replyDrop?.(a.mid, a.n); } catch (e) {}
+  if (WC.reply && WC.reply.mid === a.mid && WC.reply.n === a.n) wcReplyPaint(null);
 }
 document.getElementById('workspace-compose-reply-x').addEventListener('click', () => {
   try { document.getElementById('workspace-compose-frame').contentWindow.replyAimSet(null, true); } catch (e) {}
