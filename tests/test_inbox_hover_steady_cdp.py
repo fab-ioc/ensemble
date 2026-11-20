@@ -71,7 +71,8 @@ async function main() {
   await evalIn('ibxPoll(), 0');
   await until(`!!${D}.querySelector('li.ibx-row[data-ibx="p425-check"]') && !!${D}.querySelector('li.ibx-row[data-ibx="p425-wait"]')`);
   out.hoverMedia = await evalIn(`matchMedia('(hover: hover) and (pointer: fine)').matches`);
-  // Every change of what the person sees raised: the copy, the side panel, a card redrawn, a card's own classes.
+  // Every change of what the person sees raised. An uncut card may be redrawn
+  // in place by a poll; its side panel follows the card by id.
   await evalIn(`(() => {
     window.__rec = null;
     const kind = n => n.nodeType !== 1 ? '' : n.classList.contains('row-expanded') ? 'copy' : n.classList.contains('ibx-side') ? 'side'
@@ -148,6 +149,19 @@ async function main() {
       await evalIn('window.__rec = null, 0');
       o.slowEnd = await evalIn(look(id));
     }
+    // A background paint for a different project must not be held under the old copy.
+    await move(5, 5); await sleep(500);
+    const [sx, sy] = await at(ids.long);
+    await move(sx, sy); await sleep(700); await frame();
+    out.switch = await evalIn(`(() => {
+      const body = ldPart('ld-ibx-body');
+      const hadCopy = !!document.querySelector('.row-expanded'), oldPid = body._ibxPid;
+      IBX.scope = 'project'; IBX.polled = true;
+      try { ibxPaintIn(body, 'p425-other-project', 'ldSig', false, { listed: true }); }
+      finally { IBX.polled = false; }
+      return { hadCopy, oldPid, newPid: body._ibxPid,
+        copyGone: !document.querySelector('.row-expanded'), rows: LD_INBOX.querySelectorAll('li.ibx-row').length };
+    })()`);
   } finally {
     try { ch.kill(); } catch (e) {}
   }
@@ -202,6 +216,14 @@ class HoverSteadyInChrome(close.CloseInChrome):
 
     def test_no_page_errors(self):
         self.assertEqual(self.got['errors'], [])
+
+    def test_project_switch_draws_while_old_copy_is_open(self):
+        s = self.got['switch']
+        self.assertTrue(s['hadCopy'])
+        self.assertNotEqual(s['oldPid'], s['newPid'])
+        self.assertEqual(s['newPid'], 'p425-other-project')
+        self.assertTrue(s['copyGone'])
+        self.assertEqual(s['rows'], 0)
 
 
 for _n in [n for n in dir(close.CloseInChrome) if n.startswith("test_") and n not in HoverSteadyInChrome.__dict__]:
