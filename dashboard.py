@@ -6347,7 +6347,7 @@ def notify_sender_refusal(sender) -> str:
     low = " ".join(sender.lower().split())
     if low in _NOTIFY_RESERVED or low == operator_name().strip().lower() \
             or hub_input_kind(f"[{sender}] x")["kind"] != "human" or low.startswith("from the") \
-            or sender in outside_deliver.KINDS:
+            or low in outside_deliver.KINDS or low == "outside sender":
         return "The sender label is one the hub or the person goes by."
     return ""
 

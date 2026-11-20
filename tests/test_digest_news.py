@@ -472,7 +472,10 @@ class LiveMeansInTheRunningHub(unittest.TestCase):
 
     def facts(self, code=None):
         t = _task(merged=True, mergedAt=100, commits=0, sha=self.work, head=self.work[:7])
-        project = {**PROJECT, "code": str(code or self.project)}
+        # As load_projects builds it: the code folder is "path" (a project
+        # registered from a code folder keeps its own files at "home").
+        project = {**PROJECT, "path": str(code or self.project), "home": str(self.top / "home"),
+                   "isGit": True, "kind": "code"}
         with mock.patch.object(digest, "_STARTED", 200):      # the hub started after the merge
             return digest.plain_facts(project, [t], [], 0)
 

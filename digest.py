@@ -601,7 +601,7 @@ def plain_facts(project: dict, tasks: list[dict], changes: list[dict], since: fl
             # both "merged" and "not started", and must not be left to guess.
             if t["merged"]:
                 c = f"work merged into {t['base']} (branch {t['branch']}, nothing left to merge)"
-                if hub_repo(project.get("code") or ""):
+                if hub_repo(project.get("path") or ""):
                     # The hub's own code: live only when the running hub has it.
                     c += "; " + _live_words(t.get("sha", ""))
                 else:

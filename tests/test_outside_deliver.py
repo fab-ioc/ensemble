@@ -860,8 +860,14 @@ class LabelledBySender(unittest.TestCase):
         self.assertEqual(info["senderLabel"], "Outside sender")
 
     def test_a_program_cannot_notify_as_a_source_kind(self):
-        for kind in od.KINDS:
-            self.assertTrue(dashboard.notify_sender_refusal(kind), kind)
+        # Any case (a program notifying as "Slack" or "JIRA" is refused too),
+        # and the label an outside line without a source shows.
+        for kind, label in od.KINDS.items():
+            for name in (kind, label, kind.upper()):
+                self.assertTrue(dashboard.notify_sender_refusal(name), name)
+        for name in ("Outside sender", "outside  sender"):
+            self.assertTrue(dashboard.notify_sender_refusal(name), name)
+        self.assertEqual(dashboard.notify_sender_refusal("Slackbot builds"), "")
 
 
 class NoHubPrefixInAnOutsideLine(unittest.TestCase):
