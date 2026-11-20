@@ -16288,8 +16288,16 @@ window.addEventListener('message', e => {
   wcChoose(wcChatTarget(chat, String(e.data.roomId), e.data), !!e.data.focus);
 });
 // The box's target for a chat frame of the workspace.
+// A thread frame in the dock's terms (its holder's tid, else its mid), the
+// ones wcValid finds it by: its page may know the thread by another name
+// (an "m:<mid>" alias of the balloon its topic started on, #408).
 function wcChatTarget(chat, room, d) {
-  if (chat.classList.contains('po-thread')) return {kind:'thread',room,thread:String(d.thread || ''),mid:String(d.mid || '')};
+  if (chat.classList.contains('po-thread')) {
+    const e = pdThreadHolders().find(([, x]) => x.room === room && x.el?.contains(chat))?.[1];
+    if (e && WC.target?.kind === 'thread' && pdThreadIs(e, WC.target)) return WC.target;
+    if (e) return {kind:'thread',room,thread:e.tid || '',mid:e.tid ? '' : e.mid || ''};
+    return {kind:'thread',room,thread:String(d.thread || ''),mid:String(d.mid || '')};
+  }
   return {kind:chat.classList.contains('po-session') ? 'po' : 'task',room};
 }
 // Comment on a point's answer in a chat whose own box is hidden (#271): the

@@ -17,7 +17,14 @@ holds the three cards of tests.test_asks.THREE, a task chat one card.
 * A phone at 390x844: Reply keeps the card in view above the box, and the
   To line's × is a 44px target.
 
-Not covered here: a card in a thread (the fixture has no thread with a card).
+* The To line names who a send reaches: "Motors PO" in the PO chat,
+  "Engineer" in the task chat (its role, never a name), "PO in <thread>" in a
+  thread; it stays so when the reply is dropped or sent.
+* The Inbox's Reply on a task chat's card and on a thread's card aims the
+  workspace box at that chat.
+* A switch of the workspace box to another chat drops the aim at once (also
+  a late repaint told for the old chat); an option or Close pressed on the
+  aimed card in its (guest) chat drops it at once, the words staying in the box.
 Screenshots go to $ENSEMBLE_SHOTS when it is set."""
 from __future__ import annotations
 
@@ -41,12 +48,16 @@ import chatroom  # noqa: E402
 import dashboard  # noqa: E402
 import points  # noqa: E402
 import sends  # noqa: E402
+import threads  # noqa: E402
 from tests import chrome_profile  # noqa: E402
 from tests.test_asks import THREE  # noqa: E402
 from tests.test_page_update import CHROME  # noqa: E402
 
 NODE = shutil.which("node")
 TASK_ASK = "Speeds are in.\n\n1. **Ask:** Which motor profile should ship by default?\n   - Smooth\n   - Sport\n"
+TASK_ASK2 = "Gears next.\n\n1. **Ask:** Which gearbox ratio should we use?\n   - Low\n   - High\n"
+THREAD_TOPIC = "Backup plan for the motors."
+THREAD_ASK = "On it.\n\n1. **Ask:** Which backup window suits us?\n   - Night\n   - Morning\n"
 
 CDP_JS = chrome_profile.JS + r"""
 const A = JSON.parse(process.argv[1]);
@@ -122,6 +133,7 @@ async function main() {
     out[key].errors = errs.slice();
     await send('Target.closeTarget', { targetId });
   }
+  const send_press = async (P, p) => P.press(p.x, p.y);
   const sentList = `fetch('/test/sent').then(x => x.json())`;
   const PO = `PD.els['po-chat'].querySelector('iframe.po-session:not([hidden])')`;
   const TASK = `document.querySelector('iframe.dp-session[data-room=${JSON.stringify(A.task)}]')`;
@@ -129,8 +141,13 @@ async function main() {
   const cardIn = (doc, re) => `[...(${doc}).querySelectorAll('#msgs .qa')].find(q => ${re}.test(q.textContent))`;
   const aimedIn = doc => `[...(${doc}).querySelectorAll('#msgs .qa.aimed')].map(c => c.querySelector('.qa-qt').textContent.trim())`;
   const wcLine = `(() => { const s = document.getElementById('workspace-compose-reply'); return s.hidden ? null : s.querySelector('.wc-re').textContent; })()`;
-  const wcState = doc => `({ line: ${wcLine}, aimed: ${aimedIn(doc)}, on: [...(${doc}).querySelectorAll('#msgs .qa-reply.on')].length,
+  const wcTo = `document.getElementById('workspace-compose-link').textContent`;
+  // The aimed cards in every chat frame of the page (a docked thread's too), not the box's own.
+  const aimedAll = `[...new Set([...document.querySelectorAll('iframe')].filter(f => f.id !== 'workspace-compose-frame').flatMap(f => {
+    try { return [...f.contentDocument.querySelectorAll('.qa.aimed')].map(c => c.querySelector('.qa-qt').textContent.trim()); } catch (e) { return []; } }))]`;
+  const wcState = doc => `({ line: ${wcLine}, to: ${wcTo}, aimed: ${aimedIn(doc)}, on: [...(${doc}).querySelectorAll('#msgs .qa-reply.on')].length,
     target: WC.target && { room: WC.target.room, kind: WC.target.kind }, reply: WC.reply && { room: WC.reply.room, n: WC.reply.n, question: WC.reply.question },
+    title: document.getElementById('workspace-compose-link').title,
     caret: document.activeElement === ${WCF} && ${WCF}.contentDocument.activeElement === ${WCF}.contentDocument.getElementById('input'),
     input: ${WCF}.contentDocument.getElementById('input').value })`;
   // Reply on a card in a docked chat, words typed, Send in the workspace box.
@@ -153,6 +170,20 @@ async function main() {
     await sleep(400);
     r.after = await P.ev(wcState(doc));
     return r;
+  }
+  // The Inbox's own Reply on the row matching `re` (any aim dropped first).
+  async function inboxReply(P, re) {
+    await P.ev(`(() => { if (!document.getElementById('workspace-compose-reply').hidden) document.getElementById('workspace-compose-reply-x').click(); return 1; })()`);
+    await sleep(300);
+    const row = `[...document.querySelectorAll('#ld-ibx-body .ibx-row')].find(li => ${re}.test(li.textContent))`;
+    const has = await P.until(`!!(${row})?.querySelector('[data-ibx-reply]')`, 'row', 8000).catch(() => false);
+    if (!has) return { rows: await P.ev(`[...document.querySelectorAll('#ld-ibx-body .ibx-row')].map(li => li.textContent.trim().slice(0, 90))`) };
+    await P.ev(`(() => { (${row}).querySelector('[data-ibx-reply]').click(); return 1; })()`);
+    const line = await P.until(`${wcLine}`, 'aimed from the inbox', 10000).catch(() => null);
+    await sleep(800);
+    return P.ev(`({ line: ${JSON.stringify(line)}, now: ${wcLine}, to: ${wcTo}, aimed: ${aimedAll},
+      target: WC.target && { room: WC.target.room, kind: WC.target.kind }, reply: WC.reply && WC.reply.question,
+      caret: document.activeElement === ${WCF} && ${WCF}.contentDocument.activeElement === ${WCF}.contentDocument.getElementById('input') })`);
   }
   const WS_READY = `typeof ALL_ROWS !== 'undefined' && ALL_ROWS.some(r => r.roomId === ${JSON.stringify(A.po)})`;
   const wsOpen = async P => {
@@ -227,6 +258,63 @@ async function main() {
         }
         return r;
       }],
+      // Aimed at a PO card, the box switched to the task chat: no aim at once, before
+      // the box's page loads; a late repaint told for the PO chat is ignored.
+      ['switch', async P => {
+        const doc = `${PO}.contentDocument`;
+        await P.ev(`(() => { if (!document.getElementById('workspace-compose-reply').hidden) document.getElementById('workspace-compose-reply-x').click(); PD.dock.reveal('po-chat'); return 1; })()`);
+        await sleep(600);
+        await P.ev(`(() => { ${cardIn(doc, '/nightly backup/')}.querySelector('.qa-reply').click(); return 1; })()`);
+        const before = await P.until(`${wcLine}`, 'aimed', 5000).catch(() => null);
+        await sleep(300);
+        return P.ev(`(() => { const r = { before: ${JSON.stringify(before)}, aimedBefore: ${aimedIn(doc)} };
+          wcChoose({ kind: 'task', room: ${JSON.stringify(A.task)} });
+          r.now = { line: ${wcLine}, reply: WC.reply, aimed: ${aimedIn(doc)}, kind: WC.target && WC.target.kind };
+          wcReplyPaint({ room: ${JSON.stringify(A.po)}, thread: '', mid: ${JSON.stringify(A.backup.mid)}, n: ${A.backup.n}, question: 'Turn on the nightly backup?' });
+          r.late = { line: ${wcLine}, reply: WC.reply };
+          return r; })()`);
+      }],
+      // Aimed at a card, words typed, then an option pressed on that card in its chat:
+      // the box drops the aim at once and keeps the words.
+      ['settle', async P => {
+        const r = {}, doc = `${PO}.contentDocument`;
+        await P.ev(`PD.dock.reveal('po-chat'); 0`);
+        await sleep(600);
+        await P.pressOn(`${cardIn(doc, '/Which retention/')}.querySelector('.qa-reply')`, 'Reply');
+        r.line = await P.until(`${wcLine}`, 'aimed', 5000).catch(() => null);
+        await P.type('Draft words');
+        await sleep(200);
+        const p = await P.at(`${cardIn(doc, '/Which retention/')}.querySelector('.qa-opt')`);
+        r.optHit = !!p && p.hits;
+        const t0 = Date.now();
+        if (p) await send_press(P, p);
+        r.ms = await P.until(`${wcLine} === null`, 'dropped', 4000).then(() => Date.now() - t0).catch(() => -1);
+        await sleep(300);
+        r.after = await P.ev(wcState(doc));
+        r.done = await P.ev(`(${cardIn(doc, '/Which retention/')}).classList.contains('done')`);
+        return r;
+      }],
+      ['inboxTask', P => inboxReply(P, '/gearbox ratio/')],
+      ['inboxThread', P => inboxReply(P, '/backup window/')],
+      // Aimed at the task chat's card, words typed, then Close on that card in its chat:
+      // the box drops the aim at once and keeps the words.
+      ['closeAimed', async P => {
+        const r = {}, doc = `${TASK}.contentDocument`;
+        await P.ev(`(() => { if (!document.getElementById('workspace-compose-reply').hidden) document.getElementById('workspace-compose-reply-x').click(); PD.dock.reveal(pdChatId(${JSON.stringify(A.task)})); return 1; })()`);
+        await sleep(600);
+        await P.pressOn(`${cardIn(doc, '/gearbox ratio/')}.querySelector('.qa-reply')`, 'Reply');
+        r.line = await P.until(`${wcLine}`, 'aimed', 5000).catch(() => null);
+        await P.type('Gear words');
+        await sleep(200);
+        const p = await P.at(`${cardIn(doc, '/gearbox ratio/')}.querySelector('.qa-close')`);
+        r.closeHit = !!p && p.hits;
+        const t0 = Date.now();
+        if (p) await send_press(P, p);
+        r.ms = await P.until(`${wcLine} === null`, 'dropped', 4000).then(() => Date.now() - t0).catch(() => -1);
+        await sleep(300);
+        r.after = await P.ev(wcState(doc));
+        return r;
+      }],
     ]);
     // The chat's own page, opened from the Inbox's Reply (its link in a new tab).
     await view('pg1440', 1440, 900, false, `/session?room=${encodeURIComponent(A.po)}&msg=${encodeURIComponent(A.backup.mid)}&part=${encodeURIComponent('inbox+reply,ask:' + A.backup.n)}`,
@@ -236,6 +324,7 @@ async function main() {
         await sleep(400);
         await P.shot('pg1440-inbox-reply');
         return P.ev(`({ line: (() => { const s = document.getElementById('compose-reply'); return s.hidden ? null : s.querySelector('.cr-re').textContent; })(),
+          to: document.getElementById('compose-destination-link').textContent,
           aimed: ${aimedIn('document')}, caret: document.activeElement === document.getElementById('input') })`);
       }],
     ]);
@@ -244,7 +333,8 @@ async function main() {
       ['reply', async P => {
         await P.ev(`(() => { document.getElementById('msgs').scrollTop = 0; return 1; })()`);
         await sleep(300);
-        const card = cardIn('document', '/Which retention/');
+        // (The retention card is answered by now, on the shared hub: ws1440's 'settle'.)
+        const card = cardIn('document', '/nightly backup/');
         // The card scrolled off under the box first: the Reply is on screen, its card mostly below.
         await P.ev(`(() => { const m = document.getElementById('msgs'), c = ${card}, b = c.querySelector('.qa-reply');
           m.scrollTop += b.getBoundingClientRect().bottom - m.getBoundingClientRect().bottom + 4; return 1; })()`);
@@ -338,7 +428,11 @@ class ReplyOnCards(unittest.TestCase):
         t0 = time.time() - 600
         (base / "transcripts" / "C--po" / "po-sid.jsonl").write_text("".join(json.dumps(x) + "\n" for x in [
             _turn("po-sid", "user", "[rotation] You are the PO of Motors. Read PO-HANDOVER.md.", t0),
-            _turn("po-sid", "assistant", THREE, t0 + 5)]), encoding="utf-8")
+            _turn("po-sid", "assistant", THREE, t0 + 5),
+            _turn("po-sid", "user", THREAD_TOPIC, t0 + 10),
+            _turn("po-sid", "assistant", THREAD_ASK, t0 + 15)]), encoding="utf-8")
+        # The person's topic sent as a new thread (#367): the PO's card is its reply.
+        threads.note_send(cls.po, "", "", [], False, THREAD_TOPIC, now=t0 + 10, new=True)
         members = [{"identity": "claude", "agent": "claude", "role": "engineer", "cwd": str(code)},
                    {"identity": "claude-2", "agent": "claude", "role": "reviewer", "cwd": str(code)}]
         task = chatroom.create_room("Faster motors", members)
@@ -348,6 +442,8 @@ class ReplyOnCards(unittest.TestCase):
         dashboard.assign_task_number(cls.task, cls.proj)
         qs = asks.validated([{"question": "Which motor profile should ship by default?", "options": [{"label": "Smooth"}, {"label": "Sport"}]}], [])
         chatroom.post_message(cls.task, "claude", TASK_ASK, to="user", ask_audience="user", structured_asks=[{**q, "n": i} for i, q in enumerate(qs)])
+        qs2 = asks.validated([{"question": "Which gearbox ratio should we use?", "options": [{"label": "Low"}, {"label": "High"}]}], [])
+        chatroom.post_message(cls.task, "claude", TASK_ASK2, to="user", ask_audience="user", structured_asks=[{**q, "n": i} for i, q in enumerate(qs2)])
         cards = asks.open_in(chatroom.get_room(cls.po))
         backup = next(c for c in cards if "nightly backup" in c["question"])
 
@@ -397,6 +493,7 @@ class ReplyOnCards(unittest.TestCase):
         self.assertEqual(a["on"], 1, r)
         self.assertEqual(a["target"], {"room": self.po, "kind": "po"}, r)
         self.assertEqual(a["reply"]["question"], "What else should go into this release?", r)
+        self.assertEqual(a["to"], "Motors PO", r)
         self.assertTrue(a["caret"], ("the caret is in the workspace box", r))
         self.assertTrue(r["sendHit"], r)
         self.assertIsNotNone(r["sent"], r)
@@ -406,6 +503,7 @@ class ReplyOnCards(unittest.TestCase):
         self.assertIsNone(r["after"]["line"], r)
         self.assertEqual(r["after"]["aimed"], [], r)
         self.assertIsNone(r["after"]["reply"], r)
+        self.assertEqual(r["after"]["to"], "Motors PO", "the line goes back to the chat's agent by itself")
 
     def test_x_keeps_the_words_and_drops_the_link(self):
         r = self.step("ws1440", "x")
@@ -413,6 +511,7 @@ class ReplyOnCards(unittest.TestCase):
         self.assertIsNone(r["after"]["line"], r)
         self.assertEqual(r["after"]["aimed"], [], r)
         self.assertEqual(r["after"]["input"], "Keep a year", r)
+        self.assertEqual(r["after"]["to"], "Motors PO", r)
         self.assertIsNotNone(r["sent"], r)
         self.assertEqual(_plain(r["sent"]["text"]), "Keep a year", r)
         self.assertTrue(r["open"], "a plain message leaves the card open")
@@ -425,11 +524,14 @@ class ReplyOnCards(unittest.TestCase):
         self.assertEqual(a["line"], "reply to “Which motor profile should…”", r)
         self.assertEqual(a["aimed"], ["Which motor profile should ship by default?"], r)
         self.assertEqual(a["target"], {"room": self.task, "kind": "task"}, r)
+        self.assertEqual(a["to"], "Engineer", "a task chat's line names its agent by role")
+        self.assertEqual(a["title"], "#1 Faster motors", r)
         self.assertTrue(a["caret"], r)
         self.assertEqual(r["sent"]["roomId"], self.task, r)
         self.assertTrue(r["sent"]["text"].startswith("Re “Which motor profile should ship by default?”: Smooth, but tuned"), r)
         self.assertIn("You answered in your message", r["done"])
         self.assertIsNone(r["after"]["line"], r)
+        self.assertEqual(r["after"]["to"], "Engineer", r)
 
     def test_the_inbox_reply_opens_it_with_the_box_aimed(self):
         r = self.step("ws1440", "inbox")
@@ -446,13 +548,61 @@ class ReplyOnCards(unittest.TestCase):
         r = self.step("pg1440", "landed")
         self.assertEqual(r["line"], "reply to “Turn on the nightly backup?”", r)
         self.assertEqual(r["aimed"], ["Turn on the nightly backup?"], r)
+        self.assertEqual(r["to"], "Motors PO", r)
         self.assertTrue(r["caret"], r)
+
+    def test_the_inbox_reply_in_a_task_chat(self):
+        r = self.step("ws1440", "inboxTask")
+        self.assertEqual(r.get("target"), {"room": self.task, "kind": "task"}, r)
+        self.assertEqual(r["line"], "reply to “Which gearbox ratio should…”", r)
+        self.assertEqual(r["reply"], "Which gearbox ratio should we use?", r)
+        self.assertIn("Which gearbox ratio should we use?", r["aimed"], r)
+        self.assertEqual(r["to"], "Engineer", r)
+        self.assertTrue(r["caret"], r)
+
+    def test_the_inbox_reply_in_a_thread(self):
+        r = self.step("ws1440", "inboxThread")
+        self.assertEqual(r.get("target"), {"room": self.po, "kind": "thread"}, r)
+        self.assertEqual(r["line"], "reply to “Which backup window suits…”", r)
+        self.assertIn("Which backup window suits us?", r["aimed"], r)
+        self.assertTrue(r["to"].startswith("PO in Backup plan"), r)
+        self.assertTrue(r["caret"], r)
+
+    def test_a_switch_drops_the_aim_at_once(self):
+        r = self.step("ws1440", "switch")
+        self.assertEqual(r["before"], "reply to “Turn on the nightly backup?”", r)
+        self.assertEqual(r["aimedBefore"], ["Turn on the nightly backup?"], r)
+        self.assertEqual(r["now"], {"line": None, "reply": None, "aimed": [], "kind": "task"}, r)
+        self.assertEqual(r["late"], {"line": None, "reply": None}, "a repaint told for the chat left is ignored")
+
+    def test_an_option_in_the_chat_drops_the_aim_at_once(self):
+        r = self.step("ws1440", "settle")
+        self.assertEqual(r["line"], "reply to “Which retention for old…”", r)
+        self.assertTrue(r["optHit"], r)
+        self.assertTrue(r["done"], r)
+        self.assertGreaterEqual(r["ms"], 0, r)
+        self.assertLess(r["ms"], 1500, "dropped at once, not at the box's next poll")
+        self.assertIsNone(r["after"]["line"], r)
+        self.assertEqual(r["after"]["aimed"], [], r)
+        self.assertEqual(r["after"]["input"], "Draft words", "the words stay")
+        self.assertEqual(r["after"]["to"], "Motors PO", r)
+
+    def test_close_in_the_chat_drops_the_aim_at_once(self):
+        r = self.step("ws1440", "closeAimed")
+        self.assertEqual(r["line"], "reply to “Which gearbox ratio should…”", r)
+        self.assertTrue(r["closeHit"], r)
+        self.assertGreaterEqual(r["ms"], 0, r)
+        self.assertLess(r["ms"], 1500, "dropped at once, not at the box's next poll")
+        self.assertIsNone(r["after"]["line"], r)
+        self.assertEqual(r["after"]["aimed"], [], r)
+        self.assertEqual(r["after"]["input"], "Gear words", "the words stay")
+        self.assertEqual(r["after"]["to"], "Engineer", r)
 
     def test_the_phone_keeps_the_card_in_view_and_a_44px_x(self):
         r = self.step("ph390", "reply")
         self.assertTrue(r["hit"], r)
-        self.assertEqual(r["aimed"], ["Which retention for old transcripts?"], r)
-        self.assertEqual(r["line"], "reply to “Which retention for old…”", r)
+        self.assertEqual(r["aimed"], ["Turn on the nightly backup?"], r)
+        self.assertEqual(r["line"], "reply to “Turn on the nightly backup?”", r)
         self.assertTrue(r["inView"], r)
         self.assertGreaterEqual(min(r["x"]), 44, r)
 

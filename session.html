@@ -7596,7 +7596,8 @@ function composerDestinationPaint() {
     const page = host?.pdProjectName ? host : host?.opener?.pdProjectName ? host.opener : null;
     project = page?.pdProjectName?.() || '';
   } catch (e) {}
-  link.textContent = (project || room?.projectName || room?.title || 'Chat') + ' PO';
+  // On its own page the name may be the room's title, which says PO already ("Motors PO").
+  link.textContent = String(project || room?.projectName || room?.title || 'Chat').replace(/\s+PO$/, '') + ' PO';
 }
 $('#compose-destination-link').addEventListener('click', e => {
   e.preventDefault();
@@ -11362,6 +11363,15 @@ function workspaceComposeThread(target) {
   let next = target?.thread ? String(target.thread) : '';
   if (next.startsWith('m:')) {
     try { next = edWorkspaceStorage().getItem('cd-thread-alias:' + ROOM + ':' + next.slice(2)) || next; } catch (e) {}
+  }
+  // The thread the box serves, under the name the dashboard has since given it
+  // (pdThreadTitle, its word reaching this page late): the same thread, renamed
+  // in place, its aim kept (#408).
+  const cur = SHARED_THREAD?.thread || '';
+  if (next && cur !== next && cur.startsWith('m:')) {
+    let alias = '';
+    try { alias = edWorkspaceStorage().getItem('cd-thread-alias:' + ROOM + ':' + cur.slice(2)) || ''; } catch (e) {}
+    if (alias === next) SHARED_THREAD.thread = next;
   }
   if ((SHARED_THREAD?.thread || '') === next) {
     if (SHARED_THREAD && target.info) { SHARED_THREAD.info = target.info; SHARED_THREAD.title = String(target.title || 'Thread'); }
