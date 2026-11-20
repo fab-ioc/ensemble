@@ -556,15 +556,19 @@ _NO_CARRY = threading.local()
 class reading_only:
     """``with reading_only():`` this thread's reads of the table carry no
     per-source table over (no write): Ask the hub reads the routing to show
-    it, and writes only on Apply (#410)."""
+    it, and writes only on Apply (#410). Safe to nest, the same instance
+    too: each ``with`` keeps what it found on a stack of its own."""
+
+    def __init__(self):
+        self._was: list[bool] = []
 
     def __enter__(self):
-        self.was = getattr(_NO_CARRY, "on", False)
+        self._was.append(getattr(_NO_CARRY, "on", False))
         _NO_CARRY.on = True
         return self
 
     def __exit__(self, *exc):
-        _NO_CARRY.on = self.was
+        _NO_CARRY.on = self._was.pop()
         return False
 
 

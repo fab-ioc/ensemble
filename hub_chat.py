@@ -93,7 +93,7 @@ def _outside_apply(text: str, base_hash: str) -> dict:
     if that text is still the one it was made from (else stale, nothing
     written)."""
     if not outside_setup.setup_path().exists():
-        outside_setup.write_first(expect_hash=base_hash)
+        return outside_setup.apply_new_first(text, base_hash, outside_setup.HUB_CHAT_BY)
     return outside_setup.apply_new_text(text, base_hash, outside_setup.HUB_CHAT_BY)
 
 
@@ -528,10 +528,14 @@ def _apply(tid: str) -> None:
             state = APPLIED
             result = {"changes": res["changes"], "problems": [x["text"] for x in res["problems"]],
                       "failed": res["failed"] or res["lookupFailed"], "at": time.time()}
-        except outside_setup.Changed:
+        except outside_setup.Changed as e:
             state = STALE
-            result = {"error": "The setup file changed since this was made from it, so nothing was "
-                               "written. Ask again to get a change made from the file as it is now."}
+            result = {"error": "An older routing table was carried into the routing table since this was "
+                               "made, so the setup file was not written. Ask again to get a change made "
+                               "from the routing as it is now."
+                      if e.carried else
+                      "The setup file changed since this was made from it, so nothing was "
+                      "written. Ask again to get a change made from the file as it is now."}
         except route.Refused as e:
             result = {"error": str(e)}
         except Exception as e:

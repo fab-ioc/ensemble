@@ -123,7 +123,10 @@ class Refused(route.Refused):
 
 
 class Changed(Refused):
-    """The setup file changed since a new text for it was made from it."""
+    """The setup file changed since a new text for it was made from it.
+    ``carried``: what changed is an older per-source table carried into the
+    routing table (``apply_new_first``), which is a write."""
+    carried = False
 
 
 def _log(msg: str) -> None:
@@ -1212,29 +1215,30 @@ def apply_text(text: str, by: dict | None = None, check_only: bool = False,
 # The file: apply it, write its problems, the watcher
 # ---------------------------------------------------------------------------
 
-def write_first(expect_hash: str | None = None) -> str:
-    """Write the file from today's table when there is none. Returns its text.
-    With ``expect_hash`` (Ask the hub's Apply of a change made from the text
-    the file would be written with, #410), nothing is written and Changed is
-    raised when today's text is not that one any more."""
+def write_first() -> str:
+    """Write the file from today's table when there is none. Returns its text."""
     with _LOCK:
         p = setup_path()
         text = _read_text(p)
         if text is not None:
             return text
         text = first_text()
-        if expect_hash is not None and text_hash(text) != expect_hash:
-            raise Changed("the routing changed since this was made from it")
-        durable.write_text(p, text)
-        st = load_state()
-        # Written from the table, so it is what applies now.
-        st.update(mtime=_mtime(p), appliedHash=text_hash(text), appliedLines=_lines_by_section(text),
-                  problems=[], failed="",
-                  lastApply=time.time())
-        _save_state(st)
-    _log("written from the routing table as it stands")
+        _write_first_text(text)
     write_now()
     return text
+
+
+def _write_first_text(text: str) -> None:
+    """Write ``text`` (a ``first_text``) as the file, with ``_LOCK`` held."""
+    p = setup_path()
+    durable.write_text(p, text)
+    st = load_state()
+    # Written from the table, so it is what applies now.
+    st.update(mtime=_mtime(p), appliedHash=text_hash(text), appliedLines=_lines_by_section(text),
+              problems=[], failed="",
+              lastApply=time.time())
+    _save_state(st)
+    _log("written from the routing table as it stands")
 
 
 def apply_file(now: float | None = None, by: dict | None = None) -> dict | None:
@@ -1266,6 +1270,46 @@ def apply_new_text(text: str, base_hash: str, by: dict | None = None,
             if cur is None or text_hash(cur) != base_hash:
                 raise Changed("the setup file changed since this was made from it")
             # Keep the problems part where the hub writes it; the apply rewrites it.
+            durable.write_text(setup_path(), with_problems(text.replace("\r\n", "\n"),
+                                                           [x["text"] for x in load_state()["problems"]]))
+        return _apply_file(now, by or HUB_CHAT_BY)
+    finally:
+        _APPLYING.release()
+
+
+def apply_new_first(text: str, base_hash: str, by: dict | None = None,
+                    now: float | None = None) -> dict:
+    """``apply_new_text`` for a text made, when there was no file, from the
+    text the file would be written with (Ask the hub's Apply, #410). With
+    the apply lock held throughout (so no routing change made outside the
+    file, which waits for it in ``section_change``, can land in between),
+    and the file and table locks around the check and the writes: the text
+    the file would be written with is made again without carrying a
+    per-source table over; when it is not the one ``base_hash`` was made
+    from, Changed is raised and nothing is written. When a per-source table
+    would be carried into the table, that is done and Changed is raised
+    (``carried``): a text made without those rows would clear them. Else
+    the file is written from it, then as ``text``, and applied."""
+    if not isinstance(text, str) or not text.strip() or len(text) > 200_000:
+        raise Refused("the setup file must be text of at most 200,000 characters")
+    if not _APPLYING.acquire(timeout=APPLY_WAIT_S):
+        raise Refused("the setup file is being applied right now; try again in a minute")
+    try:
+        with _LOCK, route._LOCK:
+            if _read_text(setup_path()) is None:
+                with route.reading_only():
+                    first = first_text()
+                if text_hash(first) != base_hash:
+                    raise Changed("the routing changed since this was made from it")
+                first = first_text()        # carries a per-source table over, if one is there
+                if text_hash(first) != base_hash:
+                    e = Changed("an older per-source table was carried into the routing table")
+                    e.carried = True
+                    raise e
+                _write_first_text(first)
+            cur = _read_text(setup_path())
+            if cur is None or text_hash(cur) != base_hash:
+                raise Changed("the setup file changed since this was made from it")
             durable.write_text(setup_path(), with_problems(text.replace("\r\n", "\n"),
                                                            [x["text"] for x in load_state()["problems"]]))
         return _apply_file(now, by or HUB_CHAT_BY)

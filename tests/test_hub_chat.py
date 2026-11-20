@@ -494,6 +494,89 @@ class HubChatSettings(unittest.TestCase):
         self.assertEqual(sorted(p.name for p in outside.root().iterdir()), before)
         self.assertIn("made-up kites", json.dumps(self.row(ALPHA)))
 
+    def _legacy_table(self):
+        outside.set_source("slack", type="slack", mode="on", settings={"reader": "connector"})
+        old = outside.root() / "routing-slack.json"
+        old.write_text(json.dumps({"rows": {ALPHA: {"topic": "made-up pricing"}}, "history": []}))
+        return old
+
+    def test_a_stale_routing_change_with_a_per_source_table_writes_nothing(self):
+        """Review 3: stale with an old per-source table there: the check is
+        made without carrying the table over, so nothing at all is written."""
+        self._no_outside()
+        self._legacy_table()
+        with route.reading_only():
+            first = setup.first_text()
+        self.answer = self.change(first + "\n## Beta\nTopic: made-up boats\n", "Beta gets boats.")
+        a = hub_chat.ask("Beta is about boats")["turns"][-1]
+        self.assertEqual(a["state"], "proposed", a)
+        outside.set_source("slack", mode="off")
+        before = {p.name: p.read_bytes() for p in outside.root().iterdir() if p.is_file()}
+        hub_chat.apply(a["id"])
+        self.assertEqual(self.last()["state"], "stale", self.last())
+        self.assertIn("nothing was written", self.last()["result"]["error"])
+        self.assertEqual({p.name: p.read_bytes() for p in outside.root().iterdir() if p.is_file()}, before)
+
+    def test_a_per_source_table_carried_at_apply_makes_it_stale_and_keeps_its_rows(self):
+        """Review 3: made from the routing without an old per-source table;
+        on Apply the table is carried over, which a text made without its
+        rows would clear: stale, the setup file is not written, the rows kept."""
+        self._no_outside()
+        old = self._legacy_table()
+        with route.reading_only():
+            first = setup.first_text()
+        self.answer = self.change(first + "\n## Beta\nTopic: made-up boats\n", "Beta gets boats.")
+        a = hub_chat.ask("Beta is about boats")["turns"][-1]
+        hub_chat.apply(a["id"])
+        self.assertEqual(self.last()["state"], "stale", self.last())
+        self.assertIn("carried", self.last()["result"]["error"])
+        self.assertFalse(setup.setup_path().exists())
+        self.assertFalse(old.exists())
+        self.assertEqual(self.row(ALPHA)["topic"], "made-up pricing")
+
+    def test_a_routing_change_made_during_the_first_apply_waits_and_is_kept(self):
+        """Review 3: a routing change made outside the file (a PO's, Make a
+        rule) while Apply writes the file for the first time waits for the
+        apply, then lands: neither change is lost."""
+        import threading
+        self._no_outside()
+        self.answer = self.change(setup.first_text() + "\n## Beta\nTopic: made-up boats\n", "Beta gets boats.")
+        a = hub_chat.ask("Beta is about boats")["turns"][-1]
+        real, out = setup.first_text, {}
+        po = {"kind": "agent", "identity": "claude", "projectId": ALPHA, "agent": "claude",
+              "role": "engineer", "roomId": "room-made-up"}
+
+        def edit():
+            out["res"] = setup.set_own(ALPHA, {"topic": "made-up kites"}, po)
+
+        def first_text():
+            if "t" not in out:          # once the apply has made its check
+                out["t"] = threading.Thread(target=edit)
+                out["t"].start()
+                out["t"].join(0.3)
+                out["waited"] = out["t"].is_alive()
+            return real()
+        with mock.patch.object(setup, "first_text", first_text):
+            hub_chat.apply(a["id"])
+        out["t"].join(10)
+        self.assertTrue(out["waited"], "the routing change waits for the apply")
+        self.assertEqual(self.last()["state"], "applied", self.last())
+        self.assertEqual(self.row(BETA)["topic"], "made-up boats")
+        self.assertEqual(self.row(ALPHA)["topic"], "made-up kites")
+        self.assertIn("made-up kites", setup.setup_path().read_text(encoding="utf-8"))
+
+    def test_reading_only_nests_the_same_instance_too(self):
+        g = route.reading_only()
+        with g:
+            with g:
+                self.assertTrue(route._NO_CARRY.on)
+            self.assertTrue(route._NO_CARRY.on)
+        self.assertFalse(route._NO_CARRY.on)
+        with self.assertRaises(ValueError):
+            with g:
+                raise ValueError
+        self.assertFalse(route._NO_CARRY.on)
+
     def test_parse_settings(self):
         self.assertEqual(hub_chat.parse('SETTINGS: x\n<<<SETTINGS\n{"theme": "dark"}\nSETTINGS>>>'),
                          {"kind": "settings", "text": "x", "settings": {"theme": "dark"}})
