@@ -251,6 +251,21 @@ async function main() {
         o.r4 = { stale: await other.evalIn(`window.__stale.theme`),
           other: await other.evalIn(`({ theme: document.documentElement.dataset.theme, cache: localStorage.getItem('cd-theme'), staleTaken: PREFS.theme === window.__stale.theme })`),
           me: await evalIn(`({ theme: document.documentElement.dataset.theme, cache: localStorage.getItem('cd-theme') })`) };
+        // 5. The same for the page's own settings read (loadPrefs) in another tab: Project icons.
+        await other.evalIn(`(async () => { window.__stale = await (await window.__fetch('/api/settings', {cache: 'no-store'})).json();
+          window.__holdGet = true; window.__loaded = false; loadPrefs().then(() => { window.__loaded = true; }); return 0; })()`);
+        await other.until(`window.__gate.length === 1`);
+        await evalIn(`document.querySelector('#pref-ptiles [data-val="flat"]').click(); document.getElementById('ap-save').click(); 0`);
+        await until(`window.__gate.some(g => !g.get)`);
+        await release('!g.get', `window.__fetch(g.u, g.o)`);
+        await until(`!AP.saving && !Object.keys(AP.draft).length`);
+        await other.until(`document.documentElement.dataset.ptiles === 'flat'`, 4000);
+        await other.evalIn(`(() => { const g = window.__gate.shift(); g.res(new Response(JSON.stringify(window.__stale), {status: 200, headers: {'Content-Type': 'application/json'}})); return 0; })()`);
+        await other.until(`window.__loaded`, 5000);
+        await sleep(300);
+        o.r5 = { stale: await other.evalIn(`window.__stale.projectIcons`),
+          other: await other.evalIn(`({ tiles: document.documentElement.dataset.ptiles, cache: localStorage.getItem('cd-ptiles'), prefs: PREFS.projectIcons })`),
+          me: await evalIn(`({ tiles: document.documentElement.dataset.ptiles, cache: localStorage.getItem('cd-ptiles') })`) };
         await other.evalIn(`window.fetch = window.__fetch; 0`);
         await evalIn(`window.fetch = window.__fetch; 0`);
       }
@@ -484,6 +499,11 @@ class AppearancePage(unittest.TestCase):
         self.assertEqual(r["stale"], "dim")
         self.assertEqual(r["other"], {"theme": "fjord", "cache": "fjord", "staleTaken": False})
         self.assertEqual(r["me"], {"theme": "fjord", "cache": "fjord"})
+        # And for loadPrefs: it reads again rather than take the older answer.
+        r = g["r5"]
+        self.assertEqual(r["stale"], "glossy")
+        self.assertEqual(r["other"], {"tiles": "flat", "cache": "flat", "prefs": "flat"})
+        self.assertEqual(r["me"], {"tiles": "flat", "cache": "flat"})
 
     def test_a_choice_saved_elsewhere_arrives_within_5_seconds(self):
         for name, g in self.got.items():

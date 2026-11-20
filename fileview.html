@@ -134,7 +134,8 @@
   // when it started, sync() adopts nothing: a stale answer would undo the
   // save. Kept on the top page so its chats hold too. Another tab's Save
   // writes 'cd-saved' before its caches: a read this page had out then is
-  // older than that Save, and is dropped the same way.
+  // older than that Save, and is dropped the same way, whether or not its
+  // storage event has been handled yet (the marker itself is compared).
   function holds() {
     try { return window.top.CD_SYNC_HOLD || (window.top.CD_SYNC_HOLD = { n: 0, out: 0 }); }
     catch (e) { return holds.own || (holds.own = { n: 0, out: 0 }); }
@@ -144,6 +145,15 @@
     h.n++; h.out++;
     return function () { if (done) return; done = true; h.out--; h.n++; };
   }
+  // A settings read takes a ticket when it starts; fresh(t) says whether its
+  // answer may still be adopted (no Save landed, here or in another tab, and
+  // none is out). Every reader of Appearance settings uses it.
+  function ticket() {
+    var m = '';
+    try { m = localStorage.getItem('cd-saved') || ''; } catch (e) {}
+    return holds().n + '|' + m;
+  }
+  function fresh(t) { return !holds().out && t === ticket(); }
   function chooseAccent(color) {
     try { if (color) localStorage.setItem('cd-accent', color); else localStorage.removeItem('cd-accent'); } catch (e) {}
     epoch++; chosen++;
@@ -185,12 +195,11 @@
   // Adopt the hub's choices, which another device may have changed. If the hub
   // has none yet, hand it this browser's so a choice made before is kept.
   function sync() {
-    var at = epoch, hold = holds().n;
+    var at = epoch, t = ticket();
     fetch('/api/settings', { cache: 'no-store' })
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (s) {
-        var h = holds();
-        if (!s || h.n !== hold || h.out) return;
+        if (!s || !fresh(t)) return;
         // The page's own settings read from this answer (session.html's Chat as a log, #401).
         try { window.dispatchEvent(new CustomEvent('cd-settings', { detail: s })); } catch (e) {}
         // The hub's word for a board (static/noun.js): kept for the next load,
@@ -237,7 +246,7 @@
   window.cdTheme = { apply: apply, sync: sync, stored: stored, scheme: SCHEME, themes: Object.keys(SCHEME),
                      applyAccent: applyAccent, storedAccent: storedAccent, rgbOf: rgbOf, put: put,
                      chooseAccent: chooseAccent, saveAccent: saveAccent, cached: cached,
-                     noteAccent: noteAccent, holdSync: holdSync,
+                     noteAccent: noteAccent, holdSync: holdSync, ticket: ticket, fresh: fresh,
                      cachedAccent: cachedAccent, previewOf: previewOf, preview: preview };
   apply();
   applyAccent();
