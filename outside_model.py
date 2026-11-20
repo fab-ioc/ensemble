@@ -136,6 +136,24 @@ def _workspace() -> str | None:
         return None
 
 
+# Run like the source connectors (sources/slack_connector.py): none of the
+# person's settings, hooks, CLAUDE.md or memory, and only a few environment
+# variables, so a run cannot reach the hub (no ENSEMBLE_TOKEN) or an agent.
+RUN_FLAGS = ("--setting-sources", "", "--settings", json.dumps({"disableAllHooks": True}),
+             "--permission-mode", "dontAsk", "--max-turns", "1")
+PASS_ENV = ("HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "TMPDIR", "SHELL", "PATH",
+            "CLAUDE_CONFIG_DIR", "SYSTEMROOT", "USERPROFILE", "APPDATA", "LOCALAPPDATA")
+RUN_ENV = {"CLAUDE_CODE_DISABLE_CLAUDE_MDS": "1", "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1",
+           "DISABLE_AUTOUPDATER": "1"}
+
+
+def run_env() -> dict:
+    """The run's environment: PASS_ENV of the hub's, and RUN_ENV."""
+    env = {k: os.environ[k] for k in PASS_ENV if k in os.environ}
+    env.update(RUN_ENV)
+    return env
+
+
 def run_claude(prompt: str, timeout: float = TIMEOUT_S, binary: str | None = None,
                cwd: str | None = None) -> str:
     """Haiku's answer to ``prompt``, at most MAX_OUTPUT bytes of it. Raises
@@ -146,8 +164,8 @@ def run_claude(prompt: str, timeout: float = TIMEOUT_S, binary: str | None = Non
     if not binary:
         raise RuntimeError("claude was not found on this machine")
     cmd = [binary, "-p", "--model", MODEL, "--no-session-persistence",
-           "--tools", "", "--strict-mcp-config"]
-    env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
+           "--tools", "", "--strict-mcp-config", *RUN_FLAGS]
+    env = run_env()
     with tempfile.TemporaryDirectory(prefix="ens-route-") as tmp:
         t = Path(tmp)
         (t / "prompt.txt").write_text(prompt, encoding="utf-8", errors="replace")

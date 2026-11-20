@@ -425,14 +425,23 @@ class ModelRoutingTest(unittest.TestCase):
             kw["stdout"].write(b"[]")
             return subprocess.CompletedProcess(cmd, 0)
         with mock.patch.object(model.subprocess, "run", fake_run), \
-                mock.patch.dict("os.environ", {"CLAUDECODE": "1"}):
+                mock.patch.dict("os.environ", {"CLAUDECODE": "1", "ENSEMBLE_TOKEN": "made-up",
+                                               "ENSEMBLE_URL": "http://127.0.0.1:1",
+                                               "HOME": "/made/up/home"}):
             out = model.run_claude("the made-up question", 12, binary="/made/up/claude")
         self.assertEqual(out, "[]")
         self.assertEqual(seen["cmd"], ["/made/up/claude", "-p", "--model", "haiku",
                                        "--no-session-persistence", "--tools", "",
-                                       "--strict-mcp-config"])
+                                       "--strict-mcp-config", "--setting-sources", "",
+                                       "--settings", '{"disableAllHooks": true}',
+                                       "--permission-mode", "dontAsk", "--max-turns", "1"])
         self.assertEqual((seen["stdin"], seen["timeout"]), ("the made-up question", 12))
-        self.assertNotIn("CLAUDECODE", seen["env"])
+        # P439: like the connectors, a minimal environment: never the hub's token.
+        for k in ("CLAUDECODE", "ENSEMBLE_TOKEN", "ENSEMBLE_URL"):
+            self.assertNotIn(k, seen["env"])
+        self.assertEqual(seen["env"]["HOME"], "/made/up/home")
+        self.assertEqual(seen["env"]["CLAUDE_CODE_DISABLE_CLAUDE_MDS"], "1")
+        self.assertLessEqual(set(seen["env"]), set(model.PASS_ENV) | set(model.RUN_ENV))
 
     def test_a_real_slow_run_raises_timeout(self):
         # A made-up program (not an agent) that answers too late.
