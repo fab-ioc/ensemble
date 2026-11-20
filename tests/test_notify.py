@@ -324,6 +324,41 @@ class Cards(_Notify):
         self.assertEqual(self.look([self.card(n=1)]), [])        # still the first real look
 
 
+class InputSources(_Notify):
+    """Outside sources step 6: a source not working, and read again."""
+
+    def row(self, kind="waiting", since=None, sid="slack"):
+        since = self.now - 700 if since is None else since
+        what = "down" if kind == "waiting" else "up"
+        return {"id": f"outside:{sid}:{what}:{int(since)}", "kind": kind, "roomId": "", "projectId": "",
+                "project": "", "hub": True, "open": "source", "source": sid, "since": since, "mid": "",
+                "line": "Slack is not being read since 10:42: no connection" if what == "down"
+                else "Slack is read again (not read from 10:42 to 10:55)"}
+
+    def test_down_then_works_again_each_once(self):
+        self.look([])
+        down = self.row()
+        evs = self.look([down])
+        self.assertEqual(len(evs), 1)
+        self.assertEqual(evs[0]["title"], "Input sources · Not working")
+        self.assertEqual(evs[0]["body"], "Slack is not being read since 10:42: no connection")
+        self.assertEqual(evs[0]["path"], "/?source=slack")
+        self.assertEqual(self.look([down]), [])
+        notify._BURSTS.clear()
+        up = self.row("check", since=self.now - 5)
+        evs = self.look([up])
+        self.assertEqual([e["title"] for e in evs], ["Input sources · Working again"])
+        self.assertEqual(evs[0]["path"], "/?source=slack")
+        self.assertEqual(self.look([up]), [])
+
+    def test_a_restart_does_not_send_the_down_row_again(self):
+        self.look([])
+        self.look([self.row()])
+        notify._BURSTS.clear()
+        notify._ABSENT.clear()
+        self.assertEqual(self.look([self.row()]), [])
+
+
 class PoReplies(_Notify):
     def setUp(self):
         super().setUp()

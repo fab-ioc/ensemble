@@ -205,7 +205,7 @@ def shot(page: Path, png: Path, w: int, h: int) -> None:
         raise SystemExit("needs Chrome, Edge or Chromium for the preview")
     with tempfile.TemporaryDirectory() as t:
         png.unlink(missing_ok=True)
-        subprocess.run([b, "--headless=new", "--disable-gpu", "--hide-scrollbars", "--force-device-scale-factor=2",
+        subprocess.run([b, "--headless=new", "--use-mock-keychain", "--password-store=basic", "--disable-gpu", "--hide-scrollbars", "--force-device-scale-factor=2",
                         f"--window-size={w},{h}", f"--user-data-dir={chrome_profile.new_profile(t)}", "--allow-file-access-from-files",
                         f"--screenshot={png}", page.as_uri()],
                        capture_output=True, encoding="utf-8", errors="replace", timeout=60)

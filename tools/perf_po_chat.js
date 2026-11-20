@@ -24,7 +24,7 @@ const rand = n => { rnd = (rnd * 1103515245 + 12345) % 2147483648; return rnd % 
 
 async function main() {
   const udd = chromeProfile(A);
-  const ch = spawn(A.chrome, ['--headless=new', '--remote-debugging-port=0', '--user-data-dir=' + udd,
+  const ch = spawn(A.chrome, ['--headless=new', '--use-mock-keychain', '--password-store=basic', '--remote-debugging-port=0', '--user-data-dir=' + udd,
     '--no-first-run', '--disable-gpu', '--window-size=1600,1000', 'about:blank'], {stdio: ['ignore', 'ignore', 'pipe']});
   const ws = await new Promise((res, rej) => { let buf = ''; ch.stderr.on('data', d => {
     buf += d; const m = buf.match(/DevTools listening on (ws:\S+)/); if (m) res(m[1]);

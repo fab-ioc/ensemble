@@ -88,7 +88,7 @@ const fs = require('fs'), path = require('path');
 const A = JSON.parse(process.argv[2]);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 async function main() {
-  const ch = spawn(A.chrome, ['--headless=new', '--remote-debugging-port=0', '--user-data-dir=' + chromeProfile(A),
+  const ch = spawn(A.chrome, ['--headless=new', '--use-mock-keychain', '--password-store=basic', '--remote-debugging-port=0', '--user-data-dir=' + chromeProfile(A),
     '--no-first-run', '--disable-gpu', '--hide-scrollbars', 'about:blank'], {stdio:['ignore','ignore','pipe']});
   const ws = await new Promise((resolve,reject) => { let buf=''; ch.stderr.on('data', d => {
     buf += d; const m=buf.match(/DevTools listening on (ws:\S+)/); if(m) resolve(m[1]);

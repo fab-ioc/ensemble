@@ -560,6 +560,15 @@ def _build_all(debug: bool = False, now: float | None = None) -> dict:
             except Exception as e:      # noqa: BLE001
                 failed("threads", e, rid)
 
+    # 7. Input sources (outside sources step 6): a source not working for
+    #    its downAfterMin, and one read again after such a row. Hub rows: no
+    #    room, no project, shown in every project's Inbox.
+    try:
+        for r in _source_rows(now):
+            R.add(r)
+    except Exception as e:      # noqa: BLE001
+        failed("input sources", e)
+
     rows = sorted(R.rows, key=lambda r: (KIND_ORDER.get(r["kind"], 9), -r["since"]))
     out_rows = []
     for r in rows:
@@ -578,13 +587,43 @@ def _build_all(debug: bool = False, now: float | None = None) -> dict:
     return out
 
 
+def _source_rows(now: float) -> list[dict]:
+    """The Input sources' rows: ``waiting`` while a source is not working
+    (it goes when the source is read again; no Done), ``check`` once it is
+    read again (Done: ``seen``). Both open the Input sources panel on that
+    source (``open: "source"``)."""
+    out = getattr(_d, "outside", None)
+    if out is None:
+        return []
+    base = {"roomId": "", "projectId": "", "project": "", "isPo": False, "no": None, "ref": "",
+            "task": "Input sources", "hub": True, "mid": "", "part": "", "points": []}
+    rows = []
+    for d in out.down_rows(now):
+        rows.append({**base, "id": f"outside:{d['source']}:down:{int(d['since'])}", "kind": "waiting",
+                     "source": d["source"], "line": _line(d["text"]),
+                     "reason": f"{d['label']} is not being read", "since": float(d["since"]),
+                     "sources": ["outside:down"]})
+    for d in out.recovered_rows(now):
+        rows.append({**base, "id": f"outside:{d['source']}:up:{int(d['at'])}", "kind": "check",
+                     "source": d["source"], "line": _line(d["text"]),
+                     "reason": f"{d['label']} works again", "since": float(d["at"]),
+                     "sources": ["outside:up"]})
+    return rows
+
+
 def _acts(o: dict) -> None:
     """Where a row goes and how it is closed (#352), in place. ``open``:
     ``message`` (its message in its chat) or ``chat`` (the task's chat, at
     its latest). ``dismiss``: ``close`` (an Ask card closed by its number),
     ``done`` (a check: its points or report marked seen), else ``dealt``
     (Done: the room's ``dealtAt``, POST /api/attention/done, until it is
-    new again)."""
+    new again). An Input sources row (``hub``) opens the panel on its source
+    (``source``); a not working row has no Done (it goes when the source is
+    read again), a works again row is closed by ``seen``."""
+    if o.get("hub") and o.get("source"):
+        o["open"] = "source"
+        o["dismiss"] = "seen" if o.get("kind") == "check" else ""
+        return
     o["open"] = "message" if o.get("mid") else "chat"
     if o.get("kind") == "check":
         o["dismiss"] = "done"
@@ -635,11 +674,11 @@ def _filter(full: dict, project_id: str = "", debug: bool = False) -> dict:
     if project_id:
         if debug:
             for r in rows:
-                if r["projectId"] != project_id:
+                if r["projectId"] != project_id and not r.get("hub"):
                     dropped.append({"roomId": r["roomId"], "mid": r.get("mid", ""), "since": r.get("since"),
                                     "source": ",".join(r.get("sources") or []),
                                     "why": f"another project ({r['project'] or r['projectId'] or 'none'})"})
-        rows = [r for r in rows if r["projectId"] == project_id]
+        rows = [r for r in rows if r["projectId"] == project_id or r.get("hub")]
     counts = {k: 0 for k in KIND_ORDER}
     for r in rows:
         counts[r["kind"]] = counts.get(r["kind"], 0) + 1

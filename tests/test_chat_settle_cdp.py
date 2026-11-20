@@ -39,7 +39,7 @@ const A = JSON.parse(process.argv[2]);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 async function main() {
   const udd = chromeProfile(A);
-  const ch = spawn(A.chrome, ['--headless=new', '--remote-debugging-port=0', '--user-data-dir=' + udd,
+  const ch = spawn(A.chrome, ['--headless=new', '--use-mock-keychain', '--password-store=basic', '--remote-debugging-port=0', '--user-data-dir=' + udd,
     '--no-first-run', '--disable-gpu', 'about:blank'], {stdio:['ignore','ignore','pipe']});
   const ws = await new Promise((res,rej) => { let buf=''; ch.stderr.on('data', d => {
     buf += d; const m=buf.match(/DevTools listening on (ws:\S+)/); if(m) res(m[1]);

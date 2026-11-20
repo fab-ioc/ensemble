@@ -175,7 +175,7 @@ class Cdp {
 }
 async function main() {
   const udd = chromeProfile(A);
-  const chrome = spawn(A.chrome, ['--headless=new', '--remote-debugging-port=0', '--user-data-dir=' + udd,
+  const chrome = spawn(A.chrome, ['--headless=new', '--use-mock-keychain', '--password-store=basic', '--remote-debugging-port=0', '--user-data-dir=' + udd,
     '--no-first-run', '--no-default-browser-check', '--disable-gpu', 'about:blank'], {stdio:['ignore','ignore','pipe']});
   const ws = await new Promise((ok, no) => { let b = ''; chrome.stderr.on('data', d => { b += d; const m = b.match(/DevTools listening on (ws:\S+)/); if (m) ok(m[1]); });
     chrome.on('exit', c => no(new Error('chrome exited ' + c + ' ' + b))); setTimeout(() => no(new Error('no devtools ' + b)), 20000); });

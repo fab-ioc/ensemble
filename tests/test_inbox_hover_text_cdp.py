@@ -40,10 +40,10 @@ import unittest
 import tests.test_inbox_close_cdp as close
 
 _CLOSE, NODE, CHROME = close.CDP_JS, close.NODE, close.CHROME
-_HOVER = "'--headless=new', '--blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4',"
-assert "'--headless=new'," in _CLOSE
+_HOVER = "'--headless=new', '--use-mock-keychain', '--password-store=basic', '--blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4',"
+assert "'--headless=new', '--use-mock-keychain', '--password-store=basic'," in _CLOSE
 
-CDP_JS = _CLOSE[: _CLOSE.index("async function main()")].replace("'--headless=new',", _HOVER, 1) + r"""
+CDP_JS = _CLOSE[: _CLOSE.index("async function main()")].replace("'--headless=new', '--use-mock-keychain', '--password-store=basic',", _HOVER, 1) + r"""
 async function main() {
   const { ch, ws } = await launch();
   const c = new Cdp(ws); await c.open();
