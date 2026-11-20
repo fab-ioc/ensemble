@@ -60,6 +60,9 @@ class _Hub(unittest.TestCase):
                   mock.patch.object(route, "_log"),
                   mock.patch.object(model, "_log"),
                   mock.patch.object(model, "BACKGROUND", False),
+                  # The clock stays on the made-up Wednesday: the memory keeps
+                  # 2 days, so a real clock past Friday would empty it.
+                  mock.patch("time.time", return_value=WED + 7200),
                   mock.patch.dict(sources.TYPES, {"fake": FakeSource})):
             p.start()
             self.addCleanup(p.stop)
