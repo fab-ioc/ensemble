@@ -7,6 +7,7 @@ routed messages, never taking an item another row has; finished items leave
 from __future__ import annotations
 
 import json
+import subprocess
 import tempfile
 import time
 import types
@@ -370,6 +371,30 @@ class Dropping(_Hub):
             oi.maybe_tick(WED + 60)
             self.assertEqual(th.call_count, 1, "every 10 minutes at most")
         oi._LOCK.release()
+
+
+class OrgsAreReadAgain(_Hub):
+    """P439: the repo-to-organisation map is read again every hour, not once."""
+
+    def test_a_changed_remote_is_seen_after_an_hour(self):
+        repo = self.state / "made-up-repo"
+        repo.mkdir()
+        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+        subprocess.run(["git", "-C", str(repo), "remote", "add", "origin",
+                        "https://github.com/made-up-org/widgets.git"], check=True)
+        self.projects.append({"id": "proj-w", "name": "Widgets", "path": str(repo), "isGit": True})
+        now = [1_000_000.0]
+        with mock.patch.object(oi.time, "time", side_effect=lambda: now[0]):
+            self.assertEqual(oi._project_orgs().get("widgets"), "made-up-org")
+            subprocess.run(["git", "-C", str(repo), "remote", "set-url", "origin",
+                            "https://github.com/other-made-up-org/widgets.git"], check=True)
+            now[0] += 60
+            self.assertEqual(oi._project_orgs().get("widgets"), "made-up-org")
+            now[0] += oi.ORGS_EVERY_S
+            self.assertEqual(oi._project_orgs().get("widgets"), "other-made-up-org")
+            self.projects.pop()
+            now[0] += oi.ORGS_EVERY_S + 1
+            self.assertNotIn("widgets", oi._project_orgs())
 
 
 if __name__ == "__main__":

@@ -63,6 +63,7 @@ _LOCK = threading.Lock()
 _LAST = 0.0
 _ORGS: dict[str, str] = {}      # repo: organisation, from the projects' git remotes
 _ORGS_READ = [0.0]              # when the remotes were last read (an empty result too)
+ORGS_EVERY_S = 3600             # the remotes are read again this often (a new project, a move)
 
 
 def _log(msg: str) -> None:
@@ -198,7 +199,7 @@ GH = _run_gh                    # tests put a fake here
 
 def _project_orgs() -> dict[str, str]:
     """{repo: organisation} from the hub's code projects' git remotes."""
-    if _ORGS or time.time() - _ORGS_READ[0] < EVERY_S:
+    if time.time() - _ORGS_READ[0] < (ORGS_EVERY_S if _ORGS else EVERY_S):
         return _ORGS
     _ORGS_READ[0] = time.time()
     d = _d if _d is not None else getattr(outside, "_d", None)
@@ -206,6 +207,7 @@ def _project_orgs() -> dict[str, str]:
         projects = d.load_projects() or []
     except Exception:
         return _ORGS
+    fresh: dict[str, str] = {}
     for p in projects:
         path = p.get("path") if isinstance(p, dict) else None
         if not path or not p.get("isGit"):
@@ -217,7 +219,11 @@ def _project_orgs() -> dict[str, str]:
             continue
         m = re.search(r"github\.com[:/]([^/\s]+)/([^/\s]+?)(?:\.git)?$", url)
         if m:
-            _ORGS.setdefault(m.group(2).lower(), m.group(1))
+            fresh.setdefault(m.group(2).lower(), m.group(1))
+    # The map read now replaces the old one (P439): a removed or moved
+    # project's remote is not kept forever.
+    _ORGS.clear()
+    _ORGS.update(fresh)
     return _ORGS
 
 
