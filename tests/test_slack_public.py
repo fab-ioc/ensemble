@@ -22,8 +22,7 @@ FIXTURES = ROOT / "tests" / "fixtures" / "slack"
 def files() -> list[Path]:
     out = sorted((ROOT / "sources").glob("slack*.py"))
     out += sorted((ROOT / "tests").glob("test_slack_*.py"))
-    out += [ROOT / "tests" / "slack_fixtures.py", ROOT / "tests" / "outside_test_hub.py",
-            ROOT / "tests" / "test_outside_test_hub.py"]
+    out += [ROOT / "tests" / "slack_fixtures.py"]
     out += sorted(FIXTURES.glob("*"))
     return [p for p in out if p.is_file()]
 

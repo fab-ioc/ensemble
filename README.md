@@ -290,7 +290,6 @@ Environment variables, read at start:
 | `ENSEMBLE_TOKEN` | The remote access token |
 | `ENSEMBLE_PERMISSION_MODE` | Claude's `--permission-mode` (default `bypassPermissions`; empty omits the flag) |
 | `ENSEMBLE_RESTART_ROOMS` | Rooms whose PO may restart the hub |
-| `ENSEMBLE_HOME` | A folder where this hub keeps its own data: `.ensemble`, `EnsembleProjects` and `cs` go under it instead of the home folder. `HOME` stays, so agents keep the real home and sign-ins; agents get the variable emptied. Such a hub logs under its own `.ensemble/logs`, hands its agents a status-line file under its own `.ensemble/usage`, does not install the agent skills and does not copy claude-dashboard state. Unset or equal to the home: the home folder |
 
 Each project keeps its own files in its folder: `project.json`, `ROADMAP.md`, `PO-HANDOVER.md`, and one folder per task with `task.json`, `REVIEW-LOG.md`, `TASK-HANDOVER.md` and, for a worktree task, `repo/`.
 

@@ -59,7 +59,6 @@ from urllib.parse import parse_qs, parse_qsl, quote, unquote, urlencode, urlpars
 from backends import get_backend
 from backends.base import (
     HOME, DASHBOARD_DIR, PRESETS_DIR, CS_ROOT, PROJECTS_ROOT, APP_NAME,
-    DATA_HOME_ENV, OWN_DATA_HOME,
     NUMBERED_RE as _NUMBERED_RE, EDITORS, EDITOR_CUSTOM, ICON_CACHE_DIR,
 )
 from backends.shared import (
@@ -1086,9 +1085,7 @@ def _version_ref(m: re.Match) -> bytes:
 
 # Default log location per platform (macOS keeps the historical ~/Library/Logs
 # path; Windows/Linux log under the dashboard state dir, matching the CLIs).
-# A hub with its own data folder (ENSEMBLE_HOME) logs there on every platform,
-# never into the person's own hub's log.
-if sys.platform == "darwin" and not OWN_DATA_HOME:
+if sys.platform == "darwin":
     DEFAULT_LOG_FILE = HOME / "Library" / "Logs" / "ensemble.log"
 else:
     DEFAULT_LOG_FILE = DASHBOARD_DIR / "logs" / "ensemble.log"
@@ -3654,13 +3651,6 @@ def _agent_hooks() -> dict:
             entry["matcher"] = matcher
         hooks.setdefault(event, []).append(entry)
     return hooks
-
-
-def _no_data_home_env() -> dict:
-    """For an agent's environment: ENSEMBLE_HOME emptied (an empty value is
-    unset). The agent keeps the real home, and a hub or test it starts must
-    not take this hub's data folder for its own."""
-    return {DATA_HOME_ENV: ""} if os.environ.get(DATA_HOME_ENV) else {}
 
 
 def _agent_hook_env(port: int, room_id: str, identity: str) -> dict:
@@ -18473,12 +18463,6 @@ def install_agent_skills() -> list[str]:
     written = []
     if not SKILLS_SRC.is_dir():
         return written
-    if OWN_DATA_HOME:
-        # The agents keep the real home (ENSEMBLE_HOME moves only the hub's
-        # data): this hub's skills would replace the person's own hub's.
-        print(f"agent skills not installed: {DATA_HOME_ENV} is set, so ~/.claude/skills "
-              f"stays as the hub in the home wrote it", flush=True)
-        return written
     targets = [HOME / ".claude" / "skills"]
     if shutil.which("codex"):
         targets.append(HOME / ".codex" / "skills")
@@ -21261,7 +21245,6 @@ class Handler(BaseHTTPRequestHandler):
         # from a service shell. Codex otherwise pauses at a TUI warning.
         env["TERM"] = "xterm-256color"
         env.update(rtk_env)
-        env.update(_no_data_home_env())
         if agent_key != "codex":
             env.update(_agent_hook_env(self.server.server_address[1], room_full["id"], ident))
         check_signed_in(agent_key, env)
@@ -21331,7 +21314,6 @@ class Handler(BaseHTTPRequestHandler):
             codex=agent_key == "codex")
         rtk_args, rtk_env, _ = _rtk_task_wiring(room_full, agent_key, part.get("role", ""))
         env.update(rtk_env)
-        env.update(_no_data_home_env())
         if agent_key != "codex":
             env.update(_agent_hook_env(self.server.server_address[1], room_full["id"], ident))
         check_signed_in(agent_key, env)
@@ -25393,9 +25375,7 @@ def main():
     # Moving from claude-dashboard: copy its state in once, and say so in the
     # log, however this hub was started (see legacy_install).
     try:
-        # A hub with its own data folder (ENSEMBLE_HOME) is not the person's
-        # hub: the old program's state belongs to the hub in the home.
-        note = None if OWN_DATA_HOME else legacy_install.migrate(HOME, DASHBOARD_DIR)
+        note = legacy_install.migrate(HOME, DASHBOARD_DIR)
         if note:
             print(note, flush=True)
     except Exception as e:

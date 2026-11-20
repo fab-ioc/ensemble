@@ -76,12 +76,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import plan_weights
-from backends.base import DASHBOARD_DIR
 
 # Written by usage_statusline.py, the status-line command of hub-launched
-# Claude agents; read by read_claude_statusline. The hub hands agents the
-# path, so a hub with its own data folder (ENSEMBLE_HOME) keeps it there.
-CLAUDE_STATUSLINE_FILE = DASHBOARD_DIR / "usage" / "claude-rate-limits.json"
+# Claude agents; read by read_claude_statusline.
+CLAUDE_STATUSLINE_FILE = Path.home() / ".ensemble" / "usage" / "claude-rate-limits.json"
 
 REFRESH_INTERVAL_S = 90    # windows move in whole percents; faster buys nothing
 

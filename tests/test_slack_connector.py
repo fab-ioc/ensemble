@@ -144,7 +144,7 @@ class ReadStreamTest(unittest.TestCase):
     def test_run_environment_is_clean(self):
         env = sc.run_env()
         self.assertEqual(env["MCP_CONNECTION_NONBLOCKING"], "false")
-        for name in ("CLAUDECODE", "ANTHROPIC_API_KEY", "ENSEMBLE_HOME", "CLAUDE_CODE_ENTRYPOINT"):
+        for name in ("CLAUDECODE", "ANTHROPIC_API_KEY", "ENSEMBLE_TOKEN", "CLAUDE_CODE_ENTRYPOINT"):
             self.assertNotIn(name, env)
 
     def test_a_login_in_another_config_folder_is_kept(self):
