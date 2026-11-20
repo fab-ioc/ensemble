@@ -16077,7 +16077,7 @@ function wcNewThread(on) {
   WC.newThread = on;
   nm.hidden = !on;
   if (!on) nm.value = '';
-  if (was !== on && WC.target) document.getElementById('workspace-compose-link').textContent = on ? 'a new thread' : wcTitle(WC.target);
+  if (was !== on && WC.target) wcToPaint();
 }
 function wcThreadName() {
   return WC.newThread ? document.getElementById('workspace-compose-thread-name').value.trim() : '';
@@ -16094,6 +16094,21 @@ function wcFallback() {
   const chat = [...PD.rt.values()].find(e => e.kind === 'chat' && !PD.dock.popWindow(pdChatId(e.room)));
   const main = wcMainTarget();
   return main && wcValid(main) ? main : chat ? {kind:'task',room:chat.room} : null;
+}
+// #408 (spec item 2): what the To link reads: the agent a send reaches, by role
+// (a task chat's engineer: "Engineer"; a thread is a PO chat's: "PO in <title>");
+// its hover names the chat.
+function wcToName(t) {
+  if (t.kind === 'thread') return 'PO in ' + wcTitle(t);
+  if (t.kind === 'po') return wcTitle(t);
+  const ms = (ALL_ROWS.find(x => x.roomId === t.room)?.members || []).map(m => String(m.role || '').split(':')[0].trim()).filter(Boolean);
+  const w = ms.find(r => r === 'engineer') || ms.find(r => !/^reviewer/i.test(r)) || '';
+  return w ? w[0].toUpperCase() + w.slice(1) : wcTitle(t);
+}
+function wcToPaint() {
+  const link = document.getElementById('workspace-compose-link'), t = WC.target;
+  link.textContent = WC.newThread ? 'a new thread' : t ? wcToName(t) : '';
+  link.title = t && !WC.newThread ? wcTitle(t) : '';
 }
 function wcTitle(t) {
   if (t.kind === 'thread') return pdThreadFind(t)?.[1].title || 'Thread';
@@ -16141,7 +16156,7 @@ function wcSync() {
     } catch (e) {}
   }
   box.hidden = false;
-  document.getElementById('workspace-compose-link').textContent = WC.newThread ? 'a new thread' : wcTitle(WC.target);
+  wcToPaint();
   document.getElementById('workspace-compose-back').hidden = WC.target?.kind !== 'thread';
   const t = WC.target;
   const base = wcBase(t);

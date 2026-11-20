@@ -7568,15 +7568,28 @@ $('#new-thread').addEventListener('click', () => {
   composerDestinationPaint();
   $('#input').focus();
 });
+// #408 (spec item 2): the To line names the agent a send reaches, by role, never
+// by name: a task chat's owner (its engineer, else its first agent not a reviewer),
+// capitalised ("Engineer"); '' when the room lists none.
+function taskAgentWord(room) {
+  const ps = (room && Array.isArray(room.participants) ? room.participants : []).filter(p => p.kind !== 'user' && roleWord(p.role));
+  const p = ps.find(x => roleWord(x.role) === 'engineer') || ps.find(x => !/^reviewer/i.test(roleWord(x.role)));
+  const w = p ? roleWord(p.role) : '';
+  return w ? w[0].toUpperCase() + w.slice(1) : '';
+}
 function composerDestinationPaint() {
   newThreadPaint();
   try { replyPaint(); } catch (e) {}
   const link = $('#compose-destination-link');
   if (!link) return;
   if (NEW_THREAD) { link.textContent = 'a new thread'; return; }
-  if (THREAD_MODE || SHARED_THREAD) { link.textContent = (THREAD_MODE ? THR_INFO?.title : SHARED_THREAD?.title) || 'Thread'; return; }
+  // A thread is a PO chat's (threads.py is_threaded): its agent is the PO, named
+  // with the thread ("PO in <title>"), so it never reads as the PO chat itself.
+  const thread = THREAD_MODE || SHARED_THREAD ? (THREAD_MODE ? THR_INFO?.title : SHARED_THREAD?.title) || 'Thread' : '';
   const room = ROOM_OBJ;
-  if (room?.no) { link.textContent = '#' + room.no + ' ' + room.title; return; }
+  link.title = thread || (room?.no ? '#' + room.no + ' ' + room.title : '');
+  if (thread) { link.textContent = 'PO in ' + thread; return; }
+  if (room?.no) { link.textContent = taskAgentWord(room) || '#' + room.no + ' ' + room.title; return; }
   let project = '';
   try {
     const host = dashboardHost();

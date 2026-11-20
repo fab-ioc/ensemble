@@ -407,7 +407,7 @@ class SharedComposer(unittest.TestCase):
                 self.assertNotIn('room-', box['target'])
         self.assertEqual(g['workspaceAlone']['target'], 'Motors PO')
         self.assertEqual(g['pairedGuestRelease'], {'before':{'paired':True,'active':False,'workspace':False},'after':False})
-        self.assertEqual(g['workspaceMedium']['target'], 'A conversation with a thread.')
+        self.assertEqual(g['workspaceMedium']['target'], 'PO in A conversation with a thread.')   # #408: the thread's agent, then its name
         self.assertFalse(g['desktop']['main'])
         self.assertFalse(g['desktop']['thread'])
         self.assertTrue(g['desktop']['reply'])
@@ -432,7 +432,7 @@ class SharedComposer(unittest.TestCase):
         self.assertEqual(g['poWorkspaceRoute']['title'], 'Motors PO')
         self.assertEqual(g['threadWorkspaceRoute']['room'], self.po)
         self.assertTrue(g['threadWorkspaceRoute']['thread'])
-        self.assertEqual(g['threadWorkspaceRoute']['title'], 'A conversation with a thread.')
+        self.assertEqual(g['threadWorkspaceRoute']['title'], 'PO in A conversation with a thread.')
         self.assertEqual(g['replyWorkspaceRoute']['thread'], g['threadWorkspaceRoute']['thread'])
         self.assertEqual(g['threadDraft'], {'head':'Thread draft','point':'Numbered thread point'})
         self.assertEqual(g['threadReload'], g['threadDraft'])
