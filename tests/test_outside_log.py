@@ -50,6 +50,7 @@ class _Log(_World):
             p.start()
             self.addCleanup(p.stop)
         outside.set_source(SID, type="fake", mode="on", settings={"account": "made-up"})
+        outside.remove_source("slack")     # the world's own, for the tools only
 
     def routed(self, n: int, to: str = OPTEN, decide: bool = False, **kw) -> str:
         m = msg(n, self.now - 60, **kw)

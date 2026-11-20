@@ -580,16 +580,32 @@ class RoutingTest(unittest.TestCase):
         self.assertEqual((n["key"], n["from"], n["keptName"]), ("ABC-2", "task #3", "Alpha"))
         self.assertNotIn("itemsNotAdded", self.tool(ALPHA))
 
-    def test_every_agent_is_offered_the_tool(self):
+    def test_the_agents_of_a_routed_project_are_offered_the_tool(self):
+        # #409: ensemble_routing is offered only once a source is set up, and
+        # only to the agents (PO and tasks) of a project with a routing row:
+        # the CEO gives a project its first row in the setup file.
         hub = types.SimpleNamespace(
             chatroom=types.SimpleNamespace(participant=lambda room, ident: {"role": "reviewer"},
                                            is_on_mention=lambda room, part: False),
-            may_restart_hub=lambda rid, ident: False)
-        with mock.patch.object(ensemble_tools, "_d", hub), \
-                mock.patch.object(ensemble_tools, "is_admin_caller", return_value=False), \
-                mock.patch.object(ensemble_tools, "_is_project_po", return_value=False):
-            names = [t["name"] for t in ensemble_tools.tool_schemas({"id": "room-x"}, "claude-2")]
-        self.assertIn("ensemble_routing", names)
+            may_restart_hub=lambda rid, ident: False, outside=outside,
+            load_session_projects=lambda: {}, load_projects=lambda: list(self.projects),
+            _project_for_cwd=lambda cwd, projects: "")
+
+        def names(pid):
+            with mock.patch.object(ensemble_tools, "_d", hub), \
+                    mock.patch.object(ensemble_tools, "is_admin_caller", return_value=False), \
+                    mock.patch.object(ensemble_tools, "_is_project_po", return_value=False):
+                return [t["name"] for t in ensemble_tools.tool_schemas(
+                    {"id": "room-x", "projectId": pid}, "claude-2")]
+        self.assertNotIn("ensemble_routing", names(ALPHA))
+        self.tool(ALPHA, action="set", channels=["made-up-one"])
+        self.assertIn("ensemble_routing", names(ALPHA))
+        self.assertNotIn("ensemble_routing", names(BETA))
+        self.assertNotIn("ensemble_routing", names(""))
+        # The last source removed: no agent is offered it, the row kept or not.
+        outside.remove_source(SID)
+        self.assertEqual(outside.load_config(), {})
+        self.assertNotIn("ensemble_routing", names(ALPHA))
         self.assertIn("ensemble_routing", ensemble_tools.NAMES)
 
     # -- the log -------------------------------------------------------------

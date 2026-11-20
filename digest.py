@@ -944,6 +944,13 @@ def start_scheduler() -> None:
                 outside_setup.tick()
             except Exception as e:
                 _log(f"outside setup file error: {str(e)[:200]}")
+            # The agents' skills keep their outside part only while a source
+            # is set up (#409): installed again when that changes.
+            try:
+                for pth in _d.refresh_agent_skills():
+                    _log(f"installed agent skill: {pth}")
+            except Exception as e:
+                _log(f"agent skill refresh error: {str(e)[:200]}")
             # Outside messages routed to a PO (outside_deliver.py): typed into
             # the PO's session, at most 6 wakes an hour per PO.
             try:

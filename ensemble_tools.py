@@ -763,6 +763,7 @@ PO_MESSAGE_TOOLS = [
     },
 ]
 PO_MESSAGE_TOOL_NAMES = frozenset(t["name"] for t in PO_MESSAGE_TOOLS)
+OUTSIDE_TOOL_NAMES = frozenset({"ensemble_read_outside"})   # only once a source is set up (#409)
 
 # Offered only to the agent that may restart the hub (dashboard.may_restart_hub:
 # the PO of a room in HUB_RESTART_ROOMS, the Ensemble Dashboard PO by default).
@@ -938,11 +939,38 @@ def tool_schemas(room: dict, identity: str) -> list[dict]:
         tools = [t for t in tools if t["name"] != "ensemble_ask"]
     if _d.may_restart_hub((room or {}).get("id", ""), identity):
         tools += list(RESTART_TOOLS)
+    outside_on = _outside_on()
     if _is_project_po(room or {}, identity):
-        tools += list(PO_MESSAGE_TOOLS)
+        tools += [t for t in PO_MESSAGE_TOOLS if outside_on or t["name"] not in OUTSIDE_TOOL_NAMES]
         tools += list(MOVE_TOOLS)
-    tools += list(ROUTING_TOOLS)
+    if outside_on and _routed_project(room or {}):
+        tools += list(ROUTING_TOOLS)
     return tools
+
+
+def _outside_on() -> bool:
+    """Whether an outside source is set up on this hub (#409): until then no
+    agent is offered the outside tools."""
+    try:
+        return bool(_d.outside.load_config())
+    except Exception:       # noqa: BLE001 — no outside, no tools
+        return False
+
+
+def _routed_project(room: dict) -> bool:
+    """Whether the caller's project is routed to: its row of the routing
+    table has something set. Its PO and its tasks get ``ensemble_routing``."""
+    if not room.get("id"):
+        return False
+    pid = _project_of_room(room)
+    if not pid:
+        return False
+    try:
+        import outside_route as route
+        row = route._load_one()["rows"].get(pid)
+    except Exception:       # noqa: BLE001
+        return False
+    return bool(row) and not route._row_empty(row)
 
 
 def _allowed_names(ctx: dict) -> frozenset[str]:
@@ -2695,6 +2723,12 @@ def call(name: str, args: dict, room_id: str, identity: str, handler) -> tuple[s
                     f"{name} is available only to a reviewer during an active review")
             if name in RESTART_TOOL_NAMES:
                 raise ToolError(_d.RESTART_REFUSED)
+            if name in OUTSIDE_TOOL_NAMES | ROUTING_TOOL_NAMES and not _outside_on():
+                raise ToolError(f"{name} is not available: this hub reads no outside source")
+            if name in ROUTING_TOOL_NAMES:
+                raise ToolError(
+                    f"{name} is only for the PO and the tasks of a project that outside "
+                    "messages are routed to; the CEO sets the routing in the setup file")
             if name == "ensemble_read_outside":
                 raise ToolError(
                     f"{name} is only for a project's PO: outside messages are brought "

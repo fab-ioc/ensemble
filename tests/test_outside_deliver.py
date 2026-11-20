@@ -153,6 +153,8 @@ class _World(unittest.TestCase):
             self.addCleanup(p.stop)
         outside.reset()
         self.addCleanup(outside.reset)
+        # A source is set up: the outside tools are offered only then (#409).
+        outside._write(outside._config_file(), {"sources": {"slack": {"type": "slack"}}})
 
     # -- helpers -------------------------------------------------------------
 

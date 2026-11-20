@@ -18461,13 +18461,45 @@ def move_task(rid: str, project_id: str) -> bool:
 SKILLS_SRC = STATIC_DIR / "skills"
 
 
+# The part of a skill about outside sources (#409), between these marks: left
+# out of the installed copy until a source is set up on this hub.
+SKILL_OUTSIDE_RE = re.compile(r"<!-- outside-sources\b[^>]*-->\n.*?<!-- /outside-sources -->\n?", re.S)
+_SKILLS_OUTSIDE = [None]        # whether the last install kept that part
+
+
+def _skill_text(body: str, outside_on: bool) -> str:
+    """A skill as installed: with its outside sources part (the marks taken
+    out) when a source is set up, else without it."""
+    if outside_on:
+        return re.sub(r"<!-- /?outside-sources\b[^>]*-->\n?", "", body)
+    return SKILL_OUTSIDE_RE.sub("", body)
+
+
+def refresh_agent_skills() -> list[str]:
+    """From the hub loop: install the skills again when a source was set up
+    or the last one removed since the last install."""
+    try:
+        on = bool(outside.load_config())
+    except Exception:       # noqa: BLE001
+        return []
+    if _SKILLS_OUTSIDE[0] is None or _SKILLS_OUTSIDE[0] == on:
+        return []
+    return install_agent_skills()
+
+
 def install_agent_skills() -> list[str]:
     """Copy skills/<name>/SKILL.md into ~/.claude/skills/<name>/ and (when the
     codex CLI is present) ~/.codex/skills/<name>/. Idempotent: rewrites only
-    when the content differs. Returns the paths written."""
+    when the content differs. Returns the paths written. The outside sources
+    part is left out while no source is set up (``_skill_text``)."""
     written = []
     if not SKILLS_SRC.is_dir():
         return written
+    try:
+        outside_on = bool(outside.load_config())
+    except Exception:       # noqa: BLE001
+        outside_on = False
+    _SKILLS_OUTSIDE[0] = outside_on
     targets = [HOME / ".claude" / "skills"]
     if shutil.which("codex"):
         targets.append(HOME / ".codex" / "skills")
@@ -18476,7 +18508,7 @@ def install_agent_skills() -> list[str]:
         if not src_dir.is_dir() or not src.is_file():
             continue
         try:
-            body = src.read_text(encoding="utf-8")
+            body = _skill_text(src.read_text(encoding="utf-8"), outside_on)
         except OSError:
             continue
         for root in targets:

@@ -476,7 +476,8 @@ def clear() -> dict:
         if _BUSY["ask"] or _BUSY["apply"]:
             raise Refused("wait until the hub has finished answering or applying")
         _load()
-        _save({"turns": []})
+        if path().exists():         # nothing to clear writes no file (#409)
+            _save({"turns": []})
     return view()
 
 

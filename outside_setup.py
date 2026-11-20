@@ -1352,6 +1352,10 @@ def tick(now: float | None = None, background: bool = True) -> None:
     now = time.time() if now is None else now
     p = setup_path()
     if not p.exists():
+        # A hub with no source set up writes nothing (#409): the file comes
+        # with the first source, or when the CEO opens it (panel()).
+        if not outside.load_config():
+            return
         write_first()
     if _mtime(route._one_file()) > _mtime(now_path()):
         write_now(now)
@@ -1672,7 +1676,9 @@ def write_now(now: float | None = None) -> None:
 
 
 def panel() -> dict:
-    """What the panel's setup file box shows."""
+    """What the panel's setup file box shows. The CEO opening it writes the
+    file the first time, also on a hub with no source yet."""
+    write_first()
     st = load_state()
     text = _read_text(setup_path()) or ""
     # body: the file without its problems part, so the panel can tell a
