@@ -401,7 +401,7 @@ def _is_empty(cols: list[Field], values: dict) -> bool:
 
 _ITEM_PR_URL = re.compile(r"^https?://(?:www\.)?github\.com/[^/\s]+/([^/\s]+)/pulls?/(\d+)", re.I)
 _ITEM_PR = re.compile(r"^(?:[A-Za-z0-9_.-]+/)?([A-Za-z0-9_.-]+)\s*#\s*(\d+)$")
-_ITEM_PR_SPACE = re.compile(r"^(?:[A-Za-z0-9_.-]+/)?([A-Za-z0-9_.-]+)\s+(\d+)$")   # "crypto-mm 14271"
+_ITEM_PR_SPACE = re.compile(r"^(?:[A-Za-z0-9_.-]+/)?([A-Za-z0-9_.-]+)\s+(\d+)$")   # "example-repo 1234"
 _ITEM_TICKET = re.compile(r"^([A-Za-z][A-Za-z0-9]*-\d+)$")
 _ITEM_BROWSE = re.compile(r"^https?://\S+/browse/([A-Za-z][A-Za-z0-9]*-\d+)", re.I)
 _ITEM_WORD = re.compile(r"^(ticket|epic|pr|pull request)\s*[:\s]\s*(\S.*)$", re.I)

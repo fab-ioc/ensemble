@@ -114,7 +114,7 @@ class SetupFileTest(unittest.TestCase):
         route.add_items_auto({ALPHA: [("ticket", "ABC-99", "task #7")]}, "made up", now=WED)
         res = self.apply("## Sources\n- Slack: on\n- Jira: pause\n\n"
                          "## Alpha\nTopic: made-up pricing\nSlack channels: #made-up-one, #Made-Up-Two\n"
-                         "Jira: epic abc-1, component Made Up\nWork items: ABC-12, crypto-thing 14\n")
+                         "Jira: epic abc-1, component Made Up\nWork items: ABC-12, made-up-thing 14\n")
         self.assertEqual(self.haiku, [])
         self.assertEqual(res["problems"], [])
         r = self.row(ALPHA)
@@ -123,7 +123,7 @@ class SetupFileTest(unittest.TestCase):
         self.assertEqual(r["places"]["jira"]["epics"], ["ABC-1"])
         self.assertEqual(r["places"]["jira"]["components"], ["Made Up"])
         self.assertEqual({(i["key"], i["from"]) for i in r["items"]},
-                         {("ABC-12", "setup file"), ("crypto-thing#14", "setup file"), ("ABC-99", "task #7")})
+                         {("ABC-12", "setup file"), ("made-up-thing#14", "setup file"), ("ABC-99", "task #7")})
         self.assertTrue(outside.source_config("jira")["paused"])
         h = route.history(None, ALPHA)[0]
         self.assertEqual(h["by"], {"kind": "setup"})

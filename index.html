@@ -27923,11 +27923,11 @@ function toggleHubChat() {
   if ($('#hub-chat').hidden) openHubChat(b);
   else { HC.opener = b; closeHubChat(); }
 }
-// On load: the panel as it was left, and the dot from the first read.
+// On load: the panel as it was left. Closed, nothing is read (#409): the
+// dot comes from the reads made while it is open.
 function hcBoot() {
   hcSetW(hcPrefs().w);
   if (hcPrefs().open && !isPhone()) openHubChat(null, true);
-  else hcLoad();
 }
 window.openHubChat = openHubChat;
 window.closeHubChat = closeHubChat;

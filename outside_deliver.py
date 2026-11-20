@@ -11,7 +11,7 @@ each message to the project's PO:
 * **The typed line.** One short line, as ``po_messages`` and ``issues`` type
   theirs, prefixed with the source's kind::
 
-    [slack] Sam Doe in a DM (you are asked): "round 2 is ready" https://example.slack.com/archives/D000TEST01/p1 · why here: crypto-mm 14346 · read it whole: ensemble_read_outside id=os-1a2b3c4d
+    [slack] Sam Doe in a DM (you are asked): "round 2 is ready" https://example.slack.com/archives/D000TEST01/p1 · why here: example-repo 1234 · read it whole: ensemble_read_outside id=os-1a2b3c4d
 
   Several waiting for one PO go in one line, ``[slack] 3 new: (1) … | (2) …``.
   The line is at most :data:`LINE_MAX` characters: the excerpts are cut as
@@ -257,6 +257,19 @@ def _keep(items: list[dict], now: float, **fields) -> None:
                 changed = True
         if changed:
             _save_json(_read_file(), {"projects": projects})
+
+
+def readable() -> bool:
+    """Whether a PO may have outside messages to read: some wait in the
+    queue or were given and are still kept. With no source set up any more
+    (#409), the read tool stays for them."""
+    try:
+        if outside.queue_due():
+            return True
+        with _LOCK:
+            return any(_load_read().values())
+    except Exception:       # noqa: BLE001 — nothing readable
+        return False
 
 
 def records(project_id: str) -> list[dict]:

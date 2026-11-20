@@ -33,6 +33,7 @@ import os
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from http.server import ThreadingHTTPServer
 from pathlib import Path
@@ -352,8 +353,11 @@ class AskTheHubPage(unittest.TestCase):
         p.eval("window.ensBooted = false; 0")
         p.goto(cls.base + "/")
         p.until("window.ensBooted === true", 40)
-        p.until("HC.data")
+        time.sleep(1.5)
         g["reloadClosed"] = p.eval(cls.PANEL)
+        # #409: closed, the page reads nothing for it, on load either.
+        g["closedReads"] = p.eval("performance.getEntriesByType('resource')"
+                                  ".filter(e => /\\/api\\/hub-chat/.test(e.name)).length + (HC.data ? 100 : 0)")
         # The avatar menu opens the same panel, docked.
         p.eval("document.getElementById('me-btn').click(); 0")
         p.eval("document.querySelector('#me-menu [data-me=\"hubchat\"]').click(); 0")
@@ -504,6 +508,7 @@ class AskTheHubPage(unittest.TestCase):
         self.assertFalse(r["hidden"])
         self.assertEqual(r["w"], d["w"])
         self.assertTrue(self.got["reloadClosed"]["hidden"])
+        self.assertEqual(self.got["closedReads"], 0, "closed, nothing is read on load")
         m = self.got["fromMenu"]
         self.assertFalse(m["hidden"])
         self.assertEqual((m["pressed"], m["w"], m["right"]), ("true", d["w"], m["vw"]))

@@ -33,7 +33,7 @@ import sources
 from sources.fake import FakeSource, message
 
 T0 = 1_790_000_000.0
-WHY = "crypto-mm 14346"
+WHY = "example-repo 1234"
 
 
 class _FakePty:
@@ -728,6 +728,36 @@ class ReadTool(_World):
         self.assertEqual([m["text"] for m in got["wholeThread"]["messages"]], ["reply 1"])
         self.assertEqual(order[-2:], [("remember", {"identity": {"workspace": "later"}}),
                                       ("thread", order[-1][1])])
+
+
+class LastSourceRemoved(_World):
+    """#409 review 1: with the last source removed, a PO still reads what
+    it was given or what waits for it; with nothing left, the tool is gone."""
+
+    def names(self, rid):
+        room = chatroom.get_room(rid, public=False)
+        return {t["name"] for t in ensemble_tools.tool_schemas(room, "claude")}
+
+    def test_a_given_message_stays_readable(self):
+        a = item(1, text="kept after the source went")
+        self.put(a)
+        self.tick()
+        outside.remove_source("slack")
+        self.assertFalse(ensemble_tools._outside_on())
+        self.assertIn("ensemble_read_outside", self.names(self.opten))
+        self.assertNotIn("ensemble_routing", self.names(self.opten))
+        got = self.ok(self.opten, "ensemble_read_outside", id=od.msg_id(a["key"]))
+        self.assertEqual(got["text"], "kept after the source went")
+
+    def test_a_queued_message_keeps_the_tool(self):
+        self.put(item(2, to="proj-dock", text="waits for Dock"))
+        outside.remove_source("slack")
+        self.assertIn("ensemble_read_outside", self.names(self.dock))
+
+    def test_nothing_left_no_tool(self):
+        outside.remove_source("slack")
+        self.assertNotIn("ensemble_read_outside", self.names(self.opten))
+        self.assertIn("reads no outside source", self.refused(self.opten, "ensemble_read_outside"))
 
 
 class ThroughTheHub(_World):
