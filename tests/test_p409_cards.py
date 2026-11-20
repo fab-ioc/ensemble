@@ -152,6 +152,30 @@ class TheBoxAnswers(_Cards):
         self.assertEqual((got["option"], got["comment"], got["box"], got["key"]), ("", "After 22:00, and tell ops", True, "k1"))
         self.assertEqual([a["n"] for a in asks.open_in(chatroom.get_room(rid))], [0], "the other card stays open")
 
+    def test_a_reply_from_a_threads_box_answers_the_card(self):
+        # #408: Reply aims a thread's box at a card; its answer goes as the
+        # card's (``Re “q”:``), never with the thread's ``Re Pn`` before it.
+        rid, mid = self._po()
+        sent = []
+        with mock.patch.object(dashboard.Handler, "_resume_room", self._resume(sent)), \
+                mock.patch.object(dashboard.threads, "is_threaded", lambda r, projects=None: r == rid), \
+                mock.patch.object(dashboard.threads, "reply_text", lambda r, room, t, text: f"Re P7: {text}"), \
+                mock.patch.object(dashboard.threads, "note_send", lambda *a, **k: None):
+            status, r = http("/api/room/resume", {"roomId": rid, "text": "Ship after 22:00", "key": "kt",
+                                                  "thread": "P7", "answers": {"mid": mid, "n": 0}})
+            self.assertEqual(status, 200, r)
+            self.assertEqual(r["answered"], {"mid": mid, "n": 0})
+            status, r = http("/api/room/resume", {"roomId": rid, "text": "and a plain line", "key": "kt2",
+                                                  "thread": "P7"})
+            self.assertEqual(status, 200, r)
+            status, r = http("/api/room/resume", {"roomId": rid, "text": "late", "key": "kt3",
+                                                  "thread": "P7", "answers": {"mid": mid, "n": 0}})
+            self.assertNotIn("answered", r, "answered already: a plain thread reply")
+        self.assertTrue(sent[0][0].startswith("Re “Ship it tonight?”: Ship after 22:00"), sent[0])
+        self.assertTrue(sent[1][0].startswith("Re P7: and a plain line"), sent[1])
+        self.assertTrue(sent[2][0].startswith("Re P7: late"), sent[2])
+        self.assertEqual([s["thread"] for s in sends.view(rid)], ["P7", "P7", "P7"], "the replies stay in the thread")
+
     def test_a_card_answered_meanwhile_leaves_a_plain_message(self):
         rid, mid = self._po()
         sent = []
