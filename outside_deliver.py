@@ -175,8 +175,23 @@ def _load() -> dict:
     return st
 
 
+_WRITTEN: dict[str, str] = {}      # path: the text last written there
+
+
 def _save(st: dict) -> bool:
-    return _save_json(_state_file(), st)
+    """The state kept, written only when it changed (the look runs every
+    15 s and mostly changes nothing, P439)."""
+    path = _state_file()
+    text = json.dumps(st, indent=1, ensure_ascii=False)
+    if _WRITTEN.get(str(path)) == text and path.exists():
+        return True
+    try:
+        durable.write_text(path, text)
+    except OSError as e:
+        _log(f"cannot save {path.name}: {e}")
+        return False
+    _WRITTEN[str(path)] = text
+    return True
 
 
 def _tkey(key: str, room_id: str) -> str:

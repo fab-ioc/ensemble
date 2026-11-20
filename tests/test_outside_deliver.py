@@ -210,6 +210,28 @@ class Typed(_World):
         self.assertEqual(typing.call_args.args[2], {"kind": "external", "senderLabel": "Slack"})
         self.assertEqual(dashboard.hub_input_kind(line), {"kind": "human"})
 
+    def test_the_state_is_written_only_when_it_changes(self):
+        # P439: the look runs every 15 s; a look that changes nothing writes nothing.
+        self.idle["pty-opten"] = False
+        self.put(item(1))
+        writes = []
+        real = od.durable.write_text
+
+        def counting(path, text, *a, **kw):
+            if Path(path).name == "deliver.json":
+                writes.append(text)
+            return real(path, text, *a, **kw)
+        with mock.patch.object(od.durable, "write_text", side_effect=counting):
+            self.tick()
+            first = len(writes)
+            self.assertGreater(first, 0)
+            for _ in range(3):
+                self.tick()
+            self.assertEqual(len(writes), first)
+            od._state_file().unlink()          # gone: written again
+            self.tick()
+            self.assertEqual(len(writes), first + 1)
+
     def test_a_busy_po_is_typed_when_idle(self):
         self.idle["pty-opten"] = False
         self.put(item(1))
