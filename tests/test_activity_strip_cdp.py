@@ -330,7 +330,7 @@ class ActivityStrip(unittest.TestCase):
                 self.assertLessEqual(max(m['strips']), 1, m)
                 self.assertLessEqual(m['noStrip'], 0 if key == 'reply' else 5 * 10, m)
         targets = [x['to'] for x in self.got['switches']]
-        self.assertEqual(targets[0::2], ['A conversation with a thread.'] * 5)
+        self.assertEqual(targets[0::2], ['PO in A conversation with a thread.'] * 5)   # #408: the thread's agent, then its name
         self.assertEqual(targets[1::2], ['Motors PO'] * 5)
 
     def test_one_strip_per_window(self):

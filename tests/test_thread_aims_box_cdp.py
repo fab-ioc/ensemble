@@ -452,7 +452,7 @@ class ThreadAimsBox(unittest.TestCase):
         g, ta, tb = self.got, self.got['ta'], self.got['tb']
         self.assertNotEqual(ta, tb)
         self.assertEqual(g['first']['target'], {'kind':'thread','room':self.po,'thread':ta,'mid':''})
-        self.assertEqual(g['first']['link'], g['first']['title'])
+        self.assertEqual(g['first']['link'], 'PO in ' + g['first']['title'])   # #408: the thread's agent, then its name
         self.assertEqual(g['first']['inPlace'], 'po-chat', 'a plain click shows the thread in place (#393)')
         self.assertEqual(g['first']['panels'], [], 'no thread panel or tab of its own')
         self.assertEqual(g['firstStill']['thread'], ta, 'the press on the PO chat does not take it back')

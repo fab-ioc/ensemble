@@ -4,14 +4,16 @@ On a throwaway hub (the real handler on a spare port, state in a temp
 folder) headless Chrome opens a PO chat with four open cards: the three of
 tests.test_asks.THREE and, newest, a pick-any card.
 
-1. The box's chip names the newest open card; ▾ lists the open cards, newest
-   first, ✓ on the named one, then "No card: a plain message".
-2. Another card picked in the menu, words typed and sent: the agent is typed
+1. #408: plain typing sends a plain message; every card stays open, each
+   with its ↩ Reply (no chip, menu or card comment field).
+2. Reply on a card aims the box: the To line says "· reply to “…”", the card
+   is marked, the caret is in the box; Send types the agent
    ``Re “<question>”: <words>``, the card reads "You answered in your
-   message", the person's balloon says "Answers <question> ↑", and the card
-   leaves the open cards (so its Inbox row goes); the chip is back, on the
-   newest open card.
-3. × sends the next message as a plain one, once.
+   message", the person's balloon says "Replies to <question> ↑", the card
+   leaves the open cards and the To line drops the reply.
+3. × drops the link and keeps the words, sent as a plain message; Undo of
+   an aimed send gives the words back aimed at its card; an option clicked
+   while aimed answers the card and the aim goes.
 4. Two options of the pick-any card ticked: its Send says "Send (2)", and
    sends ``Re “<question>”: CSV; XML``; the card reads "You picked".
 
@@ -75,12 +77,19 @@ async function main() {
       for (const type of ['mousePressed', 'mouseReleased']) await send('Input.dispatchMouseEvent', { type, x: r[0], y: r[1], button: 'left', clickCount: 1 }, sessionId);
       await sleep(150);
     };
-    const chip = `(() => { const c = document.querySelector('#compose-answers'); return c && !c.hidden ? c.querySelector('.ca-q').textContent : null; })()`;
+    // #408: the box's aim, as its To line says it ("reply to “…”"), else null.
+    const aimLine = `(() => { const c = document.querySelector('#compose-reply'); return c && !c.hidden ? c.querySelector('.cr-re').textContent : null; })()`;
+    const aimedCards = `[...document.querySelectorAll('#msgs .qa.aimed')].map(c => c.querySelector('.qa-qt').textContent.trim())`;
     const typeAndSend = async words => {
       await evalIn(`(() => { const i = document.querySelector('#input'); i.focus(); return 1; })()`);
       await send('Input.insertText', { text: words }, sessionId);
       await sleep(200);
       await click('#send');
+    };
+    const replyOn = async re => {
+      await evalIn(`(() => { const c = [...document.querySelectorAll('#msgs .qa')].find(q => ${re}.test(q.textContent)); c.querySelector('.qa-reply').dataset.p408 = 'reply'; return 1; })()`);
+      await click('[data-p408="reply"]');
+      await evalIn(`(() => { document.querySelectorAll('[data-p408]').forEach(e => delete e.dataset.p408); return 1; })()`);
     };
     const userTurn = text => fs.appendFileSync(A.transcript, JSON.stringify({ type: 'user', timestamp: new Date().toISOString(), sessionId: 'po-sid',
       message: { role: 'user', content: text } }) + '\n');
@@ -91,62 +100,67 @@ async function main() {
     await until('window.ensBooted === true && typeof IBX !== "undefined" && !!IBX.data', 30000);
     await until(`(() => { const a = document.querySelector('#ld-projs [data-ldp="all"]'); if (a && a.getAttribute('aria-current') !== 'true') a.click(); return document.querySelectorAll('#ld-ibx-body .ibx-row').length >= 4; })()`, 20000);
     await sleep(300);
-    out.inbox = await evalIn(`[...document.querySelectorAll('#ld-ibx-body .ibx-row')].map(r => ({ q: (r.querySelector('.ibx-line') || r).textContent.trim(), multi: !!r.querySelector('.ibx-multi'), meta: ((r.querySelector('.ibx-meta') || {}).textContent || '').trim() }))`);
+    out.inbox = await evalIn(`[...document.querySelectorAll('#ld-ibx-body .ibx-row')].map(r => ({ q: (r.querySelector('.ibx-line') || r).textContent.trim(), multi: !!r.querySelector('.ibx-multi'), meta: ((r.querySelector('.ibx-meta') || {}).textContent || '').trim(), reply: !!r.querySelector('[data-ibx-reply]') }))`);
     await shot('0 inbox');
     await send('Page.navigate', { url: A.base + '/session?room=' + A.po }, sessionId);
     await until('document.querySelectorAll("#msgs .qa").length >= 4');
-    out.chip = await until(chip);
-    await evalIn(`(() => { const i = document.querySelector('#input'); i.focus(); return 1; })()`);
+    await sleep(300);
+    // 1. Plain typing: the box answers no card; every open card has its Reply.
+    out.aimStart = await evalIn(aimLine);
+    out.replies = await evalIn(`[...document.querySelectorAll('#msgs .qa:not(.done)')].map(c => !!c.querySelector('.qa-reply'))`);
+    out.noComment = await evalIn(`!document.querySelector('#msgs .qa-cm, #compose-answers, #answers-menu')`);
+    out.toLine = await evalIn(`document.querySelector('#compose-destination-link').textContent.trim()`);
+    await typeAndSend('A plain note');
+    await until(`!document.querySelector('#input').value`, 10000);
+    await sleep(300);
+    out.openAfterPlain = await evalIn(`document.querySelectorAll('#msgs .qa:not(.done)').length`);
+    // 2. Reply on "What else should go into this release?": the To line and the card say so; Send answers it.
+    await replyOn('/What else should go/');
+    out.aim = await evalIn(aimLine);
+    out.aimTitle = await evalIn(`document.querySelector('#compose-reply .cr-re').title`);
+    out.toLineAimed = await evalIn(`document.querySelector('#compose-destination-link').textContent.trim()`);
+    out.aimed = await evalIn(aimedCards);
+    out.replyOn = await evalIn(`(() => { const b = document.querySelector('#msgs .qa.aimed .qa-reply'); return b && { text: b.textContent.trim(), pressed: b.getAttribute('aria-pressed') }; })()`);
+    out.caret = await evalIn(`document.activeElement === document.querySelector('#input')`);
+    out.placeholder = await evalIn(`document.querySelector('#input').placeholder`);
     await send('Input.insertText', { text: 'Also the docs' }, sessionId);
     await sleep(200);
-    await shot('1 chip');
-    // 1. The menu: the open cards, newest first, ✓ on the named one.
-    await click('#compose-answers-pick');
-    await until(`!document.querySelector('#answers-menu').hidden`);
-    out.menu = await evalIn(`[...document.querySelectorAll('#answers-menu button')].map(b => ({ q: b.querySelector('.am-q').textContent, on: b.getAttribute('aria-checked') === 'true' }))`);
-    // In sight: the point at each item's middle is that item.
-    out.menuSeen = await evalIn(`[...document.querySelectorAll('#answers-menu button')].map(b => { const r = b.getBoundingClientRect(); const e = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2); return { seen: !!e && b.contains(e), r: [r.left, r.top, r.width, r.height], at: e ? (e.id || e.className || e.tagName) : null }; })`);
-    out.editor = await evalIn(`(() => { const out = []; for (let e = document.querySelector('#answers-menu'); e; e = e.parentElement) { const s = getComputedStyle(e); out.push([e.id || e.className, s.overflow, s.position, s.zIndex, s.contain]); } return out; })()`);
-    await shot('2 menu');
-    // 2. Another card: "What else should go into this release?".
-    await evalIn(`(() => { const b = [...document.querySelectorAll('#answers-menu button')].find(x => /What else/.test(x.textContent)); b.click(); return 1; })()`);
-    out.picked = await evalIn(chip);
-    out.menuClosed = await evalIn(`document.querySelector('#answers-menu').hidden`);
+    await shot('1 aimed');
     await click('#send');
     const card = `[...document.querySelectorAll('#msgs .qa')].find(q => /What else should go/.test(q.textContent))`;
     await until(`(() => { const c = ${card}; return c && c.classList.contains('done') && !c.classList.contains('busy'); })()`, 10000);
     out.answeredCard = await evalIn(`${card}.querySelector('.qa-done').textContent`);
-    out.chipAfter = await evalIn(chip);
+    out.aimAfter = await evalIn(aimLine);
+    out.aimedAfter = await evalIn(aimedCards);
     out.inputAfter = await evalIn(`document.querySelector('#input').value`);
     // The agent's terminal has it: the person's balloon names the card.
     userTurn('Re “What else should go into this release?”: Also the docs');
     await evalIn('refresh()');
-    // The pending send already reads "Answers … ↑"; wait for the turn's own balloon.
     const turnStrip = `[...document.querySelectorAll('#msgs .msg .via-card')].find(v => !v.closest('[data-key^="send-"]'))`;
     await until(`!!(${turnStrip}) && !!(${card}.querySelector('.qa-done a.msg-link'))`, 15000);
     out.balloon = await evalIn(`(() => { const v = ${turnStrip}; const m = v.closest('.msg'); return { strip: v.textContent, text: m.querySelector('.text').textContent }; })()`);
     out.cardLink = await evalIn(`!!(${card}.querySelector('.qa-done a.msg-link'))`);
-    // No balloon of the person's (the pending send too) shows the "Re “…”:" head.
     out.rawHeads = await evalIn(`[...document.querySelectorAll('#msgs .msg.user .text')].map(t => t.textContent).filter(t => t.includes('Re “What else'))`);
     out.strips = await evalIn(`document.querySelectorAll('#msgs .msg.user .via-card').length`);
     await evalIn(`(() => { const c = ${card}; c.scrollIntoView({ block: 'center' }); return 1; })()`);
     await shot('3 answered');
-    await evalIn(`(() => { (${turnStrip}).closest('.msg').scrollIntoView({ block: 'center' }); return 1; })()`);
-    await shot('3b balloon');
-    // 3. ×: this message is a plain one, and the chip comes back after it.
-    await click('#compose-answers-x');
-    out.chipAfterX = await evalIn(chip);
-    await typeAndSend('A plain note');
+    // 3. ×: the link goes, the words stay, sent as a plain message.
+    await replyOn('/Which retention/');
+    await send('Input.insertText', { text: 'Keep a year' }, sessionId);
+    await sleep(150);
+    await click('#compose-reply-x');
+    out.aimAfterX = await evalIn(aimLine);
+    out.aimedAfterX = await evalIn(aimedCards);
+    out.inputAfterX = await evalIn(`document.querySelector('#input').value`);
+    await click('#send');
     await until(`!document.querySelector('#input').value`, 10000);
     await sleep(300);
-    out.chipBack = await until(chip);
+    out.retentionOpen = await evalIn(`!![...document.querySelectorAll('#msgs .qa:not(.done)')].find(q => /Which retention/.test(q.textContent))`);
     // 3c. An older card answered from the box, then Undo before it is read:
-    // the card is open again where it stood, and its words go back under its chip.
+    // the card is open again where it stood, its words back in the box, aimed at it.
     const BQ = `[...document.querySelectorAll('#msgs .qa')].find(q => /nightly backup/.test(q.textContent))`;
-    await click('#compose-answers-pick');
-    await until(`!document.querySelector('#answers-menu').hidden`);
-    await evalIn(`(() => { const b = [...document.querySelectorAll('#answers-menu button')].find(x => /nightly backup/.test(x.textContent)); b.click(); return 1; })()`);
-    out.holdChip = await evalIn(chip);
+    await replyOn('/nightly backup/');
+    out.holdAim = await evalIn(aimLine);
     // A poll overtakes the send: the page has the card closed before the hub's answer.
     await evalIn(`(() => { const f = window.fetch; window.fetch = async (u, o) => { const r = await f(u, o);
       if (String(u).includes('/api/room/resume') && String(o && o.body).includes('Hold on, not yet') && !window.__polled) {
@@ -154,11 +168,13 @@ async function main() {
         for (let t = Date.now(); Date.now() - t < 5000; await new Promise(z => setTimeout(z, 150))) { await refresh(); if (!open()) break; }
         window.__polled = open() ? 'still open' : 'closed'; }
       return r; }; return 1; })()`);
-    await typeAndSend('Hold on, not yet');
+    await send('Input.insertText', { text: 'Hold on, not yet' }, sessionId);
+    await sleep(200);
+    await click('#send');
     await until(`(() => { const c = ${BQ}; return c && c.classList.contains('done') && !!c.querySelector('.qa-undo'); })()`, 10000);
     out.polled = await evalIn('window.__polled || null');
-    out.holdChipAfter = await evalIn(chip);
-    // A new card comes in before Undo: the card taken back goes in its own place.
+    out.holdAimAfter = await evalIn(aimLine);
+    // A new card comes in before Undo.
     fs.appendFileSync(A.transcript, JSON.stringify({ type: 'assistant', timestamp: new Date().toISOString(), sessionId: 'po-sid',
       message: { role: 'assistant', stop_reason: 'end_turn', content: [{ type: 'text', text: 'Later.\n\n**Ask:** Which colour for the report header?\n- Blue\n- Grey' }] } }) + '\n');
     await evalIn('refresh()');
@@ -167,16 +183,24 @@ async function main() {
     await click('[data-p409="undo"]');
     await until(`document.querySelector('#input').value === 'Hold on, not yet'`, 10000);
     await sleep(300);
-    out.undoChip = await evalIn(chip);
+    out.undoAim = await evalIn(aimLine);
+    out.undoAimed = await evalIn(aimedCards);
     out.undoInput = await evalIn(`document.querySelector('#input').value`);
     out.undoCardOpen = await evalIn(`!${BQ}.classList.contains('done')`);
-    await click('#compose-answers-pick');
-    await until(`!document.querySelector('#answers-menu').hidden`);
-    out.undoMenu = await evalIn(`[...document.querySelectorAll('#answers-menu button')].map(b => ({ q: b.querySelector('.am-q').textContent, on: b.getAttribute('aria-checked') === 'true' }))`);
-    await evalIn(`(() => { document.querySelector('#answers-menu button[aria-checked="true"]').click(); return 1; })()`);
     await click('#send');
     await until(`!document.querySelector('#input').value`, 10000);
     await until(`(() => { const c = ${BQ}; return c && c.classList.contains('done') && !c.classList.contains('busy'); })()`, 10000);
+    // 3d. An option clicked while the box is aimed at that card answers it; the aim goes.
+    const HQ = `[...document.querySelectorAll('#msgs .qa')].find(q => /report header/.test(q.textContent))`;
+    await until(`!!(${HQ})`, 10000);
+    await replyOn('/report header/');
+    out.headerAim = await evalIn(aimLine);
+    await evalIn(`(() => { const b = [...${HQ}.querySelectorAll('.qa-opt')].find(x => x.dataset.opt === 'Blue'); b.dataset.p409 = 'blue'; return 1; })()`);
+    await click('[data-p409="blue"]');
+    await until(`(() => { const c = ${HQ}; return c && c.classList.contains('done') && !c.classList.contains('busy'); })()`, 10000);
+    await sleep(300);
+    out.headerDone = await evalIn(`${HQ}.querySelector('.qa-done').textContent`);
+    out.headerAimAfter = await evalIn(aimLine);
     // 4. The pick-any card: two ticks, Send (2).
     const PQ = `[...document.querySelectorAll('#msgs .qa')].find(q => /export formats/.test(q.textContent))`;
     out.pickHead = await evalIn(`${PQ}.querySelector('.qa-no').textContent`);
@@ -297,41 +321,72 @@ class TheBoxAndPickAny(unittest.TestCase):
         self.assertIn("pick any", pick[0]["meta"])
         self.assertFalse(any(r["multi"] for q, r in rows.items() if "Which export formats" not in q), self.got["inbox"])
 
-    def test_the_chip_names_the_newest_open_card_and_the_menu_lists_them(self):
+    def test_plain_typing_answers_no_card(self):
         g = self.got
-        self.assertEqual(g["chip"], "Which export formats should the report offer?")
-        qs = [m["q"] for m in g["menu"]]
-        # The newest message's cards first; one message's cards in their order.
-        self.assertEqual(qs, ["Which export formats should the report offer?", "Which retention for old transcripts?",
-                              "Turn on the nightly backup?", "What else should go into this release?",
-                              "No card: a plain message"])
-        self.assertEqual([m["on"] for m in g["menu"]], [True, False, False, False, False])
-        self.assertEqual(g["picked"], "What else should go into this release?")
-        self.assertTrue(g["menuClosed"])
-        self.assertTrue(all(m["seen"] for m in g["menuSeen"]), (g["menuSeen"], g.get("editor")))
+        self.assertIsNone(g["aimStart"])
+        self.assertTrue(g["replies"] and all(g["replies"]), g["replies"])
+        self.assertTrue(g["noComment"], "no chip, menu or card comment field")
+        self.assertTrue(g["toLine"].startswith("Cards PO"), g["toLine"])
+        self.assertEqual(g["toLineAimed"], g["toLine"], "aimed, the To line keeps its label")
+        plain = [s for s in self.sent if s[0].startswith("A plain note")]
+        self.assertEqual(len(plain), 1, self.sent)
+        self.assertEqual(plain[0][0].split("\n\n[point")[0], "A plain note")
+        self.assertEqual(g["openAfterPlain"], 4)
+        rows = [r for r in self.got["inbox"]]
+        self.assertTrue(all(r["reply"] for r in rows), rows)
 
-    def test_the_message_answers_the_card_it_names(self):
+    def test_reply_aims_the_box_and_send_answers_the_card(self):
         g = self.got
-        box = [s for s in self.sent if not s[2].startswith("ask:")]
+        self.assertEqual(g["aim"], "reply to “What else should go into…”")
+        self.assertEqual(g["aimTitle"], "What else should go into this release?")
+        self.assertEqual(g["aimed"], ["What else should go into this release?"])
+        self.assertEqual(g["replyOn"], {"text": "Replying in the box ↓", "pressed": "true"})
+        self.assertTrue(g["caret"])
+        self.assertEqual(g["placeholder"], "Your reply…")
+        box = [s for s in self.sent if "Also the docs" in s[0]]
+        self.assertEqual(len(box), 1, self.sent)
         self.assertTrue(box[0][0].startswith("Re “What else should go into this release?”: Also the docs"), box)
         self.assertIn("You answered in your message", g["answeredCard"])
         self.assertIn("Also the docs", g["answeredCard"])
         self.assertTrue(g["cardLink"], "the card links to the message")
         self.assertEqual(g["inputAfter"], "")
-        self.assertEqual(g["chipAfter"], "Which export formats should the report offer?", "the chip is back, on the newest")
-        self.assertEqual(g["balloon"]["strip"], "Answers What else should go into this release? ↑")
+        self.assertIsNone(g["aimAfter"], "sent: the box goes back to the conversation")
+        self.assertEqual(g["aimedAfter"], [])
+        self.assertEqual(g["balloon"]["strip"], "Replies to What else should go into this release? ↑")
         self.assertNotIn("Re “", g["balloon"]["text"])
         self.assertEqual(g["rawHeads"], [], "no balloon keeps the Re head")
         self.assertGreaterEqual(g["strips"], 1)
         self.assertIn("Also the docs", g["balloon"]["text"])
         self.assertNotIn("What else should go into this release?", self.open, "answered: no row in the Inbox")
 
-    def test_x_sends_one_plain_message(self):
+    def test_x_keeps_the_words_and_sends_a_plain_message(self):
         g = self.got
-        self.assertIsNone(g["chipAfterX"])
-        plain = [s for s in self.sent if s[0].startswith("A plain note")]
-        self.assertEqual(len(plain), 1, self.sent)
-        self.assertEqual(g["chipBack"], "Which export formats should the report offer?")
+        self.assertIsNone(g["aimAfterX"])
+        self.assertEqual(g["aimedAfterX"], [])
+        self.assertEqual(g["inputAfterX"], "Keep a year")
+        plain = [s for s in self.sent if "Keep a year" in s[0]]
+        self.assertEqual([s[0].split("\n\n[point")[0] for s in plain], ["Keep a year"], self.sent)
+        self.assertTrue(g["retentionOpen"])
+
+    def test_an_option_clicked_while_aimed_answers_the_card(self):
+        g = self.got
+        self.assertEqual(g["headerAim"], "reply to “Which colour for the report…”")
+        self.assertIn("Blue", g["headerDone"])
+        self.assertIsNone(g["headerAimAfter"])
+
+    def test_undo_of_an_unread_box_answer_gives_back_its_own_card(self):
+        g = self.got
+        self.assertEqual(g["holdAim"], "reply to “Turn on the nightly backup?”")
+        self.assertEqual(g["polled"], "closed", "a poll before the hub's answer has the card closed")
+        self.assertIsNone(g["holdAimAfter"])
+        self.assertEqual(g["undoAim"], "reply to “Turn on the nightly backup?”", "the words go back aimed at the card they answered")
+        self.assertEqual(g["undoAimed"], ["Turn on the nightly backup?"])
+        self.assertEqual(g["undoInput"], "Hold on, not yet")
+        self.assertTrue(g["undoCardOpen"])
+        holds = [s for s in self.sent if "Hold on, not yet" in s[0]]
+        self.assertEqual(len(holds), 2, self.sent)
+        self.assertNotEqual(holds[0][2], holds[1][2], "the second send is a new message")
+        self.assertTrue(holds[1][0].startswith("Re “Turn on the nightly backup?”: Hold on, not yet"), holds)
 
     def test_two_ticks_go_together(self):
         g = self.got
@@ -339,29 +394,12 @@ class TheBoxAndPickAny(unittest.TestCase):
         self.assertEqual(g["sendOff"], {"text": "Send", "disabled": True})
         self.assertEqual(g["ticked"], {"send": "Send (2)", "primary": True, "checked": ["CSV", "XML"], "done": False},
                          "a click only ticks")
-        picks = [s for s in self.sent if s[2].startswith("ask:")]
+        picks = [s for s in self.sent if s[2].startswith("ask:") and "export formats" in s[0]]
         self.assertEqual(len(picks), 1, self.sent)
         self.assertTrue(picks[0][0].startswith("Re “Which export formats should the report offer?”: CSV; XML"), picks)
         self.assertIn("You picked: CSV · XML", g["pickDone"])
         self.assertNotIn("Which export formats should the report offer?", self.open)
-        self.assertEqual(sorted(self.open), ["Which colour for the report header?", "Which retention for old transcripts?"])
-
-    def test_undo_of_an_unread_box_answer_gives_back_its_own_card(self):
-        g = self.got
-        self.assertEqual(g["holdChip"], "Turn on the nightly backup?")
-        self.assertEqual(g["polled"], "closed", "a poll before the hub's answer has the card closed")
-        self.assertEqual(g["holdChipAfter"], "Which export formats should the report offer?")
-        self.assertEqual(g["undoChip"], "Turn on the nightly backup?", "the words go back under the card they answered")
-        self.assertEqual(g["undoInput"], "Hold on, not yet")
-        self.assertTrue(g["undoCardOpen"])
-        self.assertEqual([m["q"] for m in g["undoMenu"]], ["Which colour for the report header?", "Which export formats should the report offer?",
-                                                           "Which retention for old transcripts?", "Turn on the nightly backup?",
-                                                           "No card: a plain message"], "newest first, the card taken back in its place")
-        self.assertEqual([m["q"] for m in g["undoMenu"] if m["on"]], ["Turn on the nightly backup?"])
-        holds = [s for s in self.sent if "Hold on, not yet" in s[0]]
-        self.assertEqual(len(holds), 2, self.sent)
-        self.assertNotEqual(holds[0][2], holds[1][2], "the second send is a new message")
-        self.assertTrue(holds[1][0].startswith("Re “Turn on the nightly backup?”: Hold on, not yet"), holds)
+        self.assertEqual(sorted(self.open), ["Which retention for old transcripts?"])
 
 
 if __name__ == "__main__":
