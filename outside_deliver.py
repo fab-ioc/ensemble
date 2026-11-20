@@ -96,6 +96,9 @@ KEEP_S = 30 * 86400                 # how long a PO can read a message it was gi
 KEEP_PER_PROJECT = 300
 KEEP_TYPED_S = outside.KEEP_DONE_S  # a key typed into a room is remembered this long
 NO_PO_DROP_S = 4 * 86400            # a message for a project with no PO waits this long
+BACKLOG_MAX_AGE_S = 4 * 86400       # a message waiting for its PO is given up after this long
+BACKLOG_MAX = 60                    # a PO's newest waiting messages kept; older ones are given up
+DROPPED = "dropped"                 # the Message log's event for a message given up
 THREAD_READS_PER_HOUR = 10          # ensemble_read_outside thread=true, per PO
 RECENT_LIST = 20                    # ensemble_read_outside with no id
 TOOL = "ensemble_read_outside"
@@ -769,11 +772,18 @@ def tick(now: float | None = None) -> list[str]:
                 if since == now:
                     _log(f"outside messages for {it['to']}: the project has no PO; they wait")
                 elif now - since > NO_PO_DROP_S:
-                    outside.queue_done([(it["key"], it["to"])], now)
-                    _log(f"{msg_id(it['key'])}: no PO for {it['to']} in "
-                         f"{NO_PO_DROP_S // 86400} days: dropped")
+                    _drop([it], f"its initiative had no PO for {NO_PO_DROP_S // 86400} days", now)
                 continue
             by_room.setdefault(rid, []).append(it)
+        for rid in list(by_room):
+            if rid in st["resuming"]:
+                continue            # being handed over: never taken from under it
+            keep, old = _backlog(by_room[rid], now)
+            if old:
+                _drop([it for it, _why in old], "", now, whys=[why for _it, why in old])
+                by_room[rid] = keep
+            if not by_room[rid]:
+                by_room.pop(rid)
         st["noPo"] = {p: t for p, t in st["noPo"].items() if p in waiting_projects}
         # A held or undelivered note for a room with nothing waiting goes.
         for k in ("held", "undelivered"):
@@ -792,6 +802,45 @@ def tick(now: float | None = None) -> list[str]:
         return out
 
 
+def _backlog(items: list[dict], now: float) -> tuple[list[dict], list[tuple[dict, str]]]:
+    """(the items a PO's backlog keeps, the ones given up with why): none
+    waiting longer than BACKLOG_MAX_AGE_S, at most BACKLOG_MAX, the newest."""
+    days = BACKLOG_MAX_AGE_S // 86400
+    old = [(it, f"waited more than {days} days for its PO") for it in items
+           if now - float(it.get("queuedAt") or now) > BACKLOG_MAX_AGE_S]
+    keep = [it for it in items if all(it is not o for o, _w in old)]
+    if len(keep) > BACKLOG_MAX:
+        keep.sort(key=lambda it: float(it.get("queuedAt") or 0))
+        over = keep[:len(keep) - BACKLOG_MAX]
+        old += [(it, f"more than {BACKLOG_MAX} messages were waiting for its PO") for it in over]
+        keep = keep[len(over):]
+    return keep, old
+
+
+def _drop(items: list[dict], why: str, now: float, whys: list[str] | None = None) -> None:
+    """Give up queued messages: out of the queue (not marked as given), out
+    of the PO's read list when it never saw them, and an event on each one's
+    row of the Message log, so the CEO sees what was dropped (P439)."""
+    import outside_route        # bound by the hub; not at import time
+    read = _load_read()
+    read_changed = False
+    for n, it in enumerate(items):
+        note = (whys[n] if whys else why) or "given up"
+        outside.queue_take_back(it["key"], it["to"])
+        rec = (read.get(it["to"]) or {}).get(msg_id(it["key"]))
+        if rec is not None and not rec.get("typedAt"):
+            read[it["to"]].pop(msg_id(it["key"]))
+            read_changed = True
+        try:
+            outside_route.log_event({"source": str(it.get("source") or ""), "key": it["key"],
+                                     "action": DROPPED, "to": [it["to"]], "note": note}, now)
+        except Exception as e:      # noqa: BLE001 — the drop stands
+            _log(f"{msg_id(it['key'])}: the drop was not logged: {e!r}")
+        _log(f"{msg_id(it['key'])} for {it['to']}: dropped ({note})")
+    if read_changed:
+        _save_json(_read_file(), {"projects": read})
+
+
 def maybe_tick() -> None:
     """From the hub's scheduler loop (digest.py): once per TICK_S, and only
     reads the small queue file when nothing waits."""
@@ -800,6 +849,13 @@ def maybe_tick() -> None:
     if now - _LAST < TICK_S:
         return
     _LAST = now
+    try:
+        with _LOCK:
+            decided = outside.queue_drop_decided(now)
+            if decided:
+                _drop(decided, "read in decide-only mode, never delivered", now)
+    except Exception as e:      # noqa: BLE001 — the look goes on
+        _log(f"decide-only items not aged out: {e!r}")
     try:
         if not outside.queue_due() and not _load_json(_state_file()).get("typing"):
             return

@@ -818,6 +818,24 @@ def queue_take_back(key: str, to: str) -> bool:
         return True
 
 
+DECIDE_KEEP_S = KEEP_DONE_S       # a decide-only item leaves the queue after this long
+
+
+def queue_drop_decided(now: float | None = None) -> list[dict]:
+    """Items queued in decide-only mode are never delivered: after
+    DECIDE_KEEP_S they leave the queue (not marked delivered). Returns them;
+    writes nothing when none is that old (P439)."""
+    now = time.time() if now is None else now
+    with _LOCK:
+        q = _load_queue()
+        old = [i for i in q["items"] if i.get("decideOnly")
+               and now - float(i.get("queuedAt") or 0) > DECIDE_KEEP_S]
+        if old:
+            q["items"] = [i for i in q["items"] if i not in old]
+            _write(_queue_file(), q)
+        return old
+
+
 def queue_delivered(key: str, to: str) -> bool:
     """Whether delivery has typed ``key`` to ``to`` lately (4 days)."""
     with _LOCK:

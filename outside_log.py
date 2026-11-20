@@ -120,6 +120,9 @@ def _event(ln: dict, names: dict) -> dict:
     to_name = names.get(to) or (ln.get("toNames") or [to])[0] or "?"
     if ln.get("action") == RULE:
         text = f"Rule made: #{ln.get('channel') or '?'} goes to {to_name}"
+    elif ln.get("action") == outside_deliver.DROPPED:
+        # Given up before its PO saw it (outside_deliver._drop, P439).
+        text = f"Dropped, not given to {to_name}: {ln.get('note') or 'given up'}"
     else:
         before = ln.get("before") or ""
         before_name = names.get(before) or ln.get("beforeName") or before

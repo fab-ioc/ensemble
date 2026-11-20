@@ -313,6 +313,79 @@ class Typed(_World):
         self.assertEqual(outside.queue_items(), [])
 
 
+class Backlog(_World):
+    """P439: nothing waits forever: decide-only items age out, a PO's backlog
+    has an age and a size limit, and each drop is an event in the Message log."""
+
+    def setUp(self):
+        super().setUp()
+        self.events = []
+        p = mock.patch("outside_route.log_event", side_effect=lambda ln, now=None: self.events.append(ln))
+        p.start()
+        self.addCleanup(p.stop)
+
+    def test_the_no_po_drop_is_logged(self):
+        self.put(item(1, to="proj-lonely"))
+        self.tick()
+        self.now += od.NO_PO_DROP_S + 60
+        self.tick()
+        self.assertEqual(outside.queue_items(), [])
+        [ev] = self.events
+        self.assertEqual((ev["action"], ev["to"], ev["source"]), (od.DROPPED, ["proj-lonely"], "made-up"))
+        self.assertIn("no PO", ev["note"])
+
+    def test_decide_only_items_age_out(self):
+        it = dict(item(1), decideOnly=True)
+        self.put(it)
+        with mock.patch.object(od.time, "time", side_effect=lambda: self.now):
+            od._LAST = 0.0
+            od.maybe_tick()
+            self.assertEqual(len(outside.queue_items()), 1)
+            self.now += outside.DECIDE_KEEP_S + 60
+            od._LAST = 0.0
+            od.maybe_tick()
+        self.assertEqual(outside.queue_items(), [])
+        self.assertEqual(self.typed("pty-opten"), [])
+        [ev] = self.events
+        self.assertIn("decide-only", ev["note"])
+        self.assertFalse(outside.queue_delivered(it["key"], it["to"]))
+
+    def test_a_busy_pos_backlog_has_an_age_limit(self):
+        self.idle["pty-opten"] = False
+        self.put(item(1))
+        self.tick()
+        self.assertEqual(len(outside.queue_items()), 1)
+        self.now += od.BACKLOG_MAX_AGE_S + 60
+        self.put(item(2))
+        self.tick()
+        self.assertEqual([i["key"] for i in outside.queue_items()], [item(2)["key"]])
+        [ev] = self.events
+        self.assertEqual((ev["key"], ev["action"]), (item(1)["key"], od.DROPPED))
+        self.assertIn("days", ev["note"])
+        # Never given, so the PO cannot read it and it is not marked as given.
+        self.assertFalse(od.was_given(item(1)["key"], "proj-opten"))
+        self.assertNotIn(od.msg_id(item(1)["key"]), od._load_read().get("proj-opten", {}))
+
+    def test_a_busy_pos_backlog_has_a_size_limit(self):
+        self.idle["pty-opten"] = False
+        with mock.patch.object(od, "BACKLOG_MAX", 3):
+            for n in range(1, 6):
+                self.put(item(n))
+                self.now += 1
+            self.tick()
+        self.assertEqual([i["key"] for i in outside.queue_items()],
+                         [item(n)["key"] for n in (3, 4, 5)])
+        self.assertEqual([e["key"] for e in self.events], [item(1)["key"], item(2)["key"]])
+        self.assertTrue(all("more than 3" in e["note"] for e in self.events))
+
+    def test_the_message_log_names_the_drop(self):
+        import outside_log
+        ev = outside_log._event({"action": od.DROPPED, "to": ["proj-opten"], "at": 5,
+                                 "note": "waited more than 4 days for its PO"}, {"proj-opten": "opten"})
+        self.assertEqual(ev["text"], "Dropped, not given to opten: waited more than 4 days for its PO")
+        self.assertEqual(ev["kind"], od.DROPPED)
+
+
 class NeverTwice(_World):
     def test_one_message_for_two_projects_of_the_same_po_is_typed_once(self):
         it = item(1, text="for both")
