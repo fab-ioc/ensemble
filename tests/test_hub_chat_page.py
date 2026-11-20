@@ -520,5 +520,26 @@ class AskTheHubPage(unittest.TestCase):
         self.assertEqual((s["left"], s["w"], s["top"]), (0, s["vw"], 0))
 
 
+class ReadOnlyWhileOpen(unittest.TestCase):
+    """#409: closed, the page reads nothing for Ask the hub (no timer); the
+    dot comes from the read on load, on opening and after its actions. On a
+    phone the PO drawer is the whole width over an open task too (P439)."""
+
+    def setUp(self):
+        self.page = (ROOT / "index.html").read_text(encoding="utf-8")
+
+    def test_no_timer_while_closed(self):
+        body = self.page[self.page.index("function hcSchedule() {"):]
+        body = body[:body.index("\n}")]
+        closed = next(ln for ln in body.splitlines() if "$('#hub-chat').hidden" in ln)
+        self.assertNotIn("setTimeout", closed)
+        self.assertIn("return", closed)
+
+    def test_the_phone_drawer_is_the_whole_width_over_a_task(self):
+        self.assertIn("body.po-peek #po-panel, body.po-peek.detail-open #po-panel,\n"
+                      "    body.mid.po-peek.detail-open #po-panel { left: 0; right: 0; width: auto; }",
+                      self.page.replace("\r\n", "\n"))
+
+
 if __name__ == "__main__":
     unittest.main()

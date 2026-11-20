@@ -27756,9 +27756,9 @@ async function hcLoad() {
 }
 function hcSchedule() {
   clearTimeout(HC.timer);
-  // Closed, a read every 30 s keeps the icon's dot true (a change asked for
-  // in another window, or answered after the panel was closed).
-  if ($('#hub-chat').hidden) { HC.timer = setTimeout(hcLoad, 30000); return; }
+  // Closed, nothing is read (#409): the icon's dot is set by the read on
+  // load, on opening and after the panel's own actions.
+  if ($('#hub-chat').hidden) return;
   const d = HC.data;
   // Every 1.5 s while Haiku answers or a change is applied; else every 10 s
   // (the file can change elsewhere, which makes a proposal stale).

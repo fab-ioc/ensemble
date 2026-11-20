@@ -1700,6 +1700,9 @@ you can go*, §4) · content (*what you are looking at*) · the issue view as an
    **Inbox N** (`#inbox-btn`, #302: how many things wait on you in every project; on a computer it
    gives way while the list dock's left strip has the Inbox (#322) and comes back while the Inbox is
    in its own window, where it reveals it; on a phone, in row one, it opens the Inbox pane, #307), search,
+   **Ask the hub** (`#hc-btn`, an icon button: it toggles the Ask the hub panel docked at the right,
+   its dot a change waiting to be applied; the panel's data is read only while it is open, #409; on a
+   phone at the end of row two, the place Panels had),
    the plan chip, the avatar and **Create ▾** (a menu, see *Create's menu* in §4). Panels is the one control about the page below that the
    bar carries: a PO screen has no other row to hold it, and the bar is where the page's own
    controls start. Nothing else joins `#bar-here` without replacing something.
