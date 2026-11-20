@@ -77,10 +77,19 @@ class Refused(Exception):
 
 
 def _outside_text() -> str:
-    p = outside_setup.setup_path()
-    if not p.exists():
+    """The setup file's text, or the text it would be written with when
+    there is none: asking writes nothing (a Settings question on a hub with
+    no outside source set up leaves no outside/ folder; #410 review 1)."""
+    text = outside_setup._read_text(outside_setup.setup_path())
+    return text if text is not None else outside_setup.first_text()
+
+
+def _outside_apply(text: str, base_hash: str) -> dict:
+    """Apply a change made from the setup file, writing the file first when
+    the change was made from the text it would be written with."""
+    if not outside_setup.setup_path().exists():
         outside_setup.write_first()
-    return outside_setup._read_text(p) or ""
+    return outside_setup.apply_new_text(text, base_hash, outside_setup.HUB_CHAT_BY)
 
 
 KINDS = {
@@ -94,7 +103,7 @@ KINDS = {
         "read": _outside_text,
         "hash": outside_setup.text_hash,
         "check": lambda text: outside_setup.apply_text(text, by=outside_setup.HUB_CHAT_BY, check_only=True),
-        "apply": lambda text, h: outside_setup.apply_new_text(text, h, outside_setup.HUB_CHAT_BY),
+        "apply": _outside_apply,
         "context": lambda: outside_setup.now_text(),
     },
 }
@@ -549,8 +558,11 @@ def _apply_settings(ask_text: str, t: dict) -> tuple[str, dict]:
     except Exception as e:
         _log(f"settings apply error: {type(e).__name__}: {str(e)[:200]}")
         return PROPOSED, {"error": f"The apply did not go through ({type(e).__name__})."}
+    if res.get("historyError"):
+        _log(f"settings history not written: {res['historyError']}")
     return APPLIED, {"changes": [f"{r['name']}: {r['before']} → {r['after']}" for r in res["diff"]],
-                     "problems": [], "failed": "", "at": res["at"]}
+                     "problems": [res["historyError"]] if res.get("historyError") else [],
+                     "failed": "", "at": res["at"]}
 
 
 def discard(tid: str) -> dict:

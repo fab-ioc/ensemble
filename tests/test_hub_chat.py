@@ -280,6 +280,7 @@ class HubChatSettings(unittest.TestCase):
     Apply, never under outside/)."""
     setUp = HubChatTest.setUp
     last = HubChatTest.last
+    change = HubChatTest.change
 
     def settings(self, changes: dict, words="Changed it.") -> str:
         return f"SETTINGS: {words}\n<<<SETTINGS\n{json.dumps(changes)}\nSETTINGS>>>"
@@ -411,6 +412,52 @@ class HubChatSettings(unittest.TestCase):
         self.assertIn("Prefer was changed to Claude", t["result"]["error"])
         self.assertEqual(dashboard.load_settings()["preferAgent"], "claude")
         self.assertFalse(hs.history_path().exists())
+
+    def test_a_history_that_cannot_be_written_still_says_applied(self):
+        """Review 1: the save happened, so the turn is Applied, with a line
+        saying History missed it; never "did not go through"."""
+        self.answer = self.settings({"theme": "dark"}, "Dark theme.")
+        a = hub_chat.ask("Dark theme")["turns"][-1]
+        with mock.patch.object(hs, "_add_history", side_effect=OSError("disk full")):
+            t = hub_chat.apply(a["id"])["turns"][-1]
+        self.assertEqual(t["state"], "applied")
+        self.assertEqual(t["result"]["problems"], ["Saved, but it could not be added to History (OSError)."])
+        self.assertEqual(dashboard.load_settings()["theme"], "dark")
+        self.assertFalse(hs.history_path().exists())
+
+    def _no_outside(self):
+        import shutil
+        shutil.rmtree(outside.root())
+        for m in (outside, setup, hub_chat):
+            m.reset()
+        self.assertFalse(outside.root().exists())
+
+    def test_a_settings_question_writes_nothing_under_outside(self):
+        """Review 1: on a hub with no outside source set up, asking about or
+        changing Settings leaves no outside/ folder."""
+        self._no_outside()
+        self.answer = "REPLY: The theme follows the system."
+        hub_chat.ask("What is the theme?")
+        self.answer = self.settings({"theme": "dark"}, "Dark theme.")
+        a = hub_chat.ask("Dark theme")["turns"][-1]
+        self.assertEqual(self.last()["state"], "proposed")
+        hub_chat.apply(a["id"])
+        self.assertEqual(self.last()["state"], "applied")
+        self.assertEqual(dashboard.load_settings()["theme"], "dark")
+        self.assertFalse(outside.root().exists(), sorted(p.name for p in outside.root().iterdir()) if outside.root().exists() else "")
+
+    def test_a_routing_change_with_no_setup_file_yet_writes_it_on_apply(self):
+        self._no_outside()
+        first = setup.first_text()
+        self.answer = self.change(first.replace("## Sources\n", "## Sources\n- Slack: on\n", 1)
+                                  if "## Sources\n<!--" not in first else
+                                  first.split("## Sources\n")[0] + "## Sources\n- Slack: on\n", "Slack is on.")
+        a = hub_chat.ask("Turn Slack on")["turns"][-1]
+        self.assertEqual(a["state"], "proposed", a)
+        self.assertFalse(setup.setup_path().exists(), "asking writes nothing")
+        hub_chat.apply(a["id"])
+        self.assertEqual(self.last()["state"], "applied", self.last())
+        self.assertIn("- Slack: on", setup.setup_path().read_text(encoding="utf-8"))
 
     def test_parse_settings(self):
         self.assertEqual(hub_chat.parse('SETTINGS: x\n<<<SETTINGS\n{"theme": "dark"}\nSETTINGS>>>'),

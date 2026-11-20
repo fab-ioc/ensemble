@@ -416,8 +416,14 @@ def apply(changes: dict, before: dict, ask: str, text: str) -> dict:
         at = time.time()
         rows = [{"key": k, "name": TABLE.get(k, {}).get("name", k), "before": show(k, before.get(k)),
                  "after": show(k, get(saved, k))} for k in changes]
-        _add_history({"at": at, "ask": ask, "text": text, "changes": rows})
-    return {"diff": rows, "at": at}
+        # Saved by now: a history that cannot be written does not undo it,
+        # it is said beside the Applied (#410 review 1).
+        try:
+            _add_history({"at": at, "ask": ask, "text": text, "changes": rows})
+            history_error = ""
+        except Exception as e:
+            history_error = f"Saved, but it could not be added to History ({type(e).__name__})."
+    return {"diff": rows, "at": at, "historyError": history_error}
 
 
 # ---------------------------------------------------------------------------
