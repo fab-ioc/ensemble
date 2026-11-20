@@ -14,12 +14,16 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import agent_models
 import dashboard  # noqa: F401  (imported first: its import binds outside to the real data folder, setUp then binds a temporary one)
 import hub_chat
+import hub_chat_settings as hs
 import outside
 import outside_route as route
 import outside_setup as setup
 
+CODEX_MODELS = [{"id": "gpt-6-sol", "name": "gpt-6-sol", "description": "", "efforts": ["low", "medium", "high"],
+                 "defaultEffort": "medium", "pool": ""}]
 WED = time.mktime((2026, 11, 18, 10, 0, 0, 0, 0, -1))
 ALPHA, BETA = "p-alpha", "p-beta"
 IDS = {"made-up-one": "C000TEST01", "made-up-two": "C000TEST02"}
@@ -63,7 +67,13 @@ class HubChatTest(unittest.TestCase):
                   mock.patch.object(setup, "LOOKUP", lambda names: {n: IDS.get(n, "") for n in names}),
                   mock.patch.object(setup, "RUN", lambda p, t: (_ for _ in ()).throw(AssertionError("no loose sections"))),
                   mock.patch.object(hub_chat, "RUN", run),
-                  mock.patch.object(hub_chat, "BACKGROUND", False)):
+                  mock.patch.object(hub_chat, "BACKGROUND", False),
+                  # The hub's Settings (#410): a settings file of the test's own.
+                  mock.patch.object(dashboard, "DASHBOARD_DIR", self.state),
+                  mock.patch.object(dashboard, "SETTINGS_FILE", self.state / "settings.json"),
+                  mock.patch.object(dashboard.usage, "remark_codex", lambda: None),
+                  mock.patch.object(agent_models, "codex_models", lambda path=None: list(CODEX_MODELS)),
+                  mock.patch.object(agent_models, "codex_own", lambda: {"model": "gpt-6-sol", "effort": ""})):
             p.start()
             self.addCleanup(p.stop)
         outside.bind(hub)
@@ -72,7 +82,7 @@ class HubChatTest(unittest.TestCase):
             m.reset()
             self.addCleanup(m.reset)
         outside.set_source("slack", type="slack", mode="on", settings={"reader": "connector"})
-        for f in (setup.setup_path(), hub_chat.path()):
+        for f in (setup.setup_path(), hub_chat.path(), dashboard.SETTINGS_FILE, hs.history_path()):
             assert f.is_relative_to(self.state), f"{f} is not the test's own folder"
         setup.setup_path().parent.mkdir(parents=True, exist_ok=True)
         setup.setup_path().write_text(FILE, encoding="utf-8")
@@ -261,18 +271,189 @@ class HubChatTest(unittest.TestCase):
 
 
 
+
+class HubChatSettings(unittest.TestCase):
+    """#410: Ask the hub changes the hub's own Settings: a proposal shown as
+    old -> new per setting, saved only on Apply through the Settings save,
+    stale only when one of ITS settings changed, refused settings in one
+    line, values the save would drop or clamp, the history (written only on
+    Apply, never under outside/)."""
+    setUp = HubChatTest.setUp
+    last = HubChatTest.last
+
+    def settings(self, changes: dict, words="Changed it.") -> str:
+        return f"SETTINGS: {words}\n<<<SETTINGS\n{json.dumps(changes)}\nSETTINGS>>>"
+
+    def saved(self) -> dict:
+        return json.loads(dashboard.SETTINGS_FILE.read_text()) if dashboard.SETTINGS_FILE.exists() else {}
+
+    def test_a_proposal_shows_each_setting_and_changes_nothing_until_apply(self):
+        self.answer = self.settings({"digestIntervalMin": 15, "reviewRoundsPerTask": 3},
+                                    "The PO checks every 15 minutes, and a task gets at most 3 review rounds.")
+        hub = hub_chat.ask("Check every 15 minutes and stop reviews after 3 rounds")["turns"][-1]
+        self.assertEqual((hub["kind"], hub["setup"], hub["state"]), ("change", "settings", "proposed"))
+        self.assertEqual(hub["diff"], [
+            {"key": "digestIntervalMin", "name": "How often the PO checks on progress",
+             "where": "No row in Settings yet · a project's own value still wins",
+             "before": "every 5 minutes", "after": "every 15 minutes"},
+            {"key": "reviewRoundsPerTask", "name": "Review rounds per task",
+             "where": "Settings › Agent models › Reviews", "before": "5 rounds", "after": "3 rounds"}])
+        self.assertEqual(hub["check"]["problems"], [])
+        self.assertNotIn("proposed", hub)
+        self.assertNotIn("before", hub)
+        # The prompt lists the settings with their values now, and the ones it may not change.
+        p = self.prompts[0]
+        self.assertIn("- reviewRoundsPerTask: Review rounds per task (Settings › Agent models › Reviews). Now: 5", p)
+        self.assertIn("agentModels.codex.model: The Codex model stays", p)
+        self.assertIn('"low", "medium", "high"', p)                # the efforts the Codex model takes
+        self.assertEqual(self.saved(), {}, "nothing saved before Apply")
+        self.assertFalse(hs.history_path().exists())
+        hub = hub_chat.apply(hub["id"])["turns"][-1]
+        self.assertEqual(hub["state"], "applied")
+        self.assertEqual(hub["result"]["changes"], ["How often the PO checks on progress: every 5 minutes → every 15 minutes",
+                                                    "Review rounds per task: 5 rounds → 3 rounds"])
+        s = dashboard.load_settings()
+        self.assertEqual((s["digestIntervalMin"], s["reviewRoundsPerTask"]), (15, 3))
+        self.assertEqual(self.saved()["theme"], "", "saved whole by the Settings save, defaults and all")
+        hist = json.loads(hs.history_path().read_text())["changes"]
+        self.assertEqual(len(hist), 1)
+        self.assertEqual(hist[0]["ask"], "Check every 15 minutes and stop reviews after 3 rounds")
+        self.assertEqual(hist[0]["changes"][1], {"key": "reviewRoundsPerTask", "name": "Review rounds per task",
+                                                 "before": "5 rounds", "after": "3 rounds"})
+        self.assertEqual(hs.history_path(), self.state / "settings-history.json")
+        self.assertFalse((self.state / "outside" / "settings-history.json").exists())
+        with self.assertRaises(hub_chat.Refused):
+            hub_chat.apply(hub["id"])
+
+    def test_the_model_settings_go_through_the_models_check(self):
+        self.answer = self.settings({"agentModels.claude.model": "sonnet", "agentModels.codex.effort": "high"})
+        hub = hub_chat.ask("Claude on Sonnet, Codex effort high")["turns"][-1]
+        self.assertEqual([d["after"] for d in hub["diff"]], ["“sonnet”", "“high”"])
+        hub_chat.apply(hub["id"])
+        m = dashboard.load_settings()["agentModels"]
+        self.assertEqual((m["claude"]["model"], m["codex"]["effort"], m["codex"]["model"]), ("sonnet", "high", ""))
+        self.assertEqual(dashboard.load_settings()["defaultModel"], "sonnet")
+        # An effort the model does not take is a problem, and nothing is proposed.
+        self.answer = self.settings({"agentModels.codex.effort": "extreme"})
+        hub = hub_chat.ask("Codex effort extreme")["turns"][-1]
+        self.assertEqual(hub["kind"], "reply")
+        self.assertIn("does not take the reasoning effort", hub["text"])
+
+    def test_refused_settings_are_one_line_replies(self):
+        dashboard.save_settings({"agentModels": {"codex": {"model": "gpt-6-sol"}}})
+        for asked, line in (({"agentModels.codex.model": "gpt-5"}, "The Codex model stays gpt-6-sol: Ask the hub cannot change it."),
+                            ({"poFallbackModels.codex": "gpt-5"}, "The Codex model stays gpt-6-sol: Ask the hub cannot change it."),
+                            ({"backupRemote": "https://user:pw@example.invalid/x.git"}, "Ask the hub cannot change the backup remote"),
+                            ({"feedbackRelayUrl": "https://example.invalid"}, "Ask the hub cannot change the feedback relay"),
+                            ({"taskAgentTools": "own"}, "Ask the hub cannot change task agents' tools"),
+                            ({"editor": "custom"}, "Ask the hub cannot choose a custom editor"),
+                            ({"slackToken": "xoxb-made-up"}, "Ask the hub cannot change “slackToken”: secrets and tokens")):
+            with self.subTest(asked=asked):
+                self.answer = self.settings(asked)
+                hub = hub_chat.ask("change it")["turns"][-1]
+                self.assertEqual(hub["kind"], "reply")
+                self.assertEqual(len(hub["text"].split("\n")), 1, hub["text"])
+                self.assertTrue(hub["text"].startswith(line), hub["text"])
+        s = dashboard.load_settings()
+        self.assertEqual((s["agentModels"]["codex"]["model"], s["backupRemote"], s["taskAgentTools"]),
+                         ("gpt-6-sol", "", "ensemble"))
+        self.assertNotIn("slackToken", self.saved())
+        self.assertFalse(hs.history_path().exists())
+
+    def test_a_refused_key_next_to_a_good_one_is_named_and_the_good_one_proposed(self):
+        self.answer = self.settings({"theme": "dark", "backupRemote": "x"})
+        hub = hub_chat.ask("dark theme and back up to x")["turns"][-1]
+        self.assertEqual(hub["kind"], "change")
+        self.assertEqual([d["key"] for d in hub["diff"]], ["theme"])
+        self.assertTrue(any("backup remote" in p for p in hub["check"]["problems"]), hub["check"])
+
+    def test_a_value_the_save_drops_or_clamps(self):
+        self.answer = self.settings({"reviewRoundsPerTask": 5000, "digestModel": "", "theme": "neon"})
+        hub = hub_chat.ask("many rounds")["turns"][-1]
+        self.assertEqual(hub["kind"], "change")
+        self.assertEqual([(d["key"], d["after"]) for d in hub["diff"]],
+                         [("reviewRoundsPerTask", f"{dashboard.REVIEW_ROUNDS_MAX} rounds")])
+        probs = hub["check"]["problems"]
+        self.assertTrue(any("5000 is saved as" in p for p in probs), probs)
+        self.assertTrue(any(p.startswith("The model the PO's progress check runs on: Settings does not take") for p in probs), probs)
+        self.assertTrue(any(p.startswith("Theme: Settings does not take") for p in probs), probs)
+        # The same value written another way is nothing to change, and no problem.
+        self.answer = self.settings({"reviewRoundsPerTask": "5"})
+        hub = hub_chat.ask("five rounds")["turns"][-1]
+        self.assertEqual((hub["kind"], hub["text"]), ("reply", "Settings already say this; nothing to change."))
+
+    def test_stale_only_when_one_of_its_settings_changed(self):
+        self.answer = self.settings({"preferAgent": "codex"}, "Prefer: Codex.")
+        a = hub_chat.ask("Make reviews Codex")["turns"][-1]
+        dashboard.save_settings({"theme": "dark"})                   # some other setting
+        self.assertEqual(self.last()["state"], "proposed")
+        dashboard.save_settings({"preferAgent": "claude"})           # its own setting
+        last = self.last()
+        self.assertEqual(last["state"], "stale")
+        self.assertEqual(last["staleWhy"], "Prefer was changed to Claude since this was made, so it can no "
+                                           "longer be applied as it is.")
+        # Apply writes nothing, and says which setting changed.
+        t = hub_chat.apply(a["id"])["turns"][-1]
+        self.assertEqual(t["state"], "stale")
+        self.assertIn("Prefer was changed to Claude", t["result"]["error"])
+        self.assertEqual(dashboard.load_settings()["preferAgent"], "claude")
+        self.assertFalse(hs.history_path().exists())
+
+    def test_a_change_in_between_apply_and_its_thread_is_stale_and_saves_nothing(self):
+        self.answer = self.settings({"preferAgent": "codex"})
+        a = hub_chat.ask("prefer codex")["turns"][-1]
+        with mock.patch.object(hub_chat, "BACKGROUND", True), mock.patch.object(hub_chat, "_run", lambda fn, *x: None):
+            hub_chat.apply(a["id"])                                  # the thread has not run yet
+        dashboard.save_settings({"preferAgent": "claude"})
+        hub_chat._apply(a["id"])
+        t = self.last()
+        self.assertEqual(t["state"], "stale")
+        self.assertIn("Prefer was changed to Claude", t["result"]["error"])
+        self.assertEqual(dashboard.load_settings()["preferAgent"], "claude")
+        self.assertFalse(hs.history_path().exists())
+
+    def test_parse_settings(self):
+        self.assertEqual(hub_chat.parse('SETTINGS: x\n<<<SETTINGS\n{"theme": "dark"}\nSETTINGS>>>'),
+                         {"kind": "settings", "text": "x", "settings": {"theme": "dark"}})
+        self.assertIsNone(hub_chat.parse('<<<SETTINGS\n{"theme": "dark"}\nSETTINGS>>>'))   # no SETTINGS line
+        self.assertIsNone(hub_chat.parse("SETTINGS: x\n<<<SETTINGS\nnot json\nSETTINGS>>>"))
+        self.assertIsNone(hub_chat.parse("SETTINGS: x\n<<<SETTINGS\n{}\nSETTINGS>>>"))
+        self.assertIsNone(hub_chat.parse('SETTINGS: x\n<<<SETTINGS\n{"a": 1}\nSETTINGS>>>\nCHANGE: y\n<<<SETUP outside\n# z\nSETUP>>>'))
+
+    def test_history_lists_settings_and_routing_newest_first_and_clear_keeps_it(self):
+        self.answer = self.settings({"idleAlertMin": 10})
+        hub_chat.apply(hub_chat.ask("Tell the PO sooner when a task sits idle")["turns"][-1]["id"])
+        self.answer = f"CHANGE: Topic.\n<<<SETUP outside\n{FILE.replace('made-up pricing', 'made-up quotes')}SETUP>>>"
+        hub_chat.apply(hub_chat.ask("Alpha is about quotes")["turns"][-1]["id"])
+        items = hub_chat.history()["items"]
+        self.assertEqual([i["kind"] for i in items], ["routing", "settings"])
+        self.assertEqual(items[0]["ask"], "Alpha is about quotes")
+        self.assertEqual(items[0]["lines"], ["Alpha: topic changed"])
+        self.assertEqual(items[1]["changes"][0]["after"], "10 minutes")
+        hub_chat.clear()
+        items = hub_chat.history()["items"]
+        self.assertEqual([i["kind"] for i in items], ["routing", "settings"])
+        self.assertEqual(items[0]["ask"], "", "the question went with Clear; the change stays")
+
+    def test_the_history_keeps_the_last_200(self):
+        for i in range(205):
+            hs._add_history({"at": i, "ask": f"q{i}", "text": "", "changes": []})
+        rows = hs.history()
+        self.assertEqual((len(rows), rows[0]["ask"], rows[-1]["ask"]), (200, "q5", "q204"))
+
+
 class HubChatEndpoints(unittest.TestCase):
     """GET and POST /api/hub-chat answer the dashboard page only: never a
     bearer token, a request with no key cookie, or an agent's process."""
     setUp = HubChatTest.setUp
 
-    def call(self, method, cookie=True, bearer=False, agent=False):
+    def call(self, method, cookie=True, bearer=False, agent=False, path="/api/hub-chat", body=None):
         import io
         self.assertTrue(hub_chat.path().is_relative_to(self.state), "never the real data folder")
-        raw = json.dumps({"action": "ask", "text": "hello"}).encode()
+        raw = json.dumps(body or {"action": "ask", "text": "hello"}).encode()
         h = dashboard.Handler.__new__(dashboard.Handler)
-        h.path, h.command, h.request_version = "/api/hub-chat", method, "HTTP/1.1"
-        h.requestline = f"{method} /api/hub-chat HTTP/1.1"
+        h.path, h.command, h.request_version = path, method, "HTTP/1.1"
+        h.requestline = f"{method} {path} HTTP/1.1"
         h.headers = {"Content-Length": str(len(raw)), "Content-Type": "application/json",
                      "Host": "127.0.0.1", "Origin": "http://127.0.0.1"}
         if cookie:
@@ -298,6 +479,29 @@ class HubChatEndpoints(unittest.TestCase):
         status, r = self.call("POST")
         self.assertEqual(status, 200, r)
         self.assertEqual(self.call("GET")[1]["turns"][0]["text"], "hello")
+
+    def test_apply_and_the_history_are_the_page_only_too(self):
+        """#410: a Settings proposal is applied only from the page, and its
+        history is shown only to the page."""
+        self.answer = 'SETTINGS: Reviews stop after 3 rounds.\n<<<SETTINGS\n{"reviewRoundsPerTask": 3}\nSETTINGS>>>'
+        hub = hub_chat.ask("Stop reviews after 3 rounds")["turns"][-1]
+        self.assertEqual((hub["setup"], hub["state"]), ("settings", "proposed"))
+        apply = {"action": "apply", "id": hub["id"]}
+        for why in ({"cookie": False}, {"bearer": True}, {"agent": True}):
+            with self.subTest(apply=True, **why):
+                status, r = self.call("POST", body=apply, **why)
+                self.assertEqual((status, r.get("error")), (403, "page_only"), r)
+            with self.subTest(history=True, **why):
+                status, r = self.call("GET", path="/api/hub-chat/history", **why)
+                self.assertEqual((status, r.get("error")), (403, "page_only"), r)
+        self.assertNotEqual(dashboard.load_settings()["reviewRoundsPerTask"], 3, "nothing saved")
+        self.assertFalse(hs.history_path().exists())
+        status, r = self.call("POST", body=apply)
+        self.assertEqual((status, r["turns"][-1]["state"]), (200, "applied"), r)
+        self.assertEqual(dashboard.load_settings()["reviewRoundsPerTask"], 3)
+        status, r = self.call("GET", path="/api/hub-chat/history")
+        self.assertEqual(status, 200, r)
+        self.assertEqual([(i["kind"], i["ask"]) for i in r["items"]], [("settings", "Stop reviews after 3 rounds")], r)
 
 
 if __name__ == "__main__":

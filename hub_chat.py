@@ -28,6 +28,14 @@ question or an apply left half done by a hub restart becomes an error turn
 (``outside_setup.apply_new_text``), as "the hub chat" in the history. When
 the file changed since the answer was made from it, nothing is written: the
 turn becomes stale and the panel offers to ask again.
+
+**The hub's Settings** (#410): the model may answer with the settings to
+change instead (``SETTINGS:``); the turn then has ``setup: "settings"``,
+``proposed`` (``{path: value as the save would keep it}``), ``before`` (each
+one's value when it was made) and ``diff`` (``[{key, name, where, before,
+after}]``, as shown). Checked, applied and kept in a history by
+``hub_chat_settings``. ``history()`` is what the panel's History shows: those
+changes and the setup file's applies the hub chat made, newest first.
 """
 from __future__ import annotations
 
@@ -40,6 +48,7 @@ import uuid
 from pathlib import Path
 
 import durable
+import hub_chat_settings as hs
 import outside
 import outside_route as route
 import outside_setup
@@ -53,6 +62,7 @@ NOW_CHARS = 12000             # of routing-now.md the model sees
 TIMEOUT_S = 120
 
 PROPOSED, APPLYING, APPLIED, DISCARDED, STALE = "proposed", "applying", "applied", "discarded", "stale"
+SETTINGS = "settings"         # a change turn's setup when it changes the hub's Settings
 
 # The model call: (prompt, timeout) -> the answer's text. None: outside_model.RUN. Tests replace it.
 RUN = None
@@ -166,7 +176,14 @@ def view() -> dict:
         hashes: dict[str, str | None] = {}
         turns = []
         for t in st["turns"]:
-            if t.get("kind") == "change" and t.get("state") == PROPOSED:
+            if t.get("kind") == "change" and t.get("state") == PROPOSED and t.get("setup") == SETTINGS:
+                try:
+                    key = hs.stale_key(t.get("before") or {})
+                except Exception:
+                    key = None
+                if key:
+                    t = dict(t, state=STALE, staleWhy=hs.stale_line(key))
+            elif t.get("kind") == "change" and t.get("state") == PROPOSED:
                 k = t.get("setup") or "outside"
                 if k not in hashes:
                     try:
@@ -175,7 +192,7 @@ def view() -> dict:
                         hashes[k] = None
                 if hashes[k] is not None and hashes[k] != t.get("baseHash"):
                     t = dict(t, state=STALE)
-            turns.append({k: v for k, v in t.items() if k != "proposed"})
+            turns.append({k: v for k, v in t.items() if k not in ("proposed", "before")})
         return {"turns": turns, "busy": _BUSY["ask"], "applying": sorted(_BUSY["apply"]),
                 "setups": [{"key": k, "label": v["label"], "path": str(v["path"]())} for k, v in KINDS.items()]}
 
@@ -258,7 +275,7 @@ def _answer_turn(ask_id: str) -> dict:
     import outside_model
     run = RUN or outside_model.RUN
     try:
-        answer = run(prompt(q["text"], earlier, key, current, context), TIMEOUT_S)
+        answer = run(prompt(q["text"], earlier, key, current, context, *hs.prompt_text()), TIMEOUT_S)
     except Exception as e:
         return _hub_turn(ask_id, "error", f"Haiku did not answer ({type(e).__name__}: {str(e)[:150]}); "
                                           f"nothing changed. Ask again.")
@@ -268,6 +285,8 @@ def _answer_turn(ask_id: str) -> dict:
                                           "Ask again, perhaps in other words.")
     if got["kind"] == "reply":
         return _hub_turn(ask_id, "reply", got["text"])
+    if got["kind"] == SETTINGS:
+        return _settings_turn(ask_id, got)
     new = got["setup"]
     if kind["hash"](new) == base:
         return _hub_turn(ask_id, "reply", (got["text"] + "\n\n" if got["text"] else "")
@@ -282,12 +301,29 @@ def _answer_turn(ask_id: str) -> dict:
                      baseHash=base, diff=diff(current, new), check=check, state=PROPOSED)
 
 
+def _settings_turn(ask_id: str, got: dict) -> dict:
+    """A ``SETTINGS:`` answer: a change of the settings the save takes, or a
+    reply when there is none (each refused setting in one line)."""
+    p = hs.propose(got["settings"])
+    lines = p["refused"] + p["problems"]
+    if not p["changes"]:
+        if not lines:
+            lines = ["Settings already say this; nothing to change."]
+        return _hub_turn(ask_id, "reply", "\n".join(lines))
+    text = got["text"] or "Here is the change."
+    return _hub_turn(ask_id, "change", text, setup=SETTINGS, proposed=p["changes"], before=p["before"],
+                     diff=p["diff"], check={"problems": lines, "changes": [], "failed": ""}, state=PROPOSED)
+
+
 PROMPT = """You help the CEO of a small software team change the setup of their hub (the program
 that runs their AI agents and its dashboard). You answer one request at a time.
 
-What you can change: only {label}, which sets {what}. It is the file below. Anything else about
-the hub (agents, models, tasks, projects, people, the dashboard, other settings) you cannot change
-yet: then reply in words that you cannot change that yet, and say what you can change.
+What you can change, and nothing else:
+1. {label}, which sets {what}. It is the file below.
+2. The hub's own Settings listed under SETTINGS below, each by its key.
+Anything else about the hub (tasks, projects, people, agents' work) you cannot change: then reply
+in words that you cannot, and say what you can change. A setting listed as not changeable: reply
+with its line, nothing more.
 
 Rules for a change:
 - Answer with the WHOLE new file: every line you were not asked to change stays exactly as it is.
@@ -299,9 +335,16 @@ Rules for a change:
   from adding it back), put it on that section's `Not:` line.
 - You may leave out the part between `<!-- problems` and `<!-- end of problems -->`; the hub
   rewrites it.
-For a question (such as "what goes to Harbour?"), answer in words from the routing below.
+Rules for a Settings change:
+- Give only the settings to change, by their key, each with its new value as JSON.
+- Use only the values listed for it. When the request asks for something no setting does (a
+  setting by time of day, reviewers alone), reply in words with what is closest, or change the
+  closest setting and say in the sentence what it also changes.
+- Say what changes in plain words with each setting's name, not its key.
+For a question (such as "what goes to Harbour?" or "how often does the PO check?"), answer in words
+from the routing or the settings below.
 
-Answer in exactly one of these two forms, nothing before or after it:
+Answer in exactly one of these three forms, nothing before or after it:
 
 REPLY: <your answer in plain words>
 
@@ -312,6 +355,13 @@ CHANGE: <one plain sentence saying what you changed>
 <the whole new file>
 SETUP>>>
 
+or
+
+SETTINGS: <one plain sentence saying what you changed, old and new>
+<<<SETTINGS
+{{"<key>": <new value>, ...}}
+SETTINGS>>>
+
 The file now ({path}):
 <<<FILE
 {current}
@@ -321,6 +371,12 @@ What the hub routes from now (routing-now.md, read only; may be cut short):
 <<<ROUTING
 {context}
 ROUTING>>>
+
+SETTINGS you can change (key: name (where in Settings). Now: value. Values: what it takes):
+{settings}
+
+Settings you cannot change (key: the line to reply with):
+{refused}
 
 The conversation so far (oldest first; "proposed" changes were not applied):
 {earlier}
@@ -337,7 +393,8 @@ def _plain(text: str, limit: int) -> str:
     return text if len(text) <= limit else text[:limit] + "..."
 
 
-def prompt(request: str, earlier: list[dict], key: str, current: str, context: str) -> str:
+def prompt(request: str, earlier: list[dict], key: str, current: str, context: str,
+           settings: str = "(none)", refused: str = "(none)") -> str:
     lines = []
     for t in earlier:
         if t.get("role") == "user":
@@ -348,18 +405,33 @@ def prompt(request: str, earlier: list[dict], key: str, current: str, context: s
     kind = KINDS[key]
     return PROMPT.format(label=kind["label"], what=kind["what"], key=key, path=kind["path"]().name,
                          current=current, context=context, earlier="\n".join(lines) or "(none)",
-                         request=request)
+                         request=request, settings=settings, refused=refused)
 
 
 _SETUP = re.compile(r"<<<SETUP[^\n]*\n(.*?)\n?SETUP>>>", re.S)
+_SETTINGS = re.compile(r"<<<SETTINGS[^\n]*\n(.*?)\n?SETTINGS>>>", re.S)
 
 
 def parse(answer: str) -> dict | None:
-    """``{kind: reply, text}`` or ``{kind: change, text, setup}``, or None
-    when the answer is in neither form."""
+    """``{kind: reply, text}``, ``{kind: change, text, setup}`` or ``{kind:
+    settings, text, settings: {key: value}}``, or None when the answer is in
+    none of these forms."""
     a = answer.replace("\r\n", "\n").strip()
     a = re.sub(r"^```\w*\n(.*)\n```$", r"\1", a, flags=re.S).strip()
     m = _SETUP.search(a)
+    n = _SETTINGS.search(a)
+    if m and n:
+        return None
+    if n:
+        c = re.search(r"^SETTINGS:[ \t]*(.*)$", a[:n.start()], re.M)
+        body = re.sub(r"^```\w*\n(.*)\n```$", r"\1", n.group(1).strip(), flags=re.S)
+        try:
+            changes = json.loads(body)
+        except ValueError:
+            return None
+        if not c or not isinstance(changes, dict) or not changes or not all(isinstance(k, str) for k in changes):
+            return None
+        return {"kind": SETTINGS, "text": c.group(1).strip()[:600], "settings": changes}
     if m:
         c = re.search(r"^CHANGE:[ \t]*(.*)$", a[:m.start()], re.M)
         if not c or not m.group(1).strip():
@@ -431,7 +503,9 @@ def _apply(tid: str) -> None:
     with _LOCK:
         t = _find(_load(), tid)
     state, result = PROPOSED, {}
-    if t:
+    if t and t.get("setup") == SETTINGS:
+        state, result = _apply_settings(st_ask(t), t)
+    elif t:
         kind = KINDS.get(t.get("setup") or "outside")
         try:
             res = kind["apply"](t["proposed"], t["baseHash"])
@@ -458,6 +532,27 @@ def _apply(tid: str) -> None:
         _log(f"applied a change: {len(result['changes'])} change(s), {len(result['problems'])} problem(s)")
 
 
+def st_ask(t: dict) -> str:
+    """The question a hub turn answers, or ""."""
+    with _LOCK:
+        q = _find(_load(), t.get("ask") or "")
+    return (q or {}).get("text") or ""
+
+
+def _apply_settings(ask_text: str, t: dict) -> tuple[str, dict]:
+    try:
+        res = hs.apply(t.get("proposed") or {}, t.get("before") or {}, ask_text, t.get("text") or "")
+    except hs.Changed as e:
+        return STALE, {"error": hs.stale_line(e.key) + " Nothing was saved: ask again."}
+    except ValueError as e:
+        return PROPOSED, {"error": str(e)}
+    except Exception as e:
+        _log(f"settings apply error: {type(e).__name__}: {str(e)[:200]}")
+        return PROPOSED, {"error": f"The apply did not go through ({type(e).__name__})."}
+    return APPLIED, {"changes": [f"{r['name']}: {r['before']} → {r['after']}" for r in res["diff"]],
+                     "problems": [], "failed": "", "at": res["at"]}
+
+
 def discard(tid: str) -> dict:
     with _LOCK:
         st = _load()
@@ -479,6 +574,37 @@ def clear() -> dict:
         if path().exists():         # nothing to clear writes no file (#409)
             _save({"turns": []})
     return view()
+
+
+def history() -> dict:
+    """The panel's History: every change the hub chat applied, newest first:
+    ``{items: [{kind: settings | routing, at, ask, changes: [{name, before,
+    after}] | lines: [text]}]}``. The routing ones are the setup file's
+    applies made by the hub chat, read only when that file is there."""
+    items = [{"kind": SETTINGS, "at": r.get("at"), "ask": r.get("ask") or "",
+              "changes": [c for c in r.get("changes") or [] if isinstance(c, dict)]}
+             for r in hs.history()]
+    try:
+        state = outside_setup._state_path()
+        applies = outside_setup.load_state()["applies"] if state.exists() else []
+    except Exception:
+        applies = []
+    who = outside_setup._who(outside_setup.HUB_CHAT_BY)
+    with _LOCK:
+        done = [t for t in _load()["turns"] if t.get("kind") == "change" and t.get("setup") != SETTINGS
+                and t.get("state") == APPLIED]
+        asks = {t["id"]: t.get("text") or "" for t in _load()["turns"] if t.get("role") == "user"}
+    for a in applies:
+        if a.get("by") != who:
+            continue
+        at = a.get("at") if isinstance(a.get("at"), (int, float)) else 0
+        # The question: the applied turn whose Apply ended just after it.
+        near = [t for t in done if 0 <= ((t.get("result") or {}).get("at") or 0) - at < 120]
+        ask_text = asks.get(near[0].get("ask"), "") if near else ""
+        items.append({"kind": "routing", "at": at, "ask": ask_text,
+                      "lines": [c for c in a.get("changes") or [] if isinstance(c, str)]})
+    items.sort(key=lambda x: x.get("at") or 0, reverse=True)
+    return {"items": items}
 
 
 ACTIONS = {"ask": lambda d: ask(d.get("text")), "again": lambda d: again(str(d.get("id") or "")),
