@@ -65,6 +65,8 @@ async function main() {
   await evalIn(`(() => { VIEW_MODE = 'board'; SELECTED_PROJECT = ${JSON.stringify(A.proj)}; PROJECT_TAB = 'tasks'; renderRows(); return 0; })()`);
   const D = 'LD_INBOX';
   await until(`!!IBX.data && ${D}.querySelectorAll("li.ibx-row[data-q]").length >= 8 && ${D}.getBoundingClientRect().width > 0`, 30000);
+  // Attention arrives separately from the Inbox; the Done action appears after both have drawn.
+  await until(`${D}.querySelectorAll('li.ibx-row[data-q]')[0]?.querySelector('[data-ibx-dismiss]')`, 30000);
   out.hoverMedia = await evalIn(`matchMedia('(hover: hover) and (pointer: fine)').matches`);
   // Row i, as the pointer on its text sees it: is every point of its question
   // the question? (Its own .ibx-line, or the hover copy's.)

@@ -13842,7 +13842,8 @@ function rowExpandAllowed(row, spec) {
   const win = row.ownerDocument.defaultView, name = row.querySelector(spec.name);
   return !!(win && win.matchMedia('(hover: hover) and (pointer: fine)').matches
     && !rowExpandOpenMenu(row.ownerDocument)
-    && name && (name.scrollWidth > name.clientWidth + 1 || rowExpandClamped(name, win)));
+    && name && (name.scrollWidth > name.clientWidth + 1 || rowExpandClamped(name, win)
+      || (spec.clampedParts && [...row.querySelectorAll(spec.clampedParts)].some(el => rowExpandClamped(el, win)))));
 }
 // #337: a name cut at its lines (-webkit-line-clamp, an Inbox card's text) is cut too.
 function rowExpandClamped(name, win) {
@@ -14015,7 +14016,11 @@ function rowExpandShow(row, spec, focus = false) {
 // goes to the real button under it (covered), and the pointer moving onto them
 // lets the copy go, so the real ones take over.
 function rowExpandKeep(copy, acts, win) {
-  if (!acts || win.getComputedStyle(acts).display === 'none') return;
+  if (!acts) return;
+  const style = win.getComputedStyle(acts);
+  // P425: listed Inbox actions live in the side panel for a mouse. Their
+  // invisible in-card controls must not reserve an empty band in the copy.
+  if (style.display === 'none' || parseFloat(style.opacity) < 0.5) return;
   const ar = acts.getBoundingClientRect(), cr = copy.getBoundingClientRect();
   if (!ar.width || cr.bottom <= ar.top + 0.5 || cr.top >= ar.bottom - 0.5 || cr.right <= ar.left || cr.left >= ar.right) return;
   const doc = copy.ownerDocument, cs = win.getComputedStyle(copy);
@@ -18154,13 +18159,13 @@ function ibxPaintIn(el, pid, key, phone, opts) {
   const html = ibxHtml(IBX.data, IBX.scope, pid, Date.now() / 1000, phone === undefined ? key === 'phSig' : !!phone, opts);
   const sig = html.replace(/(<span class="(?:pdp-age|ibx-tm)"[^>]*>)[^<]*/g, '$1');
   if (sig === IBX[key]) {
+    el._ibxPid = pid;
     el.querySelectorAll('.pdp-age[data-at]').forEach(s => { const t = pdPtAge(+s.dataset.at); if (s.textContent !== t) s.textContent = t; });
     return;
   }
-  // #394: a poll's news is not drawn under a press on the list, nor under a
-  // row's hover copy: the press would land on rows that are gone. Drawn once
-  // it is over. (A repaint the person's own press asks for is drawn now.)
-  if (IBX.polled && ibxHeld(el)) { IBX.held = true; return; }
+  // #394, P425: background news is not drawn under a press or hover copy.
+  // The drawn project may change at once; a delayed draw belongs only to it.
+  if (IBX.polled && el._ibxPid === pid && ibxHeld(el)) { IBX.held = true; return; }
   // A repaint keeps the focus on the control it was on (Close, Undo…), where it still is.
   const f = document.activeElement && el.contains(document.activeElement) ? document.activeElement : null;
   const fk = f ? ['data-ibx-close', 'data-ibx-earlier', 'data-ibx-done', 'data-ibx-check', 'data-ibx-undo', 'data-ibx-go', 'data-ibx-cancel', 'data-ibx-bulk-undo', 'data-ibx-dismiss', 'data-clear']
@@ -18168,6 +18173,7 @@ function ibxPaintIn(el, pid, key, phone, opts) {
   IBX[key] = sig;
   rowExpandBeforeChange(el);
   el.innerHTML = html;
+  el._ibxPid = pid;
   if (fk) { const g = el.querySelector(fk); if (g) g.focus({ preventScroll: true }); }
 }
 // #394: the counts drawn elsewhere while open (the project switcher's, a
@@ -19264,7 +19270,7 @@ rowExpandWire(document.getElementById('ld-projs'),
 // A card's text cut at its lines (a question, an answer) shows whole too,
 // downwards; a press on what the copy covers (the card's buttons) goes there.
 rowExpandWire(document.getElementById('ld-ibx-body'),
-  { row: '.ibx-head, a.ibx-link', name: '.ibx-title-listed, .ibx-line',
+  { row: '.ibx-head, a.ibx-link', name: '.ibx-title-listed, .ibx-line', clampedParts: '.ibx-reason',
     covered: '.ibx-head, a.ibx-link, .ibx-meta, .ibx-acts, .ibx-btn, .ibx-more > summary, .ibx-gone',
     host: '.ibx-row', keep: '.ibx-acts', copyClass: 'ldp-expanded', focusClass: 'ldp-expand-focus' });
 // P410 (the CEO's choice B): with a mouse, a listed Inbox card's Close / Close this and earlier / Done with this
@@ -19614,7 +19620,7 @@ function ldSplitSet(px) {
 ibxPaint();
 ibxPoll();
 setInterval(ibxPoll, 10000);
-setInterval(() => { if (!document.hidden) ibxPaint(); }, 30000);
+setInterval(() => { if (!document.hidden) ibxPolledPaint(); }, 30000);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) ibxPoll(); });
 // The Board panel's view switch, wherever the panel is (its own window too).
 PD.els.board.addEventListener('click', e => {
@@ -23871,7 +23877,8 @@ function swRender() {
   if (!el) return;
   ldSync();
   // #328: the Inbox under the list names the pick, which may only now be known (the projects loaded).
-  if (window.LD && LD.dock) ibxPaint(); else ldpPaint();
+  // P425: this background redraw obeys the same hover hold as an Inbox poll.
+  if (window.LD && LD.dock) ibxPolledPaint(); else ldpPaint();
   const on = swOn();
   const phone = phoneNow(), back = on && el.hidden;
   if (phone && !on && !el.hidden) {
