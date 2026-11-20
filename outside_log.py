@@ -123,6 +123,9 @@ def _event(ln: dict, names: dict) -> dict:
     elif ln.get("action") == outside_deliver.DROPPED:
         # Given up before its PO saw it (outside_deliver._drop, P439).
         text = f"Dropped, not given to {to_name}: {ln.get('note') or 'given up'}"
+    elif ln.get("action") == outside_deliver.WAITING:
+        text = (f"Waiting for {to_name}: its PO is stopped, and the setup file says not to start it "
+                f"for an outside message")
     else:
         before = ln.get("before") or ""
         before_name = names.get(before) or ln.get("beforeName") or before

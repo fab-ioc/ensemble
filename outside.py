@@ -216,6 +216,46 @@ def load_config() -> dict:
     return out
 
 
+# The hub-wide settings of the setup file's Sources section (#409), beside
+# the sources in sources.json: whether a stopped PO is started for an
+# outside message (no: the messages wait queued until the PO runs).
+OPTION_DEFAULTS = {"startStoppedPo": True}
+
+
+def preview_options(opts: dict | None) -> None:
+    """Start (a copy of the options) or end (None) this thread's preview."""
+    _PREVIEW.options = dict(opts) if opts is not None else None
+
+
+def load_options() -> dict:
+    """The hub-wide outside settings, defaults filled in. During this
+    thread's preview, the preview's copy."""
+    pv = getattr(_PREVIEW, "options", None)
+    if pv is not None:
+        return dict(pv)
+    raw = _read(_config_file()).get("options")
+    out = dict(OPTION_DEFAULTS)
+    for k, v in (raw if isinstance(raw, dict) else {}).items():
+        if k in OPTION_DEFAULTS and isinstance(v, type(OPTION_DEFAULTS[k])):
+            out[k] = v
+    return out
+
+
+def set_options(**changes) -> dict:
+    """Change hub-wide outside settings (the setup file). Returns them as saved."""
+    for k, v in changes.items():
+        if k not in OPTION_DEFAULTS or not isinstance(v, type(OPTION_DEFAULTS[k])):
+            raise ValueError(f"not an outside setting: {k}={v!r}")
+    if getattr(_PREVIEW, "options", None) is not None:
+        _PREVIEW.options.update(changes)
+        return dict(_PREVIEW.options)
+    with _LOCK:
+        data = _read(_config_file())
+        data["options"] = {**(data.get("options") if isinstance(data.get("options"), dict) else {}), **changes}
+        _write(_config_file(), data)
+    return load_options()
+
+
 def source_config(source_id: str) -> dict | None:
     return load_config().get(source_id)
 

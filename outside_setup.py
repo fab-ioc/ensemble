@@ -439,8 +439,82 @@ def read_plain_section(lines: list[str]) -> dict | None:
     return out
 
 
+# The Sources section's two lines that are not a source (#409), with
+# today's behaviour as their defaults: how often every source is read, and
+# whether a stopped PO is started for an outside message.
+EVERY_LABEL = "Read every"
+START_LABEL = "Start a stopped PO for an outside message"
+EVERY_KEYS = ("read every", "check every")
+START_KEYS = ("start a stopped po for an outside message", "start a stopped po",
+              "start a stopped po for outside messages")
+EVERY_DEFAULT = (outside.DEFAULTS["fastEvery"], outside.DEFAULTS["slowEvery"])
+START_DEFAULT = outside.OPTION_DEFAULTS["startStoppedPo"]
+_MIN = r"(\d+(?:\.\d+)?)\s*(?:m|min|mins|minute|minutes)"
+_EVERY_TWO = re.compile(rf"^{_MIN}\s+in\s+working\s+hours\s*[,;]?\s*(?:and\s+)?{_MIN}\s+otherwise\.?$", re.I)
+_EVERY_ONE = re.compile(rf"^{_MIN}\.?$", re.I)
+YES_NO = {"yes": True, "no": False}
+
+
+def _num_text(v: float) -> str:
+    return str(int(v)) if float(v) == int(v) else str(v)
+
+
+def _minutes_text(v: float) -> str:
+    return f"{_num_text(v)} minute{'' if float(v) == 1 else 's'}"
+
+
+def every_text(fast: float, slow: float) -> str:
+    """``1 minute in working hours, 15 minutes otherwise``."""
+    return f"{_minutes_text(fast)} in working hours, {_minutes_text(slow)} otherwise"
+
+
+def read_every(value: str) -> tuple[float, float] | None:
+    """``(working hours, otherwise)`` minutes from a Read every value, or None."""
+    v = " ".join(str(value or "").split())
+    m = _EVERY_TWO.match(v)
+    if m:
+        nums = (float(m.group(1)), float(m.group(2)))
+    else:
+        m = _EVERY_ONE.match(v)
+        if not m:
+            return None
+        nums = (float(m.group(1)),) * 2
+    return tuple(int(n) if n == int(n) else n for n in nums)
+
+
+def _option_line(label: str, value: str) -> dict | None:
+    """A Sources line that is one of the hub-wide settings: ``{option,
+    name, value}`` (``value`` None when it cannot be read, with ``bad``),
+    else None."""
+    key = " ".join(label.split()).lower()
+    if key in EVERY_KEYS:
+        got = read_every(value)
+        return {"option": "every", "name": EVERY_LABEL, "value": got,
+                **({} if got else {"bad": f"Sources: {EVERY_LABEL}: \"{value.strip()[:80]}\" is not a "
+                                          f"time such as \"{every_text(*EVERY_DEFAULT)}\""})}
+    if key in START_KEYS:
+        word = " ".join(value.split()).lower().rstrip(".")
+        got = YES_NO.get(word)
+        return {"option": "start", "name": START_LABEL, "value": got,
+                **({} if got is not None else {"bad": f"Sources: {START_LABEL}: \"{value.strip()[:80]}\" "
+                                                      f"is not yes or no"})}
+    return None
+
+
+def option_lines(cfgs: dict | None = None, opts: dict | None = None) -> list[str]:
+    """The two hub-wide lines as the hub writes them, from today's config."""
+    cfgs = outside.load_config() if cfgs is None else cfgs
+    opts = outside.load_options() if opts is None else opts
+    first = next(iter(cfgs.values()), None) or {}
+    fast = first.get("fastEvery", EVERY_DEFAULT[0])
+    slow = first.get("slowEvery", EVERY_DEFAULT[1])
+    return [f"- {EVERY_LABEL}: {every_text(fast, slow)}",
+            f"- {START_LABEL}: {'yes' if opts.get('startStoppedPo', START_DEFAULT) else 'no'}"]
+
+
 def read_plain_sources(lines: list[str]) -> list[dict] | None:
-    """The Sources section in the plain form: ``[{name, word}]``, or None."""
+    """The Sources section in the plain form: ``[{name, word}]`` (and the
+    hub-wide lines as ``{option, name, value}``), or None."""
     out = []
     for line in lines:
         if not line.strip():
@@ -448,6 +522,10 @@ def read_plain_sources(lines: list[str]) -> list[dict] | None:
         m = _LABEL.match(line)
         if not m:
             return None
+        opt = _option_line(m.group(1), m.group(2))
+        if opt is not None:
+            out.append(opt)
+            continue
         word = " ".join(m.group(2).split()).lower()
         if word not in MODE_WORDS:
             return None
@@ -462,7 +540,10 @@ def read_plain_sources(lines: list[str]) -> list[dict] | None:
 PROMPT = """You read part of a setup file a person wrote by hand. Answer with JSON only, no other words.
 
 Each section starts with a line "## <heading>". For a section headed "Sources", list each source the person
-names and the setting they chose: "on", "off", "pause" or "decide only". For every other section give:
+names and the setting they chose: "on", "off", "pause" or "decide only"; also "readEvery": the minutes between
+reads they wrote, [in working hours, otherwise] (null when they say nothing about it), and "startStoppedPo":
+"yes" or "no", whether they want a stopped PO started for an outside message ("" when they say nothing).
+For every other section give:
 - "heading": the heading exactly as written, without the ##
 - "topic": what the person says the initiative covers, copied from their words without adding any ("" when they say nothing)
 - "slackChannels": the Slack channels named, each exactly as written, without the #
@@ -474,7 +555,7 @@ Copy every name and key exactly as the person wrote it. Never add one they did n
 empty when the section names none.
 
 Answer in this shape:
-{"sources": [{"name": "Slack", "setting": "on"}],
+{"sources": [{"name": "Slack", "setting": "on"}], "readEvery": null, "startStoppedPo": "",
  "sections": [{"heading": "...", "topic": "...", "slackChannels": [], "jiraEpics": [], "jiraComponents": [],
    "jiraProjects": [], "workItems": [], "notItems": []}]}
 
@@ -606,6 +687,8 @@ INTRO = """Change this file to set which outside messages the hub reads and whic
 The hub applies it each time you save. Each initiative has a section headed with its name (`## Name`);
 `Work items:` lists the tickets and pull requests you set (the ones the hub adds by itself are not listed);
 `Not:` lists the ones to take out of that initiative, which the hub then does not add back to it.
+Under Sources, `Read every:` is how often each source is read and `Start a stopped PO for an outside message:`
+(yes or no) whether a PO that is stopped is started for one; with no, its messages wait until it runs.
 Write loosely if you like: Haiku reads what the hub cannot. What the hub routes from now: routing-now.md, next to this file."""
 
 
@@ -624,6 +707,7 @@ def first_text() -> str:
     cfgs = outside.load_config()
     out += [f"- {outside.label_of(c)}: {_mode_word(c)}" for c in cfgs.values()] or \
         ["<!-- none yet: add a line such as \"- Slack: on\" -->"]
+    out += option_lines(cfgs)
     for pid, name in names.items():
         row = rows.get(pid)
         if row and _has_people_set(row):
@@ -771,7 +855,58 @@ def _source_for(name: str, cfgs: dict) -> tuple[str | None, str | None]:
     return None, None
 
 
-def _apply_sources(lines: list[dict], check_only: bool, problems: list[str], changes: list[str]) -> None:
+def _apply_options(opts: list[dict], plain: bool, check_only: bool, problems: list[str],
+                   changes: list[str]) -> None:
+    """The hub-wide Sources lines: the read interval set on every source,
+    and whether a stopped PO is started. In a plain section a line left out
+    means its default (today's behaviour); a loosely written section changes
+    only what Haiku read in it."""
+    got: dict = {}
+    for x in opts:
+        if x.get("bad"):
+            problems.append(x["bad"])
+        elif x["option"] in got:
+            problems.append(f"Sources: two {x['name']} lines; the second was left out")
+        else:
+            got[x["option"]] = x["value"]
+    bad = {x["option"] for x in opts if x.get("bad")}
+    if plain:
+        if "every" not in bad:
+            got.setdefault("every", EVERY_DEFAULT)
+        if "start" not in bad:
+            got.setdefault("start", START_DEFAULT)
+    if "every" in got:
+        fast, slow = got["every"]
+        try:
+            fv = outside._frame_value("fastEvery", fast)
+            sv = outside._frame_value("slowEvery", slow)
+        except outside.Refused as e:
+            problems.append(f"Sources: {EVERY_LABEL}: {e}")
+        else:
+            cfgs = outside.load_config()
+            was = [(c.get("fastEvery"), c.get("slowEvery")) for c in cfgs.values()]
+            if any(w != (fv, sv) for w in was):
+                if check_only:
+                    for c in cfgs.values():
+                        c.update(fastEvery=fv, slowEvery=sv)
+                    outside.preview_config(cfgs)
+                else:
+                    for sid in cfgs:
+                        outside.update_source(sid, frame={"fastEvery": fv, "slowEvery": sv})
+                olds = sorted({every_text(*w) for w in was})
+                changes.append(f"Sources: {EVERY_LABEL.lower()} {' / '.join(olds)} → {every_text(fv, sv)}")
+    if "start" in got:
+        was = outside.load_options()["startStoppedPo"]
+        if was != got["start"]:
+            outside.set_options(startStoppedPo=got["start"])
+            changes.append(f"Sources: {START_LABEL.lower()}: {'yes' if was else 'no'} → "
+                           f"{'yes' if got['start'] else 'no'}")
+
+
+def _apply_sources(lines: list[dict], check_only: bool, problems: list[str], changes: list[str],
+                   plain: bool = True) -> None:
+    opts = [x for x in lines if x.get("option")]
+    lines = [x for x in lines if not x.get("option")]
     for x in lines:
         name, word = x["name"], " ".join(str(x.get("word") or "").split()).lower()
         if word not in MODE_WORDS:
@@ -810,6 +945,8 @@ def _apply_sources(lines: list[dict], check_only: bool, problems: list[str], cha
             changes.append(f"Sources: {outside.label_of(cfg)} {_mode_word(cfg)} → {word}")
         except (outside.Refused, ValueError) as e:
             problems.append(f"Sources: {name}: {e}")
+    # After the sources, so a source added by this save is read as often too.
+    _apply_options(opts, plain, check_only, problems, changes)
 
 
 def _change_for(sec: dict, row: dict, kinds: set[str], ids: dict[str, str]) -> tuple[dict | None, list[str]]:
@@ -871,6 +1008,31 @@ def _cleared(row: dict, kinds: set[str]) -> dict:
     return change
 
 
+def _haiku_options(got: dict, text: str, problems: list[str]) -> list[dict]:
+    """The hub-wide settings Haiku read in a loosely written Sources
+    section, each checked against its text: a number or a yes / no the
+    section does not hold is a problem, and the setting is left as it is."""
+    out = []
+    every = got.get("readEvery")
+    if isinstance(every, list) and len(every) == 2 and all(
+            isinstance(n, (int, float)) and not isinstance(n, bool) for n in every):
+        nums = tuple(int(n) if float(n) == int(n) else float(n) for n in every)
+        if all(_num_text(n) in re.findall(r"\d+(?:\.\d+)?", text) for n in nums):
+            out.append({"option": "every", "name": EVERY_LABEL, "value": nums})
+        else:
+            problems.append(f"Haiku read {EVERY_LABEL.lower()} as {every_text(*nums)}, which the section does "
+                            f"not say; it was left as it is. Write it as \"- {EVERY_LABEL}: "
+                            f"{every_text(*EVERY_DEFAULT)}\".")
+    start = str(got.get("startStoppedPo") or "").strip().lower()
+    if start in YES_NO:
+        if start in _words(text):
+            out.append({"option": "start", "name": START_LABEL, "value": YES_NO[start]})
+        else:
+            problems.append(f"Haiku read \"{start}\" for starting a stopped PO, which the section does not say; "
+                            f"it was left as it is. Write it as \"- {START_LABEL}: yes\" (or no).")
+    return out
+
+
 def read_text(text: str) -> dict:
     """The file read, before anything is applied: ``{sources: [{name,
     word}] or None, sections: [{heading, reading or None, problems}],
@@ -878,7 +1040,7 @@ def read_text(text: str) -> dict:
     (then nothing may change); ``sourceProblems``, settings Haiku read in a
     loosely written Sources section that its lines do not say."""
     _head, secs = split_sections(text)
-    src_lines, loose, out, src_problems = None, [], [], []
+    src_lines, loose, out, src_problems, plain = None, [], [], [], True
     for s in secs:
         if name_key(s["heading"]) == SOURCES_HEADING:
             if src_lines is not None:
@@ -889,6 +1051,7 @@ def read_text(text: str) -> dict:
             if src_lines is None:
                 loose.append(s)
                 src_lines = []
+                plain = False
                 s["isSources"] = True
             continue
         reading = read_plain_section(s["lines"])
@@ -912,7 +1075,8 @@ def read_text(text: str) -> dict:
                         continue
                     name, word = str(x.get("name") or "").strip(), str(x.get("setting") or "").strip()
                     word = " ".join(word.split()).lower()
-                    if not name or not _in_text(name, s["text"]):
+                    if not name or not _in_text(name, s["text"]) or \
+                            " ".join(name.split()).lower() in EVERY_KEYS + START_KEYS:
                         continue
                     if not _setting_written(name, word, s["text"]):
                         src_problems.append(f"Haiku read {name} as \"{word}\", which its line does not say; "
@@ -920,6 +1084,7 @@ def read_text(text: str) -> dict:
                                             f"pause, decide only).")
                         continue
                     src_lines.append({"name": name, "word": word})
+                src_lines += _haiku_options(got, s["text"], src_problems)
                 continue
             a = answers.get(name_key(s["heading"]))
             if a is None:
@@ -927,7 +1092,8 @@ def read_text(text: str) -> dict:
                                               "Write it more plainly.")
                 continue
             s["entry"]["reading"], s["entry"]["problems"] = _check_haiku_section(a, s)
-    return {"sources": src_lines, "sections": out, "failed": failed, "sourceProblems": src_problems}
+    return {"sources": src_lines, "sections": out, "failed": failed, "sourceProblems": src_problems,
+            "sourcesPlain": plain}
 
 
 def apply_text(text: str, by: dict | None = None, check_only: bool = False,
@@ -976,11 +1142,13 @@ def apply_text(text: str, by: dict | None = None, check_only: bool = False,
             # This thread works on copies of the sources' config and the table:
             # nothing is written and no other thread sees the preview.
             outside.preview_config(outside.load_config())
+            outside.preview_options(outside.load_options())
             route.preview_table(True)
         with route._LOCK:
             src_problems: list[str] = list(read["sourceProblems"])
-            if read["sources"]:
-                _apply_sources(read["sources"], check_only, src_problems, changes)
+            if read["sources"] is not None:
+                _apply_sources(read["sources"], check_only, src_problems, changes,
+                               plain=read.get("sourcesPlain", True))
             problems += [{"section": "Sources", "text": p} for p in src_problems]
             kinds = {t["kind"] for t in route.place_types()}
             rows = route._load_one()["rows"]
@@ -1035,6 +1203,7 @@ def apply_text(text: str, by: dict | None = None, check_only: bool = False,
     finally:
         if check_only:
             outside.preview_config(None)
+            outside.preview_options(None)
             route.preview_table(False)
     return {"problems": problems, "changes": changes, "failed": "", "lookupFailed": lookup_failed}
 
@@ -1463,6 +1632,7 @@ def now_text(now: float | None = None) -> str:
     hs = outside.health_all(now)
     out += [f"- {h['label']} ({h['id']}): {_mode_word({'mode': h['mode'], 'paused': h['paused']})}. "
             f"{h['text']}. Last read {_when(h['lastGood'])}." for h in hs] or ["- none"]
+    out += option_lines()
     nothing = []
     for pid, name in names.items():
         row = t["rows"].get(pid)

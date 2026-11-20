@@ -99,6 +99,7 @@ NO_PO_DROP_S = 4 * 86400            # a message for a project with no PO waits t
 BACKLOG_MAX_AGE_S = 4 * 86400       # a message waiting for its PO is given up after this long
 BACKLOG_MAX = 60                    # a PO's newest waiting messages kept; older ones are given up
 DROPPED = "dropped"                 # the Message log's event for a message given up
+WAITING = "waiting"                 # ... for one that waits for its stopped PO (setup file: not started)
 THREAD_READS_PER_HOUR = 10          # ensemble_read_outside thread=true, per PO
 RECENT_LIST = 20                    # ensemble_read_outside with no id
 TOOL = "ensemble_read_outside"
@@ -552,6 +553,37 @@ def _flag(st: dict, room_id: str, why: str, n: int, parts: list[dict], now: floa
                                   "kind": parts[0]["kind"] if parts else "outside"}
 
 
+NOT_STARTED_WHY = "the setup file says a stopped PO is not started for an outside message"
+
+
+def _wait_stopped(st: dict, room_id: str, parts: list[dict], items: list[dict], now: float) -> None:
+    """The PO is stopped and is not to be started: the messages stay queued
+    until it runs (the backlog limit applies); the chat and each message's
+    row of the Message log say so once, the bell shows them
+    (``undelivered`` with the reason)."""
+    import outside_route        # bound by the hub; not at import time
+    was = st["undelivered"].get(room_id) or {}
+    shown = set(was.get("keys") or []) if was.get("why") == NOT_STARTED_WHY else set()
+    new = [p for p in parts if p["key"] not in shown]
+    if new:
+        _log(f"{len(new)} outside message(s) wait for the stopped PO of {room_id}: not started (setup file)")
+        _post(room_id, new, False, now, "Waiting: the PO is stopped, and the setup file says not to start it "
+                                        "for an outside message. It is typed these when it runs again.")
+        keys = {p["key"] for p in new}
+        for it in items:
+            if it["key"] not in keys:
+                continue
+            try:
+                outside_route.log_event({"source": str(it.get("source") or ""), "key": it["key"],
+                                         "action": WAITING, "to": [it["to"]]}, now)
+            except Exception as e:      # noqa: BLE001 — the wait stands
+                _log(f"{msg_id(it['key'])}: the wait was not logged: {e!r}")
+    st["undelivered"][room_id] = {"since": was.get("since") or now, "why": NOT_STARTED_WHY,
+                                  "count": len(parts), "kind": parts[0]["kind"] if parts else "outside",
+                                  "keys": [p["key"] for p in parts]}
+    _save(st)
+
+
 def _resume(st: dict, room: dict, line: str, told: list[dict], now: float) -> str:
     """Start the stopped PO of ``room`` with ``line`` as its first input, as
     ``po_messages._resume`` does. The messages stay queued, marked in
@@ -739,6 +771,11 @@ def _deliver(st: dict, room_id: str, items: list[dict], now: float) -> str:
             st["undelivered"].pop(room_id, None)
             _save(st)
         return got or ""
+    if stopped is not None and not outside.load_options()["startStoppedPo"]:
+        # The setup file says a stopped PO is not started for an outside
+        # message: they wait queued (the backlog limit applies) until it runs.
+        _wait_stopped(st, room_id, parts, items, now)
+        return ""
     if stopped is not None:
         line, told = wake_line(parts)
         got = _resume(st, stopped, line, told, now)
@@ -897,10 +934,15 @@ def held_by_room() -> dict[str, dict]:
         n = int(u.get("count") or 0)
         if n:
             label = label_of(u.get("kind") or "outside")
-            out[rid] = {"count": n, "since": float(u.get("since") or 0),
-                        "reason": f"{n} {label} message{'s' if n != 1 else ''} not delivered "
-                                  f"to {names.get(rid) or 'this PO'}: it is stopped and could not "
-                                  f"be started ({u.get('why') or 'unknown'})"}
+            if u.get("why") == NOT_STARTED_WHY:
+                reason = (f"{n} {label} message{'s' if n != 1 else ''} wait for "
+                          f"{names.get(rid) or 'this PO'}: it is stopped, and the setup file says not "
+                          f"to start it for an outside message")
+            else:
+                reason = (f"{n} {label} message{'s' if n != 1 else ''} not delivered "
+                          f"to {names.get(rid) or 'this PO'}: it is stopped and could not "
+                          f"be started ({u.get('why') or 'unknown'})")
+            out[rid] = {"count": n, "since": float(u.get("since") or 0), "reason": reason}
     return out
 
 

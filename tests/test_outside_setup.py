@@ -389,6 +389,80 @@ class SetupFileTest(unittest.TestCase):
         self.assertEqual(outside.source_config("jira")["mode"], "on")
         self.assertTrue(any("Mastodon" in p["text"] for p in res["problems"]))
 
+    # -- #409: the read interval and starting a stopped PO -------------------
+    def test_the_first_file_has_the_two_lines_with_todays_values(self):
+        setup.tick(now=WED, background=False)
+        text = setup.setup_path().read_text()
+        self.assertIn("- Jira: decide only\n- Read every: 1 minute in working hours, 15 minutes otherwise\n"
+                      "- Start a stopped PO for an outside message: yes\n", text)
+        self.assertIn("- Read every: 1 minute in working hours", setup.now_text(WED))
+        # Applied as written, it changes nothing.
+        res = setup.apply_file(now=WED)
+        self.assertEqual((res or {}).get("changes", []), [])
+
+    def test_the_interval_is_set_on_every_source_and_a_new_one(self):
+        outside.remove_source("jira")
+        res = self.apply("## Sources\n- Slack: on\n- Jira: on\n"
+                         "- Read every: 2 minutes in working hours, 30 minutes otherwise\n")
+        self.assertEqual(res["problems"], [])
+        for sid in ("slack", "jira"):
+            c = outside.source_config(sid)
+            self.assertEqual((c["fastEvery"], c["slowEvery"]), (2, 30), sid)
+        self.assertIn("Sources: read every 1 minute in working hours, 15 minutes otherwise → "
+                      "2 minutes in working hours, 30 minutes otherwise", res["changes"])
+        # One number is both; a line left out is today's value again.
+        self.apply("## Sources\n- Slack: on\n- Jira: on\n- Read every: 5 min\n")
+        self.assertEqual(outside.source_config("slack")["slowEvery"], 5)
+        self.apply("## Sources\n- Slack: on\n- Jira: on\n")
+        c = outside.source_config("slack")
+        self.assertEqual((c["fastEvery"], c["slowEvery"]), (1, 15))
+        self.assertEqual(self.haiku, [])
+
+    def test_a_bad_interval_is_a_problem_and_changes_nothing(self):
+        self.apply("## Sources\n- Slack: on\n- Read every: 3 minutes in working hours, 20 minutes otherwise\n")
+        res = self.apply("## Sources\n- Slack: on\n- Read every: now and then\n")
+        self.assertTrue(any("Read every" in p["text"] for p in res["problems"]), res["problems"])
+        res = self.apply("## Sources\n- Slack: on\n- Read every: 0 minutes\n")
+        self.assertTrue(any("at least 1" in p["text"] for p in res["problems"]), res["problems"])
+        self.assertEqual(outside.source_config("slack")["fastEvery"], 3)
+        self.assertEqual(self.haiku, [])
+
+    def test_start_a_stopped_po_no_and_back(self):
+        self.assertTrue(outside.load_options()["startStoppedPo"])
+        res = self.apply("## Sources\n- Slack: on\n- Start a stopped PO for an outside message: no\n")
+        self.assertEqual(res["problems"], [])
+        self.assertFalse(outside.load_options()["startStoppedPo"])
+        self.assertIn("Sources: start a stopped po for an outside message: yes → no", res["changes"])
+        self.assertIn("- Start a stopped PO for an outside message: no", setup.first_text())
+        res = self.apply("## Sources\n- Slack: on\n- Start a stopped PO for an outside message: maybe\n")
+        self.assertTrue(any("yes or no" in p["text"] for p in res["problems"]))
+        self.assertFalse(outside.load_options()["startStoppedPo"])
+        self.apply("## Sources\n- Slack: on\n")            # left out: today's yes
+        self.assertTrue(outside.load_options()["startStoppedPo"])
+
+    def test_check_only_changes_neither(self):
+        res = setup.apply_text("## Sources\n- Slack: on\n- Jira: decide only\n- Read every: 4 minutes\n"
+                               "- Start a stopped PO for an outside message: no\n", check_only=True, now=WED)
+        self.assertEqual(len(res["changes"]), 2, res["changes"])
+        self.assertEqual(outside.source_config("slack")["fastEvery"], 1)
+        self.assertTrue(outside.load_options()["startStoppedPo"])
+
+    def test_haiku_reads_them_in_a_loose_sources_section_checked_against_its_words(self):
+        self.answer = {"sources": [{"name": "Slack", "setting": "on"}, {"name": "Read every", "setting": "on"}],
+                       "readEvery": [2, 20], "startStoppedPo": "no", "sections": []}
+        res = self.apply("## Sources\nSlack on please. Read it every 2 minutes at work and 20 otherwise;\n"
+                         "do not wake a stopped PO for these, no.\n")
+        self.assertEqual(res["problems"], [])
+        self.assertEqual(outside.source_config("slack")["slowEvery"], 20)
+        self.assertFalse(outside.load_options()["startStoppedPo"])
+        # Numbers or a yes the words do not hold are problems; nothing changes.
+        self.answer = {"sources": [{"name": "Slack", "setting": "on"}], "readEvery": [9, 99],
+                       "startStoppedPo": "yes", "sections": []}
+        res = self.apply("## Sources\nSlack on, read it often\n")
+        self.assertEqual(len([p for p in res["problems"] if p["section"] == "Sources"]), 2, res["problems"])
+        self.assertEqual(outside.source_config("slack")["slowEvery"], 20)
+        self.assertFalse(outside.load_options()["startStoppedPo"])
+
     def test_jira_places_without_a_jira_source_are_a_problem(self):
         outside.remove_source("jira")
         self.apply("## Alpha\nTopic: a\nJira: epic ABC-1\n")

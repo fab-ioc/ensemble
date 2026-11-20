@@ -577,6 +577,40 @@ class StoppedPo(_World):
         self.tick()
         self.assertEqual(len(self.notices(self.opten)), 1)
 
+    def test_not_started_when_the_setup_file_says_no(self):
+        """#409: "Start a stopped PO for an outside message: no": the messages
+        wait queued, the chat, the bell and the Message log say so once, and
+        the PO is typed them when it runs again."""
+        events = []
+        p = mock.patch("outside_route.log_event", side_effect=lambda ln, now=None: events.append(ln))
+        p.start()
+        self.addCleanup(p.stop)
+        outside.set_options(startStoppedPo=False)
+        self.put(item(1))
+        self.assertEqual(self.tick(), [])
+        self.assertEqual(self.launcher.calls, [])
+        self.assertEqual(len(outside.queue_items()), 1)
+        self.assertIn("wait for opten", od.held_by_room()[self.opten]["reason"])
+        [n] = self.notices(self.opten)
+        self.assertFalse(n["typed"])
+        self.assertIn("setup file", n["text"])
+        [ev] = events
+        self.assertEqual((ev["action"], ev["to"]), (od.WAITING, ["proj-opten"]))
+        # Told once per message: a later look says it again only for a new one.
+        self.now += 60
+        self.tick()
+        self.assertEqual((len(self.notices(self.opten)), len(events)), (1, 1))
+        self.put(item(2))
+        self.tick()
+        self.assertEqual((len(self.notices(self.opten)), len(events)), (2, 2))
+        self.assertEqual(self.launcher.calls, [])
+        # The CEO starts the PO: it is typed both at the next look.
+        self.ptys["pty-opten"] = _FakePty()
+        self.now += 60
+        self.assertEqual(self.tick(), [self.opten])
+        self.assertEqual(outside.queue_items(), [])
+        self.assertEqual(od.held_by_room(), {})
+
     def test_a_failed_start_stays_queued_and_flagged(self):
         self.launcher.fail_with = "the folder is gone"
         self.put(item(1))
