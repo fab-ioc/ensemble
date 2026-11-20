@@ -17,7 +17,7 @@ messages.
 * a file opened in Plain is no tab of the Motors chat, and is back in Plain.
 
 And the boxes grow with the text (at 1728x1117 and 440x956): the message box
-and a card's comment for 1, 6 and 30 lines, capped near 40% of the visible
+for 1, 6 and 30 lines, capped near 40% of the visible
 height (on a computer the message box is the shared one under the chats,
 f0a5f87, capped at 32% of the window, P226), then scrolling; Send stays where
 it was; one row again after Send.
@@ -106,27 +106,25 @@ const GEO = `(() => {
     over: over(document).concat(over(d)), barOut, scrollW: Math.max(document.documentElement.scrollWidth, d.documentElement.scrollWidth),
     vvh: getComputedStyle(document.documentElement).getPropertyValue('--vv-h') };
 })()`;
-// The box and a card's comment with 1, 6 and 30 lines.
+// The box with 1, 6 and 30 lines (a card has no comment field since #408:
+// its Reply aims this same box).
 const GROW = `(async () => {
   const f = ${FRAME}, w = f.contentWindow, d = f.contentDocument, g = k => w.eval(k);
   const pause = () => new Promise(r => setTimeout(r, 60));
-  const who = g('ROOM_OBJ').participants.find(p => p.kind === 'agent').identity;
-  const items = (g('LAST_ITEMS') || []).concat([{ id: 'grow-ask', from: who, to: 'user', text: 'Ask: Shall I go ahead?', asks: g('parseAsks')('Ask: Shall I go ahead?'), askAudience: 'user', ts: Date.now() / 1000 }]);
-  w.__items = items; g('LAST_ITEMS = window.__items; renderBubbles(LAST_ITEMS)');
   // The message box: on a computer the shared one under the chats (f0a5f87),
   // its words capped at 32% of the window (P226); on a phone the chat's own.
   const wcf = document.getElementById('workspace-compose-frame'), shared = !!wcf && wcf.getClientRects().length > 0;
   const bw = shared ? wcf.contentWindow : w, bd = shared ? wcf.contentDocument : d, bg = k => bw.eval(k);
   const out = { cap: Math.round(w.innerHeight * 0.4), boxCap: shared ? Math.round(innerHeight * 0.32) : Math.round(w.innerHeight * 0.4), frame: Math.round(w.innerHeight), shared };
   const lines = n => Array.from({ length: n }, (_, i) => 'Line ' + (i + 1)).join('\\n');
-  for (const [key, el, W] of [['box', () => bd.getElementById('input'), bw], ['card', () => d.querySelector('.msg[data-mid="grow-ask"] .qa-cm textarea'), w]]) {
+  for (const [key, el, W] of [['box', () => bd.getElementById('input'), bw]]) {
     out[key] = {};
     for (const n of [1, 6, 30]) {
       const ta = el(); ta.focus(); ta.value = lines(n); ta.dispatchEvent(new W.Event('input', { bubbles: true })); await pause();
       out[key][n] = { h: Math.round(el().getBoundingClientRect().height), scrolls: el().scrollHeight > el().clientHeight + 1 };
     }
     // The box emptied again: a shared box (on a computer) holding 30 lines is
-    // tall under the chats and leaves the chat, and its card, less room.
+    // tall under the chats and leaves the chat less room.
     if (key === 'box') { const t = el(); t.value = ''; t.dispatchEvent(new W.Event('input', { bubbles: true })); await new Promise(r => setTimeout(r, 400)); }
   }
   // Send stays put across a press, and the box is one row after Send.
@@ -427,13 +425,13 @@ class IphoneChat(unittest.TestCase):
         if self.before:
             return
         for where, g in (('phone', self.got['440x956']['grow']), ('desktop', self.got['desktop']['grow'])):
-            for key in ('box', 'card'):
+            for key in ('box',):
                 with self.subTest(where=where, field=key):
                     one, six, thirty = g[key]['1'], g[key]['6'], g[key]['30']
                     self.assertLess(one['h'], 64, g)
                     self.assertGreater(six['h'], one['h'] + 60, g)
                     self.assertFalse(six['scrolls'], g)
-                    cap = g['boxCap'] if key == 'box' else g['cap']
+                    cap = g['boxCap']
                     self.assertLessEqual(thirty['h'], cap + 2, g)
                     self.assertGreaterEqual(thirty['h'], cap - 40, g)
                     self.assertTrue(thirty['scrolls'], g)

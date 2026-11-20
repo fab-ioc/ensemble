@@ -1,17 +1,15 @@
-"""Typing into a quick-answer card while the chat redraws (#191, GitHub issue 14).
+"""Typing a card's answer while the chat redraws (#191, GitHub issue 14; #408).
 
 On a throwaway hub (the real handler on a spare port, state in a temp folder)
-headless Chrome opens a PO chat with three asks and types into the open ask's
-comment box with real key input for 10 s. Every 500 ms something redraws the
+headless Chrome opens a PO chat with three asks, presses Reply on the open
+ask (#408: a card has no comment box of its own; Reply aims the send box at
+it) and types into the send box with real key input for 10 s. Every 500 ms something redraws the
 chat, in turn: a plain redraw, a poll, a new message from the PO at the end,
 the points changing so the card's own balloon is drawn anew (it says the ask
 no longer waits), and the catch-up line above the card coming and going (the
 read point, #188). After every redraw it checks the box still has focus, the
-same caret or selection, and the whole text. Then Ctrl+Enter, pressed twice
-and held (auto-repeat), sends exactly one answer.
-
-It also checks a comment survives a reload (the per-card draft), and that the
-Send buttons' tooltips name the shortcut.
+same caret or selection, the whole text, and the card still aimed. Then
+Ctrl+Enter, pressed twice and held (auto-repeat), sends exactly one answer.
 
 ENSEMBLE_MEASURE=<file> writes the counts (focus losses, caret moves, text
 lost, answers sent) for the before/after comparison in the task's report.
@@ -72,10 +70,12 @@ async function main() {
       await sleep(400);
     };
     await open();
-    // The card typed into: the third ask, an open one ("Your answer", Send).
-    const TA = `document.querySelectorAll('#msgs .qa')[2].querySelector('textarea')`;
-    out.tips = await evalIn(`[...document.querySelectorAll('#msgs .qa-send')].map(b => b.title)`);
-    await evalIn(`(() => { const ta = ${TA}; ta.scrollIntoView({ block: 'center' }); ta.focus(); window.__ta = ta; return 1; })()`);
+    // The card answered: the third ask, an open one; Reply aims the send box at it.
+    const TA = `document.querySelector('#input')`;
+    const AIMED = `document.querySelectorAll('#msgs .qa')[2].classList.contains('aimed')`;
+    await evalIn(`(() => { document.querySelectorAll('#msgs .qa')[2].querySelector('.qa-reply').click(); return 1; })()`);
+    await until(AIMED, 5000);
+    await evalIn(`(() => { const ta = ${TA}; ta.focus(); window.__ta = ta; return 1; })()`);
     // What redraws the chat, one every 500 ms in turn.
     const sources = [
       ['redraw', `renderBubbles(LAST_ITEMS)`],
@@ -112,8 +112,8 @@ async function main() {
         await sleep(120);
         const after = await evalIn(`(() => { const ta = document.activeElement, mine = ${TA};
           return { focused: !!ta && ta === mine, same: mine === window.__ta, value: mine ? mine.value : null,
-            sel: mine ? [mine.selectionStart, mine.selectionEnd] : null }; })()`);
-        const tick = { name, focused: after.focused, same: after.same, textOk: after.value === typed,
+            sel: mine ? [mine.selectionStart, mine.selectionEnd] : null, aimed: ${AIMED} }; })()`);
+        const tick = { name, focused: after.focused, same: after.same, textOk: after.value === typed, aimed: after.aimed,
           caretOk: !!before && !!after.sel && after.sel[0] === before[0] && after.sel[1] === before[1] };
         out.ticks.push(tick);
         if (!tick.focused) out.losses++;
@@ -141,28 +141,6 @@ async function main() {
     await key('keyUp', 'Enter', 2);
     try { await until(`document.querySelectorAll('#msgs .qa')[2].classList.contains('done') && !document.querySelectorAll('#msgs .qa')[2].classList.contains('busy')`, 8000); out.sentDone = true; }
     catch (e) { out.sentDone = false; out.valueAfterKeys = await evalIn(`(${TA} || {}).value || null`); }
-    // A send the hub refuses keeps the comment: in the box, and in storage
-    // while it is on its way (review 1).
-    const QA1 = `document.querySelectorAll('#msgs .qa')[1]`;
-    await evalIn(`(() => { ${QA1}.querySelector('textarea').focus(); return 1; })()`);
-    await send('Input.insertText', { text: 'not this time  ' }, sessionId);
-    await sleep(200);
-    out.failedSend = await evalIn(`(async () => {
-      const key = ${QA1}.dataset.ask; let release;
-      const p = askSend(key, '', () => new Promise((_, no) => { release = no; }));
-      await new Promise(r => setTimeout(r, 300));
-      const mid = { busy: ${QA1}.classList.contains('busy'), stored: JSON.parse(sessionStorage.getItem(ASK_DRAFT_KEY()) || '{}')[key] || null };
-      release(new Error('the hub did not answer'));
-      await p;
-      const ta = ${QA1}.querySelector('textarea');
-      return { mid, value: ta ? ta.value : null, stored: JSON.parse(sessionStorage.getItem(ASK_DRAFT_KEY()) || '{}')[key] || null };
-    })()`);
-    // A comment kept across a reload: the first card's.
-    await evalIn(`(() => { const ta = document.querySelectorAll('#msgs .qa')[0].querySelector('textarea'); ta.focus(); return 1; })()`);
-    await send('Input.insertText', { text: 'kept over a reload' }, sessionId);
-    await sleep(200);
-    await open();
-    out.afterReload = await evalIn(`document.querySelectorAll('#msgs .qa')[0].querySelector('textarea').value`);
     await send('Target.closeTarget', { targetId });
   } finally {
     try { await send('Browser.close'); } catch (e) {}
@@ -254,27 +232,13 @@ class TypingThroughRedraws(unittest.TestCase):
         self.assertEqual(g["losses"], 0, [t for t in g["ticks"] if not t["focused"]])
         self.assertEqual(g["caretMoves"], 0, [t for t in g["ticks"] if not t["caretOk"]])
         self.assertEqual(g["textLost"], 0, [t for t in g["ticks"] if not t["textOk"]])
+        self.assertTrue(all(t["aimed"] for t in g["ticks"]), [t for t in g["ticks"] if not t["aimed"]])
 
     def test_ctrl_enter_sends_one_answer(self):
         self.assertTrue(self.got["sentDone"], self.got.get("valueAfterKeys"))
-        answers = [t for t, k in self.sent if k.startswith("ask:")]
+        answers = [t for t, k in self.sent if t.startswith("Re “")]
         self.assertEqual(len(answers), 1, self.sent)
         self.assertIn(self.got["valueAtSend"].strip(), answers[0])
-
-    def test_a_comment_survives_a_reload(self):
-        self.assertEqual(self.got["afterReload"], "kept over a reload")
-
-    def test_a_refused_send_keeps_the_comment(self):
-        f = self.got["failedSend"]
-        self.assertTrue(f["mid"]["busy"], "the card shows it is being sent")
-        self.assertEqual(f["mid"]["stored"], "not this time  ", "kept while on its way")
-        self.assertEqual(f["value"], "not this time  ")
-        self.assertEqual(f["stored"], "not this time  ")
-        self.assertFalse([t for t, k in self.sent if "not this time" in t], "the refused answer was not delivered")
-
-    def test_send_tooltips_name_the_shortcut(self):
-        for tip in self.got["tips"]:
-            self.assertRegex(tip, r"\((Ctrl|⌘)\+Enter\)")
 
 
 if __name__ == "__main__":

@@ -17,7 +17,7 @@ on every row's text in turn; checked on each:
 * a cut question shows whole in its hover copy; one that fits shows none;
 * P410 (B): with a mouse the card shows no buttons: they are in one side panel
   8px right of the card, out of the Inbox, at the card's top, in full words
-  (Close, Close this and earlier N, Done with this) at both widths; it is gone
+  (Reply, Close, Close this and earlier N, Done with this) at both widths; it is gone
   once the pointer has left;
 * with the keyboard (the card's link focused), a cut question's copy is up and
   the card's buttons stay on top at their place (P414 item 5), the copy's text
@@ -310,6 +310,9 @@ class HoverTextInChrome(close.CloseInChrome):
         d = [r["hover"]["side"]["labels"] for r in self.got["default"]["rows"]]
         nr = [r["hover"]["side"]["labels"] for r in self.got["narrow"]["rows"]]
         self.assertEqual(d, nr, "the Inbox's width changes nothing")
+        # A question card's actions start with Reply (#408).
+        self.assertTrue(all(x[0] == "↩ Reply" for x in d), d)
+        d = [x[1:] for x in d]
         self.assertTrue(any(len(x) == 3 for x in d), d)
         for x in d:
             self.assertEqual(x[0], "Close", x)
@@ -326,10 +329,10 @@ class HoverTextInChrome(close.CloseInChrome):
     def test_the_buttons_stay_on_top_of_a_cut_question_s_copy(self):
         # P414 item 5, with the keyboard: a cut question's copy is up and its card's buttons show over it, at their place.
         cl = self.got["keepClicks"]
-        self.assertEqual(len(cl), 3, cl)
+        self.assertEqual(len(cl), 4, cl)  # Reply (#408), Close, Close this and earlier, Done with this
         for x in cl:
             self.assertTrue(x["kb"] and x["copy"], x)
-            self.assertEqual(len(x["keep"]), 3, x)
+            self.assertEqual(len(x["keep"]), 4, x)
             self.assertTrue(all(k in ("orig", "pic") for k in x["keep"]), x)
             self.assertIn("pic", x["keep"], x)
             self.assertIsNone(x["side"], (x, "no side panel while the card shows its buttons"))

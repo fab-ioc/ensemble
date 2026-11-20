@@ -431,7 +431,7 @@ class ThreadNames(unittest.TestCase):
         self.assertIn('1 repl', made['text'], made)
         head = self.got['madeHead']
         self.assertEqual(head['title'], NAME_NEW, head)
-        self.assertEqual(head['frameTo'], NAME_NEW, head)
+        self.assertEqual(head['frameTo'], 'PO in ' + NAME_NEW, head)   # #408: the To line names the thread's agent, then the thread
         self.assertEqual(self.got['listN0']['title'], NAME_NEW, self.got['listN0'])
 
     # 2 -----------------------------------------------------------------
@@ -451,11 +451,11 @@ class ThreadNames(unittest.TestCase):
         self.assertTrue(g['headSavedFile'], 'kept in the thread record')
         self.assertEqual((sv['title'], sv['field'], sv['labelHidden'], sv['penHidden']), (NAME_HEAD, False, False, False), sv)
         to = g['headTo']
-        self.assertEqual((to['frameTo'], to['mainTo']), (NAME_HEAD, NAME_HEAD), to)
+        self.assertEqual((to['frameTo'], to['mainTo']), ('PO in ' + NAME_HEAD, 'PO in ' + NAME_HEAD), to)
         self.assertIn(NAME_HEAD, to['chip'], to)
         self.assertIn(NAME_HEAD, g['headLine']['label'], g['headLine'])
         self.assertEqual(g['headLater']['title'], NAME_HEAD, g['headLater'])
-        self.assertEqual(g['headLater']['frameTo'], NAME_HEAD, g['headLater'])
+        self.assertEqual(g['headLater']['frameTo'], 'PO in ' + NAME_HEAD, g['headLater'])
 
     # 3 -----------------------------------------------------------------
     def test_the_threads_list_pencil_renames_a_row(self):
@@ -510,7 +510,7 @@ class ThreadNames(unittest.TestCase):
         self.assertEqual(g['headEmptyTyped']['value'], '', g['headEmptyTyped'])
         self.assertTrue(g['headEmptyFile'], 'an empty name kept as the automatic title')
         self.assertEqual((g['headEmpty']['title'], g['headEmpty']['field']), (g['head0']['title'], False), g['headEmpty'])
-        self.assertEqual(g['headEmptyTo']['frameTo'], g['head0']['title'], g['headEmptyTo'])
+        self.assertEqual(g['headEmptyTo']['frameTo'], 'PO in ' + g['head0']['title'], g['headEmptyTo'])
         # Over a name given at creation too.
         self.assertTrue(g['listNOpen']['field'] and g['listNOpen']['value'] == NAME_NEW, g['listNOpen'])
         self.assertTrue(g['listNEmptyFile'], 'empty over the name given at creation')
@@ -529,7 +529,7 @@ class ThreadNames(unittest.TestCase):
         self.assertTrue(g['ownPenHit'], 'the window pencil is covered')
         self.assertEqual((op['field'], op['labelHidden'], op['penHidden'], op['value'], op['focused']), (True, True, True, NAME_BLUR, True), op)
         self.assertTrue(g['ownFile'], 'kept in the thread record')
-        self.assertEqual((sv['title'], sv['field'], sv['to']), (NAME_OWN, False, NAME_OWN), sv)
+        self.assertEqual((sv['title'], sv['field'], sv['to']), (NAME_OWN, False, 'PO in ' + NAME_OWN), sv)
         self.assertEqual(g['ownDoc'], 'Thread · ' + NAME_OWN, 'the tab title follows the rename')
         self.assertEqual(g['ownNamed'], [{'roomId': self.po, 'thread': g['tidU'], 'name': NAME_OWN}])
         self.assertEqual((self.side.get('names') or {}).get(g['tidU']), NAME_OWN)

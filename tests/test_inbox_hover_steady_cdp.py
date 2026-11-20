@@ -39,6 +39,8 @@ async function main() {
   const evalIn = async (expr) => { const r = await c.send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true }, sessionId); if (r.exceptionDetails) throw new Error(expr.slice(0, 120) + ' :: ' + JSON.stringify(r.exceptionDetails).slice(0, 600)); return r.result.value; };
   const until = async (expr, ms = 20000) => { const t = Date.now(); while (Date.now() - t < ms) { let v = null; try { v = await evalIn(expr); } catch (e) {} if (v) return v; await sleep(150); } throw new Error('timeout: ' + expr); };
   const move = (x, y) => c.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y }, sessionId);
+  const click = async (x, y) => { await c.send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1 }, sessionId);
+    await c.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1 }, sessionId); };
   const shot = async (name, clip) => { if (!A.shots) return; const r = await c.send('Page.captureScreenshot', { format: 'png', ...(clip ? { clip: { ...clip, scale: 1 } } : {}) }, sessionId); fs.writeFileSync(path.join(A.shots, name + '.png'), Buffer.from(r.data, 'base64')); };
   const frame = () => evalIn('new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => r(0))))');
   await c.send('Page.addScriptToEvaluateOnNewDocument', { source: 'window.ensBootOpen = false; try { ["cd-tool-strip", "cd-tool-open", "cd-phone-tabs", "cd-inbox-scope"].forEach(k => localStorage.removeItem(k)); } catch (e) {}' }, sessionId);
@@ -149,6 +151,74 @@ async function main() {
       await evalIn('window.__rec = null, 0');
       o.slowEnd = await evalIn(look(id));
     }
+    // The visible chat is an iframe: after the pointer enters it, the parent
+    // document no longer gets pointermove. Test both kinds of background paint.
+    out.dismiss = [];
+    const chatAt = () => evalIn(`(() => { const f = [...document.querySelectorAll('iframe')]
+      .find(f => { const r = f.getBoundingClientRect(); return r.width > 400 && r.height > 200; });
+      if (!f) return null; const r = f.getBoundingClientRect();
+      return [Math.round(r.left + r.width / 2), Math.round(r.top + r.height / 2)]; })()`);
+    for (const mode of ['poll', 'timer']) for (const action of ['leave', 'click']) {
+      await move(5, 5); await sleep(500);
+      const [x, y] = await at(ids.long);
+      await move(x, y); await sleep(700); await frame();
+      const opened = await evalIn('!!IBX_SIDE.el');
+      if (mode === 'poll') {
+        const n = await evalIn('window.__polls');
+        await evalIn('ibxPoll(), 0');
+        await until(`window.__polls > ${n} && !IBX.busy`); // the poll has painted and finished
+      } else await evalIn("IBX.ldSig = ''; ibxPolledPaint(); 0"); // the 30-second timer's paint path
+      const paintSide = await evalIn('!!IBX_SIDE.el');
+      const chat = await chatAt();
+      if (chat) {
+        await move(...chat);
+        if (action === 'click') { await click(...chat); await sleep(50); }
+        else await sleep(500); // 300 ms grace plus 200 ms
+        out.dismiss.push({ mode, action, opened, paintSide, chat: true,
+          after: await evalIn('!!IBX_SIDE.el'), timer: await evalIn('!!IBX_SIDE.timer') });
+      } else {
+        out.dismiss.push({ mode, action, opened, paintSide, chat: false });
+      }
+      await frame();
+    }
+    await move(5, 5); await sleep(500);
+    let [wx, wy] = await at(ids.long);
+    await move(wx, wy); await sleep(700);
+    out.scroll = { opened: await evalIn('!!IBX_SIDE.el') };
+    // Scroll closes it at once; the browser's same-point move after the layout change must not bring it back,
+    // and a real move on the card does.
+    out.scroll.sync = await evalIn("LD_INBOX.dispatchEvent(new Event('scroll')), !!IBX_SIDE.el");
+    await frame(); await sleep(150);
+    out.scroll.after = await evalIn('!!IBX_SIDE.el');
+    await move(wx + 3, wy); await sleep(100);
+    out.scroll.moved = await evalIn('!!IBX_SIDE.el');
+    // The chat scrolling itself (a new message) under a still pointer keeps the panel; the reader's wheel there
+    // closes it at once, before the grace.
+    await move(wx + 6, wy); await sleep(700);
+    out.auto = { opened: await evalIn('!!IBX_SIDE.el') };
+    out.auto.how = await evalIn(`(() => { const f = [...document.querySelectorAll('iframe')]
+      .find(f => { const r = f.getBoundingClientRect(); return r.width > 400 && r.height > 200; });
+      const d = f && f.contentDocument; if (!d) return 'none';
+      const sc = [...d.querySelectorAll('*')].find(e => e.scrollHeight > e.clientHeight + 20 && /auto|scroll/.test(getComputedStyle(e).overflowY));
+      if (sc) { sc.scrollTop = sc.scrollTop > 10 ? 0 : sc.scrollHeight; return 'scrollTop'; }
+      (d.body.firstElementChild || d.body).dispatchEvent(new Event('scroll')); return 'event'; })()`);
+    await frame(); await frame(); await sleep(150);
+    out.auto.after = await evalIn('!!IBX_SIDE.el');
+    const chat2 = await chatAt();
+    await c.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: chat2[0], y: chat2[1], deltaX: 0, deltaY: 120 }, sessionId);
+    await sleep(50);
+    out.auto.wheel = await evalIn('!!IBX_SIDE.el');
+    // Keyboard focus in the chat, then hover a card: Esc goes to the chat's document and must still close it.
+    await move(5, 5); await sleep(500);
+    out.esc = { focus: await evalIn(`(() => { const f = [...document.querySelectorAll('iframe')]
+      .find(f => { const r = f.getBoundingClientRect(); return r.width > 400 && r.height > 200; });
+      if (!f) return false; f.focus(); f.contentWindow.focus(); return document.activeElement === f; })()`) };
+    await move(wx, wy + 2); await sleep(700);
+    out.esc.opened = await evalIn('!!IBX_SIDE.el');
+    await c.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 }, sessionId);
+    await c.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 }, sessionId);
+    await sleep(50);
+    out.esc.after = await evalIn('!!IBX_SIDE.el');
     // A background paint for a different project must not be held under the old copy.
     await move(5, 5); await sleep(500);
     const [sx, sy] = await at(ids.long);
@@ -162,6 +232,8 @@ async function main() {
       return { hadCopy, oldPid, newPid: body._ibxPid,
         copyGone: !document.querySelector('.row-expanded'), rows: LD_INBOX.querySelectorAll('li.ibx-row').length };
     })()`);
+    await frame();
+    out.switch.sideGone = await evalIn('!IBX_SIDE.el');
   } finally {
     try { ch.kill(); } catch (e) {}
   }
@@ -223,7 +295,36 @@ class HoverSteadyInChrome(close.CloseInChrome):
         self.assertNotEqual(s['oldPid'], s['newPid'])
         self.assertEqual(s['newPid'], 'p425-other-project')
         self.assertTrue(s['copyGone'])
+        self.assertTrue(s['sideGone'])
         self.assertEqual(s['rows'], 0)
+
+    def test_panel_closes_after_leaving_for_chat_and_on_outside_click(self):
+        self.assertEqual(len(self.got['dismiss']), 4)
+        for d in self.got['dismiss']:
+            with self.subTest(mode=d['mode'], action=d['action']):
+                self.assertTrue(d['opened'], d)
+                self.assertTrue(d['paintSide'], d)
+                self.assertTrue(d['chat'], d)
+                self.assertFalse(d['after'], d)
+
+    def test_chat_auto_scroll_keeps_panel_and_a_wheel_there_closes_it(self):
+        a = self.got['auto']
+        self.assertTrue(a['opened'], a)
+        self.assertNotEqual(a['how'], 'none', a)
+        self.assertTrue(a['after'], a)
+        self.assertFalse(a['wheel'], a)
+
+    def test_esc_with_focus_in_the_chat_closes_panel(self):
+        e = self.got['esc']
+        self.assertTrue(e['focus'], e)
+        self.assertTrue(e['opened'], e)
+        self.assertFalse(e['after'], e)
+
+    def test_scroll_closes_panel_at_once(self):
+        self.assertTrue(self.got['scroll']['opened'])
+        self.assertFalse(self.got['scroll']['sync'], self.got['scroll'])
+        self.assertFalse(self.got['scroll']['after'], self.got['scroll'])
+        self.assertTrue(self.got['scroll']['moved'], self.got['scroll'])
 
 
 for _n in [n for n in dir(close.CloseInChrome) if n.startswith("test_") and n not in HoverSteadyInChrome.__dict__]:

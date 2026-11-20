@@ -152,6 +152,30 @@ class TheBoxAnswers(_Cards):
         self.assertEqual((got["option"], got["comment"], got["box"], got["key"]), ("", "After 22:00, and tell ops", True, "k1"))
         self.assertEqual([a["n"] for a in asks.open_in(chatroom.get_room(rid))], [0], "the other card stays open")
 
+    def test_a_reply_from_a_threads_box_answers_the_card(self):
+        # #408: Reply aims a thread's box at a card; its answer goes as the
+        # card's (``Re “q”:``), never with the thread's ``Re Pn`` before it.
+        rid, mid = self._po()
+        sent = []
+        with mock.patch.object(dashboard.Handler, "_resume_room", self._resume(sent)), \
+                mock.patch.object(dashboard.threads, "is_threaded", lambda r, projects=None: r == rid), \
+                mock.patch.object(dashboard.threads, "reply_text", lambda r, room, t, text: f"Re P7: {text}"), \
+                mock.patch.object(dashboard.threads, "note_send", lambda *a, **k: None):
+            status, r = http("/api/room/resume", {"roomId": rid, "text": "Ship after 22:00", "key": "kt",
+                                                  "thread": "P7", "answers": {"mid": mid, "n": 0}})
+            self.assertEqual(status, 200, r)
+            self.assertEqual(r["answered"], {"mid": mid, "n": 0})
+            status, r = http("/api/room/resume", {"roomId": rid, "text": "and a plain line", "key": "kt2",
+                                                  "thread": "P7"})
+            self.assertEqual(status, 200, r)
+            status, r = http("/api/room/resume", {"roomId": rid, "text": "late", "key": "kt3",
+                                                  "thread": "P7", "answers": {"mid": mid, "n": 0}})
+            self.assertNotIn("answered", r, "answered already: a plain thread reply")
+        self.assertTrue(sent[0][0].startswith("Re “Ship it tonight?”: Ship after 22:00"), sent[0])
+        self.assertTrue(sent[1][0].startswith("Re P7: and a plain line"), sent[1])
+        self.assertTrue(sent[2][0].startswith("Re P7: late"), sent[2])
+        self.assertEqual([s["thread"] for s in sends.view(rid)], ["P7", "P7", "P7"], "the replies stay in the thread")
+
     def test_a_card_answered_meanwhile_leaves_a_plain_message(self):
         rid, mid = self._po()
         sent = []
@@ -227,11 +251,12 @@ const { code, pick } = JSON.parse(require('fs').readFileSync(0, 'utf8'));
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const ctx = { esc, attSplit: t => ({ paths: [], words: t }), stripRefBlocks: t => t, withPathAbbrevs: (t, f) => f(),
   ROOM: 'room-po', SOLO_MODE: true, pointsChanged: () => {}, pointsNote: () => {}, URL,
+  replyKey: () => '',
   refHref: (room, mid, part) => `/session?room=${room}&msg=${mid}${part ? '&part=' + part : ''}` };
 ctx.cardTextHtml = esc; ctx.hubUrlWords = s => String(s ?? ''); ctx.cardText = s => ({ html: esc(s), words: String(s ?? ''), links: [] }); ctx.cardWords = s => String(s ?? '');
 vm.createContext(ctx);
 vm.runInContext(code + `
-  globalThis.t = { parseAsks, askCardHtml, pointMaps, CHAT_NAMES, ASK_TICKS, ASK_DRAFT, boxAnswerStrip, askBoxMid,
+  globalThis.t = { parseAsks, askCardHtml, pointMaps, CHAT_NAMES, ASK_TICKS, boxAnswerStrip, askBoxMid,
     setItems: v => { LAST_ITEMS = v; }, setPoints: v => { POINTS = v; } };`, ctx);
 const T = ctx.t;
 Object.assign(T.CHAT_NAMES, { operator: 'sam', po: 'claude', taskNo: () => null });
@@ -240,8 +265,6 @@ const a = T.parseAsks(pick)[0];
 const none = T.pointMaps(null);
 const out = { multi: !!a.multi };
 out.fresh = T.askCardHtml(m, a, 1, none);
-T.ASK_DRAFT.set('s:1:0', 'only a comment');
-out.comment = T.askCardHtml(m, a, 1, none);
 T.ASK_TICKS.set('s:1:0', new Set(['CSV', 'XML']));
 out.ticked = T.askCardHtml(m, a, 1, none);
 const led = (got) => T.pointMaps({ open: 0, planned: 0, delivered: 0, items: [], approvals: [], asks: { 's:1': { '0': got } } });
@@ -296,7 +319,10 @@ class TheCard(unittest.TestCase):
         self.assertEqual(o["fresh"].count('role="checkbox"'), 3)
         self.assertEqual(o["fresh"].count('data-tick="1"'), 3)
         self.assertRegex(o["fresh"], r'<button type="button" class="qa-send"[^>]*data-multi="1" disabled[^>]*>Send</button>')
-        self.assertRegex(o["comment"], r'class="qa-send"[^>]*data-multi="1" title="[^"]*">Send comment</button>')
+        # #408: no comment field; the card's Reply sits after its Send.
+        self.assertNotIn("<textarea", o["fresh"])
+        self.assertNotIn("qa-cm", o["fresh"])
+        self.assertRegex(o["fresh"], r'>Send</button><button type="button" class="qa-reply" data-ask="s:1:0" aria-pressed="false"')
         self.assertRegex(o["ticked"], r'class="qa-send primary"[^>]*>Send \(2\)</button>')
         self.assertEqual(o["ticked"].count('aria-checked="true"'), 2)
 
@@ -313,7 +339,7 @@ class TheCard(unittest.TestCase):
         self.assertIn("After 22:00", b)
         s = self.o["strip"]
         self.assertTrue(s["text"].startswith("After 22:00"), s)
-        self.assertIn('Answers <a class="card-jump"', s["html"])
+        self.assertIn('Replies to <a class="card-jump"', s["html"])
         self.assertIn("Ship it tonight? ↑", s["html"])
         self.assertIsNone(self.o["plain"], "words of its own: not the box's answer")
 

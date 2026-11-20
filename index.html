@@ -4383,6 +4383,14 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   #workspace-compose-thread-name::placeholder { color:var(--fg-muted); }
   #workspace-compose-thread-name:focus { outline:none; border-color:var(--focus-ring); box-shadow:0 0 0 1px var(--focus-ring); }
   @media (pointer:coarse) { #workspace-compose-thread-name { font-size:16px; } }
+  /* #408: "· reply to “…”" while the box answers a card (session.html #compose-reply); × drops the link, the text stays. */
+  #workspace-compose-reply { display:inline-flex; align-items:center; gap:var(--s-100); min-width:0; }
+  #workspace-compose-reply[hidden] { display:none; }
+  #workspace-compose-reply .wc-re { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--selected-fg); }
+  #workspace-compose .wc-to #workspace-compose-reply-x { display:inline-flex; align-items:center; justify-content:center; width:20px; height:20px; min-width:0; min-height:0; padding:0;
+    border-radius:var(--r-200); color:var(--fg-subtle); font-size:14px; }
+  #workspace-compose .wc-to #workspace-compose-reply-x:hover { background:var(--hover); color:var(--fg); }
+  @media (pointer:coarse) { #workspace-compose .wc-to #workspace-compose-reply-x { width:var(--touch-min); height:var(--touch-min); font-size:18px; } }
   #workspace-compose iframe { display:block; width:100%; height:110px; border:0; background:var(--surface); }
   #workspace-compose iframe.menu-room { position:relative; z-index:1; background:transparent; }   /* a menu's room over the chats (wcFrameRoom) */
   @media (min-width:768px) {
@@ -4512,6 +4520,9 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .ibx-btn.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
   .ibx-btn.subtle { border-color: transparent; background: transparent; color: var(--link); }
   .ibx-btn.subtle:hover { background: var(--hover); }
+  /* #408: Reply on a question's card opens it with the send box aimed at it (drawing .b.rp). */
+  .ibx-btn.ibx-reply, .ibx-side-btn.ibx-side-reply { border-color: var(--accent); background: var(--selected-bg); color: var(--selected-fg); font-weight: 600; }
+  .ibx-btn.ibx-reply:hover, .ibx-side-btn.ibx-side-reply:hover { background: var(--selected-bg); border-color: var(--accent-hover); }
   .ibx-earlier:hover, .ibx-earlier:focus-visible, .ibx-earlier.on { background: var(--c-danger-bg); color: var(--c-danger-fg); border-color: var(--c-danger-bold); }
   .ibx-cn { font-weight: 600; font-variant-numeric: tabular-nums; }
   /* The rows Close this and earlier would close: a red ground and left bar, their words muted. */
@@ -5754,7 +5765,7 @@ window.DOC_LISTENERS_PAUSED = false;
     <section id="po-panel" hidden aria-label="The project's PO" data-noun-aria-label="The {project}'s PO"></section>
 
   </div>
-  <div id="workspace-compose" hidden><div class="wc-to">To: <a href="#" id="workspace-compose-link"></a><input type="text" id="workspace-compose-thread-name" maxlength="80" placeholder="Name (optional)" aria-label="Name of the new thread (optional; empty: its first words)" autocomplete="off" hidden><button type="button" id="workspace-compose-back" hidden aria-label="Back to the PO" title="Back to the PO">&times;</button></div><iframe id="workspace-compose-frame" title="Workspace message box" allow="clipboard-read; clipboard-write; microphone"></iframe></div>
+  <div id="workspace-compose" hidden><div class="wc-to">To: <a href="#" id="workspace-compose-link"></a><input type="text" id="workspace-compose-thread-name" maxlength="80" placeholder="Name (optional)" aria-label="Name of the new thread (optional; empty: its first words)" autocomplete="off" hidden><span id="workspace-compose-reply" hidden><span aria-hidden="true">·</span><span class="wc-re"></span><button type="button" id="workspace-compose-reply-x" aria-label="Drop the reply link" title="Drop the reply link: the text stays, sent as a plain message">&times;</button></span><button type="button" id="workspace-compose-back" hidden aria-label="Back to the PO" title="Back to the PO">&times;</button></div><iframe id="workspace-compose-frame" title="Workspace message box" allow="clipboard-read; clipboard-write; microphone"></iframe></div>
 </main>
 <dialog id="modal"></dialog>
 <aside id="detail-panel"></aside>
@@ -16154,6 +16165,7 @@ function wcChoose(t, focus = false) {
   if (changed) {
     if (wcBase(t) !== WC.base) { wcLeaveFrame(document.getElementById('workspace-compose-frame')); WC.base = ''; }
     WC.target = t;
+    wcReplyPaint(null);     // #408: the old chat's card is not this one's, even before the box's page loads
     try { sessionStorage.setItem('cd-workspace-compose-target', JSON.stringify(t)); } catch (e) {}
   }
   wcSync();
@@ -16201,6 +16213,7 @@ function wcF6(e) {
 document.getElementById('workspace-compose-frame').addEventListener('load', e => {
   try { e.target.contentDocument.addEventListener('keydown', wcF6); } catch (x) {}
   wcNewThread(false);     // a new page in the box: its thread icon is off
+  wcReplyPaint(null);     // #408: nor does it answer a card yet
 });
 // Issue 51: the box's thread icon on (session.html's NEW_THREAD, told by the
 // box's page as it paints it): the To line reads "a new thread" and has the
@@ -16213,7 +16226,7 @@ function wcNewThread(on) {
   WC.newThread = on;
   nm.hidden = !on;
   if (!on) nm.value = '';
-  if (was !== on && WC.target) document.getElementById('workspace-compose-link').textContent = on ? 'a new thread' : wcTitle(WC.target);
+  if (was !== on && WC.target) wcToPaint();
 }
 function wcThreadName() {
   return WC.newThread ? document.getElementById('workspace-compose-thread-name').value.trim() : '';
@@ -16230,6 +16243,21 @@ function wcFallback() {
   const chat = [...PD.rt.values()].find(e => e.kind === 'chat' && !PD.dock.popWindow(pdChatId(e.room)));
   const main = wcMainTarget();
   return main && wcValid(main) ? main : chat ? {kind:'task',room:chat.room} : null;
+}
+// #408 (spec item 2): what the To link reads: the agent a send reaches, by role
+// (a task chat's engineer: "Engineer"; a thread is a PO chat's: "PO in <title>");
+// its hover names the chat.
+function wcToName(t) {
+  if (t.kind === 'thread') return 'PO in ' + wcTitle(t);
+  if (t.kind === 'po') return wcTitle(t);
+  const ms = (ALL_ROWS.find(x => x.roomId === t.room)?.members || []).map(m => String(m.role || '').split(':')[0].trim()).filter(Boolean);
+  const w = ms.find(r => r === 'engineer') || ms.find(r => !/^reviewer/i.test(r)) || '';
+  return w ? w[0].toUpperCase() + w.slice(1) : wcTitle(t);
+}
+function wcToPaint() {
+  const link = document.getElementById('workspace-compose-link'), t = WC.target;
+  link.textContent = WC.newThread ? 'a new thread' : t ? wcToName(t) : '';
+  link.title = t && !WC.newThread ? wcTitle(t) : '';
 }
 function wcTitle(t) {
   if (t.kind === 'thread') return pdThreadFind(t)?.[1].title || 'Thread';
@@ -16267,6 +16295,7 @@ function wcSync() {
     if (wcKey(next) !== wcKey(WC.target)) {
       if (wcBase(next) !== WC.base) { wcLeaveFrame(f); WC.base = ''; }
       WC.target = next;
+      wcReplyPaint(null);   // #408: as in wcChoose, the old chat's card is not the fallback's
       try { sessionStorage.setItem('cd-workspace-compose-target', JSON.stringify(next)); } catch (e) {}
     }
   } else WC.restoring = false;
@@ -16278,7 +16307,7 @@ function wcSync() {
     } catch (e) {}
   }
   box.hidden = false;
-  document.getElementById('workspace-compose-link').textContent = WC.newThread ? 'a new thread' : wcTitle(WC.target);
+  wcToPaint();
   document.getElementById('workspace-compose-back').hidden = WC.target?.kind !== 'thread';
   const t = WC.target;
   const base = wcBase(t);
@@ -16410,8 +16439,16 @@ window.addEventListener('message', e => {
   wcChoose(wcChatTarget(chat, String(e.data.roomId), e.data), !!e.data.focus);
 });
 // The box's target for a chat frame of the workspace.
+// A thread frame in the dock's terms (its holder's tid, else its mid), the
+// ones wcValid finds it by: its page may know the thread by another name
+// (an "m:<mid>" alias of the balloon its topic started on, #408).
 function wcChatTarget(chat, room, d) {
-  if (chat.classList.contains('po-thread')) return {kind:'thread',room,thread:String(d.thread || ''),mid:String(d.mid || '')};
+  if (chat.classList.contains('po-thread')) {
+    const e = pdThreadHolders().find(([, x]) => x.room === room && x.el?.contains(chat))?.[1];
+    if (e && WC.target?.kind === 'thread' && pdThreadIs(e, WC.target)) return WC.target;
+    if (e) return {kind:'thread',room,thread:e.tid || '',mid:e.tid ? '' : e.mid || ''};
+    return {kind:'thread',room,thread:String(d.thread || ''),mid:String(d.mid || '')};
+  }
   return {kind:chat.classList.contains('po-session') ? 'po' : 'task',room};
 }
 // Comment on a point's answer in a chat whose own box is hidden (#271): the
@@ -16431,6 +16468,58 @@ function wcCommentLink(win, link, d) {
   if (f.contentDocument?.readyState === 'complete' && f.contentDocument.URL.includes(WC.base)) put(); else f.addEventListener('load', put, {once:true});
   return true;
 }
+// #408: the card the box answers ({room, mid, n, question}, told by the box's
+// page as it paints its To line, session.html replyPaint), or null. A chat
+// the box serves (a guest) reads it to mark its card and send nothing itself.
+WC.reply = null;
+function wcReplyNow() { return WC.reply; }
+const wcChatFrames = () => [...document.querySelectorAll('iframe.po-session, iframe.dp-session, iframe.po-thread')];
+function wcReplyShort(q, max = 28) {
+  q = String(q || '').replace(/\s+/g, ' ').trim();
+  if (q.length <= max) return q;
+  const w = q.slice(0, max + 1).replace(/\s+\S*$/, '');
+  return (w.length >= max / 2 ? w : q.slice(0, max)).replace(/[\s,.;:–—-]+$/, '') + '…';
+}
+function wcReplyPaint(aim) {
+  // Told for a chat the box no longer serves (a page a switch is leaving): none.
+  // A new thread's m:<mid> and the id it was promoted to are one thread.
+  const t = WC.target, th = x => { x = String(x || ''); if (!x.startsWith('m:')) return x; try { return sessionStorage.getItem('cd-thread-alias:' + t.room + ':' + x.slice(2)) || x; } catch (e) { return x; } };
+  if (aim && (!t || String(aim.room || '') !== t.room || th(aim.thread) !== th(wcThreadOf(t)))) aim = null;
+  const was = WC.reply ? WC.reply.room + '/' + WC.reply.mid + ':' + WC.reply.n : '';
+  WC.reply = aim && aim.mid ? {room:String(aim.room || ''), mid:String(aim.mid), n:+aim.n, question:String(aim.question || '')} : null;
+  const a = WC.reply, span = document.getElementById('workspace-compose-reply'), re = span.querySelector('.wc-re');
+  span.hidden = !a;
+  const txt = a ? `reply to “${wcReplyShort(a.question) || 'the question'}”` : '';
+  if (re.textContent !== txt) re.textContent = txt;
+  re.title = a ? a.question : '';
+  if (was !== (a ? a.room + '/' + a.mid + ':' + a.n : '')) wcChatFrames().forEach(f => { try { f.contentWindow.replyAimCards?.(); } catch (e) {} });
+}
+// Reply on a card in a chat the box serves: the box is aimed at that chat and
+// at the card, the caret in it (text: an answer taken back goes back in the
+// box, aimed again). False when the box does not serve that chat.
+function wcReplyAim(win, aim, d, text, points) {
+  const chat = wcChatFrames().find(x => x.contentWindow === win);
+  if (!chat || !chat.contentDocument?.body.classList.contains('workspace-guest')) return false;
+  const t = wcChatTarget(chat, String(d?.roomId || ''), d || {});
+  if (!t.room || !wcValid(t)) return false;
+  wcChoose(t);
+  const f = document.getElementById('workspace-compose-frame');
+  if (!WC.base || wcKey(WC.target) !== wcKey(t)) return false;
+  const put = () => { if (wcKey(WC.target) === wcKey(t)) try { f.contentWindow.replyAimSet(aim, !text, text, points); } catch (e) {} };
+  if (f.contentDocument?.readyState === 'complete' && f.contentDocument.URL.includes(WC.base)) put(); else f.addEventListener('load', put, {once:true});
+  return true;
+}
+// The card the box answers was settled in its chat (an option, Close): the
+// box drops the aim at once (its words stay), not at its own next poll.
+function wcReplySettled(w) {
+  const a = WC.reply;
+  if (!a || !w || a.room !== String(w.room || '') || a.mid !== String(w.mid || '') || a.n !== +w.n) return;
+  try { document.getElementById('workspace-compose-frame').contentWindow.replyDrop?.(a.mid, a.n); } catch (e) {}
+  if (WC.reply && WC.reply.mid === a.mid && WC.reply.n === a.n) wcReplyPaint(null);
+}
+document.getElementById('workspace-compose-reply-x').addEventListener('click', () => {
+  try { document.getElementById('workspace-compose-frame').contentWindow.replyAimSet(null, true); } catch (e) {}
+});
 setInterval(wcSync, 400);
 // A thread the person opens (a balloon's link, an Inbox card, Reply in
 // thread…) has the box at once, no click into its panel needed (#363). Not
@@ -18166,6 +18255,9 @@ function ibxHtml(d, scope, pid, now, phone, opts) {
       }
     }
     let acts = '';
+    // #408: an open question's card: Reply opens it with the box aimed at the card.
+    const reply = r.kind === 'answer' && r.mid && /^ask:\d+$/.test(r.part || '')
+      ? `<button type="button" class="ibx-btn ibx-reply" data-ibx-reply data-room="${esc(r.roomId)}" data-mid="${esc(r.mid)}" data-part="${esc(r.part)}" title="Reply: open it with the send box aimed at this question"><span aria-hidden="true">↩</span> Reply</button>` : '';
     if (n) {
       acts = `<button type="button" class="ibx-btn" data-ibx-close="${esc(r.id)}" title="Close this question without an answer">Close</button>`
         + (n > 1 ? `<button type="button" class="ibx-btn ibx-earlier${conf === r.id ? ' on' : ''}" data-ibx-earlier="${esc(r.id)}"`
@@ -18179,6 +18271,7 @@ function ibxHtml(d, scope, pid, now, phone, opts) {
     if (listed && dismissible.has(r.roomId) && r.kind !== 'check' && !ibxDealt(r)) {
       acts += `<button type="button" class="ibx-btn" data-room="${esc(r.roomId)}" data-ibx-dismiss title="Done with this: a new ask brings the row back"><span class="ibx-lw">Done with this</span><span class="ibx-ls" aria-hidden="true">Done</span></button>`;
     }
+    acts = reply + acts;
     const link = `<a class="ibx-link" href="${esc(href(r))}" data-room="${esc(r.roomId)}" data-mid="${esc(r.mid || '')}" data-part="${esc(r.part || '')}"`
       + ` title="${esc(r.mid ? 'Open it in its conversation' : 'Open the conversation')}">`
       + `<span class="ibx-line">${esc(lineN || 'Open it')}</span>${reason ? `<span class="ibx-reason">${esc(reason)}</span>` : ''}`
@@ -18716,6 +18809,14 @@ function ibxWire(box) {
       else if (b.dataset.clear === 'cancel') swClearEnd();
       else if (b.dataset.clear === 'go') swClearAll();
       else if (b.dataset.clear === 'undo') swClearUndo();
+      return;
+    }
+    if ((b = at('[data-ibx-reply]'))) {
+      if (e.button) return;
+      e.preventDefault();
+      const li = b.closest('li.ibx-row[data-ibx]');
+      if (li) IBX.pressed = { id: li.dataset.ibx, rid: b.dataset.room, mid: b.dataset.mid, at: Date.now() };
+      openMsgLink(b.dataset.room, b.dataset.mid, 'inbox+reply,' + b.dataset.part);
       return;
     }
     if ((b = at('[data-ibx-dismiss]'))) { swDone(b); return; }
@@ -19434,8 +19535,8 @@ rowExpandWire(document.getElementById('ld-ibx-body'),
 // Inbox's handlers act); pointing at Close this and earlier marks what it would close, as on the card. A
 // repaint keeps it, on the same card. Touch screens keep the card's buttons (no hover: the CSS shows them).
 const IBX_SIDE_GRACE = 300;
-const IBX_SIDE_KEYS = ['ibxClose', 'ibxEarlier', 'ibxDone', 'ibxDismiss'];
-const IBX_SIDE = { box: null, el: null, id: '', sig: '', timer: 0, mark: null, doc: null, obs: null, raf: 0, pt: null, next: null, aim: 0 };
+const IBX_SIDE_KEYS = ['ibxReply', 'ibxClose', 'ibxEarlier', 'ibxDone', 'ibxDismiss'];
+const IBX_SIDE = { box: null, el: null, id: '', sig: '', timer: 0, watch: 0, mark: null, doc: null, frames: [], obs: null, raf: 0, pt: null, at: null, quiet: null, next: null, aim: 0 };
 function ibxSideKey(b) { return IBX_SIDE_KEYS.find(k => k in b.dataset) || ''; }
 function ibxSideRow(id) {
   const box = IBX_SIDE.box;
@@ -19457,19 +19558,44 @@ function ibxSideUnmark() {
 function ibxSideHide() {
   clearTimeout(IBX_SIDE.timer);
   IBX_SIDE.timer = 0;
+  clearInterval(IBX_SIDE.watch);
+  IBX_SIDE.watch = 0;
   ibxSideUnaim();
   cancelAnimationFrame(IBX_SIDE.raf);
   ibxSideUnmark();
   if (IBX_SIDE.obs) IBX_SIDE.obs.disconnect();
   if (IBX_SIDE.doc) {
     IBX_SIDE.doc.removeEventListener('pointermove', ibxSideTrack, true);
+    IBX_SIDE.doc.removeEventListener('pointerdown', ibxSidePress, true);
     IBX_SIDE.doc.removeEventListener('mouseout', ibxSideOut, true);
     IBX_SIDE.doc.removeEventListener('keydown', ibxSideKeyDown, true);
     IBX_SIDE.doc.removeEventListener('scroll', ibxSideScroll, true);
-    if (IBX_SIDE.doc.defaultView) IBX_SIDE.doc.defaultView.removeEventListener('resize', ibxSideHide);
+    if (IBX_SIDE.doc.defaultView) {
+      IBX_SIDE.doc.defaultView.removeEventListener('resize', ibxSideHide);
+      IBX_SIDE.doc.defaultView.removeEventListener('blur', ibxSideDismiss);
+    }
+  }
+  for (const frame of IBX_SIDE.frames) {
+    frame.removeEventListener('pointerdown', ibxSideDismiss, true);
+    for (const t of ['wheel', 'touchmove', 'keydown']) frame.removeEventListener(t, ibxSideFrameScroll, true);
   }
   if (IBX_SIDE.el) IBX_SIDE.el.remove();
-  Object.assign(IBX_SIDE, { el: null, id: '', sig: '', doc: null, obs: null, pt: null });
+  Object.assign(IBX_SIDE, { el: null, id: '', sig: '', doc: null, frames: [], obs: null, pt: null });
+}
+// Dismissed (a press outside, Esc, scroll, the window losing focus): the browser then sends a move at the same
+// point once the layout changes, and the card still under the pointer would bring the panel straight back. It
+// stays shut until the pointer really moves, anywhere on the page.
+function ibxSideDismiss() {
+  const pt = IBX_SIDE.pt || IBX_SIDE.at, doc = IBX_SIDE.doc;
+  ibxSideHide();
+  if (!pt || !doc) return;
+  IBX_SIDE.quiet = pt;
+  const wake = ev => {
+    if (ev.clientX === pt.x && ev.clientY === pt.y) return;
+    doc.removeEventListener('pointermove', wake, true);
+    if (IBX_SIDE.quiet === pt) IBX_SIDE.quiet = null;
+  };
+  doc.addEventListener('pointermove', wake, true);
 }
 function ibxSideStay() { clearTimeout(IBX_SIDE.timer); IBX_SIDE.timer = 0; }
 function ibxSideLater() { if (IBX_SIDE.el && !IBX_SIDE.timer) IBX_SIDE.timer = setTimeout(ibxSideHide, IBX_SIDE_GRACE); }
@@ -19482,7 +19608,7 @@ function ibxSideButtons(acts) {
     const s = doc.createElement('button');
     s.type = 'button';
     s.tabIndex = -1;
-    s.className = 'ibx-side-btn' + (key === 'ibxEarlier' ? ' ibx-side-earlier' : key === 'ibxDismiss' ? ' ibx-side-dismiss' : '');
+    s.className = 'ibx-side-btn' + (key === 'ibxEarlier' ? ' ibx-side-earlier' : key === 'ibxDismiss' ? ' ibx-side-dismiss' : key === 'ibxReply' ? ' ibx-side-reply' : '');
     s.dataset.sideKey = key;
     if (b.title) s.title = b.title;
     const lw = b.querySelector('.ibx-lw'), cn = b.querySelector('.ibx-cn');
@@ -19553,11 +19679,30 @@ function ibxSideOpen(li) {
   doc.body.appendChild(el);
   ibxSidePlace(li);
   if (!IBX_SIDE.el) return;
+  // A move into an iframe may update :hover without sending a final pointer
+  // event to this document. Check it while the panel is open so grace starts.
+  IBX_SIDE.watch = setInterval(ibxSideCheck, 100);
   doc.addEventListener('pointermove', ibxSideTrack, true);
+  doc.addEventListener('pointerdown', ibxSidePress, true);
   doc.addEventListener('mouseout', ibxSideOut, true);
   doc.addEventListener('keydown', ibxSideKeyDown, true);
   doc.addEventListener('scroll', ibxSideScroll, { capture: true, passive: true });
-  if (doc.defaultView) doc.defaultView.addEventListener('resize', ibxSideHide);
+  if (doc.defaultView) {
+    doc.defaultView.addEventListener('resize', ibxSideHide);
+    doc.defaultView.addEventListener('blur', ibxSideDismiss);
+  }
+  // Pointer events inside a chat iframe do not bubble to this document. Its scroll events do not tell the reader's
+  // scroll from the chat's own (a new message): the reader's wheel, touch and keys close it; a scrollbar drag
+  // starts with a press.
+  for (const frame of doc.querySelectorAll('iframe')) {
+    try {
+      const child = frame.contentDocument;
+      if (!child) continue;
+      child.addEventListener('pointerdown', ibxSideDismiss, true);
+      for (const t of ['wheel', 'touchmove', 'keydown']) child.addEventListener(t, ibxSideFrameScroll, { capture: true, passive: true });
+      IBX_SIDE.frames.push(child);
+    } catch (e) {} // A cross-origin frame still closes after the pointer leaves it.
+  }
   // A repaint draws the cards anew: the panel follows its card, or goes with it.
   if (doc.defaultView && doc.defaultView.MutationObserver) {
     IBX_SIDE.obs = new doc.defaultView.MutationObserver(() => { if (!IBX_SIDE.raf) IBX_SIDE.raf = requestAnimationFrame(ibxSideSync); });
@@ -19603,9 +19748,19 @@ function ibxSideTrack(ev) {
   ibxSideUnaim();
   if (li) ibxSideOpen(li); else ibxSideLater();
 }
-function ibxSideOut(ev) { if (!ev.relatedTarget) ibxSideLater(); }
-function ibxSideKeyDown(ev) { if (ev.key === 'Escape') ibxSideHide(); }
-function ibxSideScroll() { if (!IBX_SIDE.raf) IBX_SIDE.raf = requestAnimationFrame(ibxSideSync); }
+function ibxSideOut(ev) { if (!ev.relatedTarget || ev.relatedTarget.tagName === 'IFRAME') ibxSideLater(); }
+function ibxSideCheck() {
+  const li = ibxSideRow(IBX_SIDE.id), cp = ROW_EXPAND && ROW_EXPAND.host === li ? ROW_EXPAND.copy : null;
+  if ((li && li.matches(':hover')) || (cp && cp.matches(':hover')) || (IBX_SIDE.el && IBX_SIDE.el.matches(':hover')))
+    ibxSideStay();
+  else ibxSideLater();
+}
+function ibxSidePress(ev) { if (IBX_SIDE.el && !IBX_SIDE.el.contains(ev.target)) ibxSideDismiss(); }
+function ibxSideKeyDown(ev) { if (ev.key === 'Escape') ibxSideDismiss(); }
+function ibxSideScroll() { ibxSideDismiss(); }
+// Keys typed in a focused chat: its scroll keys, and Esc, which never reaches this document's own listener.
+const IBX_SIDE_SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' ', 'Escape']);
+function ibxSideFrameScroll(ev) { if (ev.type !== 'keydown' || IBX_SIDE_SCROLL_KEYS.has(ev.key)) ibxSideDismiss(); }
 function ibxSideWire(box) {
   if (!box || box._ibxSide) return;
   box._ibxSide = true;
@@ -19614,6 +19769,8 @@ function ibxSideWire(box) {
     if (ev.pointerType !== 'mouse') return;
     const win = box.ownerDocument.defaultView;
     if (!win || !win.matchMedia('(hover: hover)').matches) return;
+    IBX_SIDE.at = { x: ev.clientX, y: ev.clientY };
+    if (IBX_SIDE.quiet) return;
     // With the panel up, ibxSideTrack (on the document) decides.
     if (IBX_SIDE.el) return;
     const li = ibxSideCard(ev.target);

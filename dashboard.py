@@ -20483,10 +20483,13 @@ class Handler(BaseHTTPRequestHandler):
                     # The person's words become points, each with its line
                     # for the agent; a retry of a held send keeps its own.
                     if text and not held:
-                        if thread:
-                            text = self._thread_text(room_full, thread, text)
-                        elif data.get("answers"):
+                        # #408: a Reply aimed at a card answers it from a
+                        # thread's box too; its own ``Re “q”:`` head says
+                        # what it answers, so no thread ``Re Pn`` before it.
+                        if data.get("answers"):
                             text, to, card = self._box_answer(room_full, data.get("answers"), text, to, key)
+                        if thread and not card:
+                            text = self._thread_text(room_full, thread, text)
                         text, pids = self._take_points(room_full, text, to, key)
                         text = message_refs.with_images(text, paths, attachment_names(data.get("attachments")))
                     elif paths and not held:
@@ -20555,10 +20558,9 @@ class Handler(BaseHTTPRequestHandler):
                       "room": chatroom.get_room(rid)})
 
     def _box_answer(self, room_full: dict, answers, text: str, to: str, key: str) -> tuple[str, str, tuple | None]:
-        """P409: a message typed in the box while its chip names an open card
-        (``answers: {mid, n}``) is that card's answer, as its Comment would
-        be: recorded on the card (``box``: typed in the box, ``key``: its
-        send) and typed to the agent as ``Re “<question>”: <text>``, to the
+        """P409, #408: a message typed in the box after the person pressed a
+        card's Reply (``answers: {mid, n}``) is that card's answer: recorded
+        on the card (``box``: typed in the box, ``key``: its send) and typed to the agent as ``Re “<question>”: <text>``, to the
         card's asker unless the person directed it. A card answered or gone
         meanwhile leaves the message a plain one. Returns (text, to, card)."""
         rid = room_full.get("id", "")
