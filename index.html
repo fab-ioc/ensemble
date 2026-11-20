@@ -5653,6 +5653,9 @@ window.DOC_LISTENERS_PAUSED = false;
 <div id="me-menu" hidden>
   <!-- #407 (P437): one row for every look choice; it names what is in effect and opens Settings › Appearance. -->
   <button class="me-item" id="me-appearance" data-me="appearance">Appearance…<span class="me-cur" id="me-appearance-cur"></span></button>
+  <!-- Input sources (#7, cut down in #15): each source's health, the setup file, the message log. -->
+  <button class="me-item" data-me="hubchat">Ask the hub</button>
+  <button class="me-item" data-me="sources">Input sources</button>
   <button class="me-item" data-me="settings">Settings</button>
   <div class="me-rule"></div>
   <!-- What's new (#339): shown while an update is available; quiet once it is skipped. -->
@@ -5660,9 +5663,6 @@ window.DOC_LISTENERS_PAUSED = false;
   <!-- Phone only: the plan chip has no room in the bar there, so its tray opens from here. -->
   <button class="me-item me-phone" data-me="usage">Plan allowance</button>
   <button class="me-item" data-me="feedback">Send feedback…</button>
-  <!-- Input sources (#7, cut down in #15): each source's health, the setup file, the message log. -->
-  <button class="me-item" data-me="hubchat">Ask the hub</button>
-  <button class="me-item" data-me="sources">Input sources</button>
   <button class="me-item" data-me="about">About Ensemble</button>
 </div>
 <div id="proj-menu" role="dialog" aria-label="Switch project" data-noun-aria-label="Switch {project}" hidden></div>

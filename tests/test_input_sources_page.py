@@ -344,7 +344,8 @@ class InputSourcesPanel(unittest.TestCase):
 
     def test_the_list_is_sources_and_the_message_log_only(self):
         g = self.got
-        self.assertEqual(g["menuOrder"][-2:], ["sources", "settings"], "Input sources sits just above Settings")
+        i = g["menuOrder"].index("sources")
+        self.assertEqual(g["menuOrder"][i:i + 2], ["sources", "settings"], "Input sources sits just above Settings")
         f = g["first"]
         self.assertEqual([n[:2] for n in f["nav"]], [[":sources", "Sources"], [":log", "Message log"]])
         self.assertEqual(f["nav"][0][2], "1 not working")

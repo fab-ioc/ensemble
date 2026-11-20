@@ -397,7 +397,8 @@ class AskTheHubPage(unittest.TestCase):
         o = self.got["open"]
         self.assertEqual(o["focus"], "hc-in")
         self.assertIn("nothing changes until you click Apply", o["intro"])
-        self.assertEqual(o["menu"][-3:], ["hubchat", "sources", "settings"])
+        i = o["menu"].index("hubchat")
+        self.assertEqual(o["menu"][i:i + 3], ["hubchat", "sources", "settings"])
         self.assertEqual(self.got["fromSources"], {"chat": True, "sources": False})
 
     def test_a_change_shows_its_lines_and_check_and_waits_for_apply(self):

@@ -358,9 +358,9 @@ class AppearancePage(unittest.TestCase):
     def test_account_menu_rows_and_their_pages(self):
         for name, g in self.got.items():
             with self.subTest(name):
-                want = ["Appearance…", "Settings", "—", "Send feedback…", "About Ensemble"]
+                want = ["Appearance…", "Ask the hub", "Input sources", "Settings", "—", "Send feedback…", "About Ensemble"]
                 if name.startswith("phone"):
-                    want.insert(3, "Plan allowance")
+                    want.insert(5, "Plan allowance")
                 self.assertEqual(g["menu"], want)
                 self.assertEqual(g["menuCur"], "Light")
                 self.assertEqual(g["flyouts"], 0)

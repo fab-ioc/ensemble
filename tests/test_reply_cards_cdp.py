@@ -69,7 +69,7 @@ async function main() {
   const errs = [], chromes = [];
   // A computer's Chrome has desktop hover and a fine pointer (the Inbox's hover panel); a phone's, none.
   async function browser(desk) {
-    const ch = spawn(A.chrome, ['--headless=new', ...(desk ? ['--blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4'] : []),
+    const ch = spawn(A.chrome, ['--headless=new', '--use-mock-keychain', '--password-store=basic', ...(desk ? ['--blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4'] : []),
       '--remote-debugging-port=0', '--user-data-dir=' + chromeProfile(A), '--no-first-run',
       '--no-default-browser-check', '--disable-gpu', '--hide-scrollbars', 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] });
     chromes.push(ch);
