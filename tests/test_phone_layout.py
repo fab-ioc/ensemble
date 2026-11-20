@@ -204,6 +204,22 @@ async function main() {
       await click(p, row(A.task));
       await opened(p); await sleep(400);
       out.afterHidden = await p.evalIn(LOOK);
+      // P439: the PO's drawer opened over the open task (as openPoOf opens it
+      // where no PO leads the page) is the whole width, over the task.
+      await p.evalIn(`PO_PIN = ${JSON.stringify(A.proj)}; PO_PEEK = true; renderPo(); swRender(); 0`);
+      await p.until('document.body.classList.contains("po-peek") && !document.getElementById("po-panel").hidden', 15000);
+      await sleep(500);
+      out.drawerOverTask = await p.evalIn(`(() => { const r = document.getElementById('po-panel').getBoundingClientRect();
+        return { x: Math.round(r.left), r: Math.round(r.right), vw: innerWidth, task: !!SELECTED_SID,
+                 scrollW: document.documentElement.scrollWidth }; })()`);
+      await p.shot('phone-390-po-over-task');
+      // Where the panels failed to load (renderPo sets po-dock only with
+      // PD.lib), the drawer's own phone rule must win over the desktop's
+      // "beside an open task" (right: --detail-w).
+      out.drawerNoDock = await p.evalIn(`(() => { document.body.classList.remove('po-dock');
+        const r = document.getElementById('po-panel').getBoundingClientRect();
+        const got = { x: Math.round(r.left), r: Math.round(r.right), vw: innerWidth, open: document.body.classList.contains('detail-open') };
+        document.body.classList.add('po-dock'); return got; })()`);
       await p.close();
     }
   } finally {
@@ -316,6 +332,15 @@ class ThePhone(unittest.TestCase):
                 for grp in ("needs", "running", "projects", "unassigned", "done"):
                     self.assertIn(grp, g["groups"])
                 self.fits(g, "the list")
+
+    def test_the_po_drawer_over_a_task_is_the_whole_width(self):
+        g = self.got["drawerOverTask"]
+        self.assertTrue(g["task"], "the task stays open under it")
+        self.assertEqual((g["x"], g["r"]), (0, g["vw"]), "P439: edge to edge, as without a task")
+        self.assertLessEqual(g["scrollW"], g["vw"])
+        g = self.got["drawerNoDock"]
+        self.assertTrue(g["open"])
+        self.assertEqual((g["x"], g["r"]), (0, g["vw"]), "P439: without the panels too")
 
     def test_a_row_opens_its_conversation_full_screen(self):
         for w in self.WIDTHS:
