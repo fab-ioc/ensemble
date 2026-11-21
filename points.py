@@ -2086,6 +2086,7 @@ def task_lookup(room_id: str, room: dict | None = None):
         if r is not None:
             wf = _d.normalize_workflow(r.get("workflow")) or ""
             info = {"ref": ref, "roomId": rid, "title": r.get("title") or "", "workflow": wf,
+                    "specPoints": list(r.get("specPoints") or []),
                     "workflowName": _d.WORKFLOW_LABELS.get(wf, ""), "done": wf == "done"}
             if wf == "done":
                 try:
@@ -2094,9 +2095,30 @@ def task_lookup(room_id: str, room: dict | None = None):
                     info["doneAt"] = None
         memo[ref] = info
         return dict(info) if info is not None else None
+
+    def born() -> list[tuple[float, str]]:
+        """The tasks this chat's PO created or started (#411), ``[(when,
+        "#N")]``: the hub keeps on each the PO chat it was made from
+        (``poFrom``). Read from the same index, once while it is the same."""
+        if _BORN not in memo:
+            out = []
+            for r in index:
+                src = r.get("poFrom")
+                ref = task_ref(f"#{r.get('no')}") if r.get("no") else ""
+                if isinstance(src, dict) and src.get("room") == room_id and ref:
+                    try:
+                        at = float(src.get("at") or 0)
+                    except (TypeError, ValueError):
+                        at = 0.0
+                    if at > 0:
+                        out.append((at, ref))
+            memo[_BORN] = out
+        return list(memo[_BORN])
+    get.born = born
     return get
 
 
+_BORN = "\0born"                  # task_lookup's memo key for born()
 _LOOKUPS: dict[str, tuple] = {}   # room id -> (task index, (project, keys), {ref: task info})
 
 

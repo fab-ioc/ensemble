@@ -9208,6 +9208,14 @@ _TASK_INDEX_LIST: list[list[dict]] = [[]]   # the last list given: given again w
 _TASK_INDEX_LOCK = threading.Lock()
 
 
+_SPEC_POINT = re.compile(r"(?<![\w])P\d{1,5}(?![\w])")
+
+
+def _spec_points(spec) -> list[str]:
+    """The points a task's spec names, in order, at most eight (#411)."""
+    return list(dict.fromkeys(_SPEC_POINT.findall(str(spec or ""))))[:8]
+
+
 def _task_index() -> list[dict]:
     """Every room's numbering and the little a reference shows of it, reading
     again only the room files that changed since the last call. The same list
@@ -9237,6 +9245,10 @@ def _task_index() -> list[dict]:
                  "launched": room.get("launched", True), "status": room.get("status", ""),
                  "workflow": copy.deepcopy(room.get("workflow")), "workflowAt": room.get("workflowAt"),
                  "createdAt": room.get("createdAt"),
+                 # #411: where its traffic goes in its PO chat (threads.assign):
+                 # the points its spec names, the PO chat it was made from.
+                 "specPoints": _spec_points(room.get("spec")),
+                 "poFrom": dict(room["poFrom"]) if isinstance(room.get("poFrom"), dict) else None,
                  "branch": ((room.get("workspace") or {}).get("branch") or ""),
                  "taskDir": room.get("taskDir") or "",
                  "participants": [{k: pp.get(k) for k in ("identity", "kind", "agent", "role", "ptyId", "pid")}

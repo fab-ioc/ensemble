@@ -35,21 +35,34 @@ choice"; one pass over the chat's balloons, oldest first):
   holding its link is, else where the input before it is (#379): a card asked
   while working on a thread's point is in that thread, never in the main
   chat too. The hub's "closed without an answer" line goes with its card.
-* A task's report is in the thread of the person's point the task works on
-  (planned on it, or naming it alone), in its Work log, and so is a PO note
-  on it that answers nothing (no ``Re``, no ledger answer, no question);
-  else in Team activity.
-* The hub's notes (digests, restarts, due lines, …) and what the PO answers
-  to them belong to no thread: the chat folds them as before (Team activity),
-  and so does a PO handover line outside a thread. A PO question, "is live"
-  or a line for the person after them is in the main chat.
+* A task's report is in its thread's Work log, and so is a PO note on it
+  that answers nothing (no ``Re``, no ledger answer, no question). Its thread
+  (#411, the CEO's P441: "thread work stays in its thread"; first match
+  wins): the thread of the person's point the task works on (planned on it,
+  or naming it alone); else of the points its title names (``(P439)``), the
+  first of them in a thread, and none when they are all in the main chat;
+  else the same with the points its spec names; else the thread the PO's
+  current input was in when it created or started the task (``poFrom`` on
+  the task). Else, and always for a main-chat point, Team activity.
+* The hub's lines about tasks (quiet reports, idle and stall checks, due and
+  board lines …: ``TASK_LINE_KINDS``) go to the thread of the tasks they name
+  when that is one thread for all of them (a quiet line by its items' heads,
+  "review 3 approved of #409 (codex)"), with the PO's note on them. Its other
+  notes (digests, restarts, …), a line naming tasks of two places, and what
+  the PO answers to them belong to no thread: the chat folds them as before
+  (Team activity), and so does a PO handover line outside a thread. A PO
+  question, "is live" or a line for the person after them is in the main
+  chat.
 
 The person's own reply in a thread can also be shown in the chat ("Also send
 to chat").
 
 **Unread.** A thread whose replies came after the person last opened it (or
-after their own last message in it) is unread. What came before the room was
-first threaded counts as read (``since``).
+after their own last message in it) is unread, its Work log entries (a task's
+report, the PO's note on it) too (#411). What came before the room was
+first threaded counts as read (``since``); in a chat threaded before #411,
+what its rules took into a thread from Team activity is unread there until
+the thread is opened after they first ran (``tasksSince``).
 
 **Storage.** ``threads/<room>.json`` beside the rooms folder: when the room
 was first threaded, when each thread was last opened, the anchors of replies
@@ -191,7 +204,7 @@ def _path(room_id: str) -> Path:
 
 
 def _empty_side() -> dict:
-    return {"version": 1, "since": 0.0, "seen": {}, "anchors": {}, "also": [], "sent": [],
+    return {"version": 1, "since": 0.0, "tasksSince": 0.0, "seen": {}, "anchors": {}, "also": [], "sent": [],
             "archived": {}, "deleted": {}, "names": {}, "notices": {}}
 
 
@@ -212,10 +225,8 @@ def load_side(room_id: str) -> dict:
             d = None
         side = _empty_side()
         if isinstance(d, dict):
-            try:
-                side["since"] = float(d.get("since") or 0)
-            except (TypeError, ValueError):
-                pass
+            side["since"] = _num(d.get("since"))
+            side["tasksSince"] = _num(d.get("tasksSince"))
             for k in ("seen", "anchors"):
                 if isinstance(d.get(k), dict):
                     side[k] = d[k]
@@ -284,12 +295,17 @@ def _side_sig(room_id: str) -> tuple:
 
 
 def _ensure_since(room_id: str, now: float | None = None) -> None:
-    """The first time a room is threaded: what came before counts as read."""
+    """The first time a room is threaded: what came before counts as read.
+    The first time the #411 rules place it (``tasksSince``): what they took
+    into a thread from Team activity is new there."""
     with _LOCK:
         side = load_side(room_id)
-        if side.get("since"):
+        if side.get("since") and side.get("tasksSince"):
             return
-        side["since"] = time.time() if now is None else now
+        at = time.time() if now is None else now
+        if not side.get("since"):
+            side["since"] = at
+        side["tasksSince"] = at
         _save_side(room_id, side)
 
 
@@ -411,6 +427,29 @@ _POINT_MENTION = re.compile(r"(?<![\w])P(\d{1,5})([a-z]?)(?![\w])", re.I)
 _POINT_RANGE = re.compile(r"(?<![\w])P(\d{1,5})\s*[-–—]\s*P(\d{1,5})(?![\w])", re.I)
 
 
+_POINT_MENTION_ANY = re.compile(r"(?<![\w])(P\d{1,5})(?![\w])")
+# The hub lines about tasks whose task names place them (#411); a session's
+# own lines (handover, rotation, restart …) and the person's points are not.
+TASK_LINE_KINDS = frozenset({"quiet", "idle", "stalled", "reviewlimit", "digest", "due", "board",
+                             "relay", "resumed", "spec", "checkpoint"})
+# A quiet report's item: "review 3 approved of #409 (codex): …".
+_QUIET_ITEM = re.compile(r"(?:^|; )[^;:]{0,80}?\b(?:of|from) ([A-Z][A-Z0-9]*-\d+|#\d+) \(")
+
+
+def _hub_task_refs(kind: str, text: str) -> list[str]:
+    """The tasks a hub line is about (#411): a quiet reports line's items by
+    their heads (what they quote may name others), another line's task
+    names in its prose; none for a line that is not about tasks."""
+    if kind not in TASK_LINE_KINDS:
+        return []
+    if kind == "quiet":
+        body = text.split(":", 1)[1] if ":" in text else text
+        body = body.split(" | Quiet reports since", 1)[0]
+        refs = [points.task_ref(m) for m in _QUIET_ITEM.findall(" " + body.strip())]
+        return list(dict.fromkeys(r for r in refs if r))
+    return points.task_refs(text)
+
+
 def _point_mentions(text: str) -> list[str]:
     """Point names in the PO's own prose, including short `P5–P8` ranges."""
     prose = points._prose(points.strip_point_lines(text or ""))
@@ -478,7 +517,8 @@ def room_cards(room: dict | None) -> list[dict]:
 
 
 def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=None,
-           claimed: dict | None = None, cards: list[dict] | None = None) -> dict:
+           claimed: dict | None = None, cards: list[dict] | None = None,
+           task_facts=None, born=None) -> dict:
     """The threads of a chat, from its balloons (oldest first), its points
     ledger and its record (:func:`load_side`). Pure: the same input gives the
     same threads. Returns ``{threads: {tid: thread}, of: {mid: [tid, …]},
@@ -488,7 +528,10 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
     thread whose report gave none. ``cards``: the room's question cards
     (:func:`room_cards`); ``cards`` out: those in a thread ({card: tid}).
     ``split``: a PO balloon answering points in several places, its parts
-    ({mid: {tid or "": text}}, "" the main chat's)."""
+    ({mid: {tid or "": text}}, "" the main chat's). ``task_facts(ref)``: what
+    places a task's traffic (#411), ``{title, specPoints}`` or None;
+    ``born``: the tasks the PO created or started from this chat, ``[(when,
+    ref)]``."""
     pts = {p["id"]: p for p in led.get("points") or []}
     anchors = side.get("anchors") or {}
     # A record from before #237 (``side["also"]``): a reply sent from a
@@ -571,7 +614,7 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
         if p is not None:
             anc = anchors.get(pid) or ""
             if anc.startswith("task:") and anc not in threads:
-                anc = task_thread.get(anc[5:], anc)
+                anc = task_home(anc[5:]) or anc
             if anc.startswith("m:") and anc not in threads:
                 # Started from a balloon's "Reply in thread": that balloon is
                 # its parent, or the thread it is in by now.
@@ -603,6 +646,49 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
         memo[pid] = out
         return out
 
+    born_list = sorted((_num(at), ref) for at, ref in born or () if ref and _num(at))
+    born_in: dict[str, str] = {}            # a task the PO made → the thread it was made from (#411)
+    next_born = [0]
+
+    def place_born(upto: float) -> None:
+        """The tasks the PO created or started up to ``upto``: each in the
+        thread its current input is in, when that is a person's thread."""
+        while next_born[0] < len(born_list) and born_list[next_born[0]][0] <= upto:
+            ref = born_list[next_born[0]][1]
+            next_born[0] += 1
+            if ref not in born_in:
+                born_in[ref] = last if last in chosen else ""
+
+    def named_home(text: str) -> str | None:
+        """The thread of the points a task's title or spec names (#411): the
+        first of them in a person's thread, "" when they are all in the main
+        chat, None when it names none."""
+        ids = [i for i in _POINT_MENTION_ANY.findall(text or "") if i in pts]
+        if not ids:
+            return None
+        for i in dict.fromkeys(ids):
+            t = point_thread(i) if pts[i].get("mid") in done or i in memo else None
+            if t in chosen:
+                return t
+        return ""
+
+    def task_home(ref: str, title: str = "") -> str | None:
+        """The thread a task's traffic goes to (#411), first match wins: a
+        point in a thread planned on it or naming it (claim_tasks), the
+        points its title names, else those its spec names, else the thread
+        the PO made it from. None: Team activity."""
+        if not ref:
+            return None
+        t = task_thread.get(ref)
+        if t is not None and t != activity:
+            return t
+        facts = (task_facts(ref) if task_facts else None) or {}
+        for text in (title or facts.get("title") or "", " ".join(facts.get("specPoints") or ())):
+            t = named_home(text)
+            if t is not None:
+                return t or None
+        return born_in.get(ref) or None
+
     def claim_tasks(pid: str, tid: str) -> None:
         if tid not in chosen:
             return          # a point in the main chat: its task's reports are Team activity
@@ -615,6 +701,8 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
 
     last = ""                       # where the last input is: what a PO message answers ("" the main chat)
     last_input_work = False
+    last_via = False                # … placed there by a #411 rule (a task's title, its PO, a hub line)
+    via: set[str] = set()           # the balloons a #411 rule put in a thread (Team activity before)
     last_human_points: set[str] = set()
     activity = "team:activity"
     sent_of = _pair_sent(recs, side, {**(claimed or {}),
@@ -707,12 +795,23 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
             notice_thread[close] = t
         return t
 
+    def hub_task_home(r: dict) -> str:
+        """The thread of the tasks a hub line names (#411: ``[quiet
+        reports] … #409 …``, ``[idle] #410 …``), "" when it names none, or
+        tasks of two places (Team activity is one)."""
+        refs = _hub_task_refs(r.get("kind") or "", r["turn"].get("text") or "")
+        homes = {task_home(ref) for ref in refs}
+        t = homes.pop() if len(homes) == 1 else None
+        return t if t in chosen else ""
+
     for number, r in enumerate(recs, 1):
         if on_message and (number == 1 or number % 50 == 0 or number == len(recs)):
             on_message(number, len(recs))
         mid = r["mid"]
         if mid in done:
             continue
+        if r["ts"]:
+            place_born(r["ts"])
         done[mid] = r
         if r["ts"]:
             place_cards(r["ts"])
@@ -720,6 +819,7 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
             kind = r.get("kind")
             if kind == "human":
                 last_input_work = False
+                last_via = False
                 made = [i for i in by_mid.get(mid, []) if i in pts]
                 made += [i for i in r.get("pts") or [] if i in pts and i not in made
                          and pts[i].get("mid") in (None, "", mid)]
@@ -745,8 +845,8 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
                     # Sent from a thread's box: in that thread (and in those
                     # the points it made are in), whatever it holds.
                     t = sent["thread"]
-                    if t.startswith("task:") and task_thread.get(t[5:]) not in (None, activity):
-                        t = task_thread[t[5:]]
+                    if t.startswith("task:") and task_home(t[5:]):
+                        t = task_home(t[5:])
                     if t not in threads and t in pts and t not in made:
                         # A point's name (a review comment sent on a point,
                         # #379): the thread that point is in by now.
@@ -788,19 +888,24 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
             elif kind == "report":
                 last_input_work = True
                 ref = r.get("task") or ""
-                tid = task_thread.get(ref) if ref else None
+                tid = task_home(ref, r.get("taskTitle") or "")
+                last_via = tid is not None and task_thread.get(ref) != tid
                 if tid is None:
                     tid = team(r)
-                    if ref:
-                        task_thread[ref] = tid
                 else:
                     join(tid, r)
-                    if tid != activity:
-                        work.add(mid)
+                    work.add(mid)
+                    if last_via:
+                        via.add(mid)
                 last = tid
             else:
                 last_input_work = True
                 tid = closed_card(r)
+                last_via = not tid
+                tid = tid or hub_task_home(r)
+                last_via = last_via and bool(tid)
+                if last_via:
+                    via.add(mid)
                 if tid:
                     # Its card is in a thread: the line is that thread's
                     # traffic, its Work log (#379), not the chat's.
@@ -879,6 +984,8 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
                 card_home[h] = mine
         if noting and any(t in chosen for t in tids):
             work.add(mid)       # in the main chat it is a message as any other
+        if last_via and tids == [last] and last in chosen:
+            via.add(mid)        # woken by an input a #411 rule placed: with it
         # Several PO balloons may be one answer with no new input between
         # them. Keep the same place until the next human or hub input.
         last = next((t for t in reversed(tids) if t in chosen or t == activity), "")
@@ -893,7 +1000,7 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
     for c, t in in_thread.items():
         threads[t].setdefault("cards", []).append(c)
     return {"threads": threads, "of": of, "parent": parent, "also": also,
-            "work": work, "order": order, "paired": paired, "answered": answered,
+            "work": work, "via": via, "order": order, "paired": paired, "answered": answered,
             "cards": in_thread, "split": split, "notices": notice_keys}
 
 
@@ -1261,7 +1368,7 @@ def build(room_id: str, room: dict | None = None, *, show_progress: bool = True,
     cards = room_cards(room)
     out = assign(recs, led, side, lambda ref: (task_of(ref) or {}).get("title") or "",
                  lambda done, total: announce("Sorting messages into threads", done, total), claimed,
-                 cards)
+                 cards, task_facts=task_of, born=getattr(task_of, "born", list)())
     announce("Finishing threads")
     # Kept only once no later balloon can be the send (review 2): a guess
     # while it may still come is made again on the next build.
@@ -1289,6 +1396,8 @@ def build(room_id: str, room: dict | None = None, *, show_progress: bool = True,
     open_mids = {c.get("mid") for c in waiting}
     pts = {p["id"]: p for p in led.get("points") or []}
     since = float(side.get("since") or 0)
+    moved_at = _num(side.get("tasksSince"))
+    moved = {m for m in out.get("via") or () if by_mid.get(m) and by_mid[m]["ts"] < moved_at}
     seen = side.get("seen") or {}
     archived = side.get("archived") or {}
     for tid, th in out["threads"].items():
@@ -1298,7 +1407,12 @@ def build(room_id: str, room: dict | None = None, *, show_progress: bool = True,
         work_replies = [r for r in rs[1:] if r["mid"] in work]
         mine = max([r["ts"] for r in rs if _who(r) == "you"] + [0.0])
         mark = max(since, _num(seen.get(tid)), mine)
-        news = [r for r in replies if _who(r) != "you" and r["ts"] > mark]
+        # #411: a task's report and the PO's note on it ring the thread too;
+        # what the #411 rules took in from Team activity is new until the
+        # thread is opened after they did.
+        news = [r for r in rs[1:] if _who(r) != "you" and r["ts"] > mark]
+        if since < moved_at and max(_num(seen.get(tid)), mine) < moved_at:
+            news += [r for r in rs[1:] if r["mid"] in moved and _who(r) != "you" and r["ts"] <= mark]
         po_replies = [r for r in replies if _who(r) == "po"] if tid == "team:activity" else []
         po_news = [r for r in po_replies if r["ts"] > mark]
         last_po = max(po_replies, key=lambda r: r["ts"]) if po_replies else None

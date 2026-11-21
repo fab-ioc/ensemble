@@ -326,3 +326,40 @@ class StaleMark(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PoFrom(_Rooms):
+    """#411: a task keeps the PO chat it was created or first started from,
+    and the index carries it and the points its spec names."""
+
+    def setUp(self):
+        super().setUp()
+        chatroom.patch_room(self.rid, projectId="p1")
+
+    def test_the_po_chat_is_kept_once_and_only_from_the_po(self):
+        ensemble_tools._note_po_from(self.ctx(), self.room())
+        self.assertNotIn("poFrom", self.room(), "the owner's own call is not the PO's")
+        t0 = time.time()
+        other = {**self.po_ctx(), "room": {**self.room(self.po_rid), "id": "room-other"}}
+        ensemble_tools._note_po_from(other, self.room())
+        self.assertNotIn("poFrom", self.room(), "another project's PO chat")
+        ensemble_tools._note_po_from(self.po_ctx(), self.room())
+        first = self.room()["poFrom"]
+        self.assertEqual(first["room"], self.po_rid)
+        self.assertGreaterEqual(first["at"], t0)
+        ensemble_tools._note_po_from(self.po_ctx(), self.room())
+        self.assertEqual(self.room()["poFrom"], first)
+
+    def test_starting_a_task_keeps_it(self):
+        self.handler._resume_room = lambda room: {}
+        with mock.patch.object(dashboard, "_room_is_live", return_value=False), \
+                mock.patch.object(dashboard.pacing, "hold", return_value=None):
+            res = ensemble_tools._start_task(self.po_ctx(), {"taskId": self.rid}, self.handler)
+        self.assertTrue(res["ok"], res)
+        self.assertEqual(self.room()["poFrom"]["room"], self.po_rid)
+
+    def test_the_index_carries_it_and_the_spec_points(self):
+        chatroom.patch_room(self.rid, spec="Do P12 and P3, again P12; not XP4 or P5x.",
+                            poFrom={"room": self.po_rid, "at": 5.0})
+        entry = next(e for e in dashboard._task_index() if e["id"] == self.rid)
+        self.assertEqual((entry["specPoints"], entry["poFrom"]), (["P12", "P3"], {"room": self.po_rid, "at": 5.0}))
