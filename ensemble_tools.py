@@ -1963,6 +1963,7 @@ def _create_task(ctx, args, handler):
                                         priority)
     if not ok:
         raise ToolError(err)
+    _note_po_from(ctx, room_full)
     if args.get("keepAgents") is True:
         _d.set_keep_agents(room_full["id"], True)
         room_full["keepAgents"] = True
@@ -1995,6 +1996,23 @@ def _create_task(ctx, args, handler):
                      (allocation or {}).get("reason", "launched") if started else
                      "created as a draft — the product owner can start it from the "
                      "dashboard, or call ensemble_start_task")}
+
+
+def _note_po_from(ctx, room: dict) -> None:
+    """Keep on a task the PO chat it was created or first started from
+    (#411): its reports and the hub's lines about it go to the thread that
+    chat was in at that time. Kept once: a later start does not move it."""
+    here = ctx["room"]
+    if not (room or {}).get("id") or not here.get("id"):
+        return
+    project = _projects().get(_project_of_room(room)) or {}
+    if ((project.get("poRoomId") or "").strip() != here["id"]
+            or _d.chatroom.po_identity(here) != ctx["identity"]):
+        return      # only the task's own project's PO, from its PO chat
+    stamp = {"room": ctx["room"]["id"], "at": time.time()}
+    if _d.chatroom.patch_room_if(room["id"], lambda r: not isinstance(r.get("poFrom"), dict),
+                                 poFrom=stamp):
+        room["poFrom"] = stamp
 
 
 def _update_task(ctx, args, handler):
@@ -2230,6 +2248,7 @@ def _start_task(ctx, args, handler):
         return {"ok": True, "taskId": room["id"], "status": _status(room), "held": True,
                 "note": _d.pacing.note_text(held)}
     first_launch = not room.get("launched", True)
+    _note_po_from(ctx, room)
     try:
         # Through the hub's resume guard: one resume per task at a time, and
         # a message the board sent it meanwhile is delivered once it is up.

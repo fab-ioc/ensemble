@@ -10,8 +10,10 @@ thread.
   the ledger's answers), else where the input before it is; after a hub note
   it joins Team activity, a handover line outside a thread too;
 * a task's report is in the thread of the person's point about the task
-  (its Work log, with the PO's note on it), else in Team activity; a card
-  answered in a thread is in it;
+  (its Work log, with the PO's note on it), else of the points its title or
+  spec names, else of the thread the PO made it from (#411), else in Team
+  activity; the hub's lines about tasks go with them; a card answered in a
+  thread is in it;
 * the channel (#234) is the whole chat but a thread's replies: its first
   message, what the person typed in the chat's own box, a reply sent to the
   chat too, and the hub's and tasks' traffic no thread claimed;
@@ -847,6 +849,283 @@ class AssignTest(unittest.TestCase):
         self.assertEqual(out["threads"]["P2"]["members"], ["s:2", "s:3", "s:4", "s:5"])
 
 
+def hub(mid, ts, kind, text):
+    return {"mid": mid, "sid": "s", "role": "user", "kind": kind, "ts": T0 + ts,
+            "turn": {"role": "user", "text": text}}
+
+
+class TaskHomeTest(unittest.TestCase):
+    """#411: a task's reports, the PO's notes on them and the hub's lines
+    about it go to the thread it came from."""
+
+    def run_(self, recs, pts, sd=None, facts=None, born=None):
+        facts = facts or {}
+        return threads.assign(recs, {"points": pts}, sd or side(), lambda ref: (facts.get(ref) or {}).get("title", ""),
+                              task_facts=lambda ref: facts.get(ref), born=born)
+
+    def test_the_real_case_stays_in_its_thread(self):
+        # A thread the person started; its task #9 and the task #10 the PO
+        # made from it; then a point typed in the main chat.
+        quiet = ("[quiet reports] 2 reports that did not wake you, all in your chat, nothing to answer "
+                 "unless one needs you: review 3 approved of #9 (codex): Approved; the notes name #4.; "
+                 "update from #9 (claude): ## #9: approved")
+        recs = [human("s:0", 0, "bring outside sources in"), po("s:1", 5, "Re P1 (planned #9): drafted", re_=["P1"]),
+                hub("s:2", 10, "quiet", quiet),
+                report("s:3", 20, "#9", "Outside sources (P1)"),
+                po("s:4", 22, "#9 is merged and #10 is drafted."),
+                report("s:5", 30, "#10", "Outside sources change settings (P1)"),
+                po("s:6", 31, "The picture is waiting for your yes or no on its Inbox card."),
+                hub("s:7", 40, "idle", "[idle] #10 wait over, on CEO card: the card was answered."),
+                po("s:8", 41, "#10 carries on."),
+                human("s:9", 50, "keep work in its thread"),
+                po("s:10", 51, "Re P2 (planned #11): drafted", re_=["P2"])]
+        pts = [point("P1", "s:0", "bring outside sources in", state="planned", task="#9"),
+               point("P2", "s:9", "keep work in its thread", 50, state="planned", task="#11")]
+        out = self.run_(recs, pts, side(sent=[new_row("s:0")]), born=[(T0 + 21, "#10")])
+        self.assertEqual(out["threads"]["P1"]["members"], [f"s:{i}" for i in range(9)])
+        self.assertEqual((out["of"]["s:9"], out["of"]["s:10"]), (["P2"], ["m:s:10"]))
+        self.assertNotIn("team:activity", out["threads"])
+        self.assertEqual(out["work"], {"s:2", "s:3", "s:4", "s:5", "s:6", "s:7", "s:8"})
+        # Put there by a #411 rule (Team activity before): the quiet line, #10's
+        # report and idle line, and the PO's notes on them.
+        self.assertEqual(out["via"], {"s:2", "s:5", "s:6", "s:7", "s:8"})
+        self.assertEqual(threads._channel({**out, "recs": recs}), ["s:0", "s:9", "s:10"])
+
+    def test_a_report_goes_to_the_thread_of_the_point_its_title_names(self):
+        recs = [human("s:0", 0, "a"), po("s:1", 5, "ok"), report("s:2", 20, "#20", "Thing (P1)"),
+                po("s:3", 21, "Noted.")]
+        pts = [point("P1", "s:0", "a")]
+        out = self.run_(recs, pts, side(sent=[new_row("s:0")]))
+        self.assertEqual(out["threads"]["P1"]["members"], ["s:0", "s:1", "s:2", "s:3"])
+        self.assertEqual(out["via"], {"s:2", "s:3"})
+        # The index's title when the report carries none.
+        recs[2] = report("s:2", 20, "#20")
+        out = self.run_(recs, pts, side(sent=[new_row("s:0")]), facts={"#20": {"title": "Thing (P1)"}})
+        self.assertEqual(out["threads"]["P1"]["members"], ["s:0", "s:1", "s:2", "s:3"])
+        # The point is in the main chat: Team activity.
+        out = self.run_(recs, pts, facts={"#20": {"title": "Thing (P1)"}})
+        self.assertEqual(out["threads"]["team:activity"]["members"], ["s:2", "s:3"])
+
+    def test_a_title_naming_only_main_chat_points_wins_over_the_spec(self):
+        recs = [human("s:0", 0, "a"), human("s:1", 2, "b"), report("s:2", 20, "#20")]
+        pts = [point("P1", "s:0", "a"), point("P2", "s:1", "b", 2)]
+        facts = {"#20": {"title": "Thing (P1)", "specPoints": ["P2"]}}
+        out = self.run_(recs, pts, side(sent=[new_row("s:1", key="k1")]), facts=facts)
+        self.assertEqual(out["threads"]["team:activity"]["members"], ["s:2"])
+        # A title naming no point: its spec's points.
+        facts["#20"]["title"] = "Thing"
+        out = self.run_(recs, pts, side(sent=[new_row("s:1", key="k1")]), facts=facts)
+        self.assertEqual(out["threads"]["P2"]["members"], ["s:1", "s:2"])
+        self.assertEqual(out["via"], {"s:2"})
+        # A point of the thread planned on it comes first.
+        pts[0].update(state="planned", task="#20")
+        out = self.run_(recs, pts, side(sent=[new_row("s:0"), new_row("s:1", key="k1")]),
+                        facts={"#20": {"title": "Thing (P2)"}})
+        self.assertEqual(out["threads"]["P1"]["members"], ["s:0", "s:2"])
+
+    def test_a_task_the_po_made_from_a_thread_reports_there(self):
+        recs = [human("s:0", 0, "a"), po("s:1", 5, "I will make a task."),
+                human("s:2", 10, "other"), report("s:3", 20, "#20"), po("s:4", 21, "Noted.")]
+        pts = [point("P1", "s:0", "a"), point("P2", "s:2", "other", 10)]
+        sd = side(sent=[new_row("s:0")])
+        out = self.run_(recs, pts, sd, born=[(T0 + 6, "#20")])
+        self.assertEqual(out["threads"]["P1"]["members"], ["s:0", "s:1", "s:3", "s:4"])
+        self.assertEqual(out["of"]["s:2"], ["P2"])
+        # Made after the main chat's point: Team activity.
+        out = self.run_(recs, pts, sd, born=[(T0 + 11, "#20")])
+        self.assertEqual(out["threads"]["team:activity"]["members"], ["s:3", "s:4"])
+        # No record of it: Team activity.
+        out = self.run_(recs, pts, sd)
+        self.assertEqual(out["threads"]["team:activity"]["members"], ["s:3", "s:4"])
+
+    def test_a_hub_line_goes_where_all_its_tasks_are(self):
+        pts = [point("P1", "s:0", "a", state="planned", task="#9"),
+               point("P2", "s:1", "b", 1, state="planned", task="#10")]
+        sd = side(sent=[new_row("s:0"), new_row("s:1", key="k1")])
+        head = [human("s:0", 0, "a"), human("s:1", 1, "b")]
+        one = "[quiet reports] 1 report: update from #9 (claude): it names #10 (and more)"
+        two = "[quiet reports] 2 reports: update from #9 (claude): x; review 1 approved of #10 (codex): y"
+        out = self.run_(head + [hub("s:2", 10, "quiet", one), po("s:3", 11, "ok")], pts, sd)
+        self.assertEqual(out["threads"]["P1"]["members"], ["s:0", "s:2", "s:3"])
+        out = self.run_(head + [hub("s:2", 10, "quiet", two), po("s:3", 11, "ok")], pts, sd)
+        self.assertEqual(out["threads"]["team:activity"]["members"], ["s:2", "s:3"])
+        out = self.run_(head + [hub("s:2", 10, "stalled", "[stalled] #10 has said nothing for 2 h")], pts, sd)
+        self.assertEqual(out["threads"]["P2"]["members"], ["s:1", "s:2"])
+        # One task of a thread and one of none: Team activity.
+        out = self.run_(head + [hub("s:2", 10, "idle", "[idle] #9 and #30 wait")], pts, sd)
+        self.assertEqual(out["threads"]["team:activity"]["members"], ["s:2"])
+        # A line not about tasks stays out, whatever it names.
+        out = self.run_(head + [hub("s:2", 10, "handover", "[handover] #9 rotated")], pts, sd)
+        self.assertEqual(out["threads"]["team:activity"]["members"], ["s:2"])
+
+    def test_quiet_items_are_read_by_their_heads(self):
+        text = ("[quiet reports] 3 reports that did not wake you: review 3 approved of #409 (codex): it reads "
+                "#12; the notes name #13.; update from ED-410 (claude): see #14 (old) | Quiet reports since "
+                "of #15 (x)")
+        self.assertEqual(threads._hub_task_refs("quiet", text), ["#409", "ED-410"])
+        self.assertEqual(threads._hub_task_refs("idle", "[idle] #410 wait over"), ["#410"])
+        self.assertEqual(threads._hub_task_refs("rotated", "[rotated] #410"), [])
+
+    def test_every_quiet_item_head_is_read_and_summary_text_is_not_an_item(self):
+        """#411 review 1: the review limit's head names its task; an item
+        naming none, or one not listed, keeps the line out of every thread;
+        a "; " in an old line's summary is that item's text."""
+        lead = "[quiet reports] 2 reports that did not wake you, all in your chat, nothing to answer unless one needs you: "
+        refs = threads._hub_task_refs
+        self.assertEqual(refs("quiet", lead + "review limit of #409: 3 of 3 rounds used, its owner's question follows"
+                                       "; update from #410 (claude): done."), ["#409", "#410"])
+        self.assertEqual(refs("quiet", lead + "update from #410 (claude): x; This project is now called "
+                                       "\u201cA\u201d (was \u201cB\u201d)."), ["#410", ""])
+        self.assertEqual(refs("quiet", lead + "update from #410 (claude): x; and 3 more."), ["#410", ""])
+        self.assertEqual(refs("quiet", lead + "update from Untitled thing (claude): x."), [""])
+        # The real line: its first summary holds "; ".
+        self.assertEqual(refs("quiet", lead + "review 3 approved of #409 (codex): Review 3 approved: pruned on "
+                                       "the idle hourly path; the two fixtures use Maple.; update from #409 "
+                                       "(claude): ## #409: approved."), ["#409"])
+        # The quiet reports riding on another hub line count too.
+        self.assertEqual(refs("idle", "[idle] #410 wait over | Quiet reports since your last wake (in your chat; "
+                                      "nothing to answer): update from #409 (claude): x."), ["#410", "#409"])
+        # A mixed batch goes to Team activity, not the thread of the task it names first.
+        pts = [point("P1", "s:0", "a", state="planned", task="#409"),
+               point("P2", "s:1", "b", 1, state="planned", task="#410")]
+        sd = side(sent=[new_row("s:0"), new_row("s:1", key="k1")])
+        line = lead + "review limit of #409: 3 of 3 rounds used; update from #410 (claude): x."
+        out = self.run_([human("s:0", 0, "a"), human("s:1", 1, "b"), hub("s:2", 10, "quiet", line)], pts, sd)
+        self.assertEqual(out["threads"]["team:activity"]["members"], ["s:2"])
+
+    def test_a_queued_item_holds_no_item_separator(self):
+        import quiet_reports
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(quiet_reports, "_d", mock.Mock(DASHBOARD_DIR=Path(d))):
+            quiet_reports.reset()
+            self.addCleanup(quiet_reports.reset)
+            quiet_reports.hold("room-x", "m1", quiet_reports.gist("update from #12 (claude)",
+                                                                  "a; review 1 approved of #10 (codex): b"))
+            line = quiet_reports.pending("room-x")[0]["line"]
+            self.assertEqual(line, "update from #12 (claude): a, review 1 approved of #10 (codex): b")
+            self.assertEqual(threads._quiet_items(line), ["#12"])
+
+    def test_a_main_chat_point_on_the_task_comes_before_its_title(self):
+        """#411 review 1: first match wins, a planned or naming point in the
+        main chat too: Team activity, until a thread's point claims it."""
+        recs = [human("s:0", 0, "a"), human("s:1", 2, "b"), report("s:2", 20, "#20", "Thing (P2)"),
+                po("s:3", 21, "Noted.")]
+        pts = [point("P1", "s:0", "a", state="planned", task="#20"), point("P2", "s:1", "b", 2)]
+        sd = side(sent=[new_row("s:1", key="k1")])
+        out = self.run_(recs, pts, sd)
+        self.assertEqual(out["threads"]["team:activity"]["members"], ["s:2", "s:3"])
+        self.assertEqual(out["placed"], {})
+        # Naming it, not planned: the same.
+        pts[0] = point("P1", "s:0", "#20 is slow")
+        recs[0] = human("s:0", 0, "#20 is slow")
+        out = self.run_(recs, pts, sd)
+        self.assertEqual(out["threads"]["team:activity"]["members"], ["s:2", "s:3"])
+        # A later point in the thread claims it: there.
+        recs = recs[:2] + [human("s:4", 10, "and #20 too")] + recs[2:]
+        pts.append(point("P3", "s:4", "and #20 too", 10))
+        out = self.run_(recs, pts, side(sent=[new_row("s:1", key="k1")], anchors={"P3": "P2"}))
+        self.assertEqual(out["threads"]["P2"]["members"], ["s:1", "s:4", "s:2", "s:3"])
+
+    def test_work_once_in_a_thread_stays_there_when_its_task_changes(self):
+        """#411 review 1 (Do 4): a report and a hub line put in P1 by the
+        task's title stay there after the title names P2 of the main chat."""
+        recs = [human("s:0", 0, "a"), human("s:1", 2, "b"), report("s:2", 20, "#20"), po("s:3", 21, "Noted."),
+                hub("s:4", 30, "idle", "[idle] #20 wait over"), po("s:5", 31, "Carrying on.")]
+        pts = [point("P1", "s:0", "a"), point("P2", "s:1", "b", 2)]
+        sd = side(sent=[new_row("s:0")])
+        first = self.run_(recs, pts, sd, facts={"#20": {"title": "Thing (P1)"}})
+        self.assertEqual(first["threads"]["P1"]["members"], ["s:0", "s:2", "s:3", "s:4", "s:5"])
+        self.assertEqual(first["placed"], {"s:2": "P1", "s:4": "P1"})
+        later = self.run_(recs, pts, {**sd, "placed": first["placed"]}, facts={"#20": {"title": "Thing (P2)"}})
+        self.assertEqual(later["threads"]["P1"]["members"], ["s:0", "s:2", "s:3", "s:4", "s:5"])
+        self.assertNotIn("team:activity", later["threads"])
+        self.assertEqual(later["placed"], {}, "nothing new to keep")
+        # A new report after the change goes where the title says now.
+        more = recs + [report("s:6", 40, "#20")]
+        later = self.run_(more, pts, {**sd, "placed": first["placed"]}, facts={"#20": {"title": "Thing (P2)"}})
+        self.assertEqual(later["threads"]["team:activity"]["members"], ["s:6"])
+        # Without the record, as the rules say now: Team activity.
+        lost = self.run_(recs, pts, sd, facts={"#20": {"title": "Thing (P2)"}})
+        self.assertEqual(lost["threads"]["team:activity"]["members"], ["s:2", "s:3", "s:4", "s:5"])
+
+    def test_placed_work_is_saved_in_the_rooms_record(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(threads, "_dir", lambda: Path(d)):
+            rid = "room-0123abcd"
+            threads.keep_placed(rid, {"s:2": "P1"})
+            threads.keep_placed(rid, {"s:2": "P9", "s:4": "P1"})
+            self.assertEqual(threads.load_side(rid)["placed"], {"s:2": "P1", "s:4": "P1"}, "the first place stays")
+
+    def test_past_the_cap_no_place_of_a_balloon_still_there_is_dropped(self):
+        """#411 review 3: past PLACED_KEEP entries, only the places of
+        balloons gone from the transcript go; saving them again changes
+        nothing, and a task edit after it moves none."""
+        recs = [human("s:0", 0, "a"), human("s:1", 2, "b"), report("s:2", 20, "#20"), po("s:3", 21, "Noted."),
+                hub("s:4", 30, "idle", "[idle] #20 wait over"), po("s:5", 31, "Carrying on.")]
+        pts = [point("P1", "s:0", "a"), point("P2", "s:1", "b", 2)]
+        sd = side(sent=[new_row("s:0")])
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(threads, "_dir", lambda: Path(d)):
+            rid = "room-0123abcd"
+            old = {f"o:{n}": "P1" for n in range(threads.PLACED_KEEP)}
+            present = set(old) | {r["mid"] for r in recs}
+            threads.keep_placed(rid, old, present)
+            first = self.run_(recs, pts, {**sd, "placed": threads.load_side(rid)["placed"]}, facts={"#20": {"title": "Thing (P1)"}})
+            self.assertEqual(first["placed"], {"s:2": "P1", "s:4": "P1"})
+            threads.keep_placed(rid, first["placed"], present)
+            kept = threads.load_side(rid)["placed"]
+            self.assertEqual(len(kept), threads.PLACED_KEEP + 2, "none evicted")
+            self.assertEqual(kept["o:0"], "P1")
+            saves = threads.SAVES.get(rid, 0)
+            threads.keep_placed(rid, first["placed"], present)
+            self.assertEqual(threads.SAVES.get(rid, 0), saves, "saving them again writes nothing")
+            later = self.run_(recs, pts, {**sd, "placed": threads.load_side(rid)["placed"]}, facts={"#20": {"title": "Thing (P2)"}})
+            self.assertEqual(later["threads"]["P1"]["members"], ["s:0", "s:2", "s:3", "s:4", "s:5"])
+            self.assertEqual(later["placed"], {})
+            # A balloon gone from the transcript: its place goes at the next save.
+            threads.keep_placed(rid, {"s:6": "P1"}, present - {"o:0"} | {"s:6"})
+            kept = threads.load_side(rid)["placed"]
+            self.assertNotIn("o:0", kept)
+            self.assertEqual((len(kept), kept["s:2"], kept["s:6"]), (threads.PLACED_KEEP + 2, "P1", "P1"))
+
+    def test_a_report_carrying_quiet_reports_of_another_thread_stays_in_team_activity(self):
+        """#411 review 3: a report's riders count: tasks of two places keep
+        it, and the PO's note after it, in Team activity."""
+        rider = (" | Quiet reports since your last wake (in your chat; nothing to answer): "
+                 "update from #21 (claude): x.")
+        pts = [point("P1", "s:0", "a"), point("P2", "s:1", "b", 2)]
+        sd = side(sent=[new_row("s:0"), new_row("s:1", key="k1")])
+        facts = {"#20": {"title": "Thing (P1)"}, "#21": {"title": "Other (P2)"}}
+        rep = report("s:2", 20, "#20")
+        rep["turn"] = {"role": "user", "text": "[report] done" + rider}
+        recs = [human("s:0", 0, "a"), human("s:1", 2, "b"), rep, po("s:3", 21, "Noted.")]
+        out = self.run_(recs, pts, sd, facts=facts)
+        self.assertEqual(out["threads"]["team:activity"]["members"], ["s:2", "s:3"])
+        self.assertEqual(out["placed"], {})
+        # Riders of the same thread: there.
+        out = self.run_(recs, pts, sd, facts={**facts, "#21": {"title": "Other (P1)"}})
+        self.assertEqual(out["threads"]["P1"]["members"], ["s:0", "s:2", "s:3"])
+        # A rider about no task: Team activity.
+        rep["turn"] = {"role": "user", "text": "[report] done | Quiet reports since your last wake: "
+                                               "This project is now called \u201cA\u201d."}
+        out = self.run_(recs, pts, sd, facts=facts)
+        self.assertEqual(out["threads"]["team:activity"]["members"], ["s:2", "s:3"])
+        # A hub line of a kind about no task carries riders of P1: still Team activity.
+        recs[2] = hub("s:2", 20, "handover", "[handover] rotated" + rider)
+        out = self.run_(recs, pts, sd, facts={**facts, "#21": {"title": "Other (P1)"}})
+        self.assertEqual(out["threads"]["team:activity"]["members"], ["s:2", "s:3"])
+
+    def test_the_tasks_signature_follows_what_places_their_traffic(self):
+        rows = [{"id": "room-a", "no": 20, "title": "Thing (P1)", "specPoints": ["P3"], "poFrom": None,
+                 "status": "running"}]
+        index = [dict(rows[0])]
+        with mock.patch.object(dashboard, "_task_index", lambda: index):
+            first = threads._tasks_sig()
+            index = [dict(rows[0], status="stopped")]
+            self.assertEqual(threads._tasks_sig(), first, "a field the threads do not read")
+            for change in ({"title": "Thing (P2)"}, {"specPoints": ["P4"]},
+                           {"poFrom": {"room": "room-po", "at": 5.0}}):
+                index = [dict(rows[0], **change)]
+                self.assertNotEqual(threads._tasks_sig(), first, change)
+
+
 class ThreadStaysTest(unittest.TestCase):
     """#379: a PO's answer to a point in a thread stays in that thread, its
     question cards, its later replies and the hub's notices about them too."""
@@ -1264,7 +1543,8 @@ class Endpoints(tp._World):
         self.assertNotIn("team:activity", [t["id"] for t in ch["unreadThreads"]])
         self.assertEqual(ch["activity"]["lastWho"], "po")
 
-    def test_work_log_replies_do_not_raise_unread(self):
+    def test_work_log_replies_ring_unread(self):
+        """#411: a task's report and the PO's note on it ring its thread too."""
         now = time.time() + 2
         asked, ids = self.send(self.rid, "How is #12?", key="k2", at=now)
         threads.note_send(self.rid, "", "k2", ids, False, asked, now=now, new=True)
@@ -1277,9 +1557,54 @@ class Endpoints(tp._World):
         tid = next(t for t in idx["threads"] if t not in ("P1", "team:activity"))
         th = threads.thread_view(self.rid, chatroom.get_room(self.rid), tid)
         self.assertEqual(th["thread"]["replies"], 1)
-        self.assertEqual(th["thread"]["unread"], 1, "only the explicit PO answer is new")
+        self.assertEqual(th["thread"]["unread"], 3, "the PO answer, the report and the PO's note")
         self.assertEqual(th["thread"]["workCount"], 2)
         self.assertEqual([m.get("workLog", False) for m in th["items"]], [False, False, True, True])
+
+    def test_a_task_title_change_builds_the_threads_again(self):
+        """#411 review 1: the built index follows the tasks: an [idle] line
+        about #12 goes to P1 once #12's title names P1, though nothing else
+        in the chat changed; once there, it stays."""
+        task = chatroom.create_room("Wider chart", [{"identity": "claude", "agent": "claude"}])["id"]
+        chatroom.patch_room(task, no=12, noProjectId="proj-a")
+        self.add("sid-1", tp.turn("user", "[idle] #12 wait over, on CEO card", self.t0 + 20),
+                 tp.turn("assistant", "Carrying on.", self.t0 + 21))
+        points.sync(self.rid, force=True)
+        idx = threads.build(self.rid)
+        self.assertEqual(idx["of"]["sid-1:4"], ["team:activity"])
+        self.assertIs(threads.build(self.rid), idx, "nothing changed: the same index")
+        chatroom.patch_room(task, title="Wider chart (P1)")
+        idx = threads.build(self.rid)
+        self.assertEqual((idx["of"]["sid-1:4"], idx["of"]["sid-1:5"]), (["P1"], ["P1"]))
+        self.assertEqual(threads.load_side(self.rid)["placed"], {"sid-1:4": "P1"})
+        chatroom.patch_room(task, title="Wider chart")
+        idx = threads.build(self.rid)
+        self.assertEqual(idx["of"]["sid-1:4"], ["P1"], "once in a thread, it stays")
+
+    def test_what_the_new_rules_took_in_is_unread_until_the_thread_is_opened(self):
+        """#411: a chat threaded before the new rules: the report they took
+        into P1 from Team activity (and the PO's note on it) is new there,
+        though the thread was seen after it, until it is opened again."""
+        report_turn = tp.turn("user", "[report] completed from task 'Wider chart (P1)' (#12, claude): shipped",
+                              self.t0 + 20)
+        self.add("sid-1", report_turn, tp.turn("assistant", "Shipped.", self.t0 + 21))
+        points.sync(self.rid, force=True)
+        with threads._LOCK:
+            sd = threads.load_side(self.rid)
+            sd.update(since=self.t0 - 1, tasksSince=0.0)
+            sd["seen"]["P1"] = self.t0 + 30
+            threads._save_side(self.rid, sd)
+        threads.forget()
+        idx = threads.build(self.rid)
+        self.assertEqual(idx["of"]["sid-1:4"], ["P1"])
+        self.assertEqual(idx["via"], {"sid-1:4", "sid-1:5"})
+        ch = http_get(f"/api/room/channel?id={self.rid}")[1]
+        self.assertEqual(ch["threads"]["P1"]["unread"], 2)
+        self.assertGreater(threads.load_side(self.rid)["tasksSince"], self.t0 + 30)
+        threads.mark_seen(self.rid, "P1")
+        threads.build(self.rid)
+        ch = http_get(f"/api/room/channel?id={self.rid}")[1]
+        self.assertEqual(ch["threads"]["P1"]["unread"], 0)
 
     def test_a_reply_from_a_thread_names_its_point_and_new_replies_are_unread(self):
         sent = []
