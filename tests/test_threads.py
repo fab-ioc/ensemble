@@ -1054,6 +1054,64 @@ class TaskHomeTest(unittest.TestCase):
             threads.keep_placed(rid, {"s:2": "P9", "s:4": "P1"})
             self.assertEqual(threads.load_side(rid)["placed"], {"s:2": "P1", "s:4": "P1"}, "the first place stays")
 
+    def test_past_the_cap_no_place_of_a_balloon_still_there_is_dropped(self):
+        """#411 review 3: past PLACED_KEEP entries, only the places of
+        balloons gone from the transcript go; saving them again changes
+        nothing, and a task edit after it moves none."""
+        recs = [human("s:0", 0, "a"), human("s:1", 2, "b"), report("s:2", 20, "#20"), po("s:3", 21, "Noted."),
+                hub("s:4", 30, "idle", "[idle] #20 wait over"), po("s:5", 31, "Carrying on.")]
+        pts = [point("P1", "s:0", "a"), point("P2", "s:1", "b", 2)]
+        sd = side(sent=[new_row("s:0")])
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(threads, "_dir", lambda: Path(d)):
+            rid = "room-0123abcd"
+            old = {f"o:{n}": "P1" for n in range(threads.PLACED_KEEP)}
+            present = set(old) | {r["mid"] for r in recs}
+            threads.keep_placed(rid, old, present)
+            first = self.run_(recs, pts, {**sd, "placed": threads.load_side(rid)["placed"]}, facts={"#20": {"title": "Thing (P1)"}})
+            self.assertEqual(first["placed"], {"s:2": "P1", "s:4": "P1"})
+            threads.keep_placed(rid, first["placed"], present)
+            kept = threads.load_side(rid)["placed"]
+            self.assertEqual(len(kept), threads.PLACED_KEEP + 2, "none evicted")
+            self.assertEqual(kept["o:0"], "P1")
+            saves = threads.SAVES.get(rid, 0)
+            threads.keep_placed(rid, first["placed"], present)
+            self.assertEqual(threads.SAVES.get(rid, 0), saves, "saving them again writes nothing")
+            later = self.run_(recs, pts, {**sd, "placed": threads.load_side(rid)["placed"]}, facts={"#20": {"title": "Thing (P2)"}})
+            self.assertEqual(later["threads"]["P1"]["members"], ["s:0", "s:2", "s:3", "s:4", "s:5"])
+            self.assertEqual(later["placed"], {})
+            # A balloon gone from the transcript: its place goes at the next save.
+            threads.keep_placed(rid, {"s:6": "P1"}, present - {"o:0"} | {"s:6"})
+            kept = threads.load_side(rid)["placed"]
+            self.assertNotIn("o:0", kept)
+            self.assertEqual((len(kept), kept["s:2"], kept["s:6"]), (threads.PLACED_KEEP + 2, "P1", "P1"))
+
+    def test_a_report_carrying_quiet_reports_of_another_thread_stays_in_team_activity(self):
+        """#411 review 3: a report's riders count: tasks of two places keep
+        it, and the PO's note after it, in Team activity."""
+        rider = (" | Quiet reports since your last wake (in your chat; nothing to answer): "
+                 "update from #21 (claude): x.")
+        pts = [point("P1", "s:0", "a"), point("P2", "s:1", "b", 2)]
+        sd = side(sent=[new_row("s:0"), new_row("s:1", key="k1")])
+        facts = {"#20": {"title": "Thing (P1)"}, "#21": {"title": "Other (P2)"}}
+        rep = report("s:2", 20, "#20")
+        rep["turn"] = {"role": "user", "text": "[report] done" + rider}
+        recs = [human("s:0", 0, "a"), human("s:1", 2, "b"), rep, po("s:3", 21, "Noted.")]
+        out = self.run_(recs, pts, sd, facts=facts)
+        self.assertEqual(out["threads"]["team:activity"]["members"], ["s:2", "s:3"])
+        self.assertEqual(out["placed"], {})
+        # Riders of the same thread: there.
+        out = self.run_(recs, pts, sd, facts={**facts, "#21": {"title": "Other (P1)"}})
+        self.assertEqual(out["threads"]["P1"]["members"], ["s:0", "s:2", "s:3"])
+        # A rider about no task: Team activity.
+        rep["turn"] = {"role": "user", "text": "[report] done | Quiet reports since your last wake: "
+                                               "This project is now called \u201cA\u201d."}
+        out = self.run_(recs, pts, sd, facts=facts)
+        self.assertEqual(out["threads"]["team:activity"]["members"], ["s:2", "s:3"])
+        # A hub line of a kind about no task carries riders of P1: still Team activity.
+        recs[2] = hub("s:2", 20, "handover", "[handover] rotated" + rider)
+        out = self.run_(recs, pts, sd, facts={**facts, "#21": {"title": "Other (P1)"}})
+        self.assertEqual(out["threads"]["team:activity"]["members"], ["s:2", "s:3"])
+
     def test_the_tasks_signature_follows_what_places_their_traffic(self):
         rows = [{"id": "room-a", "no": 20, "title": "Thing (P1)", "specPoints": ["P3"], "poFrom": None,
                  "status": "running"}]

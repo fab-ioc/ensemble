@@ -109,7 +109,7 @@ PREVIEW_MAX = 240               # what a reply line quotes of the last reply
 ALSO_SLACK_S = 600              # a reply sent to the chat too: its balloon within this
 SIDE_KEEP = 400                 # thread box sends kept whole (what they hold, to find their balloon)
 NOTICES_KEEP = 2000             # the hub's card notices kept with their send key (#379 review 2)
-PLACED_KEEP = 4000              # the reports and hub lines kept in the thread they were put in (#411 review 1)
+PLACED_KEEP = 4000              # past it, the kept places of balloons gone from the transcript go (#411 review 3)
 YIELD_BUDGET_S = 1.0            # a build stands aside for the pages this long in all (#266)
 SLOW_BUILD_S = 2.0              # a build taking longer says so in the log
 
@@ -275,9 +275,6 @@ def _save_side(room_id: str, side: dict) -> None:
     notices = side.get("notices") or {}
     if len(notices) > NOTICES_KEEP:
         side["notices"] = dict(list(notices.items())[-NOTICES_KEEP:])
-    placed = side.get("placed") or {}
-    if len(placed) > PLACED_KEEP:
-        side["placed"] = dict(list(placed.items())[-PLACED_KEEP:])
     sent = side.get("sent", [])
     if len(sent) > SIDE_KEEP:
         # A reply's place lasts as long as its balloon (#237 reviews 1, 2):
@@ -476,17 +473,24 @@ def _hub_task_refs(kind: str, text: str) -> list[str]:
     their heads (what they quote may name others), another line's task
     names in its prose, and the quiet reports riding on it by their heads;
     none for a line that is not about tasks. "" stands for an item about
-    no task, or not listed: such a line is no one task thread's."""
-    if kind not in TASK_LINE_KINDS:
-        return []
+    no task, or not listed: such a line is no one task thread's. A line of
+    another kind carrying quiet reports (review 3) is about no task itself
+    (""), and about its riders' tasks."""
     own, _, rider = text.partition(_QUIET_RIDER)
+    if kind not in TASK_LINE_KINDS:
+        return list(dict.fromkeys([""] + rider_refs(text))) if rider else []
     if kind == "quiet":
         refs = _quiet_items(own.split(":", 1)[1] if ":" in own else own)
     else:
         refs = points.task_refs(own)
-    if rider:
-        refs += _quiet_items(rider.split(":", 1)[1] if ":" in rider else "")
-    return list(dict.fromkeys(refs))
+    return list(dict.fromkeys(refs + rider_refs(text)))
+
+
+def rider_refs(text: str) -> list[str]:
+    """The tasks of the quiet reports riding on a hub input (#411 review 3):
+    each item's task by its head, "" for one about no task."""
+    rider = (text or "").partition(_QUIET_RIDER)[2]
+    return _quiet_items(rider.split(":", 1)[1] if ":" in rider else "") if rider else []
 
 
 def _point_mentions(text: str) -> list[str]:
@@ -860,6 +864,16 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
         t = homes.pop() if len(homes) == 1 else None
         return t if t in chosen else ""
 
+    def with_riders(r: dict, t: str | None) -> str | None:
+        """``t``, the thread of a hub input's own subject, unless the quiet
+        reports riding on it are about tasks of another place (#411 review
+        3): then None, Team activity (it counts as one place)."""
+        refs = rider_refs(r["turn"].get("text") or "")
+        if not refs:
+            return t
+        homes = {t if t in chosen and t != activity else None} | {task_home(x) for x in refs}
+        return t if len(homes) == 1 else None
+
     for number, r in enumerate(recs, 1):
         if on_message and (number == 1 or number % 50 == 0 or number == len(recs)):
             on_message(number, len(recs))
@@ -944,7 +958,7 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
             elif kind == "report":
                 last_input_work = True
                 ref = r.get("task") or ""
-                tid = keep_place(mid, task_home(ref, r.get("taskTitle") or ""))
+                tid = keep_place(mid, with_riders(r, task_home(ref, r.get("taskTitle") or "")))
                 last_via = tid is not None and task_thread.get(ref) != tid
                 if tid is None:
                     tid = team(r)
@@ -956,7 +970,7 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
                 last = tid
             else:
                 last_input_work = True
-                tid = closed_card(r)
+                tid = with_riders(r, closed_card(r) or None) or ""
                 last_via = not tid
                 tid = keep_place(mid, tid or hub_task_home(r) or None) or ""
                 last_via = last_via and bool(tid)
@@ -1468,7 +1482,7 @@ def build(room_id: str, room: dict | None = None, *, show_progress: bool = True,
             print(f"[threads] {room_id}: card notices not kept: {e!r}", flush=True)
     if out.get("placed") and keep:
         try:
-            keep_placed(room_id, out["placed"])
+            keep_placed(room_id, out["placed"], {r["mid"] for r in recs})
         except Exception as e:      # noqa: BLE001 — kept on the next build
             print(f"[threads] {room_id}: thread work not kept in place: {e!r}", flush=True)
     by_mid = {r["mid"]: r for r in recs}
@@ -2313,10 +2327,12 @@ def keep_notices(room_id: str, keys: dict) -> None:
             _save_side(room_id, side)
 
 
-def keep_placed(room_id: str, placed: dict) -> None:
+def keep_placed(room_id: str, placed: dict, present=None) -> None:
     """The reports and hub lines put in a thread ``{balloon: thread}`` (#411
     review 1): they stay there though their task's title, spec or points
-    change later."""
+    change later. None is dropped while its balloon is in the transcript
+    (review 3); past ``PLACED_KEEP`` entries, those of balloons ``present``
+    no longer holds go."""
     if not _ROOM_ID.fullmatch(room_id or "") or not placed:
         return
     with _LOCK:
@@ -2326,6 +2342,8 @@ def keep_placed(room_id: str, placed: dict) -> None:
                and m not in got}
         if new:
             got.update(new)
+            if len(got) > PLACED_KEEP and present is not None:
+                side["placed"] = {m: t for m, t in got.items() if m in present}
             _save_side(room_id, side)
 
 
