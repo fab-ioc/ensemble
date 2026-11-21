@@ -102,6 +102,9 @@ def hold(po_room_id: str, msg_id: str, line: str, task_id: str = "",
     """Queue one quiet report for the PO of ``po_room_id``."""
     if not po_room_id or not line:
         return
+    # The items of a line are joined by "; ", which an item never holds:
+    # the PO chat's threads tell its items apart by their heads (#411).
+    line = " ".join(line.split()).replace("; ", ", ")
     with _LOCK:
         st = _load()
         st.setdefault(po_room_id, []).append(

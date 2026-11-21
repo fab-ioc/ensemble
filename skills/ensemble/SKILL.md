@@ -1118,7 +1118,14 @@ them; a reply to a `[digest]`, a `[report]`, a `[handover]` or a session note
 sits behind one "Team activity" line with the traffic it answers (measured on
 the Ensemble PO chat: 240 such replies in three days, 110 of them "nothing
 new" or a status note, against 60 answers to the product owner). It is still
-there, one click away, so a status note costs them nothing. The chat keeps in
+there, one click away, so a status note costs them nothing. A task that came
+out of one of their threads is the exception (#411): its reports, the hub's
+lines about it and your note after them go in that thread's Work log. A task
+belongs to the thread of a point planned on it or naming it, else of the
+point its title or spec names (`(P439)`), else of the thread their last
+message was in when you created or started it; a point in the main chat
+keeps it in Team activity. So name the point in the title of a task you make
+from a thread. The chat keeps in
 view (#160) a reply that answers or names one of their open asks (`Re P12,`,
 `P12`), leaves them something ("waiting for you", "you asked", "your pick",
 their name), asks a decision of them, or says something is live, blocked or
