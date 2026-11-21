@@ -2002,6 +2002,13 @@ def _note_po_from(ctx, room: dict) -> None:
     """Keep on a task the PO chat it was created or first started from
     (#411): its reports and the hub's lines about it go to the thread that
     chat was in at that time. Kept once: a later start does not move it."""
+    try:
+        _note_po_from_once(ctx, room)
+    except Exception:   # the task exists: never fail its create or start over this
+        pass
+
+
+def _note_po_from_once(ctx, room: dict) -> None:
     here = ctx["room"]
     if not (room or {}).get("id") or not here.get("id"):
         return
