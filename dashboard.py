@@ -6094,25 +6094,30 @@ def _outside_lines(room_id: str, identity: str) -> list[dict]:
         return []
     return [{"line": f"[{m.get('senderLabel')}] {m.get('text') or ''}".strip(),
              "label": str(m.get("senderLabel")),
-             "ts": float(m.get("typedAt") or m.get("ts") or 0)}
+             "ts": float(m.get("typedAt") or m.get("ts") or 0),
+             "thread": str(m.get("outsideThread") or "")}
             for m in room.get("messages") or []
             if m.get("kind") == "notice" and m.get("noticeKind") == NOTICE_EXTERNAL
             and m.get("typed") and m.get("senderLabel")
             and (not identity or not m.get("agent") or m.get("agent") == identity)]
 
 
-def _outside_turn(lines: list[dict], text: str, at: float | None, label: str = "") -> str:
-    """The label of the typed outside line this turn is (taken from
-    ``lines``, so it claims no second turn), or "": the same text, and a turn
-    from when it went to be typed to a day on, never one before it. With
-    ``label``, only a line of that sender (a journalled turn claiming its own)."""
+def _outside_turn(lines: list[dict], text: str, at: float | None, label: str = "",
+                  thread: str | None = None) -> dict:
+    """The typed outside line this turn is (taken from ``lines``, so it
+    claims no second turn: its label, its thread key, #412), or {}: the same
+    text, and a turn from when it went to be typed to a day on, never one
+    before it. With ``label``, only a line of that sender, and with
+    ``thread`` only one of that thread key ("" none): a journalled turn
+    claiming its own (#412 review 1: the same words of two requests)."""
     text = (text or "").strip()
     for i, ln in enumerate(lines):
         if (ln["line"] == text and at and (not label or ln["label"] == label)
+                and (thread is None or ln["thread"] == thread)
                 and ln["ts"] - OUTSIDE_CLOCK_SKEW_S <= at <= ln["ts"] + OUTSIDE_TYPED_WITHIN_S):
             del lines[i]
-            return ln["label"]
-    return ""
+            return ln
+    return {}
 
 
 def classify_turns(turns: list[dict], *, room_id: str = "", identity: str = "",
@@ -6167,18 +6172,19 @@ def classify_turns(turns: list[dict], *, room_id: str = "", identity: str = "",
         # same words typed later by the person are not read as a second one.
         if t.get("role") == "user" and t.get("kind") == NOTICE_EXTERNAL:
             _outside_turn(outside, t.get("text") or "", _turn_epoch(t.get("timestamp")),
-                          str(t.get("senderLabel") or ""))
+                          str(t.get("senderLabel") or ""), str(t.get("outsideThread") or ""))
     last = None
     for t in out:
         if t.get("role") == "user":
-            label = (_outside_turn(outside, t.get("text") or "", _turn_epoch(t.get("timestamp")))
-                     if "kind" not in t and outside else "")
-            if label:
+            line = (_outside_turn(outside, t.get("text") or "", _turn_epoch(t.get("timestamp")))
+                    if "kind" not in t and outside else {})
+            if line:
                 # An outside sender's line (#357) the journal does not hold
                 # (its write failed): read from the room's stored line, never
-                # the person's.
+                # the person's, with the thread it carries (#412).
                 t.update(_input_sender_info(t.get("text") or "",
-                                            {"kind": NOTICE_EXTERNAL, "senderLabel": label}))
+                                            {"kind": NOTICE_EXTERNAL, "senderLabel": line["label"],
+                                             **({"outsideThread": line["thread"]} if line.get("thread") else {})}))
             if "kind" not in t:
                 if modern_session:
                     # A contemporary journal proves this session uses explicit
@@ -20721,12 +20727,23 @@ class Handler(BaseHTTPRequestHandler):
             return text
 
     def _room_notify(self, data) -> None:
-        """POST /api/room/notify {roomId, sender, text, key?}: a line from an
-        outside sender (#357; see NOTICE_EXTERNAL). Only a program on this
-        machine may post one, never through a proxy (_is_local, the rule of
-        #341), not with the access token either: the token is the person's,
-        who writes in the chat. Not a page on another site, nor a task's agent
-        (it would put words in an outsider's mouth)."""
+        """POST /api/room/notify {roomId, sender, text, key?, thread?}: a line
+        from an outside sender (#357; see NOTICE_EXTERNAL). Only a program on
+        this machine may post one, never through a proxy (_is_local, the rule
+        of #341), not with the access token either: the token is the
+        person's, who writes in the chat. Not a page on another site, nor a
+        task's agent (it would put words in an outsider's mouth).
+
+        ``thread`` (#412, the CEO's P442), only into a project's PO chat:
+        ``{"key": "<1-64 of A-Z a-z 0-9 _ ->", "title": "<at most 80
+        characters>"}``. The first line with a key opens a thread of that
+        chat, named by its title (threads.outside_title: the sender's label
+        put before it unless it starts with that label's first word); a later line with the same key joins it, its
+        title then optional and the first one kept. The PO's reply to it,
+        the tasks the PO creates or starts from it and their reports go to
+        that thread (threads.py). It makes no point. A bad key or title is
+        refused (400 bad_thread). ``key`` (the line's own) still makes a
+        line with a thread posted once: a duplicate is a duplicate."""
         if not self._is_local():
             self._send_json(403, {"error": "local_only",
                                   "message": "Only a program on the hub's machine can post an "
@@ -20758,10 +20775,26 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(400, {"error": "text_too_long",
                                   "message": f"The text is longer than {NOTIFY_TEXT_MAX} characters."})
             return
+        thread = None
+        if "thread" in data:        # #412 review 1: a null thread is refused, not ignored
+            tkey, ttitle, bad = threads.outside_refusal(data.get("thread"))
+            if bad:
+                self._send_json(400, {"error": "bad_thread", "message": bad})
+                return
+            thread = {"key": tkey, "title": ttitle}
         room_full = chatroom.get_room(rid, public=False)
         if room_full is None:
             self._send_json(404, {"error": "no_such_room"})
             return
+        if thread is not None:
+            if not threads.is_threaded(rid):
+                self._send_json(400, {"error": "bad_thread",
+                                      "message": "Only a project's PO chat has threads."})
+                return
+            if not thread["title"] and not threads.outside_known(rid, thread["key"]):
+                self._send_json(400, {"error": "bad_thread",
+                                      "message": "thread.title is needed on the first line of a thread."})
+                return
         now = time.time()
         with _NOTIFY_LOCK:
             held = _notify_reserve(rid, sender, key, now)
@@ -20785,25 +20818,35 @@ class Handler(BaseHTTPRequestHandler):
                                              f"Try again later."})
             return
         try:
-            self._notify_post(rid, sender, text, key, now, room_full)
+            self._notify_post(rid, sender, text, key, now, room_full, thread)
         finally:
             with _NOTIFY_LOCK:
                 _NOTIFY_INFLIGHT.discard((rid, key))
 
     def _notify_post(self, rid: str, sender: str, text: str, key: str, now: float,
-                     room_full: dict) -> None:
-        """POST /api/room/notify past its checks: type the line, keep it, answer."""
+                     room_full: dict, thread: dict | None = None) -> None:
+        """POST /api/room/notify past its checks: type the line, keep it,
+        answer. ``thread`` (#412): kept in the chat's thread record before
+        the line is typed, and carried by its provenance and its notice."""
         ident, woken, failed = "", False, None
+        on = {"outsideThread": thread["key"]} if thread else {}
         try:
+            if thread:
+                try:
+                    threads.open_outside(rid, thread["key"], thread["title"], sender, now)
+                except Exception as e:      # noqa: BLE001 — its key rides on the line itself
+                    print(f"[notify] {rid}: thread {thread['key']} not recorded: {e!r}", flush=True)
             ident = chatroom.po_identity(room_full)
             if ident:
                 try:
                     woken = bool(self._ring(rid, [ident], f"[{sender}] {text}", provenance={
-                        "kind": NOTICE_EXTERNAL, "senderLabel": sender}))
+                        "kind": NOTICE_EXTERNAL, "senderLabel": sender, **on}))
                 except Exception as e:      # noqa: BLE001 — the line is kept anyway
                     print(f"[notify] {rid}: {ident} not woken: {e!r}", flush=True)
             msg = chatroom.post_notice(rid, rotation.SENDER, text,
-                                       {"noticeKind": NOTICE_EXTERNAL, "senderLabel": sender,
+                                       {"noticeKind": NOTICE_EXTERNAL, "senderLabel": sender, **on,
+                                        **({"outsideTitle": threads.outside_title(thread["title"], sender)}
+                                           if thread and thread["title"] else {}),
                                         "typed": woken, "typedAt": now, **({"agent": ident} if ident else {})})
         except Exception as e:      # noqa: BLE001 — answered, never a dropped request
             print(f"[notify] {rid}: not stored: {e!r}", flush=True)
@@ -20825,7 +20868,7 @@ class Handler(BaseHTTPRequestHandler):
                                 "The line could not be kept in the chat and was not typed; "
                                 "it can be sent again.")})
             return
-        self._send_json(200, {"ok": True, "message": msg, "typed": woken, "agent": ident,
+        self._send_json(200, {"ok": True, "message": msg, "typed": woken, "agent": ident, **on,
                               **({} if woken else {"note": "The agent is not running: the line "
                                                            "is in the chat, not typed, and the "
                                                            "agent is not started for it."})})

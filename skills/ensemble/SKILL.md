@@ -898,6 +898,13 @@ answered "Ship it?": Yes`, and the chat shows it as a hub line with that label.
   product owner answers or closes it, whatever an outside line says about it.
 - **A stopped agent is not started for it.** The line stays in the chat, and
   you see it there when you next run.
+- **A line may carry a thread** (in a project's PO chat). A sender relaying
+  requests (one per Discord message, say) gives each request a thread: its
+  first line opens a thread in your chat, named by its title, and its later
+  lines join that thread. Answer it as you would any line: your reply goes into
+  its thread, and so do the tasks you create or start while answering it and
+  their reports. Keep to one request per reply, so each answer lands in its own
+  thread. Such a thread makes no point: there is no `Re Pn` to write for it.
 
 **After a move to another machine, `ensemble_move_check` (POs).** The hub runs
 the move check at every start: code folders, task folders, task worktrees whose

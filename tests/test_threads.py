@@ -1333,6 +1333,115 @@ class ThreadStaysTest(unittest.TestCase):
                          "only the hub's own line")
 
 
+SWANN = "Swann bot (Discord)"
+
+
+def outside(mid, ts, text, key="k1", lost=False):
+    """An outside sender's line carrying a thread (#412); ``lost``: its
+    provenance row gone (read as a plain line)."""
+    line = f"[{SWANN}] {text}"
+    if lost:
+        return human(mid, ts, line)
+    return {"mid": mid, "sid": "s", "role": "user", "kind": "external", "ts": T0 + ts,
+            "turn": {"role": "user", "text": line, "senderType": "external", "senderLabel": SWANN,
+                     "outsideThread": key},
+            "outside": key}
+
+
+def outside_rec(title="Swann: SPX puts", mids=()):
+    return {"title": title, "sender": SWANN, "at": T0, "mids": list(mids)}
+
+
+class OutsideThreadTest(unittest.TestCase):
+    """#412: an outside line with a thread key opens a thread of the PO chat
+    (its title, the PO's reply, the tasks made from it and their reports);
+    the same key joins it; it makes no point."""
+
+    def run_(self, recs, pts=(), sd=None, born=None):
+        return threads.assign(recs, {"points": list(pts)}, sd or side(outside={"k1": outside_rec()}),
+                              lambda ref: "", task_facts=lambda ref: None, born=born)
+
+    def test_a_new_key_opens_a_thread_the_po_answers_in(self):
+        recs = [outside("s:0", 0, "SPX 0DTE puts at 10 delta?"), po("s:1", 5, "Looking into it.")]
+        out = self.run_(recs)
+        th = out["threads"]["m:s:0"]
+        self.assertEqual((th["title"], th["outside"], th["members"]), ("Swann: SPX puts", "k1", ["s:0", "s:1"]))
+        self.assertEqual(out["work"], set(), "a reply, not Work log")
+        self.assertEqual(out["outside"], {"s:0": "k1"})
+        self.assertEqual(threads._channel({**out, "recs": recs}), ["s:0"])
+        # No record of the key (its write failed): named from the line.
+        out = self.run_(recs, sd=side())
+        self.assertEqual(out["threads"]["m:s:0"]["title"], f"{SWANN}: SPX 0DTE puts at 10 delta?")
+
+    def test_the_same_key_joins_and_another_key_opens_another(self):
+        sd = side(outside={"k1": outside_rec(), "k2": outside_rec("Swann: NDX calls")})
+        recs = [outside("s:0", 0, "SPX?"), po("s:1", 5, "Looking."),
+                outside("s:2", 10, "NDX?", key="k2"), po("s:3", 11, "On it."),
+                outside("s:4", 20, "and the SPX greeks?"), po("s:5", 21, "Here they are.")]
+        out = self.run_(recs, sd=sd)
+        self.assertEqual(out["threads"]["m:s:0"]["members"], ["s:0", "s:1", "s:4", "s:5"])
+        self.assertEqual(out["threads"]["m:s:2"]["members"], ["s:2", "s:3"])
+        self.assertEqual(out["threads"]["m:s:2"]["title"], "Swann: NDX calls")
+
+    def test_a_line_without_a_key_stays_as_before(self):
+        line = {**outside("s:0", 0, "hello"), "outside": None}
+        line["turn"].pop("outsideThread")
+        out = self.run_([line, po("s:1", 5, "Hi.")])
+        self.assertFalse(any(t.get("outside") for t in out["threads"].values()))
+        self.assertEqual(out["outside"], {})
+        self.assertNotIn("m:s:0", out["threads"])
+
+    def test_it_makes_no_point_and_the_persons_message_after_it_is_theirs(self):
+        recs = [outside("s:0", 0, "SPX?"), po("s:1", 5, "Looking."),
+                human("s:2", 10, "unrelated"), po("s:3", 11, "Re P1: ok", re_=["P1"])]
+        out = self.run_(recs, [point("P1", "s:2", "unrelated", 10)])
+        self.assertEqual(out["threads"]["m:s:0"]["members"], ["s:0", "s:1"])
+        self.assertEqual(out["of"]["s:2"], ["P1"])
+        self.assertNotIn("s:3", out["threads"]["m:s:0"]["members"])
+
+    def test_a_task_made_from_it_reports_in_it(self):
+        recs = [outside("s:0", 0, "SPX?"), po("s:1", 5, "I made #20 for it."),
+                report("s:2", 20, "#20"), po("s:3", 21, "Noted.")]
+        out = self.run_(recs, born=[(T0 + 6, "#20")])
+        self.assertEqual(out["threads"]["m:s:0"]["members"], ["s:0", "s:1", "s:2", "s:3"])
+        self.assertEqual(out["work"], {"s:2", "s:3"})
+        self.assertNotIn("team:activity", out["threads"])
+
+    def test_a_kept_balloon_stays_in_its_thread_when_its_provenance_is_gone(self):
+        sd = side(outside={"k1": outside_rec(mids=["s:0", "s:2"])})
+        recs = [outside("s:0", 0, "SPX?", lost=True), po("s:1", 5, "Looking."),
+                outside("s:2", 10, "and greeks?", lost=True), po("s:3", 11, "Here.")]
+        out = self.run_(recs, sd=sd)
+        self.assertEqual(out["threads"]["m:s:0"]["members"], ["s:0", "s:1", "s:2", "s:3"])
+        self.assertEqual(out["outside"], {}, "already kept")
+
+    def test_a_kept_root_opens_its_thread_however_many_lines_came_after(self):
+        """Review 1: the root is kept apart from the later lines, so a lost
+        provenance never moves the thread to a later balloon."""
+        sd = side(outside={"k1": {**outside_rec(), "root": "s:0", "mids": []}})
+        recs = [outside("s:0", 0, "SPX?", lost=True), po("s:1", 5, "Looking."),
+                outside("s:2", 10, "and greeks?"), po("s:3", 11, "Here.")]
+        out = self.run_(recs, sd=sd)
+        self.assertEqual(out["threads"]["m:s:0"]["members"], ["s:0", "s:1", "s:2", "s:3"])
+        self.assertEqual(out["outside"], {"s:2": "k1"})
+
+    def test_the_title_says_the_sender(self):
+        self.assertEqual(threads.outside_title("Swann: SPX puts", SWANN), "Swann: SPX puts")
+        self.assertEqual(threads.outside_title("swann asks", SWANN), "swann asks")
+        self.assertEqual(threads.outside_title("SPX  puts", SWANN), f"{SWANN}: SPX puts")
+        self.assertEqual(threads.outside_title("Swanny", SWANN), f"{SWANN}: Swanny")
+        self.assertEqual(threads.outside_title("", SWANN), SWANN)
+
+    def test_a_bad_thread_is_refused(self):
+        ok = threads.outside_refusal
+        self.assertEqual(ok({"key": "1234567890", "title": " Swann:  x "}), ("1234567890", "Swann: x", ""))
+        self.assertEqual(ok({"key": "k-1_A"}), ("k-1_A", "", ""))
+        for bad in ("k", ["k"], {"title": "x"}, {"key": ""}, {"key": "a b"}, {"key": "k" * 65},
+                    {"key": 5}, {"key": "k", "title": 5}, {"key": "k", "title": "x" * 81},
+                    {"key": "k", "title": "a​b"}, {"key": "../x"}):
+            self.assertTrue(ok(bad)[2], bad)
+
+
 class PoRoomsTest(unittest.TestCase):
     def test_the_po_chats_are_read_once_per_ttl_and_again_when_a_po_changes(self):
         threads.forget()
@@ -1420,6 +1529,20 @@ class SideTest(unittest.TestCase):
         sd = threads.load_side(rid)
         self.assertEqual([(a["thread"], a["key"], a.get("new")) for a in sd["sent"]], [("", "kn", True)])
         self.assertEqual(sd["anchors"], {}, "a new thread has no thread to anchor in yet")
+
+    def test_outside_balloons_are_kept_while_shown_and_the_root_apart(self):
+        rid = "room-abc129"
+        threads.open_outside(rid, "k1", "Swann: x", "Swann bot", T0)
+        threads.keep_outside(rid, {"s:0": "k1", "s:2": "k1"}, {"s:0", "s:2"})
+        rec = threads.load_side(rid)["outside"]["k1"]
+        self.assertEqual((rec["root"], rec["mids"]), ("s:0", ["s:2"]))
+        many = {f"s:{i}": "k1" for i in range(4, 4 + threads.OUTSIDE_MIDS_KEEP)}
+        threads.keep_outside(rid, many, {"s:0", "s:2", *many})
+        self.assertEqual(len(threads.load_side(rid)["outside"]["k1"]["mids"]), threads.OUTSIDE_MIDS_KEEP + 1,
+                         "none dropped while its balloon is shown")
+        threads.keep_outside(rid, {"s:9999": "k1"}, {"s:0", "s:9999"})
+        rec = threads.load_side(rid)["outside"]["k1"]
+        self.assertEqual((rec["root"], rec["mids"]), ("s:0", ["s:9999"]), "past the cap, those gone go")
 
     def test_since_is_set_once(self):
         rid = "room-abc124"
@@ -1542,6 +1665,55 @@ class Endpoints(tp._World):
         # Team activity is in the channel itself (#234): never in the Threads list.
         self.assertNotIn("team:activity", [t["id"] for t in ch["unreadThreads"]])
         self.assertEqual(ch["activity"]["lastWho"], "po")
+
+    def test_an_outside_line_opens_its_thread_and_keeps_it_on_a_rebuild(self):
+        """#412: a Discord request is a thread of the PO chat, named by its
+        title, its first line and the PO's reply ringing it; a restart and a
+        rebuild without its provenance keep it."""
+        now = time.time() + 2
+        self.assertTrue(threads.open_outside(self.rid, "1234", "Swann: SPX puts", SWANN, now))
+        self.assertFalse(threads.open_outside(self.rid, "1234", "Swann: other", SWANN, now + 5))
+        line = tp.turn("user", f"[{SWANN}] SPX 0DTE puts at 10 delta?", now)
+        line.update(kind="external", senderType="external", senderLabel=SWANN, outsideThread="1234")
+        self.add("sid-1", line, tp.turn("assistant", "Looking into it.", now + 1))
+        points.sync(self.rid, force=True)
+        idx = threads.build(self.rid, show_progress=False)
+        tid = "m:sid-1:4"
+        self.assertEqual(idx["of"]["sid-1:4"], [tid])
+        self.assertEqual(idx["of"]["sid-1:5"], [tid])
+        th = threads.thread_view(self.rid, chatroom.get_room(self.rid), tid)["thread"]
+        self.assertEqual((th["title"], th["replies"], th["unread"]), ("Swann: SPX puts", 1, 2),
+                         "nobody here wrote its first line: it rings too")
+        kept = threads.load_side(self.rid)["outside"]["1234"]
+        self.assertEqual((kept["root"], kept["mids"]), ("sid-1:4", []))
+        ch = http_get(f"/api/room/channel?id={self.rid}")[1]
+        self.assertIn(("sid-1:4", [tid]), [(i["mid"], i.get("thr")) for i in ch["items"]])
+        self.assertNotIn("sid-1:5", [i["mid"] for i in ch["items"]], "the reply is in the thread")
+        self.assertEqual(len(points.load(self.rid)["points"]), 1, "no point but setUp's")
+        # A restart, the journal's row gone: the line reads as a plain one.
+        for k in ("kind", "senderType", "senderLabel", "outsideThread"):
+            line.pop(k)
+        threads.forget()
+        self.gen += 1
+        idx = threads.build(self.rid, show_progress=False)
+        self.assertEqual((idx["of"]["sid-1:4"], idx["of"]["sid-1:5"]), ([tid], [tid]))
+        self.assertEqual(idx["threads"][tid]["title"], "Swann: SPX puts")
+
+    def test_an_outside_request_before_the_first_build_is_new(self):
+        """Review 1: a chat first threaded after the request came in still
+        counts it as new."""
+        rid = self.solo_room("sid-9")
+        now = time.time()
+        threads.open_outside(rid, "77", "Swann: first", SWANN, now)
+        line = tp.turn("user", f"[{SWANN}] first request", now + 1)
+        line.update(kind="external", senderType="external", senderLabel=SWANN, outsideThread="77")
+        self.add("sid-9", line)
+        with mock.patch.object(threads, "is_threaded", lambda r, projects=None: r in (rid, self.rid)), \
+                mock.patch.object(threads.time, "time", lambda: now + 30):
+            idx = threads.build(rid, show_progress=False)
+            th = threads.thread_view(rid, chatroom.get_room(rid), "m:sid-9:0")["thread"]
+        self.assertEqual(idx["of"]["sid-9:0"], ["m:sid-9:0"])
+        self.assertEqual(th["unread"], 1)
 
     def test_work_log_replies_ring_unread(self):
         """#411: a task's report and the PO's note on it ring its thread too."""
