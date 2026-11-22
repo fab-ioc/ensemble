@@ -210,6 +210,17 @@ class Notify(unittest.TestCase):
         with mock.patch.object(dashboard.time, "time", lambda: later):
             self.assertEqual(self.notify("an hour on")[0], 200)
 
+    def test_a_sender_may_have_its_own_hourly_limit(self):
+        with mock.patch.dict(dashboard.NOTIFY_PER_HOUR_FOR, {(self.rid, "fast bot"): 25}):
+            for i in range(25):
+                self.assertEqual(self.notify(f"line {i}", sender="Fast Bot")[0], 200)
+            status, r = self.notify("one too many", sender="Fast Bot")
+            self.assertEqual((status, r["error"]), (429, "rate_limited"))
+            self.assertIn("25", r["message"])
+        self.assertEqual(dashboard.notify_per_hour("room-3f303104", "Swann bot (Discord)"), 60)
+        self.assertEqual(dashboard.notify_per_hour("room-other", "Swann bot (Discord)"),
+                         dashboard.NOTIFY_PER_HOUR, "only into that room")
+
     # ---- the agent ----
 
     def test_the_agent_is_typed_the_sender_and_the_text(self):
