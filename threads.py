@@ -584,17 +584,25 @@ def room_cards(room: dict | None) -> list[dict]:
     return out
 
 
+# An outside title that already names its poster: "fab: …", "Jean Paul: …".
+OUTSIDE_POSTER = re.compile(r"[^\W\d_][\w.'-]*(?: [^\W\d_][\w.'-]*)?: \S")
+
+
 def outside_title(title: str, sender: str) -> str:
     """An outside thread's name (#412): its title, which says who it is
     from. Kept as given when it starts with the sender label's first word
-    ("Swann: SPX puts…" from "Swann bot (Discord)"); else the label is put
-    before it ("Swann bot (Discord): SPX puts…")."""
+    ("Swann: SPX puts…" from "Swann bot (Discord)") or already names its
+    poster, a name of one or two words and a colon ("fab: Test request",
+    opTen P1329); else the label is put before it ("Swann bot (Discord):
+    SPX puts…")."""
     t = " ".join(str(title or "").split())
     who = " ".join(str(sender or "").split())
     if not who:
         return t
     first = re.match(r"\w+", who)
     if first and re.match(re.escape(first.group(0)) + r"(?!\w)", t, re.I):
+        return t
+    if OUTSIDE_POSTER.match(t):
         return t
     return f"{who}: {t}" if t else who
 

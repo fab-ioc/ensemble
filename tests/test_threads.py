@@ -1431,6 +1431,10 @@ class OutsideThreadTest(unittest.TestCase):
         self.assertEqual(threads.outside_title("SPX  puts", SWANN), f"{SWANN}: SPX puts")
         self.assertEqual(threads.outside_title("Swanny", SWANN), f"{SWANN}: Swanny")
         self.assertEqual(threads.outside_title("", SWANN), SWANN)
+        self.assertEqual(threads.outside_title("fab: Test request", SWANN), "fab: Test request")
+        self.assertEqual(threads.outside_title("Jean Paul: SPX", SWANN), "Jean Paul: SPX")
+        self.assertEqual(threads.outside_title("SPX puts at 10:30", SWANN), f"{SWANN}: SPX puts at 10:30")
+        self.assertEqual(threads.outside_title("one two three: x", SWANN), f"{SWANN}: one two three: x")
 
     def test_a_bad_thread_is_refused(self):
         ok = threads.outside_refusal
