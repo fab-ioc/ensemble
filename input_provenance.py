@@ -122,7 +122,7 @@ def records(room_id: str) -> list[dict]:
 
 _PUBLIC_FIELDS = ("kind", "senderType", "senderId", "senderLabel", "reportKind",
                   "taskTitle", "taskId", "reporter", "fromProject", "fromProjectName",
-                  "poKind")
+                  "poKind", "outsideThread")
 
 
 def _metadata(info: dict) -> dict:

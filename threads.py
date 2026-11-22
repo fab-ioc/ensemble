@@ -58,6 +58,16 @@ choice"; one pass over the chat's balloons, oldest first):
   question, "is live" or a line for the person after them is in the main
   chat.
 
+* An outside sender's line (``POST /api/room/notify``, #357) that carries a
+  thread (#412, the CEO's P442: a request from Discord is a thread of its
+  own) opens that thread in the PO chat, named by its title (which says
+  the sender), and a later line with the same thread key joins it. It is
+  a thread as the person's are: the PO's reply to it, the tasks the PO
+  creates or starts from it (``poFrom``) and their reports go there, and
+  its lines ring it. It makes no point. Kept by key in the record
+  (``outside``), with the balloons found for it, so a rebuild finds them
+  though the provenance journal has dropped their rows.
+
 The person's own reply in a thread can also be shown in the chat ("Also send
 to chat").
 
@@ -72,8 +82,10 @@ the thread is opened after they first ran (``tasksSince``).
 was first threaded, when each thread was last opened, the anchors of replies
 sent from a thread, and every reply sent from a thread's box (``sent``: its
 key, its thread, whether it goes to the chat too, what it holds, and its
-balloon once found; #237), and the reports and hub lines put in a thread
-(``placed``, #411). The threads themselves are never stored.
+balloon once found; #237), the reports and hub lines put in a thread
+(``placed``, #411), and the outside senders' threads by key (``outside``:
+title, sender, when, their balloons; #412). The threads themselves are
+never stored.
 
 Bound to the dashboard module like ``points``: nothing reads ``_d`` at import.
 """
@@ -110,6 +122,9 @@ ALSO_SLACK_S = 600              # a reply sent to the chat too: its balloon with
 SIDE_KEEP = 400                 # thread box sends kept whole (what they hold, to find their balloon)
 NOTICES_KEEP = 2000             # the hub's card notices kept with their send key (#379 review 2)
 PLACED_KEEP = 4000              # past it, the kept places of balloons gone from the transcript go (#411 review 3)
+OUTSIDE_KEY = re.compile(r"[A-Za-z0-9_-]{1,64}")    # an outside thread's key (#412): the request's id
+OUTSIDE_TITLE_MAX = 80          # an outside thread's title, at most
+OUTSIDE_MIDS_KEEP = 500         # the balloons kept for one outside thread, at most
 YIELD_BUDGET_S = 1.0            # a build stands aside for the pages this long in all (#266)
 SLOW_BUILD_S = 2.0              # a build taking longer says so in the log
 
@@ -211,7 +226,7 @@ def _path(room_id: str) -> Path:
 
 def _empty_side() -> dict:
     return {"version": 1, "since": 0.0, "tasksSince": 0.0, "seen": {}, "anchors": {}, "also": [], "sent": [],
-            "archived": {}, "deleted": {}, "names": {}, "notices": {}, "placed": {}}
+            "archived": {}, "deleted": {}, "names": {}, "notices": {}, "placed": {}, "outside": {}}
 
 
 def load_side(room_id: str) -> dict:
@@ -260,6 +275,13 @@ def load_side(room_id: str) -> dict:
             if isinstance(d.get("placed"), dict):
                 side["placed"] = {m: t for m, t in d["placed"].items()
                                   if isinstance(m, str) and isinstance(t, str) and t}
+            # #412: the outside senders' threads ({key: {title, sender, at, mids}}).
+            if isinstance(d.get("outside"), dict):
+                side["outside"] = {k: {"title": str(v.get("title") or ""), "sender": str(v.get("sender") or ""),
+                                       "at": _num(v.get("at")),
+                                       "mids": [m for m in v.get("mids") or [] if isinstance(m, str)]}
+                                   for k, v in d["outside"].items()
+                                   if isinstance(k, str) and OUTSIDE_KEY.fullmatch(k) and isinstance(v, dict)}
             for k in ("also", "sent"):
                 if isinstance(d.get(k), list):
                     side[k] = [x for x in d[k] if isinstance(x, dict)]
@@ -346,6 +368,8 @@ def _rec(sid: str, mid: str, t: dict) -> dict:
     elif kind == "report":
         r["task"] = points.task_ref(t.get("taskId") or "")
         r["taskTitle"] = t.get("taskTitle") or ""
+    elif kind == "external" and OUTSIDE_KEY.fullmatch(str(t.get("outsideThread") or "")):
+        r["outside"] = str(t["outsideThread"])      # #412: the thread it opens or joins
     return r
 
 
@@ -557,6 +581,90 @@ def room_cards(room: dict | None) -> list[dict]:
                     "tags": [card_tag(str(m["id"]), n) for n in range(len(m["asks"]))]})
     out.sort(key=lambda c: c["ts"])
     return out
+
+
+def outside_title(title: str, sender: str) -> str:
+    """An outside thread's name (#412): its title, which says who it is
+    from. Kept as given when it starts with the sender label's first word
+    ("Swann: SPX puts…" from "Swann bot (Discord)"); else the label is put
+    before it ("Swann bot (Discord): SPX puts…")."""
+    t = " ".join(str(title or "").split())
+    who = " ".join(str(sender or "").split())
+    if not who:
+        return t
+    first = re.match(r"\w+", who)
+    if first and re.match(re.escape(first.group(0)) + r"(?!\w)", t, re.I):
+        return t
+    return f"{who}: {t}" if t else who
+
+
+def outside_refusal(thread) -> tuple[str, str, str]:
+    """A notify's ``thread`` (#412) as ``(key, title, why)``: ``why`` is ""
+    when it may open or join a thread, else the one-line reason it may not.
+    The title may be left out of a line joining a thread already open."""
+    if not isinstance(thread, dict):
+        return "", "", "thread is an object {key, title}."
+    key, title = thread.get("key"), thread.get("title")
+    if not isinstance(key, str) or not OUTSIDE_KEY.fullmatch(key):
+        return "", "", "thread.key is 1 to 64 letters, digits, '-' or '_'."
+    if title is None:
+        return key, "", ""
+    if not isinstance(title, str):
+        return key, "", "thread.title is a string."
+    flat = " ".join(title.split())
+    if len(flat) > OUTSIDE_TITLE_MAX:
+        return key, "", f"thread.title is longer than {OUTSIDE_TITLE_MAX} characters."
+    if not flat.isprintable():
+        return key, "", "thread.title holds a control or non-printing character."
+    return key, flat, ""
+
+
+def outside_known(room_id: str, key: str) -> bool:
+    """Whether the room's record holds the outside thread ``key`` (#412)."""
+    return key in (load_side(room_id).get("outside") or {})
+
+
+def open_outside(room_id: str, key: str, title: str, sender: str, now: float | None = None) -> bool:
+    """An outside line carrying the thread ``key`` is about to be typed
+    (#412): the record keeps the thread, named ``title`` with its sender
+    (:func:`outside_title`), the first time; a later line keeps that name.
+    True when it was new."""
+    with _LOCK:
+        side = load_side(room_id)
+        got = side.setdefault("outside", {})
+        rec = got.get(key)
+        if rec is not None:
+            if not rec.get("title") and title:
+                # Kept from its balloon alone (keep_outside): named now.
+                rec.update(title=outside_title(title, sender), sender=sender)
+                _save_side(room_id, side)
+            return False
+        got[key] = {"title": outside_title(title, sender), "sender": sender,
+                    "at": time.time() if now is None else now, "mids": []}
+        _save_side(room_id, side)
+        return True
+
+
+def keep_outside(room_id: str, found: dict) -> None:
+    """The balloons found for outside threads ``{balloon: key}`` (#412),
+    kept for good: a rebuild finds them though the provenance journal no
+    longer holds their rows."""
+    if not _ROOM_ID.fullmatch(room_id or "") or not found:
+        return
+    with _LOCK:
+        side = load_side(room_id)
+        got = side.setdefault("outside", {})
+        changed = False
+        for mid, key in found.items():
+            rec = got.get(key)
+            if rec is None:
+                # A line whose record was lost: kept now, named on its balloon.
+                rec = got[key] = {"title": "", "sender": "", "at": 0.0, "mids": []}
+            if mid not in rec["mids"]:
+                rec["mids"] = (rec["mids"] + [mid])[-OUTSIDE_MIDS_KEEP:]
+                changed = True
+        if changed:
+            _save_side(room_id, side)
 
 
 def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=None,
@@ -816,6 +924,37 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
         if tid in chosen and tid != activity:
             placed[mid] = tid
         return tid
+    # #412: the outside senders' threads by key, and the balloons the record
+    # keeps for them (a rebuild finds them though the provenance journal
+    # dropped their rows). ``outside`` out: those found now ({balloon: key}).
+    kept_outside = side.get("outside") or {}
+    outside_of = {m: k for k, v in kept_outside.items() if isinstance(v, dict) for m in v.get("mids") or ()}
+    outside_tid: dict[str, str] = {}
+    outside_found: dict[str, str] = {}
+
+    def outside_line(r: dict, okey: str) -> str:
+        """An outside sender's line carrying a thread (#412): the first of
+        its key opens that thread (one the person's are like: its replies,
+        the tasks made from it), a later one joins it."""
+        tid = outside_tid.get(okey)
+        if tid not in threads:
+            rec = kept_outside.get(okey) or {}
+            turn = r["turn"]
+            label = str(turn.get("senderLabel") or "")
+            text = turn.get("text") or ""
+            if label and text.startswith(f"[{label}] "):
+                text = text[len(label) + 3:]
+            tid = "m:" + r["mid"]
+            if tid not in threads:
+                new(tid, r, rec.get("title") or outside_title(_words(text), label) or "Thread")
+            threads[tid]["outside"] = okey
+            chosen.add(tid)
+            outside_tid[okey] = tid
+        join(tid, r)
+        if r["mid"] not in outside_of:
+            outside_found[r["mid"]] = okey
+        return tid
+
     key_of = {m: k for k, m in (claimed or {}).items() if isinstance(k, str)}
     notice_keys: dict[str, dict] = {}
     tag_card = {t: c["id"] for c in card_list for t in c.get("tags") or ()}
@@ -887,6 +1026,15 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
             place_cards(r["ts"])
         if r["role"] == "user":
             kind = r.get("kind")
+            okey = outside_of.get(mid) or (r.get("outside") if kind == "external" else "")
+            if okey:
+                # An outside line with a thread (#412): what the PO answers
+                # and makes now is that thread's, as after the person's
+                # message in one; nothing a point of theirs.
+                last = outside_line(r, okey)
+                last_input_work = last_via = False
+                last_human_points = set()
+                continue
             if kind == "human":
                 last_input_work = False
                 last_via = False
@@ -1071,7 +1219,8 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
         threads[t].setdefault("cards", []).append(c)
     return {"threads": threads, "of": of, "parent": parent, "also": also,
             "work": work, "via": via, "order": order, "paired": paired, "answered": answered,
-            "cards": in_thread, "split": split, "notices": notice_keys, "placed": placed}
+            "cards": in_thread, "split": split, "notices": notice_keys, "placed": placed,
+            "outside": outside_found}
 
 
 PAIR_SLACK_S = 120              # a transcript's clock behind the hub's, at most (sends.SLACK_S)
@@ -1363,7 +1512,8 @@ def _drop_deleted(out: dict, by_mid: dict, deleted: dict, card_ts: dict | None =
         r = by_mid[root]
         th.pop("given", None)       # started again: no longer the message it was named on
         th.update(members=keep, root=root, rootTs=r["ts"],
-                  title=_words(r["turn"].get("text") or "") or th.get("title") or "Thread")
+                  title=(th.get("title") if th.get("outside") else "")    # #412: its name stays
+                  or _words(r["turn"].get("text") or "") or th.get("title") or "Thread")
     return {m for m in gone if not out["of"].get(m)}
 
 
@@ -1485,6 +1635,11 @@ def build(room_id: str, room: dict | None = None, *, show_progress: bool = True,
             keep_placed(room_id, out["placed"], {r["mid"] for r in recs})
         except Exception as e:      # noqa: BLE001 — kept on the next build
             print(f"[threads] {room_id}: thread work not kept in place: {e!r}", flush=True)
+    if out.get("outside") and keep:
+        try:
+            keep_outside(room_id, out["outside"])
+        except Exception as e:      # noqa: BLE001 — found again on the next build
+            print(f"[threads] {room_id}: outside threads not kept: {e!r}", flush=True)
     by_mid = {r["mid"]: r for r in recs}
     hidden = _drop_deleted(out, by_mid, side.get("deleted") or {},
                            {c["id"]: c["ts"] for c in cards})
@@ -1511,7 +1666,8 @@ def build(room_id: str, room: dict | None = None, *, show_progress: bool = True,
         # #411: a task's report and the PO's note on it ring the thread too;
         # what the #411 rules took in from Team activity is new until the
         # thread is opened after they did.
-        news = [r for r in rs[1:] if _who(r) != "you" and r["ts"] > mark]
+        # #412: an outside thread's first line is news too (nobody here wrote it).
+        news = [r for r in (rs if th.get("outside") else rs[1:]) if _who(r) != "you" and r["ts"] > mark]
         if since < moved_at and max(_num(seen.get(tid)), mine) < moved_at:
             news += [r for r in rs[1:] if r["mid"] in moved and _who(r) != "you" and r["ts"] <= mark]
         po_replies = [r for r in replies if _who(r) == "po"] if tid == "team:activity" else []

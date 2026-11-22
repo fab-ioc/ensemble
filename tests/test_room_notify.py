@@ -16,7 +16,11 @@ posts {roomId, sender, text, key?}. Checked:
   shown among a one-agent chat's turns;
 * a bad sender label (empty, too long, control characters, brackets, one the
   hub or the person goes by) is refused, and the text is one line without
-  control characters.
+  control characters;
+* a line may carry a thread (#412): only into a PO chat, a key and, for a
+  new key, a title; the record keeps the thread (the first title), the
+  typed turn, its journal row and its notice carry the key; a bad thread is
+  refused and a failed record write never fails the line.
 """
 from __future__ import annotations
 
@@ -40,6 +44,7 @@ import chatroom  # noqa: E402
 import dashboard  # noqa: E402
 import input_provenance  # noqa: E402
 import points  # noqa: E402
+import threads  # noqa: E402
 
 PORT = 8799
 SENDER = "Tester (Discord)"
@@ -413,6 +418,82 @@ class Notify(unittest.TestCase):
         self.assertEqual((status, r["error"]), (400, "text_too_long"))
         status, r = self.post({"roomId": "room-nothere0", "sender": SENDER, "text": "hi"})
         self.assertEqual((status, r["error"]), (404, "no_such_room"))
+
+    # ---- a line with a thread (#412) ----
+
+    def po_chat(self):
+        threads.forget()
+        self.addCleanup(threads.forget)
+        p = mock.patch.object(threads, "is_threaded", lambda rid, projects=None: rid == self.rid)
+        p.start()
+        self.addCleanup(p.stop)
+
+    def test_a_line_with_a_thread_opens_it_and_carries_its_key(self):
+        self.po_chat()
+        status, r = self.notify("SPX 0DTE puts?", key="m1", thread={"key": "1234", "title": "SPX puts"})
+        self.assertEqual((status, r["typed"], r["outsideThread"]), (200, True, "1234"), r)
+        rec = threads.load_side(self.rid)["outside"]["1234"]
+        self.assertEqual((rec["title"], rec["sender"], rec["mids"]), (f"{SENDER}: SPX puts", SENDER, []))
+        self.assertEqual(self.typed[-1][2], {"kind": "external", "senderLabel": SENDER, "outsideThread": "1234"})
+        (m,) = self.externals()
+        self.assertEqual((m["outsideThread"], m["outsideTitle"]), ("1234", f"{SENDER}: SPX puts"))
+        # The journalled turn carries its key, and so does the one the journal missed.
+        line = f"[{SENDER}] SPX 0DTE puts?"
+        input_provenance.record(self.rid, "claude", line, dashboard._input_sender_info(line, self.typed[-1][2]),
+                                session_id="sid-1")
+        stamp = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime())
+        (turn,) = dashboard.classify_turns([{"role": "user", "text": line, "timestamp": stamp}],
+                                           room_id=self.rid, identity="claude", session_id="sid-1")
+        self.assertEqual((turn["kind"], turn["outsideThread"]), ("external", "1234"))
+        self.assertEqual(threads._rec("sid-1", "sid-1:0", turn)["outside"], "1234")
+        (missed,) = dashboard.classify_turns([{"role": "user", "text": line, "timestamp": stamp}],
+                                             room_id=self.rid, identity="claude", session_id="sid-2")
+        self.assertEqual((missed["kind"], missed.get("outsideThread")), ("external", "1234"))
+        # A later line joins: its title optional, the first one kept.
+        self.assertEqual(self.notify("and the greeks?", key="m2", thread={"key": "1234"})[0], 200)
+        self.assertEqual(self.notify("and NDX?", key="m3", thread={"key": "1234", "title": "Other"})[0], 200)
+        self.assertEqual(threads.load_side(self.rid)["outside"]["1234"]["title"], f"{SENDER}: SPX puts")
+        self.assertEqual([x.get("outsideTitle") for x in self.externals()],
+                         [f"{SENDER}: SPX puts", None, f"{SENDER}: Other"],
+                         "a notice says the title it was sent with; the thread keeps the first")
+        led = points.load(self.rid) if points.exists(self.rid) else {"points": []}
+        self.assertEqual(led["points"], [], "it makes no point")
+        # The same line key again is a duplicate, the thread with it or not.
+        self.assertEqual(self.notify("SPX 0DTE puts?", key="m1", thread={"key": "1234", "title": "SPX puts"})[1]
+                         .get("duplicate"), True)
+        self.assertEqual(len(self.externals()), 3)
+
+    def test_a_line_without_a_thread_is_as_before(self):
+        self.po_chat()
+        self.assertEqual(self.notify("hi")[0], 200)
+        self.assertEqual(self.typed[-1][2], {"kind": "external", "senderLabel": SENDER})
+        self.assertNotIn("outsideThread", self.externals()[-1])
+        self.assertEqual(threads.load_side(self.rid)["outside"], {})
+
+    def test_a_bad_thread_is_refused(self):
+        self.po_chat()
+        for bad in ("1234", [], {"title": "x"}, {"key": "a b", "title": "x"}, {"key": "k" * 65, "title": "x"},
+                    {"key": "k", "title": "x" * 81}, {"key": "k", "title": "a\x1bb"}, {"key": "k", "title": 3},
+                    {"key": "new-one"}, {"key": "new-one", "title": "  "}):
+            status, r = self.notify(thread=bad)
+            self.assertEqual((status, r.get("error")), (400, "bad_thread"), repr(bad))
+            self.assertTrue(r["message"])
+        self.assertEqual((self.externals(), self.typed), ([], []))
+        self.assertEqual(threads.load_side(self.rid)["outside"], {})
+
+    def test_only_a_po_chat_has_threads(self):
+        threads.forget()
+        with mock.patch.object(threads, "is_threaded", lambda rid, projects=None: False):
+            status, r = self.notify(thread={"key": "1234", "title": "SPX puts"})
+        self.assertEqual((status, r.get("error")), (400, "bad_thread"))
+        self.assertEqual(self.externals(), [])
+
+    def test_a_thread_record_that_cannot_be_written_never_fails_the_line(self):
+        self.po_chat()
+        with mock.patch.object(threads, "open_outside", side_effect=OSError("disk full")):
+            status, r = self.notify(thread={"key": "1234", "title": "SPX puts"})
+        self.assertEqual((status, r["outsideThread"]), (200, "1234"))
+        self.assertEqual(self.typed[-1][2]["outsideThread"], "1234")
 
 
 class ThePage(unittest.TestCase):
