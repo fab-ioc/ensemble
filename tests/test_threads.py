@@ -1415,6 +1415,16 @@ class OutsideThreadTest(unittest.TestCase):
         self.assertEqual(out["threads"]["m:s:0"]["members"], ["s:0", "s:1", "s:2", "s:3"])
         self.assertEqual(out["outside"], {}, "already kept")
 
+    def test_a_kept_root_opens_its_thread_however_many_lines_came_after(self):
+        """Review 1: the root is kept apart from the later lines, so a lost
+        provenance never moves the thread to a later balloon."""
+        sd = side(outside={"k1": {**outside_rec(), "root": "s:0", "mids": []}})
+        recs = [outside("s:0", 0, "SPX?", lost=True), po("s:1", 5, "Looking."),
+                outside("s:2", 10, "and greeks?"), po("s:3", 11, "Here.")]
+        out = self.run_(recs, sd=sd)
+        self.assertEqual(out["threads"]["m:s:0"]["members"], ["s:0", "s:1", "s:2", "s:3"])
+        self.assertEqual(out["outside"], {"s:2": "k1"})
+
     def test_the_title_says_the_sender(self):
         self.assertEqual(threads.outside_title("Swann: SPX puts", SWANN), "Swann: SPX puts")
         self.assertEqual(threads.outside_title("swann asks", SWANN), "swann asks")
@@ -1519,6 +1529,20 @@ class SideTest(unittest.TestCase):
         sd = threads.load_side(rid)
         self.assertEqual([(a["thread"], a["key"], a.get("new")) for a in sd["sent"]], [("", "kn", True)])
         self.assertEqual(sd["anchors"], {}, "a new thread has no thread to anchor in yet")
+
+    def test_outside_balloons_are_kept_while_shown_and_the_root_apart(self):
+        rid = "room-abc129"
+        threads.open_outside(rid, "k1", "Swann: x", "Swann bot", T0)
+        threads.keep_outside(rid, {"s:0": "k1", "s:2": "k1"}, {"s:0", "s:2"})
+        rec = threads.load_side(rid)["outside"]["k1"]
+        self.assertEqual((rec["root"], rec["mids"]), ("s:0", ["s:2"]))
+        many = {f"s:{i}": "k1" for i in range(4, 4 + threads.OUTSIDE_MIDS_KEEP)}
+        threads.keep_outside(rid, many, {"s:0", "s:2", *many})
+        self.assertEqual(len(threads.load_side(rid)["outside"]["k1"]["mids"]), threads.OUTSIDE_MIDS_KEEP + 1,
+                         "none dropped while its balloon is shown")
+        threads.keep_outside(rid, {"s:9999": "k1"}, {"s:0", "s:9999"})
+        rec = threads.load_side(rid)["outside"]["k1"]
+        self.assertEqual((rec["root"], rec["mids"]), ("s:0", ["s:9999"]), "past the cap, those gone go")
 
     def test_since_is_set_once(self):
         rid = "room-abc124"
@@ -1660,7 +1684,8 @@ class Endpoints(tp._World):
         th = threads.thread_view(self.rid, chatroom.get_room(self.rid), tid)["thread"]
         self.assertEqual((th["title"], th["replies"], th["unread"]), ("Swann: SPX puts", 1, 2),
                          "nobody here wrote its first line: it rings too")
-        self.assertEqual(threads.load_side(self.rid)["outside"]["1234"]["mids"], ["sid-1:4"])
+        kept = threads.load_side(self.rid)["outside"]["1234"]
+        self.assertEqual((kept["root"], kept["mids"]), ("sid-1:4", []))
         ch = http_get(f"/api/room/channel?id={self.rid}")[1]
         self.assertIn(("sid-1:4", [tid]), [(i["mid"], i.get("thr")) for i in ch["items"]])
         self.assertNotIn("sid-1:5", [i["mid"] for i in ch["items"]], "the reply is in the thread")
@@ -1673,6 +1698,22 @@ class Endpoints(tp._World):
         idx = threads.build(self.rid, show_progress=False)
         self.assertEqual((idx["of"]["sid-1:4"], idx["of"]["sid-1:5"]), ([tid], [tid]))
         self.assertEqual(idx["threads"][tid]["title"], "Swann: SPX puts")
+
+    def test_an_outside_request_before_the_first_build_is_new(self):
+        """Review 1: a chat first threaded after the request came in still
+        counts it as new."""
+        rid = self.solo_room("sid-9")
+        now = time.time()
+        threads.open_outside(rid, "77", "Swann: first", SWANN, now)
+        line = tp.turn("user", f"[{SWANN}] first request", now + 1)
+        line.update(kind="external", senderType="external", senderLabel=SWANN, outsideThread="77")
+        self.add("sid-9", line)
+        with mock.patch.object(threads, "is_threaded", lambda r, projects=None: r in (rid, self.rid)), \
+                mock.patch.object(threads.time, "time", lambda: now + 30):
+            idx = threads.build(rid, show_progress=False)
+            th = threads.thread_view(rid, chatroom.get_room(rid), "m:sid-9:0")["thread"]
+        self.assertEqual(idx["of"]["sid-9:0"], ["m:sid-9:0"])
+        self.assertEqual(th["unread"], 1)
 
     def test_work_log_replies_ring_unread(self):
         """#411: a task's report and the PO's note on it ring its thread too."""

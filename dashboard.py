@@ -6102,15 +6102,18 @@ def _outside_lines(room_id: str, identity: str) -> list[dict]:
             and (not identity or not m.get("agent") or m.get("agent") == identity)]
 
 
-def _outside_turn(lines: list[dict], text: str, at: float | None, label: str = "") -> dict:
+def _outside_turn(lines: list[dict], text: str, at: float | None, label: str = "",
+                  thread: str | None = None) -> dict:
     """The typed outside line this turn is (taken from ``lines``, so it
     claims no second turn: its label, its thread key, #412), or {}: the same
     text, and a turn from when it went to be typed to a day on, never one
-    before it. With ``label``, only a line of that sender (a journalled turn
-    claiming its own)."""
+    before it. With ``label``, only a line of that sender, and with
+    ``thread`` only one of that thread key ("" none): a journalled turn
+    claiming its own (#412 review 1: the same words of two requests)."""
     text = (text or "").strip()
     for i, ln in enumerate(lines):
         if (ln["line"] == text and at and (not label or ln["label"] == label)
+                and (thread is None or ln["thread"] == thread)
                 and ln["ts"] - OUTSIDE_CLOCK_SKEW_S <= at <= ln["ts"] + OUTSIDE_TYPED_WITHIN_S):
             del lines[i]
             return ln
@@ -6169,7 +6172,7 @@ def classify_turns(turns: list[dict], *, room_id: str = "", identity: str = "",
         # same words typed later by the person are not read as a second one.
         if t.get("role") == "user" and t.get("kind") == NOTICE_EXTERNAL:
             _outside_turn(outside, t.get("text") or "", _turn_epoch(t.get("timestamp")),
-                          str(t.get("senderLabel") or ""))
+                          str(t.get("senderLabel") or ""), str(t.get("outsideThread") or ""))
     last = None
     for t in out:
         if t.get("role") == "user":
@@ -20773,7 +20776,7 @@ class Handler(BaseHTTPRequestHandler):
                                   "message": f"The text is longer than {NOTIFY_TEXT_MAX} characters."})
             return
         thread = None
-        if data.get("thread") is not None:
+        if "thread" in data:        # #412 review 1: a null thread is refused, not ignored
             tkey, ttitle, bad = threads.outside_refusal(data.get("thread"))
             if bad:
                 self._send_json(400, {"error": "bad_thread", "message": bad})

@@ -463,6 +463,24 @@ class Notify(unittest.TestCase):
                          .get("duplicate"), True)
         self.assertEqual(len(self.externals()), 3)
 
+    def test_the_same_words_of_two_requests_keep_their_own_threads(self):
+        """Review 1: a journalled turn claims the line of its own key, so a
+        turn the journal missed takes the other's. Twenty minutes apart: the
+        first one's row is missing, the second one's journalled."""
+        self.po_chat()
+        now = time.time()
+        with mock.patch.object(dashboard.time, "time", lambda: now - 1200):
+            self.assertEqual(self.notify("same request", key="a", thread={"key": "first", "title": "x"})[0], 200)
+        self.assertEqual(self.notify("same request", key="b", thread={"key": "second", "title": "y"})[0], 200)
+        line = f"[{SENDER}] same request"
+        input_provenance.record(self.rid, "claude", line, dashboard._input_sender_info(line, self.typed[-1][2]),
+                                session_id="sid-1")
+        turns = dashboard.classify_turns([{"role": "user", "text": line, "timestamp": self._stamp(now - 1199)},
+                                          {"role": "user", "text": line, "timestamp": self._stamp(now + 1)}],
+                                         room_id=self.rid, identity="claude", session_id="sid-1")
+        self.assertEqual([(t.get("kind"), t.get("outsideThread")) for t in turns],
+                         [("external", "first"), ("external", "second")])
+
     def test_a_line_without_a_thread_is_as_before(self):
         self.po_chat()
         self.assertEqual(self.notify("hi")[0], 200)
@@ -474,7 +492,7 @@ class Notify(unittest.TestCase):
         self.po_chat()
         for bad in ("1234", [], {"title": "x"}, {"key": "a b", "title": "x"}, {"key": "k" * 65, "title": "x"},
                     {"key": "k", "title": "x" * 81}, {"key": "k", "title": "a\x1bb"}, {"key": "k", "title": 3},
-                    {"key": "new-one"}, {"key": "new-one", "title": "  "}):
+                    {"key": "new-one"}, {"key": "new-one", "title": "  "}, None):
             status, r = self.notify(thread=bad)
             self.assertEqual((status, r.get("error")), (400, "bad_thread"), repr(bad))
             self.assertTrue(r["message"])

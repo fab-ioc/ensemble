@@ -124,7 +124,7 @@ NOTICES_KEEP = 2000             # the hub's card notices kept with their send ke
 PLACED_KEEP = 4000              # past it, the kept places of balloons gone from the transcript go (#411 review 3)
 OUTSIDE_KEY = re.compile(r"[A-Za-z0-9_-]{1,64}")    # an outside thread's key (#412): the request's id
 OUTSIDE_TITLE_MAX = 80          # an outside thread's title, at most
-OUTSIDE_MIDS_KEEP = 500         # the balloons kept for one outside thread, at most
+OUTSIDE_MIDS_KEEP = 4000        # past it, the kept balloons of outside threads gone from the transcript go
 YIELD_BUDGET_S = 1.0            # a build stands aside for the pages this long in all (#266)
 SLOW_BUILD_S = 2.0              # a build taking longer says so in the log
 
@@ -279,6 +279,7 @@ def load_side(room_id: str) -> dict:
             if isinstance(d.get("outside"), dict):
                 side["outside"] = {k: {"title": str(v.get("title") or ""), "sender": str(v.get("sender") or ""),
                                        "at": _num(v.get("at")),
+                                       "root": v.get("root") if isinstance(v.get("root"), str) else "",
                                        "mids": [m for m in v.get("mids") or [] if isinstance(m, str)]}
                                    for k, v in d["outside"].items()
                                    if isinstance(k, str) and OUTSIDE_KEY.fullmatch(k) and isinstance(v, dict)}
@@ -628,9 +629,14 @@ def open_outside(room_id: str, key: str, title: str, sender: str, now: float | N
     """An outside line carrying the thread ``key`` is about to be typed
     (#412): the record keeps the thread, named ``title`` with its sender
     (:func:`outside_title`), the first time; a later line keeps that name.
-    True when it was new."""
+    True when it was new. A chat never threaded yet counts what came
+    before as read from now on, not from its first build after the line
+    (#412 review 1: the request itself is new)."""
     with _LOCK:
         side = load_side(room_id)
+        at = time.time() if now is None else now
+        if not side.get("since"):
+            side["since"] = side["tasksSince"] = at - 1
         got = side.setdefault("outside", {})
         rec = got.get(key)
         if rec is not None:
@@ -639,16 +645,18 @@ def open_outside(room_id: str, key: str, title: str, sender: str, now: float | N
                 rec.update(title=outside_title(title, sender), sender=sender)
                 _save_side(room_id, side)
             return False
-        got[key] = {"title": outside_title(title, sender), "sender": sender,
-                    "at": time.time() if now is None else now, "mids": []}
+        got[key] = {"title": outside_title(title, sender), "sender": sender, "at": at, "root": "", "mids": []}
         _save_side(room_id, side)
         return True
 
 
-def keep_outside(room_id: str, found: dict) -> None:
-    """The balloons found for outside threads ``{balloon: key}`` (#412),
-    kept for good: a rebuild finds them though the provenance journal no
-    longer holds their rows."""
+def keep_outside(room_id: str, found: dict, present=None) -> None:
+    """The balloons found for outside threads ``{balloon: key}``, oldest
+    first (#412): a rebuild finds them though the provenance journal no
+    longer holds their rows. A thread's first (``root``) is kept apart.
+    None is dropped while its balloon is in the transcript; past
+    ``OUTSIDE_MIDS_KEEP`` in all, those ``present`` no longer holds go
+    (review 1: never the root of a thread still shown)."""
     if not _ROOM_ID.fullmatch(room_id or "") or not found:
         return
     with _LOCK:
@@ -659,12 +667,21 @@ def keep_outside(room_id: str, found: dict) -> None:
             rec = got.get(key)
             if rec is None:
                 # A line whose record was lost: kept now, named on its balloon.
-                rec = got[key] = {"title": "", "sender": "", "at": 0.0, "mids": []}
-            if mid not in rec["mids"]:
-                rec["mids"] = (rec["mids"] + [mid])[-OUTSIDE_MIDS_KEEP:]
+                rec = got[key] = {"title": "", "sender": "", "at": 0.0, "root": "", "mids": []}
+            if not rec.get("root"):
+                rec["root"] = mid
                 changed = True
-        if changed:
-            _save_side(room_id, side)
+            elif mid != rec["root"] and mid not in rec["mids"]:
+                rec["mids"].append(mid)
+                changed = True
+        if not changed:
+            return
+        if sum(len(v["mids"]) for v in got.values()) > OUTSIDE_MIDS_KEEP and present is not None:
+            for v in got.values():
+                v["mids"] = [m for m in v["mids"] if m in present]
+                if v.get("root") and v["root"] not in present:
+                    v["root"] = ""
+        _save_side(room_id, side)
 
 
 def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=None,
@@ -928,7 +945,8 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
     # keeps for them (a rebuild finds them though the provenance journal
     # dropped their rows). ``outside`` out: those found now ({balloon: key}).
     kept_outside = side.get("outside") or {}
-    outside_of = {m: k for k, v in kept_outside.items() if isinstance(v, dict) for m in v.get("mids") or ()}
+    outside_of = {m: k for k, v in kept_outside.items() if isinstance(v, dict)
+                  for m in (v.get("root") or "", *(v.get("mids") or ())) if m}
     outside_tid: dict[str, str] = {}
     outside_found: dict[str, str] = {}
 
@@ -1637,7 +1655,7 @@ def build(room_id: str, room: dict | None = None, *, show_progress: bool = True,
             print(f"[threads] {room_id}: thread work not kept in place: {e!r}", flush=True)
     if out.get("outside") and keep:
         try:
-            keep_outside(room_id, out["outside"])
+            keep_outside(room_id, out["outside"], {r["mid"] for r in recs})
         except Exception as e:      # noqa: BLE001 — found again on the next build
             print(f"[threads] {room_id}: outside threads not kept: {e!r}", flush=True)
     by_mid = {r["mid"]: r for r in recs}
