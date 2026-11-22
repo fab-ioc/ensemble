@@ -6342,6 +6342,15 @@ NOTICE_EXTERNAL = "external"
 NOTIFY_SENDER_MAX = 40
 NOTIFY_TEXT_MAX = 2000
 NOTIFY_PER_HOUR = 20            # per room and sender
+# A sender into a room that may send more: (room id, sender lowercased) -> lines
+# an hour. Swann bot into opTen's PO chat: a request's follow-ups must wake the
+# PO at once (fab, opTen P1324), so 60 an hour (opTen PO, 11-22).
+NOTIFY_PER_HOUR_FOR = {("room-3f303104", "swann bot (discord)"): 60}
+
+
+def notify_per_hour(rid: str, sender: str) -> int:
+    """How many lines an hour ``sender`` may post into room ``rid``."""
+    return NOTIFY_PER_HOUR_FOR.get((rid, sender.lower()), NOTIFY_PER_HOUR)
 NOTIFY_WINDOW_S = 3600
 _NOTIFY_LOCK = threading.Lock()
 _NOTIFY_KEYS: dict = {}         # (room, key) -> when posted; kept a day like _SAY_KEYS
@@ -6390,7 +6399,7 @@ def _notify_reserve(rid: str, sender: str, key: str, now: float) -> str:
     """Under _NOTIFY_LOCK: "" when the line may go (counted for the hourly
     limit, its key marked and in flight), "pending" for a key whose line is
     still being posted, "duplicate" for a key already posted in the room,
-    "limited" past NOTIFY_PER_HOUR for the room and sender."""
+    "limited" past notify_per_hour for the room and sender."""
     for k in [k for k, at in _NOTIFY_KEYS.items() if now - at > _SAY_KEY_TTL]:
         del _NOTIFY_KEYS[k]
     for k in [k for k in _NOTIFY_UNSTORED if k not in _NOTIFY_KEYS]:
@@ -6404,7 +6413,7 @@ def _notify_reserve(rid: str, sender: str, key: str, now: float) -> str:
     if key and (rid, key) in _NOTIFY_KEYS:
         return "duplicate"
     sent = _NOTIFY_SENT.setdefault((rid, sender.lower()), [])
-    if len(sent) >= NOTIFY_PER_HOUR:
+    if len(sent) >= notify_per_hour(rid, sender):
         return "limited"
     sent.append(now)
     if key:
@@ -20813,7 +20822,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         if held == "limited":
             self._send_json(429, {"error": "rate_limited",
-                                  "message": f"At most {NOTIFY_PER_HOUR} lines an hour from "
+                                  "message": f"At most {notify_per_hour(rid, sender)} lines an hour from "
                                              f"'{sender}' into this room; this one was not posted. "
                                              f"Try again later."})
             return
