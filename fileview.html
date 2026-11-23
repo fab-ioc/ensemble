@@ -1927,7 +1927,7 @@ function selReact(r, data) {
 }
 function dropCmts(cids) {
   FVC.remove(cids); cids.forEach(cid => LOST.delete(cid));
-  if (!CMTS.length) destSave(null);       // the place chosen was for these comments
+  if (!CMTS.length) { destSave(null); fvPend(''); }   // the place chosen was for these comments
 }
 const SEND_WORD = { thread: 'Send to thread', po: 'Send to main chat', task: 'Send to task', new: 'Send to new thread' };
 // The name of the PO chat ``room`` (its main chat's entry), for the chooser's groups.
@@ -2393,9 +2393,30 @@ async function copyCmts() {
   catch (e) { showFallback('Copy your comments:', body); }
 }
 // One message of comments; true when it went (or the hub holds it).
+// A send the hub did not answer (#414): its key and the place it went to, kept
+// beside the comments, so the same comments sent again go there and count once
+// (the key alone would make a send to another place a duplicate, and drop them).
+const fvPendKey = () => 'cd-fvp:' + fvList();
+function fvPending(key) {
+  try {
+    const p = JSON.parse(localStorage.getItem(fvPendKey()) || 'null');
+    return p && p.key === key && p.dest && typeof p.dest.room === 'string' ? p.dest : null;
+  } catch (e) { return null; }
+}
+function fvPend(key, dest) {
+  try {
+    if (key) localStorage.setItem(fvPendKey(), JSON.stringify({ key, dest }));
+    else localStorage.removeItem(fvPendKey());
+  } catch (e) {}
+}
 async function sendCmts(list) {
   const body = buildBody(list);
-  const to = DEST.room, toName = DEST.room ? destLabel(DEST) : '', dest = DEST;
+  // The key names this batch by its comments' ids, which are kept with them:
+  // sent again after a lost reply or a reload, it counts once.
+  const sent = list.map(c => c.cid);
+  const key = 'fv:' + sent.join(',');
+  const dest = fvPending(key) || DEST;
+  const to = dest.room, toName = dest.room ? destLabel(dest) : '';
   if (!to) {
     try { await navigator.clipboard.writeText(body); toast('No chat chosen to send to — comments copied.'); }
     catch (e) { showFallback('No chat chosen to send to. Copy your comments:', body); }
@@ -2403,10 +2424,7 @@ async function sendCmts(list) {
   }
   // The hub's resume-or-deliver, never /api/room/say: a task that is not
   // running is resumed for the comments and they are typed in once its owner
-  // is up. The key names this batch by its comments' ids, which are kept
-  // with them: sent again after a lost reply or a reload, it counts once.
-  const sent = list.map(c => c.cid);
-  const key = 'fv:' + sent.join(',');
+  // is up.
   try {
     // Given up after 20 s (sendJson): the copy fallback shows instead of nothing.
     // #414: into a thread as its own box sends (session.html sendResuming):
@@ -2415,6 +2433,7 @@ async function sendCmts(list) {
     const req = { roomId: to, text: body, to: '', key };
     if (dest.kind === 'thread' && dest.thread) {
       req.thread = dest.thread;
+      req.liveThread = true;     // refused if closed or deleted since the tray was filled
       if (!dest.hasPoints && dest.root) req.text = location.origin + '/session?room=' + encodeURIComponent(to) + '&msg='
         + encodeURIComponent(dest.root).replace(/%3A/gi, ':') + '\n\n' + body;
     } else if (dest.kind === 'new') {
@@ -2423,6 +2442,16 @@ async function sendCmts(list) {
     }
     const r = await sendJson('/api/room/resume', req);
     const j = r.data;
+    if (j && j.threadGone) {
+      // Closed or deleted since: nothing was sent. The tray asks the hub
+      // again, falls back to the main chat and says so; Send sends there.
+      fvPend('');
+      await loadDest();
+      toast('“' + (dest.name || 'The thread') + '” was ' + (j.threadGone === 'closed' ? 'closed' : 'deleted')
+        + ': nothing was sent. Check where they go, then Send again.');
+      return false;
+    }
+    fvPend('');
     if (!r.ok || !j || j.error) {
       // Refused but held by the hub: shown in the task's chat as not
       // delivered, with Retry. Anything else keeps them here.
@@ -2435,9 +2464,12 @@ async function sendCmts(list) {
     if (dest.kind === 'new') loadDest();
     return true;
   } catch (e) {
-    // No answer: they may have arrived. The same comments again have the same key, so they count once.
-    showFallback(e && !e.status && (e.timeout || e.network)
-      ? 'Not confirmed: the hub did not answer. Submit again without changing them (they are posted only once), or copy them:'
+    // No answer: they may have arrived. The same comments again have the same
+    // key and go to the same place, so they count once.
+    const unsure = e && !e.status && (e.timeout || e.network);
+    if (unsure) fvPend(key, dest);
+    showFallback(unsure
+      ? 'Not confirmed: the hub did not answer. Submit again without changing them (they go to “' + toName + '”, posted only once), or copy them:'
       : 'Couldn’t send to the chat. Copy your comments:', body);
     return false;
   }

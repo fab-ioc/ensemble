@@ -189,3 +189,69 @@ class FileThreads(tp._World):
         j = self.owner(room=self.rid)
         first = next(c for c in j["choices"] if c["kind"] == "thread")
         self.assertEqual(first["name"], "plan.md", "the new thread leads the list, by the file's name")
+
+    # ---- review 1 (#414): checked again at send time ---------------------
+
+    def resume_raw(self, body):
+        sent = []
+        with mock.patch.object(dashboard.Handler, "_resume_room",
+                               lambda h, room, text="", to="", key="", quiet=False: sent.append(text) or {"delivered": 1}), \
+                mock.patch.object(dashboard, "_send_left_behind", return_value=""):
+            status, j = tp.http("/api/room/resume", {"roomId": self.rid, "to": "", **body})
+        return status, j, sent
+
+    def test_a_thread_closed_after_the_tray_was_filled_is_refused_and_nothing_goes(self):
+        self.assertEqual(self.owner(room=self.rid, thread="P2")["thread"], "P2")
+        threads.archive(self.rid, ["P2"], now=self.t0 + 500)
+        self.rebuild()
+        status, j, sent = self.resume_raw({"text": "## Review comments (1)\n\n**1.** x", "key": "fv:c9",
+                                           "thread": "P2", "liveThread": True})
+        self.assertEqual((status, j.get("threadGone"), sent), (409, "closed", []), j)
+        status, j, sent = self.resume_raw({"text": "x", "key": "fv:c10", "thread": "P9", "liveThread": True})
+        self.assertEqual((status, j.get("threadGone"), sent), (409, "gone", []), j)
+
+    def test_a_live_thread_goes_and_its_lost_reply_sent_again_after_a_close_counts_once(self):
+        status, j, sent = self.resume_raw({"text": "## Review comments (1)\n\n**1.** y", "key": "fv:c11",
+                                           "thread": "P2", "liveThread": True})
+        self.assertEqual(status, 200, j)
+        self.assertTrue(sent and sent[0].startswith("Re P2:"), sent)
+        threads.archive(self.rid, ["P2"], now=time.time())
+        self.rebuild()
+        status, j, sent = self.resume_raw({"text": "## Review comments (1)\n\n**1.** y", "key": "fv:c11",
+                                           "thread": "P2", "liveThread": True})
+        self.assertEqual((status, j.get("duplicate"), sent), (200, True, []), "already sent: not refused")
+
+    def test_without_the_ask_a_thread_box_send_is_as_before(self):
+        threads.archive(self.rid, ["P2"], now=self.t0 + 500)
+        self.rebuild()
+        status, j, sent = self.resume_raw({"text": "more", "key": "k-box", "thread": "P2"})
+        self.assertEqual(status, 200, j)
+
+    # ---- review 1 (#414): another project's file -------------------------
+
+    def other_po(self):
+        """A second project, Boats, with its own PO chat: the file stays Motors'."""
+        other = self.solo_room(sid="sid-2")
+        self.turns["sid-2"] = []
+        p = mock.patch.object(threads, "is_threaded", lambda rid, projects=None: rid in (self.rid, other))
+        p.start()
+        self.addCleanup(p.stop)
+        ps = dashboard.load_projects()
+        ps.append({"id": "proj-b", "name": "Boats", "path": str(dashboard.DASHBOARD_DIR / "boats"),
+                   "poRoomId": other, "createdAt": 2})
+        dashboard.save_projects(ps)
+        return other
+
+    def test_opened_from_another_projects_main_chat_the_owners_threads_are_offered(self):
+        other = self.other_po()
+        j = self.owner(room=other)
+        self.assertEqual(j["threadRoom"], self.rid, "the PO chat that owns the file")
+        self.assertEqual(self.places(j)[:2], [("po", "", "opener"), ("po", "", "owner")])
+        self.assertEqual([c.get("thread") for c in j["choices"] if c["kind"] == "thread"], ["P1", "P2"])
+        self.assertTrue(all(c["room"] == self.rid for c in j["choices"] if c["kind"] in ("thread", "new")))
+
+    def test_opened_from_a_thread_of_another_projects_chat_that_chat_leads(self):
+        other = self.other_po()
+        j = self.owner(room=other, thread="P9")
+        self.assertEqual(j["threadRoom"], other, "the thread it was opened from is that chat's")
+        self.assertEqual(j["gone"], [{"id": "P9", "title": "", "why": "gone"}])

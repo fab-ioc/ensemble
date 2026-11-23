@@ -84,6 +84,34 @@ async function main() {
     out.closed = await p.ev(TRAY);
     await SEND(p);
     out.closedSent = (await got(p)).sent.slice(-1)[0];
+    // 5. P2 closed after the tray was filled: refused, nothing sent; the tray says so and the main chat stands in.
+    await p.go(A.fromP2);
+    await p.until(`DEST_STATE === 'ok'`);
+    await p.ev(ADD('Too late?'));
+    out.beforeClose = await p.ev(TRAY);
+    await p.ev(`fetch('/__close?t=P2').then(() => 1)`);
+    await p.ev(`document.querySelector('#cmt-tray .cmt-submit').click(), 1`);
+    await p.until(`!FV_SENDING && DEST.kind === 'po' && !!document.querySelector('#cmt-tray .cmt-dest-gone')`);
+    out.refused = (await got(p)).sent.slice(-1)[0];
+    out.afterClose = await p.ev(TRAY);
+    await SEND(p);
+    out.afterCloseSent = (await got(p)).sent.slice(-1)[0];
+    // 6. A send to P1 whose reply is lost, then the main chat picked: the retry still goes to P1, once.
+    await p.go(A.fromMain);
+    await p.until(`DEST_STATE === 'ok'`);
+    await p.ev(ADD('Lost on the way.'));
+    await p.ev(PICK(A.po + '|P1|'));
+    await p.ev(`fetch('/__drop').then(() => 1)`);
+    const n = (await got(p)).sent.length;
+    await p.ev(`document.querySelector('#cmt-tray .cmt-submit').click(), 1`);
+    await p.until(`!FV_SENDING && !!document.querySelector('.cmt-composer .cmt-quote')`);
+    await p.ev(`fetch('/__undrop').then(() => 1)`);
+    out.unsure = await p.ev(`document.querySelector('.cmt-composer .cmt-quote').textContent`);
+    await p.ev(`document.querySelector('.cmt-composer .cmt-cancel').click(), 1`);
+    await p.ev(PICK(A.po + '||'));
+    out.repicked = await p.ev(TRAY);
+    await SEND(p);
+    out.lost = (await got(p)).sent.slice(n);
     await p.close();
   } finally {
     ch.kill();
@@ -92,6 +120,9 @@ async function main() {
 }
 main().catch(e => { console.error(e && e.stack || e); process.exit(1); });
 """
+
+
+CLOSED: set = set()    # threads closed while the page is open (/__close)
 
 
 def owner_answer(path: str, po: str, q: dict) -> dict:
@@ -104,11 +135,16 @@ def owner_answer(path: str, po: str, q: dict) -> dict:
     t2 = {"room": po, "thread": "P2", "name": "Fix the login page", "kind": "thread", "projectId": "proj-m",
           "root": "sid-1:4", "hasPoints": False}
     new = {"room": po, "kind": "new", "name": Path(path).name, "projectId": "proj-m", "why": "new"}
-    gone = [{"id": t, "title": "Old one", "why": "closed"} for t in (thread, pick) if t == "P7"]
-    if thread == "P2":
+    titles = {"P7": "Old one", "P2": "Fix the login page", "P1": "Make the chart wider"}
+    shut = {"P7"} | CLOSED
+    gone = [{"id": t, "title": titles[t], "why": "closed"} for t in dict.fromkeys((thread, pick)) if t in shut]
+    if thread == "P2" and "P2" in shut:
+        choices = [{**main, "why": "main"}, {**t1, "why": "thread"}, new]
+    elif thread == "P2":
         choices = [{**t2, "why": "opener"}, {**main, "why": "main"}, {**t1, "why": "thread"}, new]
     else:
         choices = [{**main, "why": "opener"}, {**t1, "why": "thread"}, {**t2, "why": "thread"}, new]
+    choices = [c for c in choices if c.get("thread") not in CLOSED]
     first = choices[0]
     return {"path": path, "owner": main, "opener": main, "openerGone": False, "room": po,
             "thread": first.get("thread", ""), "threadRoom": po, "gone": gone, "choices": choices}
@@ -152,18 +188,35 @@ class InChrome(unittest.TestCase):
         doc = home / "Documents" / "plan.md"
         doc.write_text("# Plan\n\nThe gearbox runs at seven to one.\n", encoding="utf-8")
         cls.po, cls.doc = po, doc
-        sent, asked = [], []
+        sent, asked, drop = [], [], []
 
         class Handler(dashboard.Handler):
             def do_POST(self):
                 if self.path.startswith("/api/room/resume"):
                     n = int(self.headers.get("Content-Length") or 0)
-                    sent.append(json.loads(self.rfile.read(n) or b"{}"))
+                    req = json.loads(self.rfile.read(n) or b"{}")
+                    sent.append(req)
+                    if drop:          # the reply lost on its way back: no HTTP answer (until
+                        # /__undrop: Chrome sends it again itself on a kept-alive socket)
+                        self.wfile.write(b"lost\r\n\r\n")
+                        self.close_connection = True
+                        return
+                    if req.get("thread") in CLOSED and req.get("liveThread"):
+                        self._send_json(409, {"error": "thread_gone", "threadGone": "closed", "thread": req["thread"]})
+                        return
                     self._send_json(200, {"ok": True})
                     return
                 super().do_POST()
 
             def do_GET(self):
+                if self.path.startswith("/__close"):
+                    CLOSED.add(parse_qs(urlsplit(self.path).query)["t"][0])
+                    self._send_json(200, {"ok": True})
+                    return
+                if self.path in ("/__drop", "/__undrop"):
+                    drop[:] = [1] if self.path == "/__drop" else []
+                    self._send_json(200, {"ok": True})
+                    return
                 if self.path == "/__got":
                     self._send_json(200, {"sent": sent, "asked": asked})
                     return
@@ -182,7 +235,7 @@ class InChrome(unittest.TestCase):
         at = f"{b}/fileview?path={quote(str(doc))}&room={po}&roomName=Motors%20PO"
         args = {**foc.chrome_profile.node_args(), "tmp": cls.tmp.name, "po": po,
                 "fromP2": at + "&thread=P2&threadName=" + quote("Fix the login page"),
-                "fromP7": at + "&thread=P7&threadName=" + quote("Old one")}
+                "fromP7": at + "&thread=P7&threadName=" + quote("Old one"), "fromMain": at}
         with mock.patch.object(dashboard, "workspace_access_ok", lambda *a, **k: True):
             out = subprocess.run([NODE, "-e", CDP_JS, json.dumps(args)], capture_output=True, encoding="utf-8", timeout=300)
         assert out.returncode == 0, out.stderr[-4000:]
@@ -238,6 +291,26 @@ class InChrome(unittest.TestCase):
         self.assertEqual(s["roomId"], self.po)
         self.assertNotIn("thread", s)
         self.assertNotIn("newThread", s)
+
+    def test_a_thread_closed_after_the_tray_was_filled_sends_nothing_and_says_so(self):
+        self.assertEqual(self.got["beforeClose"]["send"], "Send to thread")
+        r = self.got["refused"]
+        self.assertEqual((r["thread"], r.get("liveThread")), ("P2", True), "the hub is asked for it live")
+        a = self.got["afterClose"]
+        self.assertEqual((a["send"], a["items"]), ("Send to main chat", 1), "kept, the main chat standing in")
+        self.assertEqual(a["gone"], "The thread “Fix the login page” was closed: these go to the main chat.")
+        s = self.got["afterCloseSent"]
+        self.assertEqual(s["roomId"], self.po)
+        self.assertNotIn("thread", s)
+        self.assertIn("Too late?", s["text"])
+
+    def test_a_send_not_answered_is_sent_again_to_the_same_place_whatever_is_picked_since(self):
+        self.assertIn("they go to “Thread · Make the chart wider”", self.got["unsure"])
+        self.assertEqual(self.got["repicked"]["picked"], f"{self.po}||")
+        lost = self.got["lost"]
+        self.assertGreaterEqual(len(lost), 2)
+        self.assertEqual({(s.get("thread"), s["key"]) for s in lost}, {("P1", lost[0]["key"])},
+                         "the same place and key: the hub counts it once")
 
 
 if __name__ == "__main__":

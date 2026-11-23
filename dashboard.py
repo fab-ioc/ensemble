@@ -9832,6 +9832,18 @@ def resolve_file_ref(raw: str, room_id: str = "", cwd: str = "") -> Path | None:
     return resolve_file_ref_how(raw, room_id, cwd)[0]
 
 
+def _thread_gone(room_id: str, room: dict | None, tid: str) -> str:
+    """#414: "closed" or "gone" for a thread of PO chat ``room_id`` that the
+    file view would send into but that is put away or deleted since; "" while
+    it is live, or when the threads cannot be read (the send goes as asked)."""
+    try:
+        places = threads.file_places(room_id, room, [tid], 0)
+    except Exception as e:      # noqa: BLE001 — not known: not refused
+        print(f"[file-owner] {room_id}: thread {tid!r} not checked: {e!r}", flush=True)
+        return ""
+    return str(((places or {}).get("asked") or {}).get(tid, {}).get("gone") or "")
+
+
 def file_owner_info(raw: str, room_id: str = "", cwd: str = "", thread: str = "", pick: str = "") -> dict:
     """GET /api/file/owner (#297): where a comment made on this file in the
     file view goes. The path is the one the viewer shows (resolved as
@@ -9847,8 +9859,8 @@ def file_owner_info(raw: str, room_id: str = "", cwd: str = "", thread: str = ""
     default (kind "thread", why "opener", ``room`` its chat and ``thread``
     its id), its chat's main chat next (why "main", the default in its place
     once it is gone). ``threadRoom`` is the PO chat whose
-    threads are offered (the opener's, else the PO chat of the file's
-    project): after the places above come its live threads, latest first
+    threads are offered (the opener's when opened from one of its threads,
+    else the PO chat of the file's owner, else the opener's): after the places above come its live threads, latest first
     (FILE_THREADS at most; why "thread"), then a new thread named after the
     file (kind "new"). ``pick`` is the thread the tray last sent to: listed
     too while live. Each of the two that is gone is in ``gone``
@@ -9885,10 +9897,14 @@ def file_owner_info(raw: str, room_id: str = "", cwd: str = "", thread: str = ""
             seen.add(e["room"])
             choices.append({**e, "why": why})
 
-    # The PO chat whose threads are offered: the opener's, else the file's project's.
+    # The PO chat whose threads are offered.
     by_pid = {pr.get("id"): pr for pr in projects}
     thr_room = ""
-    for e in (opener, own, opener and {"kind": "task", "projectId": opener["projectId"]}):
+    # Opened from one of its threads, that PO chat; else the PO chat of the
+    # file's owner (P444: the PO chat that owns the file, whichever chat it was
+    # opened from), then the opener's.
+    thread_po = opener if opener and opener["kind"] == "po" and (thread or "").strip() else None
+    for e in (thread_po, own, opener, opener and {"kind": "task", "projectId": opener["projectId"]}):
         if not e:
             continue
         rid = e["room"] if e["kind"] == "po" else (by_pid.get(e.get("projectId")) or {}).get("poRoomId") or ""
@@ -20590,6 +20606,13 @@ class Handler(BaseHTTPRequestHandler):
                     # taken once. Its receipt says where it is.
                     return (200, {"ok": True, "duplicate": True,
                                   **({"send": prior} if prior else {})})
+                # #414: the file view's send into a thread asks for it live
+                # (``liveThread``): a thread closed or deleted since the tray
+                # was filled is refused, and the tray says so before sending.
+                if thread and data.get("liveThread") is True and not again:
+                    gone = _thread_gone(rid, room_full, thread)
+                    if gone:
+                        return (409, {"error": "thread_gone", "threadGone": gone, "thread": thread})
                 if again:
                     text, to = prior["text"], prior.get("to") or ""
                 else:
