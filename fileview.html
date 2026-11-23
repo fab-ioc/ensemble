@@ -1928,7 +1928,10 @@ function selReact(r, data) {
 function dropCmts(cids) {
   FVC.remove(cids); cids.forEach(cid => LOST.delete(cid));
   if (!CMTS.length) destSave(null);       // the place chosen was for these comments
-  fvPendSave(fvPendAll());                // an attempt whose comments are all gone is over
+  // An attempt whose comments this tab has just taken off is over; another
+  // tab's attempt is never judged by this tab's list, which may lag behind.
+  const off = new Set(cids);
+  fvPendWrite(a => a.filter(p => !p.cids.every(cid => off.has(cid))));
 }
 const SEND_WORD = { thread: 'Send to thread', po: 'Send to main chat', task: 'Send to task', new: 'Send to new thread' };
 // The name of the PO chat ``room`` (its main chat's entry), for the chooser's groups.
@@ -2411,20 +2414,27 @@ async function copyCmts() {
 // they count once (under the key alone a send to another place would be taken
 // as a duplicate and the comments dropped; under a new key they went twice).
 const fvPendKey = () => 'cd-fvp:' + fvList();
-function fvPendAll() {
+// The list is shared by every tab open on this file: each change reads it as
+// stored just before writing it, and takes off only what this tab resolved.
+function fvPendStored() {
   let a = [];
   try { a = JSON.parse(localStorage.getItem(fvPendKey()) || '[]'); } catch (e) {}
-  const have = new Set(CMTS.map(c => c.cid));
   return (Array.isArray(a) ? a : []).filter(p => p && typeof p.key === 'string' && Array.isArray(p.cids)
-    && p.dest && typeof p.dest.room === 'string' && p.cids.some(cid => have.has(cid)));
+    && p.dest && typeof p.dest.room === 'string');
 }
-function fvPendSave(a) {
+// The attempts with a comment in this tray (read only: binding, never pruning).
+function fvPendAll() {
+  const have = new Set(CMTS.map(c => c.cid));
+  return fvPendStored().filter(p => p.cids.some(cid => have.has(cid)));
+}
+function fvPendWrite(change) {
   try {
+    const a = change(fvPendStored());
     if (a.length) localStorage.setItem(fvPendKey(), JSON.stringify(a));
     else localStorage.removeItem(fvPendKey());
   } catch (e) {}
 }
-const fvPendDrop = key => fvPendSave(fvPendAll().filter(p => p.key !== key));
+const fvPendDrop = key => fvPendWrite(a => a.filter(p => p.key !== key));
 async function sendCmts(list, pend) {
   const body = buildBody(list);
   // The key names this batch by its comments' ids, which are kept with them:
@@ -2484,7 +2494,7 @@ async function sendCmts(list, pend) {
     // No answer: they may have arrived. The same comments again have the same
     // key and go to the same place, so they count once.
     const unsure = e && !e.status && (e.timeout || e.network);
-    if (unsure && !pend) fvPendSave([...fvPendAll(), { key, cids: sent, dest }]);
+    if (unsure && !pend) fvPendWrite(a => [...a.filter(p => p.key !== key), { key, cids: sent, dest }]);
     showFallback(unsure
       ? 'Not confirmed: the hub did not answer. Submit again without changing them (they go to “' + toName + '”, posted only once), or copy them:'
       : 'Couldn’t send to the chat. Copy your comments:', body);

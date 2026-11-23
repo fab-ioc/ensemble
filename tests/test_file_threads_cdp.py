@@ -119,6 +119,28 @@ async function main() {
     await p.ev(ADD('One more.'));
     await SEND(p);
     out.lost = (await got(p)).sent.slice(n);
+    // 7. Two tabs: the other tab added a comment and its send to P1 was not answered; this tab,
+    // which has not heard of that comment yet, sends one of its own. The other tab's attempt
+    // stays: after a reload its comment goes to P1 under its key, whatever is picked.
+    await p.go(A.fromMain);
+    await p.until(`DEST_STATE === 'ok'`);
+    await p.ev(ADD('This tab.'));
+    await p.ev(PICK(A.po + '|P1|'));
+    out.otherKey = await p.ev(`(() => { const cid = FVC.id(), key = 'fv:' + cid;
+      // written as the other tab writes them: no storage event reaches this tab
+      localStorage.setItem(fvList() + cid, JSON.stringify({ cid, at: FVC.now(), note: 'From the other tab.', view: CUR_VIEW, start: -1, end: -1, quote: '' }));
+      localStorage.setItem(fvPendKey(), JSON.stringify([...JSON.parse(localStorage.getItem(fvPendKey()) || '[]'), { key, cids: [cid], dest: { ...DEST } }]));
+      return key; })()`);
+    await p.ev(PICK(A.po + '||'));
+    const k = (await got(p)).sent.length;
+    await SEND(p);
+    out.thisTab = (await got(p)).sent.slice(k);
+    out.kept = await p.ev(`JSON.parse(localStorage.getItem(fvPendKey()) || '[]').map(x => x.key)`);
+    await p.go(A.fromMain);
+    await p.until(`DEST_STATE === 'ok' && document.querySelectorAll('#cmt-tray .cmt-item').length === 1`);
+    await p.ev(PICK(A.po + '||'));
+    await SEND(p);
+    out.otherSent = (await got(p)).sent.slice(k + out.thisTab.length);
     await p.close();
   } finally {
     ch.kill();
@@ -330,6 +352,13 @@ class InChrome(unittest.TestCase):
         self.assertEqual((more[0].get("thread"), "Lost on the way." in more[0]["text"]), (None, False),
                          "the comment added since goes to the main chat picked, without the lost one")
         self.assertNotEqual(more[0]["key"], key)
+
+    def test_another_tabs_send_not_answered_is_kept_by_this_tabs_send(self):
+        self.assertEqual([("This tab." in s["text"], s.get("thread")) for s in self.got["thisTab"]], [(True, None)])
+        self.assertIn(self.got["otherKey"], self.got["kept"], "this tab drops only what it resolved")
+        other = self.got["otherSent"]
+        self.assertEqual([(s["key"], s.get("thread"), "From the other tab." in s["text"]) for s in other],
+                         [(self.got["otherKey"], "P1", True)], "sent again as that send: its key, its place")
 
 
 if __name__ == "__main__":
