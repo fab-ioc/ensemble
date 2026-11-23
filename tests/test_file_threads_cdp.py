@@ -110,6 +110,13 @@ async function main() {
     await p.ev(`document.querySelector('.cmt-composer .cmt-cancel').click(), 1`);
     await p.ev(PICK(A.po + '||'));
     out.repicked = await p.ev(TRAY);
+    // ... a quick reaction sent meanwhile (a send of its own, answered) ...
+    const m = (await got(p)).sent.length;
+    await p.ev(`(() => { const cid = FVC.id(); FVC.put({ cid, at: FVC.now(), note: 'Nice.', react: true, view: CUR_VIEW, start: -1, end: -1, quote: '' }); renderTray(); submitCmts([cid]); return 1; })()`);
+    await p.until(`!FV_SENDING && document.querySelectorAll('#cmt-tray .cmt-item').length === 1`);
+    out.reacted = (await got(p)).sent.slice(m);
+    // ... and a comment added to the tray: Submit sends the lost one as it was, the new one on its own.
+    await p.ev(ADD('One more.'));
     await SEND(p);
     out.lost = (await got(p)).sent.slice(n);
     await p.close();
@@ -308,9 +315,21 @@ class InChrome(unittest.TestCase):
         self.assertIn("they go to “Thread · Make the chart wider”", self.got["unsure"])
         self.assertEqual(self.got["repicked"]["picked"], f"{self.po}||")
         lost = self.got["lost"]
-        self.assertGreaterEqual(len(lost), 2)
-        self.assertEqual({(s.get("thread"), s["key"]) for s in lost}, {("P1", lost[0]["key"])},
+        key = lost[0]["key"]
+        tries = [s for s in lost if "Lost on the way." in s["text"]]
+        self.assertGreaterEqual(len(tries), 2)
+        self.assertEqual({(s.get("thread"), s["key"]) for s in tries}, {("P1", key)},
                          "the same place and key: the hub counts it once")
+        self.assertEqual(len(self.got["reacted"]), 1)
+        r = self.got["reacted"][0]
+        self.assertEqual((r["roomId"], r.get("thread"), "Nice." in r["text"]), (self.po, None, True),
+                         "the reaction goes where it was sent, on its own")
+        self.assertNotEqual(r["key"], key)
+        more = [s for s in lost if "One more." in s["text"]]
+        self.assertEqual(len(more), 1)
+        self.assertEqual((more[0].get("thread"), "Lost on the way." in more[0]["text"]), (None, False),
+                         "the comment added since goes to the main chat picked, without the lost one")
+        self.assertNotEqual(more[0]["key"], key)
 
 
 if __name__ == "__main__":
