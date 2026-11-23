@@ -245,6 +245,26 @@ async function main() {
       c: d.getElementById('c').checked, s: d.getElementById('s').selectedIndex, ed: d.getElementById('ed').innerHTML, holds: fvChg.frameHolds(),
       line: !document.getElementById('fv-chg').hidden }; })()`);
 
+    // Only the region typed in is carried; a radio goes by its name and value;
+    // a field known only by its place is not put into a field that moved.
+    const page2 = (b, extra) => `<div contenteditable>region A</div><div contenteditable>${b}</div>
+      <form>${extra ? '<input type="radio" name="r" value="x"><input>' : ''}<input type="radio" name="r" value="a"><input type="radio" name="r" value="b"><input></form>`;
+    const RELOAD = async want => { await p.ev(CHECK('window')); await p.ev(`document.getElementById('fv-reload').click(), 1`); await p.until(want); };
+    const st2 = `(() => { const d = ${FD}, ce = d.querySelectorAll('[contenteditable]'), r = d.querySelector('[name=r]:checked'), ins = [...d.querySelectorAll('input:not([type])')];
+      return { a: ce[0].textContent, b: ce[1].textContent, r: r ? r.value : null, ins: ins.map(e => e.value) }; })()`;
+    write(A.html, page2('old B', false));
+    await p.go(A.htmlUrl, `typeof fvChg !== 'undefined' && fvChg.seen && document.querySelector('iframe.file')`);
+    await p.until(`${FD}.querySelector('[contenteditable]') && /old B/.test(${FD}.body.textContent)`);
+    await p.ev(`(() => { const d = ${FD}, w = d.defaultView, put = (el, f) => { f(el); el.dispatchEvent(new w.Event('input', { bubbles: true })); };
+      put(d.querySelector('[contenteditable]'), e => { e.textContent = 'typed A'; }); put(d.querySelector('[value=b]'), e => { e.checked = true; });
+      put(d.querySelector('input:not([type])'), e => { e.value = 'loose'; }); return 1; })()`);
+    write(A.html, page2('new B', false));
+    await RELOAD(`/new B/.test(${FD}.body.textContent)`);
+    out.regions = await p.ev(st2);
+    write(A.html, page2('new B', true));
+    await RELOAD(`${FD}.querySelector('[value=x]')`);
+    out.moved = await p.ev(st2);
+
     // A JSON file: Formatted is there while it parses, and comes back.
     const jsonState = `(() => { const seg = document.getElementById('views'); return { views: [...seg.children].map(b => b.dataset.view), segHidden: seg.hidden,
       view: CUR_VIEW, text: document.querySelector('main').textContent }; })()`;
@@ -417,6 +437,13 @@ class InChrome(unittest.TestCase):
         self.assertEqual(self.got["formHeld"], {"old": True, "line": True}, "typed into the page's form: no reload by itself")
         self.assertEqual(self.got["formAfter"], {"q": "typed words", "who": "fab", "t": "a longer note", "c": True, "s": 1,
                                                  "ed": "edited <b>here</b>", "holds": True, "line": False})
+
+    def test_only_the_region_typed_in_is_carried(self):
+        self.assertEqual(self.got["regions"], {"a": "typed A", "b": "new B", "r": "b", "ins": ["loose"]}, "region B shows what is on disk")
+
+    def test_a_radio_keeps_its_value_and_a_moved_field_takes_nothing(self):
+        self.assertEqual(self.got["moved"], {"a": "region A", "b": "new B", "r": "b", "ins": ["", ""]},
+                         "the radio by its value; fields known only by place are not filled once the fields changed")
 
     def test_json_formatted_comes_and_goes_with_whether_it_parses(self):
         valid, broken, again, pretty = self.got["json"]
