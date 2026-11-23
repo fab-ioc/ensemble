@@ -265,6 +265,33 @@ async function main() {
     await RELOAD(`${FD}.querySelector('[value=x]')`);
     out.moved = await p.ev(st2);
 
+    // Nested regions: only the innermost one typed in is carried, so a sibling
+    // changed on disk shows its new text.
+    const nest = b => `<div contenteditable id="outer"><p contenteditable>child A</p><p contenteditable>${b}</p></div>`;
+    const stN = `(() => { const ps = ${FD}.querySelectorAll('#outer p'); return { a: ps[0].textContent, b: ps[1].textContent }; })()`;
+    write(A.html, nest('old B'));
+    await p.go(A.htmlUrl, `typeof fvChg !== 'undefined' && fvChg.seen && document.querySelector('iframe.file')`);
+    await p.until(`${FD}.querySelector('#outer p') && /old B/.test(${FD}.body.textContent)`);
+    await p.ev(`(() => { const d = ${FD}, el = d.querySelector('#outer p'); el.textContent = 'typed A'; el.dispatchEvent(new d.defaultView.Event('input', { bubbles: true })); return 1; })()`);
+    out.nestHolds = await p.ev(`fvChg.frameHolds()`);
+    write(A.html, nest('new B'));
+    await RELOAD(`/new B/.test(${FD}.body.textContent)`);
+    out.nested = await p.ev(stN);
+
+    // Two unnamed fields alike, swapped in the file: neither takes the text;
+    // a named one still does.
+    const swap = first => `<form>${first ? '<label>first <input></label><label>second <input></label>' : '<label>second <input></label><label>first <input></label>'}<input name="kept"></form>`;
+    const stS = `(() => { const d = ${FD}; return { first: [...d.querySelectorAll('label')].find(l => /first/.test(l.textContent)).querySelector('input').value,
+      second: [...d.querySelectorAll('label')].find(l => /second/.test(l.textContent)).querySelector('input').value, kept: d.querySelector('[name=kept]').value }; })()`;
+    write(A.html, swap(true));
+    await p.go(A.htmlUrl, `typeof fvChg !== 'undefined' && fvChg.seen && document.querySelector('iframe.file')`);
+    await p.until(`${FD}.querySelector('label') && /first/.test(${FD}.querySelector('label').textContent)`);
+    await p.ev(`(() => { const d = ${FD}, w = d.defaultView, put = (el, v) => { el.value = v; el.dispatchEvent(new w.Event('input', { bubbles: true })); };
+      put(d.querySelector('label input'), 'first answer'); put(d.querySelector('[name=kept]'), 'named'); return 1; })()`);
+    write(A.html, swap(false));
+    await RELOAD(`/second/.test(${FD}.querySelector('label').textContent)`);
+    out.swapped = await p.ev(stS);
+
     // A JSON file: Formatted is there while it parses, and comes back.
     const jsonState = `(() => { const seg = document.getElementById('views'); return { views: [...seg.children].map(b => b.dataset.view), segHidden: seg.hidden,
       view: CUR_VIEW, text: document.querySelector('main').textContent }; })()`;
@@ -442,8 +469,15 @@ class InChrome(unittest.TestCase):
         self.assertEqual(self.got["regions"], {"a": "typed A", "b": "new B", "r": "b", "ins": ["loose"]}, "region B shows what is on disk")
 
     def test_a_radio_keeps_its_value_and_a_moved_field_takes_nothing(self):
-        self.assertEqual(self.got["moved"], {"a": "region A", "b": "new B", "r": "b", "ins": ["", ""]},
-                         "the radio by its value; fields known only by place are not filled once the fields changed")
+        self.assertEqual(self.got["moved"], {"a": "typed A", "b": "new B", "r": "b", "ins": ["", ""]},
+                         "the radio by its value; two unnamed inputs alike take nothing; region A, unchanged on disk, keeps what was typed")
+
+    def test_nested_regions_carry_only_the_innermost_typed_in(self):
+        self.assertTrue(self.got["nestHolds"])
+        self.assertEqual(self.got["nested"], {"a": "typed A", "b": "new B"}, "the sibling shows what is on disk")
+
+    def test_two_unnamed_fields_alike_take_nothing_when_swapped(self):
+        self.assertEqual(self.got["swapped"], {"first": "", "second": "", "kept": "named"})
 
     def test_json_formatted_comes_and_goes_with_whether_it_parses(self):
         valid, broken, again, pretty = self.got["json"]

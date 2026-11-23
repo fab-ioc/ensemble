@@ -2815,24 +2815,17 @@ const fvChg = window.fvChg = (() => {
   // here, and a form with something typed in it holds the reload off as typed
   // text does; a Reload puts what was typed back into the new page.
   let frameInputAt = 0, carry = null;
-  const edited = new WeakMap();               // document → the editable regions typed in
+  const base = new WeakMap();                 // editable region → what it held when the page loaded
   const frameDoc = () => { try { const f = document.querySelector('main iframe.file'); return (f && f.contentDocument) || null; } catch (e) { return null; } };
-  const FIELDS = 'input, textarea, select, [contenteditable]:not([contenteditable="false"])';
+  const CE = '[contenteditable]:not([contenteditable="false"])';
   const NOT_TYPED = /^(hidden|button|submit|reset|image)$/;
   const isField = el => /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName);
   const kindOf = el => el.tagName + ':' + (isField(el) ? (el.type || '').toLowerCase() : 'ce');
-  // The outermost editable element around what was typed in.
-  const hostOf = el => { let h = el; while (h.parentElement && h.parentElement.isContentEditable) h = h.parentElement; return h; };
+  const regions = d => [...d.querySelectorAll(CE)].filter(el => !isField(el));
   function watchFrame(doc) {
     if (!doc) return;
     for (const t of ['input', 'keydown', 'pointerdown', 'wheel']) doc.addEventListener(t, () => { frameInputAt = Date.now(); }, true);
-    doc.addEventListener('input', e => {
-      const t = e.target;
-      if (!t || !t.isContentEditable || isField(t)) return;
-      let s = edited.get(doc);
-      if (!s) edited.set(doc, s = new Set());
-      s.add(hostOf(t));
-    }, true);
+    for (const el of regions(doc)) base.set(el, el.innerHTML);
   }
   function changed(el) {
     const tag = el.tagName;
@@ -2851,63 +2844,61 @@ const fvChg = window.fvChg = (() => {
       if (t === 'file') return !!(el.files && el.files.length);
       return el.value !== el.defaultValue;
     }
-    return false;
+    if (!base.has(el)) return false;
+    return el.innerHTML !== base.get(el);    // an editable region typed in
   }
-  const editedIn = d => [...(edited.get(d) || [])].filter(h => h.isConnected);
   function frameHolds() {
     const d = frameDoc();
     if (!d) return false;
-    if (editedIn(d).length) return true;
-    try { return [...d.querySelectorAll('input, textarea, select')].some(changed); } catch (e) { return false; }
+    try { return [...d.querySelectorAll('input, textarea, select, ' + CE)].some(changed); } catch (e) { return false; }
   }
-  // A field goes by its id, else its name (a radio or a checkbox by its name
-  // and value). A key two fields share is no key: those fields, and the ones
-  // with neither, go by their place among the page's fields, which holds only
-  // while the page has the same fields as before (its shape).
+  // What a field or region is known by, and only when nothing else on the page
+  // shares it: a field by its id, else its name (a radio or a checkbox by its
+  // name and value), else, unnamed, by its tag and type; a region by its id,
+  // else by what it held when the page loaded. A region that holds another
+  // editable region is not carried at all: putting its whole HTML back would
+  // bring back old text in the regions inside it. So, too, a shared key: two
+  // fields alike could be either, and their text is not put in a guessed one.
   function fieldKeys(d) {
-    const els = [...d.querySelectorAll(FIELDS)];
+    const els = [...d.querySelectorAll('input, textarea, select')].concat(regions(d).filter(el => !el.querySelector(CE)));
     const raw = els.map(el => {
       if (el.id) return 'id:' + el.id;
-      if (!isField(el) || !el.name) return null;
+      if (!isField(el)) return base.has(el) ? 'ce:' + base.get(el) : null;
       const t = (el.type || '').toLowerCase();
-      return 'n:' + kindOf(el) + ':' + el.name + (t === 'radio' || t === 'checkbox' ? '=' + el.value : '');
+      if (el.name) return 'n:' + kindOf(el) + ':' + el.name + (t === 'radio' || t === 'checkbox' ? '=' + el.value : '');
+      return 'k:' + kindOf(el);
     });
     const count = new Map();
     raw.forEach(k => k && count.set(k, (count.get(k) || 0) + 1));
-    const shape = els.map(el => kindOf(el) + ':' + el.id + ':' + (el.name || '') + (/:(radio|checkbox)$/.test(kindOf(el)) ? '=' + el.value : '')).join('|');
-    return { shape, list: els.map((el, i) => [raw[i] && count.get(raw[i]) === 1 ? raw[i] : 'at:' + i, el]) };
+    return els.map((el, i) => [raw[i], el]).filter(([k]) => k && count.get(k) === 1);
   }
   function frameState() {
     const d = frameDoc();
     if (!d || !frameHolds()) return null;
-    const hosts = new Set(editedIn(d)), { shape, list } = fieldKeys(d), keep = new Map();
-    for (const [k, el] of list) {
-      const kind = kindOf(el);
-      if (el.tagName === 'SELECT') { if (changed(el)) keep.set(k, { kind, sel: [...el.options].filter(o => o.selected).map(o => o.value) }); }
-      else if (isField(el)) {
-        const t = (el.type || '').toLowerCase();
-        if (!changed(el) || t === 'file') continue;
-        keep.set(k, t === 'checkbox' || t === 'radio' ? { kind, checked: el.checked } : { kind, value: el.value });
-      } else if (hosts.has(el)) keep.set(k, { kind, html: el.innerHTML });   // only a region typed in
+    const keep = new Map();
+    for (const [k, el] of fieldKeys(d)) {
+      if (!changed(el)) continue;
+      const kind = kindOf(el), t = (el.type || '').toLowerCase();
+      if (el.tagName === 'SELECT') keep.set(k, { kind, sel: [...el.options].filter(o => o.selected).map(o => o.value) });
+      else if (!isField(el)) keep.set(k, { kind, html: el.innerHTML });
+      else if (t === 'checkbox' || t === 'radio') keep.set(k, { kind, checked: el.checked });
+      else if (t !== 'file') keep.set(k, { kind, value: el.value });
     }
-    return { shape, keep };
+    return keep.size ? keep : null;
   }
-  function frameRestore(st) {
+  function frameRestore(keep) {
     const d = frameDoc();
-    if (!st || !d) return;
-    const { shape, list } = fieldKeys(d), same = shape === st.shape, hosts = new Set();
-    for (const [k, el] of list) {
-      if (k.startsWith('at:') && !same) continue;   // its place means another field now
-      const v = st.keep.get(k);
+    if (!keep || !d) return;
+    for (const [k, el] of fieldKeys(d)) {
+      const v = keep.get(k);
       if (!v || v.kind !== kindOf(el)) continue;
       try {
         if (v.sel) [...el.options].forEach(o => { o.selected = v.sel.includes(o.value); });
         else if ('checked' in v) el.checked = v.checked;
         else if ('value' in v) el.value = v.value;
-        else if ('html' in v) { el.innerHTML = v.html; hosts.add(el); }
+        else if ('html' in v) el.innerHTML = v.html;
       } catch (e) {}
     }
-    if (hosts.size) edited.set(d, hosts);
   }
   // A Reload keeps what was typed; the new page takes it when it has loaded,
   // before its comments are anchored and its place is put back.
