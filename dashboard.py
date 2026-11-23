@@ -10081,6 +10081,24 @@ def file_download_target(raw: str, room_id: str = "", cwd: str = "") -> tuple[in
     return 200, fp
 
 
+def file_version_answer(raw: str, room_id: str = "", cwd: str = "") -> tuple[int, dict]:
+    """GET /api/file/version: what the file view checks every 30 s to say
+    the file it shows changed on disk, without reading it. The same file and
+    the same boundary as a download; ``version`` changes whenever the file's
+    modification time or size does."""
+    code, fp = file_download_target(raw, room_id=room_id, cwd=cwd)
+    if fp is None:
+        errors = {400: "missing_path", 403: "path_not_allowed", 404: "not_found"}
+        return code, {"error": errors.get(code, "not_found")}
+    try:
+        st = fp.stat()
+    except OSError:
+        return 404, {"error": "not_found"}
+    if not stat.S_ISREG(st.st_mode):
+        return 404, {"error": "not_found"}
+    return 200, {"version": f"{st.st_mtime_ns}-{st.st_size}", "mtime": st.st_mtime, "size": st.st_size}
+
+
 def file_download_mime(path: Path) -> str:
     mime, _ = mimetypes.guess_type(path.name)
     return mime or "application/octet-stream"
@@ -13240,7 +13258,7 @@ BODY_DRAIN_S = 10
 # diffs, search hits and the agents' transcripts. Chats, lists and documents
 # are kept: revalidating them is what saves a switch its bytes.
 NO_STORE_GETS = {"/api/settings", "/api/platform", "/api/editors", "/api/config", "/api/health", "/api/agent/hooks",
-                 "/api/ws/file", "/api/file", "/api/file/download", "/api/ws/search",
+                 "/api/ws/file", "/api/file", "/api/file/download", "/api/file/version", "/api/ws/search",
                  "/api/git/diff", "/api/checkpoints/diff", "/api/checkpoints/preview"}
 NO_STORE_GET_PREFIXES = ("/api/history/", "/api/file-at/", "/api/session/")
 # A poll that names the copy it holds (a cursor) asks a URL of its own each
@@ -19596,6 +19614,13 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 # Everything else (md, code, text, unknown) as inline UTF-8 text.
                 self._send_file(fp, "text/plain; charset=utf-8", found)
+            return
+        if p == "/api/file/version":
+            # The file view's change check: a few bytes, never the file.
+            q = parse_qs(u.query)
+            self._send_json(*file_version_answer((q.get("path", [""])[0] or "").strip(),
+                                                 room_id=(q.get("room", [""])[0] or "").strip(),
+                                                 cwd=(q.get("cwd", [""])[0] or "").strip()))
             return
         if p == "/api/files/check":
             # The page's file links, all at once: is each one there now.
