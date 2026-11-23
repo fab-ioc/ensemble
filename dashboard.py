@@ -113,17 +113,6 @@ import po_usage
 # What a handover says is due at a time: the idle PO is typed it then.
 import due
 import issues
-import outside
-import outside_route
-import outside_model
-# Outside messages typed into their initiative's PO (outside sources step 3).
-import outside_deliver
-import outside_log
-# Work items that fill and empty themselves (round 2 step 2).
-import outside_items
-import outside_setup
-import hub_chat
-import hub_chat_settings
 # A task in a PO project that stopped without saying so: nudge, then tell the PO.
 import stall
 import idle
@@ -227,12 +216,6 @@ task_brief.bind(sys.modules[__name__])
 pacing.bind(sys.modules[__name__])
 due.bind(sys.modules[__name__])
 issues.bind(sys.modules[__name__])
-outside.bind(sys.modules[__name__])
-outside_route.bind(sys.modules[__name__])
-outside_model.bind(sys.modules[__name__])   # routing step 3: the router from here on
-outside_deliver.bind(sys.modules[__name__])
-outside_log.bind(sys.modules[__name__])
-outside_items.bind(sys.modules[__name__])
 stall.bind(sys.modules[__name__])
 first_run.bind(sys.modules[__name__])
 idle.bind(sys.modules[__name__])
@@ -3145,16 +3128,6 @@ def save_settings(settings: dict) -> dict:
 
 
 def _save_settings_locked(settings: dict, pins: list | None = None) -> dict:
-    current = merge_settings(settings, pins)
-    _write_settings(current)
-    # The pool Codex is judged by follows the model chosen here.
-    usage.remark_codex()
-    return current
-
-
-def merge_settings(settings: dict, pins: list | None = None) -> dict:
-    """The settings as a save of ``settings`` would leave them: every check
-    and clamp the save makes, nothing written (Ask the hub's proposal, #410)."""
     current = load_settings()
     if pins is not None:
         current["pinnedProjects"] = clean_pinned_projects(pins)
@@ -3294,10 +3267,6 @@ def merge_settings(settings: dict, pins: list | None = None) -> dict:
                 continue
             v = v.strip()
         current[k] = v
-    return current
-
-
-def _write_settings(current: dict) -> None:
     DASHBOARD_DIR.mkdir(parents=True, exist_ok=True)
     # A temp file of its own, and a few tries at the swap: on Windows another
     # process reading settings.json (a preflight hub) makes a replace fail.
@@ -3315,13 +3284,9 @@ def _write_settings(current: dict) -> None:
     finally:
         with contextlib.suppress(OSError):
             tmp.unlink()
-
-
-# Ask the hub (#410) changes Settings through this same save.
-hub_chat_settings.HUB.update(
-    load=lambda: load_settings(), merge=lambda s: merge_settings(s), save=lambda s: save_settings(s),
-    models_error=lambda s: agent_models_error(s), lock=_SETTINGS_LOCK, dir=lambda: DASHBOARD_DIR,
-    editors=[(eid, label) for eid, label in EDITORS])
+    # The pool Codex is judged by follows the model chosen here.
+    usage.remark_codex()
+    return current
 
 
 _GIT_NAME_CACHE: list = []
@@ -5828,11 +5793,6 @@ def _origin_sender_info(text: str, origin: str) -> dict:
         return _input_sender_info(text, {"kind": "human"})
     if origin == "hub":
         return _input_sender_info(text)
-    if origin == NOTICE_EXTERNAL:
-        # An outside line typed by outside_deliver: the source it names.
-        m = _OUTSIDE_HEAD.match((text or "").lstrip())
-        label = outside_deliver.label_of(m.group(1)) if m else ""
-        return _input_sender_info(text, {"kind": origin, **({"senderLabel": label} if label else {})})
     return _input_sender_info(text, {"kind": origin})
 
 
@@ -5947,9 +5907,6 @@ HUB_INPUT_KINDS = (
 # A message from another project's PO (po_messages.wake_line): the project's
 # name varies, so it is matched here rather than listed above.
 _PO_MESSAGE_HEAD = re.compile(r"\[from the (?P<fromProject>.+?) PO\] (?P<poKind>bug|question|answer|info): ")
-# An outside message (outside_deliver.wake_line): "[slack] …", the source's
-# kind. Read only for a line whose origin is outside (_origin_sender_info).
-_OUTSIDE_HEAD = re.compile(r"\[([a-z]+)\] ")
 _REPORT_HEAD = re.compile(r"\[report\] (?P<reportKind>.+?) from task '(?P<taskTitle>.*?)' "
                           r"\((?P<taskId>[^\s,()]+), (?P<reporter>[^()]*?)\): ")
 
@@ -5969,9 +5926,6 @@ def hub_input_kind(text: str) -> dict:
     m = _PO_MESSAGE_HEAD.match(s)
     if m:
         return {"kind": "pomsg", **m.groupdict()}
-    # An outside message ("[slack] …", outside_deliver) is told by who typed
-    # it (its provenance: _origin_sender_info, the input journal), never by
-    # its words: the person's own "[slack] hi" is the person's (P439).
     return {"kind": "human"}
 
 
@@ -5987,7 +5941,6 @@ _FIRST_WORDS_KIND = {
     "po": "Message from the PO",
     "issue": "GitHub issue", "issuecomment": "GitHub issue comment",
     "reviewlimit": "Review limit reached", "quiet": "Quiet reports",
-    "external": "Outside message",       # NOTICE_EXTERNAL, defined below
 }
 
 
@@ -6364,6 +6317,11 @@ _NOTIFY_RESERVED = {"user", "you", "me", "ensemble", "hub", "ceo", "po", "produc
                     "system", "relay"}
 
 
+# Sender labels that read as an outside source the hub once typed lines from
+# (#409, taken out in #413): a program still cannot notify as one of them.
+_NOTIFY_SOURCE_KINDS = frozenset({"slack", "discord", "jira", "outside"})
+
+
 def notify_sender_refusal(sender) -> str:
     """Why ``sender`` cannot label an outside line, or "" when it can: 1 to
     NOTIFY_SENDER_MAX printable characters, no brackets, and nothing the hub
@@ -6381,7 +6339,7 @@ def notify_sender_refusal(sender) -> str:
     low = " ".join(sender.lower().split())
     if low in _NOTIFY_RESERVED or low == operator_name().strip().lower() \
             or hub_input_kind(f"[{sender}] x")["kind"] != "human" or low.startswith("from the") \
-            or low in outside_deliver.KINDS or low == "outside sender":
+            or low in _NOTIFY_SOURCE_KINDS or low == "outside sender":
         return "The sender label is one the hub or the person goes by."
     return ""
 
@@ -10466,14 +10424,9 @@ def workspace_access_ok(path: str) -> bool:
     the collaboration-session root (~/cs), or in the folder of a session the
     task list shows (session_folder_ok: a task in no project, a past terminal
     conversation). Keeps the read-only file APIs from wandering the whole disk
-    even though the hub is single-user + token-gated. Two files of the hub's
-    own folder are readable too: the outside sources setup file and
-    routing-now.md (#15: the Input sources panel's See routing now), never the
-    rest of that folder, which holds what outside people wrote."""
+    even though the hub is single-user + token-gated."""
     if not path:
         return False
-    if any(_within(path, str(f)) for f in (outside_setup.setup_path(), outside_setup.now_path())):
-        return True
     roots = [p["path"] for p in load_projects()]
     roots.append(str(CS_ROOT))
     roots.append(str(PROJECTS_ROOT))   # every project home and task folder
@@ -18507,45 +18460,13 @@ def move_task(rid: str, project_id: str) -> bool:
 SKILLS_SRC = STATIC_DIR / "skills"
 
 
-# The part of a skill about outside sources (#409), between these marks: left
-# out of the installed copy until a source is set up on this hub.
-SKILL_OUTSIDE_RE = re.compile(r"<!-- outside-sources\b[^>]*-->\n.*?<!-- /outside-sources -->\n?", re.S)
-_SKILLS_OUTSIDE = [None]        # whether the last install kept that part
-
-
-def _skill_text(body: str, outside_on: bool) -> str:
-    """A skill as installed: with its outside sources part (the marks taken
-    out) when a source is set up, else without it."""
-    if outside_on:
-        return re.sub(r"<!-- /?outside-sources\b[^>]*-->\n?", "", body)
-    return SKILL_OUTSIDE_RE.sub("", body)
-
-
-def refresh_agent_skills() -> list[str]:
-    """From the hub loop: install the skills again when a source was set up
-    or the last one removed since the last install."""
-    try:
-        on = bool(outside.load_config())
-    except Exception:       # noqa: BLE001
-        return []
-    if _SKILLS_OUTSIDE[0] is None or _SKILLS_OUTSIDE[0] == on:
-        return []
-    return install_agent_skills()
-
-
 def install_agent_skills() -> list[str]:
     """Copy skills/<name>/SKILL.md into ~/.claude/skills/<name>/ and (when the
     codex CLI is present) ~/.codex/skills/<name>/. Idempotent: rewrites only
-    when the content differs. Returns the paths written. The outside sources
-    part is left out while no source is set up (``_skill_text``)."""
+    when the content differs. Returns the paths written."""
     written = []
     if not SKILLS_SRC.is_dir():
         return written
-    try:
-        outside_on = bool(outside.load_config())
-    except Exception:       # noqa: BLE001
-        outside_on = False
-    _SKILLS_OUTSIDE[0] = outside_on
     targets = [HOME / ".claude" / "skills"]
     if shutil.which("codex"):
         targets.append(HOME / ".codex" / "skills")
@@ -18554,7 +18475,7 @@ def install_agent_skills() -> list[str]:
         if not src_dir.is_dir() or not src.is_file():
             continue
         try:
-            body = _skill_text(src.read_text(encoding="utf-8"), outside_on)
+            body = src.read_text(encoding="utf-8")
         except OSError:
             continue
         for root in targets:
@@ -20047,23 +19968,6 @@ class Handler(BaseHTTPRequestHandler):
             ref = {**ref, "text": text[:message_refs.QUOTE_MAX],
                    "more": max(0, len(text) - message_refs.QUOTE_MAX)}
             self._send_json(200, ref)
-            return
-        if p.startswith("/api/outside/"):
-            self._outside_get(p, u)
-            return
-        if p == "/api/hub-chat":
-            # The hub chat (#16): the page only, like the setup file it changes.
-            if not self._page_read_ok() or self._agent_peer():
-                self._send_json(403, {"error": "page_only", "message": "Only the dashboard page can show this."})
-                return
-            self._send_json(200, hub_chat.view())
-            return
-        if p == "/api/hub-chat/history":
-            # What Ask the hub applied (#410): Settings and routing, newest first.
-            if not self._page_read_ok() or self._agent_peer():
-                self._send_json(403, {"error": "page_only", "message": "Only the dashboard page can show this."})
-                return
-            self._send_json(200, hub_chat.history())
             return
         if p == "/api/notify":
             # Whether this hub can notify, its key, and the devices it
@@ -23254,139 +23158,6 @@ class Handler(BaseHTTPRequestHandler):
             res = notify.send_test(endpoint)
             self._send_json(200 if res.get("ok") else 502, res)
 
-    def _outside_get(self, p: str, u) -> None:
-        """GET /api/outside/sources: what the Input sources panel draws (each
-        source with its health). GET /api/outside/setup: the setup file's
-        text, its path and routing-now.md's, the problems of the last apply
-        and whether an apply is running (#15). GET
-        /api/outside/log?source=ID&limit=N: where routed messages went and
-        why, as the log's raw lines. GET
-        /api/outside/messages?source=&project=&nomatch=1&limit=N: the log view
-        (step 7), one row per message with the CEO's actions on it; with
-        recent=PROJECT, an initiative's latest routed messages (its settings).
-        The page only: the log holds what outside people wrote, and agents
-        read the tables with ensemble_routing."""
-        why = self._agent_peer() if self._page_read_ok() else "not the page"
-        if why:
-            self._send_json(403, {"error": "page_only", "message": "Only the dashboard page can show this."})
-            return
-        q = parse_qs(u.query)
-        sid = (q.get("source", [""])[0] or "").strip()
-        if p == "/api/outside/sources":
-            self._send_json(200, outside.panel())
-        elif p == "/api/outside/setup":
-            self._send_json(200, outside_setup.panel())
-        elif p == "/api/outside/log":
-            try:
-                limit = max(1, min(1000, int(q.get("limit", ["200"])[0])))
-            except ValueError:
-                limit = 200
-            self._send_json(200, {"lines": outside_route.log_lines(sid or None, limit)})
-        elif p == "/api/outside/messages":
-            recent = (q.get("recent", [""])[0] or "").strip()
-            if recent:
-                self._send_json(200, {"rows": outside_log.recent_for(recent),
-                                      "routed": bool(outside_route.routed_sources())})
-                return
-            try:
-                limit = int(q.get("limit", ["200"])[0])
-            except ValueError:
-                limit = 200
-            self._send_json(200, outside_log.rows(
-                sid, (q.get("project", [""])[0] or "").strip(),
-                q.get("nomatch", [""])[0] in ("1", "true"), limit))
-        else:
-            self._send_json(404, {"error": "not_found"})
-
-    def _outside_post(self, p: str, data) -> None:
-        """POST /api/outside/setup {text}: the panel's Save of the setup file
-        (#15): the whole file is written and applied on a thread; the answer
-        is what GET /api/outside/setup shows. POST /api/outside/sources
-        {action: seen, source}: Done on a works again row. POST
-        /api/outside/messages {action: move | send | rule, source, key, to}:
-        the log view's Send elsewhere, Send anyway and Make a rule
-        (outside_log), each done at most once (where a message belongs is
-        changed only there, which also delivers it). The page only: an agent
-        changes its own initiative's section with ensemble_routing, never
-        through here."""
-        if not isinstance(data, dict):
-            self._send_json(400, {"error": "expected_object"})
-            return
-        why = self._page_refusal()
-        if why:
-            self._send_json(403, {"error": "page_only", "message": why})
-            return
-        sid = str(data.get("source") or "").strip()
-        if p == "/api/outside/sources":
-            self._outside_sources_post(sid, data)
-            return
-        if p == "/api/outside/messages":
-            act = outside_log.ACTIONS.get(str(data.get("action") or ""))
-            if act is None:
-                self._send_json(400, {"error": "refused",
-                                      "message": "the action must be move, send or rule"})
-                return
-            try:
-                res = act(sid, str(data.get("key") or ""), str(data.get("to") or ""))
-            except outside_log.Refused as e:
-                self._send_json(400, {"error": "refused", "message": str(e)})
-                return
-            self._send_json(200, {"ok": True, **res})
-            return
-        if p == "/api/outside/setup":
-            try:
-                outside_setup.save_text(data.get("text"))
-            except outside_route.Refused as e:
-                self._send_json(400, {"error": "refused", "message": str(e)})
-                return
-            self._send_json(200, {"ok": True, **outside_setup.panel()})
-            return
-        self._send_json(404, {"error": "not_found"})
-
-    def _hub_chat_post(self, data) -> None:
-        """POST /api/hub-chat {action: ask | again | apply | discard | clear,
-        text | id}: the hub chat (#16). A question is answered on a thread
-        (the page polls GET /api/hub-chat while ``busy``); Apply writes the
-        proposed setup file and applies it. The page only: an agent never
-        changes the hub's setup through the chat. The answer is the chat as
-        it is now; a refused action is a 400 with why in ``message``."""
-        if not isinstance(data, dict):
-            self._send_json(400, {"error": "expected_object"})
-            return
-        why = self._page_refusal()
-        if why:
-            self._send_json(403, {"error": "page_only", "message": why})
-            return
-        act = hub_chat.ACTIONS.get(str(data.get("action") or ""))
-        if act is None:
-            self._send_json(400, {"error": "refused",
-                                  "message": "the action must be ask, again, apply, discard or clear"})
-            return
-        try:
-            res = act(data)
-        except hub_chat.Refused as e:
-            self._send_json(400, {"error": "refused", "message": str(e)})
-            return
-        self._send_json(200, {"ok": True, **res})
-
-    def _outside_sources_post(self, sid: str, data: dict) -> None:
-        """POST /api/outside/sources {action: seen, source}: Done on a
-        source's works again row (the Inbox). Sources are set in the setup
-        file now (#15). A refused change is a 400 with what is wrong in
-        ``message``; the answer is the panel as it is now."""
-        action = str(data.get("action") or "")
-        try:
-            if action == "seen":
-                outside.recovered_seen(sid)
-                inbox.forget()
-            else:
-                self._send_json(404, {"error": "not_found", "message": f"no action {action!r}"})
-                return
-        except outside.Refused as e:
-            self._send_json(400, {"error": "refused", "message": str(e)})
-            return
-        self._send_json(200, {"ok": True, "source": sid, **outside.panel()})
-
     def _agent_hook(self) -> None:
         """POST /api/agent/hook — a Claude agent's hook (agent_hook.py) saying
         what it is doing: ``{room, identity, ptyId, at, event}``. This machine
@@ -24437,12 +24208,6 @@ class Handler(BaseHTTPRequestHandler):
             return
         if p.startswith("/api/notify/"):
             self._push_post(p, data)
-            return
-        if p.startswith("/api/outside/"):
-            self._outside_post(p, data)
-            return
-        if p == "/api/hub-chat":
-            self._hub_chat_post(data)
             return
         if p == "/api/room/points/decisions":
             # Clear all on Needs you's Decisions (#279): {roomId, action:
