@@ -305,13 +305,6 @@ Each project keeps its own files in its folder: `project.json`, `ROADMAP.md`, `P
 | `chatroom.py` | Task rooms: participants, messages, who a message wakes |
 | `ensemble_tools.py` | The `ensemble_*` MCP tools and their role checks |
 | `digest.py` | The PO's progress check |
-| `outside.py` | Outside sources: when each source is read, what it has seen, where it reads from, the delivery queue and each source's health |
-| `outside_route.py` | Outside sources: each source's routing table (one row per initiative, changed by the CEO or by that initiative's own agents with `ensemble_routing`, every change kept), routing by work item (a ticket or pull request one row lists), by channel and by thread, the last few messages of each conversation (for the model), and the log of where each message went |
-| `outside_model.py` | Outside sources: routing step 3. One Haiku call per batch, with no tools, reads the messages no channel or thread decides against each initiative's topic, with each conversation's last few messages; the answer is checked against the list; small talk is dropped, "no match" is only logged |
-| `work_items.py` | Outside sources: finds the tickets (`ABC-123`) and pull requests (`<repo> <number>`, `<repo>#<number>`, a GitHub link) a text names; text in, items out, no state |
-| `outside_items.py` | Outside sources: work items that fill and empty themselves: those an initiative's tasks name join its row; a pull request merged or closed 14 days ago (read with `gh`, read only) or a ticket not seen for 30 days leaves it; every 10 minutes while a source is set up |
-| `outside_replay.py` | Outside sources: a command-line replay of saved Slack messages through the full routing, compared with a dispatch log, written as a report with the bare pull request and ticket numbers counted (run locally, never in the tests) |
-| `sources/` | The outside source types (`base.py`: what a source type provides; `fake.py`: a made-up source for tests) |
 | `rotation.py` | Handovers and fresh sessions past the token limit |
 | `notify.py`, `webpush.py` | Notifications on your devices: what notifies, the devices, Web Push encryption and signing |
 | `due.py` | What a handover's `## Due` section names for a time, typed into its idle agent then |

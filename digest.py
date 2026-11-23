@@ -95,10 +95,6 @@ from pathlib import Path
 
 import due
 import issues
-import outside
-import outside_deliver
-import outside_items
-import outside_setup
 import board
 import points
 import po_messages
@@ -932,37 +928,6 @@ def start_scheduler() -> None:
                 issues.maybe_tick()
             except Exception as e:
                 _log(f"issues check error: {str(e)[:200]}")
-            # Outside message sources (outside.py): each checked when due on a
-            # thread of its own. None is configured unless someone adds one.
-            try:
-                outside.maybe_tick()
-            except Exception as e:
-                _log(f"outside sources check error: {str(e)[:200]}")
-            # The outside sources setup file (outside_setup.py): written the
-            # first time, applied on a thread of its own after each save.
-            try:
-                outside_setup.tick()
-            except Exception as e:
-                _log(f"outside setup file error: {str(e)[:200]}")
-            # The agents' skills keep their outside part only while a source
-            # is set up (#409): installed again when that changes.
-            try:
-                for pth in _d.refresh_agent_skills():
-                    _log(f"installed agent skill: {pth}")
-            except Exception as e:
-                _log(f"agent skill refresh error: {str(e)[:200]}")
-            # Outside messages routed to a PO (outside_deliver.py): typed into
-            # the PO's session, at most 6 wakes an hour per PO.
-            try:
-                outside_deliver.maybe_tick()
-            except Exception as e:
-                _log(f"outside delivery error: {str(e)[:200]}")
-            # Work items named by tasks join their rows; finished ones leave
-            # (outside_items.py), every 10 minutes on a thread of its own.
-            try:
-                outside_items.maybe_tick()
-            except Exception as e:
-                _log(f"work items error: {str(e)[:200]}")
             # A task in a PO project idle with nothing open (stall.py).
             try:
                 stall.maybe_tick()
