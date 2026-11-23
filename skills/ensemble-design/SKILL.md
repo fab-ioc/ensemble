@@ -590,6 +590,16 @@ they like: nothing here asks them to write differently.
   the link holds, the files of that name (moved) and of a close name (renamed, or the same `#N` in front) as
   rows that open them, and a **Check again** button. When exactly one file has that name, the view
   opens it straight away with a note naming the path the link pointed at.
+- **Reload this file** (the file view's header): an icon-only Default button (a circular arrow)
+  right before Point, title "Reload this file · keeps your place and your comments". It redraws
+  only the file in place — Markdown, text, code, HTML pages and pictures — never the page or its
+  host: the scroll place, the view, unsent comments and a comment being written stay; a comment
+  whose words are gone is listed as not found. The view asks for the file's version
+  (`GET /api/file/version`: modification time and size, never the file) every 30 s; when it
+  changed, one quiet line hangs under the header, "This file changed · Reload" (`--fs-200`,
+  `--surface-sunken`, a `--border` bottom, 24px, the content moves down with it). The whole line
+  reloads. With nothing in hand (no typed text, no comment box, idle 5 s, or the tab hidden) it
+  reloads by itself, by the update reload's rule; never while typing.
 
 ### Avatar
 

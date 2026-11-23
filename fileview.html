@@ -569,8 +569,12 @@
   @media (max-width: 520px) {
     header { flex-wrap:nowrap; padding:var(--s-100) var(--s-200); gap:var(--s-100); }
     header .name { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; word-break:normal; }
+    /* The meta gives way before the name: by so much that the name loses no
+       fraction of a pixel (which would already draw its ellipsis). */
+    header .meta { min-width:0; overflow:hidden; text-overflow:ellipsis; flex-shrink:100000; }
     header .grow { flex:1 1 0; min-width:0; }
     header .btn { flex:none; }
+    #fv-chg { padding:0 var(--s-200); }
     #cmt-file .lbl, #cmt-pick .lbl { display:none; }
     /* Download, Copy and Share… fold into one menu button. */
     header .btn.out { display:none; }
@@ -603,7 +607,7 @@
      its number; the number is drawn, never text, so selecting, copying and
      commenting see exactly the file. */
   body.code-mode { height:100vh; height:100dvh; min-height:0; display:flex; flex-direction:column; overflow:hidden; }
-  body.code-mode header { position:static; flex:none; }
+  body.code-mode header { position:relative; flex:none; }
   body.code-mode main { flex:1; min-height:0; max-width:none; width:100%; margin:0; padding:0; display:flex; flex-direction:column; }
   body.code-mode main > .note { margin:var(--s-200) var(--s-400) 0; }
   .code { position:relative; flex:1; min-height:0; overflow:auto; padding:var(--s-200) 0 var(--s-600);
@@ -791,6 +795,23 @@
     /* Centred, the comment box sat under the keyboard it opens. */
     .cmt-composer { top: var(--s-300); transform: translateX(-50%); }
   }
+  /* The line that says the file shown changed on disk (see "This file changed"
+     in the script): it hangs under the header, as wide as the page, so it
+     stays with the header when the page or the code scrolls; main makes room
+     for it while it shows. --surface-sunken on a border, the action a link,
+     as on the update line below. */
+  body { --fv-chg-h: 24px; }
+  #fv-chg {
+    position:absolute; left:0; right:0; top:calc(100% + 1px);   /* under the header's own 1px border */ height:var(--fv-chg-h); box-sizing:border-box;
+    display:flex; align-items:center; gap:var(--s-100); padding:0 var(--s-400);
+    background:var(--surface-sunken); border-bottom:1px solid var(--border); color:var(--fg);
+    font-size:var(--fs-200); line-height:var(--lh-200); font-weight:500; white-space:nowrap; overflow:hidden; cursor:pointer;
+  }
+  #fv-chg[hidden] { display:none; }
+  #fv-chg button { background:none; border:0; padding:0; margin:0; font:inherit; color:var(--link); text-decoration:underline; cursor:pointer; border-radius:var(--r-100); }
+  #fv-chg button:focus-visible { outline:none; box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  body.fv-chg main { padding-top:calc(var(--s-600) + var(--fv-chg-h)); }
+  body.code-mode.fv-chg main { padding-top:var(--fv-chg-h); }
   /* The line that says the page on disk is newer (see "Page update" in the
      script): one quiet strip over the top of the page, --surface on a border,
      the action a link. The same rule in index.html, session.html and fileview.html. */
@@ -817,6 +838,7 @@
   <span class="grow"></span>
   <span class="seg" id="views" hidden></span>
   <button class="btn" id="wrap" hidden aria-pressed="true" title="Wrap long lines to the width of the view">Wrap</button>
+  <button class="btn" id="fv-reload" type="button" title="Reload this file · keeps your place and your comments" aria-label="Reload this file"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9"/><path d="M12.5 1.8v2.7H9.8"/></svg></button>
   <button class="btn" id="cmt-pick" type="button" hidden aria-pressed="false" title="Comment on an element: point at a part of the page and click it (Esc leaves)"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l4 10 1.5-4L12.5 7.5z"/><path d="M9 9l4 4"/></svg><span class="lbl">&nbsp;Point</span></button>
   <button class="btn" id="cmt-file" title="Comment on this file as a whole">💬<span class="lbl">&nbsp;Comment</span></button>
   <a class="btn" id="raw" target="_blank">Raw</a>
@@ -824,6 +846,7 @@
   <button class="btn out" id="out-copy" type="button" hidden title="Copy the file’s content, to paste it into a mail or a chat"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><rect x="5" y="5" width="8.5" height="9" rx="1.5"/><path d="M3 11V3.5A1.5 1.5 0 0 1 4.5 2H10"/></svg><span class="lbl">&nbsp;Copy</span></button>
   <button class="btn out" id="out-share" type="button" hidden title="Share the file with another app"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 10V2M5 4.5 8 1.5l3 3M4.5 7H3.5v7h9V7h-1"/></svg><span class="lbl">&nbsp;Share…</span></button>
   <button class="btn" id="out-menu" type="button" hidden aria-haspopup="menu" aria-expanded="false" aria-label="Download, copy or share" title="Download, copy or share the file"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v8M4.5 6.5 8 10l3.5-3.5M2.5 13.5h11"/></svg>&nbsp;▾</button>
+  <div id="fv-chg" role="status" hidden>This file changed · <button type="button">Reload</button></div>
 </header>
 <main id="main"><div class="err">Loading…</div></main>
 <script src="/static/hl.js"></script>
@@ -2750,6 +2773,92 @@ function fvBackButton() {
     fvBack();
   });
 }
+// ---- This file changed ------------------------------------------------------
+// The view asks the hub for the file's version (its modification time and
+// size, GET /api/file/version: a few bytes, never the file) every 30 s, with
+// the update check below. When it changed, one quiet line under the header
+// says so: "This file changed · Reload". The header's Reload button does the
+// same at any time. A reload draws the file again in place (FV_RELOAD, set by
+// the reader): the dashboard, its panels and other frames are not touched,
+// and the scroll place, the comments, the tray and a comment being written
+// stay. By itself it reloads only by the update reload's rule: nothing in hand
+// (no comment being written, no text typed, no selection, no held pointer) and
+// no input for 5 s; never while text is being typed.
+let FV_RELOAD = null;
+const fvChg = window.fvChg = (() => {
+  const CHECK_MS = 30000, QUIET_MS = 5000, RECHECK_MS = 5000;
+  const S = { seen: '', pending: false, reloading: false, checking: false, checkedAt: 0, timer: 0 };
+  const line = () => document.getElementById('fv-chg');
+  // The file's version: '' when the hub could not say (asked again later),
+  // 'gone' when there is no file there now.
+  async function version() {
+    try {
+      const r = await fetch('/api/file/version?path=' + encodeURIComponent(PATH_Q) + CTX, { cache: 'no-store' });
+      if (r.status === 404) return 'gone';
+      const j = r.ok ? await r.json() : null;
+      return (j && j.version) || '';
+    } catch (e) { return ''; }
+  }
+  // Shown or gone, the line moves what is under it by its height: a page
+  // scrolled down is moved by as much, so the words in view stay put.
+  function show(on) {
+    const n = line(), b = document.body;
+    if (!n || b.classList.contains('fv-chg') === on) return;
+    const s = b.classList.contains('code-mode') ? null : document.scrollingElement, top = s ? s.scrollTop : 0;
+    n.hidden = !on;
+    b.classList.toggle('fv-chg', on);
+    if (top > 0) s.scrollTop = top + (on ? 1 : -1) * (parseFloat(getComputedStyle(b).getPropertyValue('--fv-chg-h')) || 0);
+  }
+  async function start() { S.seen = await version(); S.checkedAt = Date.now(); }
+  async function reload() {
+    if (S.reloading) return;
+    S.reloading = true;
+    clearInterval(S.timer); S.timer = 0;
+    try {
+      // Taken before the file is read: a change made while it is read is
+      // seen at the next check (one reload too many, never one too few).
+      const v = await version();
+      if (v) S.seen = v;
+      let done = false;
+      try { done = !!FV_RELOAD && (await FV_RELOAD()) !== false; } catch (e) {}
+      if (!done) {
+        // Nothing drawn in place to draw again (a missing file, a folder, an
+        // error): this page alone loads again, where it was.
+        let place = null;
+        try { place = window.ensUpdPlace ? window.ensUpdPlace() : null; } catch (e) {}
+        if (place && place.url) location.replace(place.url); else location.reload();
+        return;
+      }
+      S.pending = false;
+      show(false);
+    } finally { S.reloading = false; }
+  }
+  function maybe() {
+    if (!S.pending || S.reloading) return;
+    // The update reload loads the whole page anyway.
+    if (ensUpd.pending || ensUpd.reloading) return;
+    if (document.hidden ? ensUpd.holdingText() : (ensUpd.busy() || ensUpd.idleFor() < QUIET_MS)) return;
+    reload();
+  }
+  async function tick() {
+    if (S.reloading || !S.seen) return;
+    if (S.pending) { maybe(); return; }
+    if (S.checking || Date.now() - S.checkedAt < CHECK_MS) return;
+    S.checking = true; S.checkedAt = Date.now();
+    try {
+      const v = await version();
+      if (v && v !== S.seen && !S.reloading) {
+        S.pending = true;
+        show(true);
+        if (!S.timer) S.timer = setInterval(maybe, RECHECK_MS);
+        maybe();
+      }
+    } finally { S.checking = false; }
+  }
+  return Object.assign(S, { version, start, reload, maybe, tick, show });
+})();
+document.getElementById('fv-reload').addEventListener('click', () => fvChg.reload());
+document.getElementById('fv-chg').addEventListener('click', () => fvChg.reload());   // the whole line; the button is where the keyboard lands
 (async function () {
   const path = new URLSearchParams(location.search).get('path') || '';
   const main = document.getElementById('main');
@@ -2780,6 +2889,8 @@ function fvBackButton() {
     }
   }
   FileDrag.mark(nameEl, path, { kind: 'file-title', room: ROOM, cwd: CWD });
+  // The version the view shows, taken before the file is read (see fvChg).
+  await fvChg.start();
 
   // Not on the hub: said here, and to the Workspace tab this viewer is in.
   // A page opened from a link in another (BACK) is not the Workspace tab's file:
@@ -2818,21 +2929,35 @@ function fvBackButton() {
   const MEDIA = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp',
                   svg: 'image/svg+xml', bmp: 'image/bmp', ico: 'image/x-icon', pdf: 'application/pdf' };
   if (MEDIA[ext]) {
-    let r = null, url = '';
-    try { r = await fetch(src, { cache: 'no-store' }); } catch (e) {}
+    // One read, kept: the bytes read are what is shown (a file deleted in
+    // between says it is missing instead of showing a broken picture).
+    const read = async () => { try { return await fetch(src, { cache: 'no-store' }); } catch (e) { return null; } };
+    let r = await read(), url = '';
     if (r && r.status === 404) { notFound(); return; }
     if (r && r.status === 403) { main.innerHTML = nounText('<div class="err">Could not open file (403) — it sits outside the folders the dashboard is allowed to read: registered {projects} and their task folders.</div>'); return; }
     try { if (r && r.ok) url = URL.createObjectURL(new Blob([await r.arrayBuffer()], { type: MEDIA[ext] })); } catch (e) {}
     if (!url) { main.innerHTML = `<div class="err">Could not open file${r && !r.ok ? ' (' + r.status + ')' : ''}.</div>`; return; }
     // A PDF's place is inside the browser's own viewer, out of this page's
     // reach: it is kept while the tab's viewer stays loaded.
+    // Reload: the new bytes in the same element. A picture keeps the page's
+    // scroll place; a PDF opens at its top again (its viewer is the browser's).
+    FV_RELOAD = async () => {
+      const r2 = await read();
+      const el = main.querySelector('img.file, iframe.file');
+      if (!r2 || !r2.ok || !el) return false;
+      const fresh = URL.createObjectURL(new Blob([await r2.arrayBuffer()], { type: MEDIA[ext] }));
+      const old = el.src, s = fvScrollOwner(main), top = s ? s.scrollTop : 0;
+      el.addEventListener('load', () => { URL.revokeObjectURL(old); if (s) s.scrollTop = top; }, { once: true });
+      el.src = fresh;
+      return true;
+    };
     if (ext === 'pdf') { main.innerHTML = `<iframe class="file" src="${url}" title="${esc(base)}"></iframe>`; return; }
     main.innerHTML = `<img class="file" src="${url}" alt="${esc(base)}">`;
     main.querySelector('img').addEventListener('load', () => { putBack(); reporting = true; report(); }, { once: true });
     return;
   }
 
-  const res = await loadText(path, src);
+  let res = await loadText(path, src);
   if (res.ok) fvFound(res.at);
   // Found by its name, not where the link put it: the link's folders were wrong.
   if (res.ok && res.found === 'tail' && res.at && /[\\/]/.test(path.replace(/^\.[\\/]/, '')) && !MOVED_FROM) movedNote(path, res.at, main);
@@ -2851,13 +2976,14 @@ function fvBackButton() {
                              'Use Raw to download it. You can still comment on it as a whole.']));
     return;
   }
-  const text = res.text;
+  let text = res.text;
   const notes = [];
   // Everything about size is counted in bytes: res.size is bytes, and a
   // character count would under-report any file that isn't pure ASCII. How much
   // came back IS the hub's read cap, so quote that rather than a number
   // hard-coded here, which would start lying the day the cap moves.
-  if (res.truncated) notes.push(`Showing the first ${fmtSize(byteLen(text))} of ${fmtSize(res.size)} — use Raw for the whole file.`);
+  const noteTruncated = () => { notes.length = 0; if (res.truncated) notes.push(`Showing the first ${fmtSize(byteLen(text))} of ${fmtSize(res.size)} — use Raw for the whole file.`); };
+  noteTruncated();
   const lang = HL.langOf(base, text);
   const metaEl = document.getElementById('meta');
   const setMeta = detail => { metaEl.textContent = [detail, fmtSize(res.size)].filter(Boolean).join(' · '); };
@@ -2866,7 +2992,8 @@ function fvBackButton() {
   // The ways to show this file, the first one the default. A link to a line
   // wants the source, since that is where line numbers are.
   const isMd = lang === 'markdown', isHtml = ext === 'html' || ext === 'htm', isCsv = ext === 'csv' || ext === 'tsv';
-  const laidOut = lang === 'json' && !['jsonl', 'ndjson'].includes(ext) ? jsonLayout(text, res.truncated) : '';
+  const layOut = () => lang === 'json' && !['jsonl', 'ndjson'].includes(ext) ? jsonLayout(text, res.truncated) : '';
+  let laidOut = layOut();
   const views = isMd || isHtml ? [['preview', 'Preview'], ['source', 'Source']]
     : isCsv ? [['table', 'Table'], ['source', 'Source']]
     : laidOut ? [['pretty', 'Formatted'], ['source', 'As written']] : null;
@@ -3047,6 +3174,26 @@ function fvBackButton() {
   if (!main.querySelector('iframe.file')) putBack();
   reporting = true;
   report();
+  // Reload: the file's text as it is now, drawn again in the same view at the
+  // same scroll place. The comments are marked again where their words are now
+  // (a passage whose words are gone is listed as such in the tray); the tray,
+  // a comment being written and its destination are outside main and stay.
+  // Anything else (gone, unreadable, binary now) loads this page again.
+  FV_RELOAD = async () => {
+    const r = await loadText(path, src);
+    if (!r.ok || r.binary) return false;
+    const s = fvScrollOwner(main);
+    const top = s ? Math.round(s.scrollTop) : 0;
+    res = r; text = r.text;
+    noteTruncated();
+    laidOut = layOut();
+    if (view === 'pretty' && !laidOut) view = 'source';
+    pendingTop = top;
+    paint();
+    if (!main.querySelector('iframe.file')) putBack();
+    renderTray();
+    return true;
+  };
 })();
 // ---- Page update: begin shared block ----------------------------------------
 // The hub serves the pages from disk, so a merge is live on the next load; this
@@ -3200,6 +3347,7 @@ const ensUpd = window.ensUpd = (() => {   // a window property too: a host page 
 // the same st= a Workspace tab reopens it with (see ensUpdPlace in the reader).
 window.ensUpdBusy = () => _composerOpen || selShown() || FC.picking();
 setInterval(ensUpd.poll, 15000);   // asks every 30 s; a tick that lands a hair early is not skipped
+setInterval(fvChg.tick, 15000);    // the file's own version, in the same rhythm
 </script>
 </body>
 </html>
