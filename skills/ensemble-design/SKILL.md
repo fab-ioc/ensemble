@@ -925,6 +925,17 @@ them), the same tray, the same `## Review comments (N)` message.
   comment added or edited meanwhile unsent. A send carries a key made from the comments as they read
   (`drKey`), and the hub posts a key once, so two tabs or a retry never deliver the same comments
   twice; where the browser has a lock (https, localhost) a second tab also waits and sends nothing.
+- **The file view's tray** (`#cmt-tray` in `fileview.html`, #297, #414) says where its comments go
+  in a **Send to** chooser grouped by `<optgroup>`: the PO chat it was opened from (the thread it was
+  opened from first, marked "opened here", then "· main chat"), `Task`, "(Other) threads of <PO>,
+  latest first" (five at most, plus the one last sent to), then under a rule `+ New thread ·
+  “<file>”`. A place is `Thread · <title>`, `<PO> · main chat`, a task's name. **The button names
+  the kind of place** (Send to thread / main chat / task / new thread), never the place, so it is
+  never cut off; its tooltip names the place. A thread closed or deleted since says so in an amber
+  line (`.cmt-dest-gone`: `--c-warning-bg`/`--c-warning-fg`) and its main chat stands in; a new thread
+  says what it will be called in a muted line (`.cmt-dest-hint`). The place picked is kept with the
+  comments across a reload and forgotten when the tray empties; the last-used thread is never the
+  default, only first in its list.
 - **Phone:** every diff line is `--touch-min` tall, since a tap on it starts a comment (a line that
   wraps is taller anyway); comment cards span the width, every control is `--touch-min`, the comment
   field is `--fs-400`.

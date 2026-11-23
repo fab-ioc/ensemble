@@ -145,17 +145,17 @@ class TheHubsAnswer(unittest.TestCase):
         got = self.d.file_owner_info(str(self.doc))
         self.assertEqual(got["room"], self.po)
         self.assertEqual(got["owner"]["name"], "Motors PO")
-        self.assertEqual([c["why"] for c in got["choices"]], ["owner"])
+        self.assertEqual([c["why"] for c in got["choices"]], ["owner", "new"])
 
     def test_the_openers_room_is_kept_with_the_owner_beside_it(self):
         got = self.d.file_owner_info(str(self.doc), room_id=self.task)
         self.assertEqual(got["room"], self.task)
-        self.assertEqual([(c["room"], c["why"]) for c in got["choices"]], [(self.task, "opener"), (self.po, "owner")])
+        self.assertEqual([(c["room"], c["why"]) for c in got["choices"]], [(self.task, "opener"), (self.po, "owner"), (self.po, "new")])
 
     def test_a_tasks_file_offers_the_task_then_its_po(self):
         got = self.d.file_owner_info(str(self.mine))
         self.assertEqual(got["room"], self.task)
-        self.assertEqual([c["why"] for c in got["choices"]], ["owner", "po"])
+        self.assertEqual([c["why"] for c in got["choices"]], ["owner", "po", "new"])
 
     def test_an_unknown_opener_falls_back_to_the_owner(self):
         got = self.d.file_owner_info(str(self.doc), room_id="room-00000000")

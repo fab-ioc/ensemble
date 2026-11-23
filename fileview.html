@@ -733,6 +733,9 @@
   #cmt-tray .cmt-dest { display:flex; flex-direction:column; gap:var(--s-100); padding:var(--s-200) 11px; border-bottom:1px solid var(--border); font-size:var(--fs-200); color:var(--fg-muted); }
   #cmt-tray .cmt-dest label { display:flex; align-items:center; gap:var(--s-200); }
   #cmt-tray .cmt-dest select { flex:1; min-width:0; height:28px; background:var(--surface); color:var(--fg); border:1px solid var(--border-strong); border-radius:var(--r-200); font:inherit; font-size:var(--fs-200); }
+  /* #414: the thread the comments were to go to is gone (closed or deleted): said before sending. */
+  #cmt-tray .cmt-dest-gone { padding:var(--s-100) var(--s-200); border-radius:var(--r-200); background:var(--c-warning-bg); color:var(--c-warning-fg); }
+  #cmt-tray .cmt-dest-hint { color:var(--fg-muted); }
   #cmt-tray .cmt-list { overflow-y:auto; }
   #cmt-tray .cmt-item { position:relative; padding:8px 26px 8px 11px; border-bottom:1px solid var(--border); cursor:pointer; }
   #cmt-tray .cmt-item:hover, #cmt-tray .cmt-item.hit { background:var(--hover); }
@@ -863,6 +866,10 @@ const ROOM = new URLSearchParams(location.search).get('room') || '';
 // Which task's chat the comments will land in, named so the sender can see it
 // before they press the button.
 const ROOM_NAME = new URLSearchParams(location.search).get('roomName') || '';
+// The thread of that PO chat it was opened from (#414, the CEO's P444): the
+// comments go there by default, as if typed in the thread's own box.
+const THREAD = (new URLSearchParams(location.search).get('thread') || '').trim();
+const THREAD_NAME = new URLSearchParams(location.search).get('threadName') || '';
 // ---- Links in rendered text: begin shared block ----------------------------
 // index.html, session.html and fileview.html carry this block word for word;
 // tests/test_links.py fails when the copies drift. The page supplies esc() and
@@ -1339,13 +1346,44 @@ const CTX = (ROOM ? '&room=' + encodeURIComponent(ROOM) : '') + (CWD ? '&cwd=' +
 // DEST_CHOICES: what the tray's chooser offers. DEST_NONE: nothing owns the file.
 // Nothing is sent until the hub has answered: a room= in the address is only
 // used once the hub confirms it (DEST_STATE: 'pending' | 'ok' | 'failed').
-let DEST = { room: '', name: '' }, DEST_CHOICES = [], DEST_NONE = false, DEST_STATE = 'pending';
-const DEST_WHY = { opener: 'where it was opened', owner: '', po: 'its project', pick: '' };
+// #414: a place is a chat (kind task | po: its main chat), a thread of a PO
+// chat (kind thread: room + thread) or a new thread there (kind new, named
+// after the file); destKey tells them apart. DEST_GONE: the thread the
+// comments were to go to is gone since (closed or deleted), its main chat
+// standing in, said in the tray before sending.
+let DEST = { room: '', name: '' }, DEST_CHOICES = [], DEST_NONE = false, DEST_STATE = 'pending', DEST_GONE = null;
+const DEST_WHY = { opener: 'opened here', owner: '', po: 'its project', pick: '' };
+const destKey = c => [c.room || '', c.thread || '', c.kind === 'new' ? 'new' : ''].join('|');
+// What the chooser and the Send button's tooltip call a place.
+const destLabel = c => c.kind === 'thread' ? 'Thread · ' + c.name
+  : c.kind === 'po' ? c.name + ' · main chat'
+  : c.kind === 'new' ? 'New thread · “' + c.name + '”' : c.name;
+// The tray's comments are kept per file, per chat and per thread they were made from
+// (FVC below); the place chosen for them is kept beside them until they are all gone.
+function fvList() {
+  return THREAD ? 'cd-fvt:' + [ROOM, THREAD, CWD, PATH_Q].map(encodeURIComponent).join(':') + ':'
+    : 'cd-fvc:' + [ROOM, CWD, PATH_Q].map(encodeURIComponent).join(':') + ':';
+}
+function destSaved() {
+  try {
+    const d = JSON.parse(localStorage.getItem('cd-fvd:' + fvList()) || 'null');
+    return d && typeof d.room === 'string' ? d : null;
+  } catch (e) { return null; }
+}
+function destSave(c) {
+  try {
+    if (c) localStorage.setItem('cd-fvd:' + fvList(), JSON.stringify({ room: c.room, thread: c.thread || '', kind: c.kind || '', name: c.name || '' }));
+    else localStorage.removeItem('cd-fvd:' + fvList());
+  } catch (e) {}
+}
 async function loadDest() {
   if (!PATH_Q) { DEST_STATE = 'failed'; return; }
+  const saved = destSaved();
   let j = null;
   try {
-    const r = await fetch('/api/file/owner?path=' + encodeURIComponent(PATH_Q) + CTX, { cache: 'no-store' });
+    const r = await fetch('/api/file/owner?path=' + encodeURIComponent(PATH_Q) + CTX
+      + (THREAD ? '&thread=' + encodeURIComponent(THREAD) : '')
+      + (saved && saved.thread ? '&pick=' + encodeURIComponent(saved.thread) : ''), { cache: 'no-store' });
     if (r.ok) j = await r.json();
   } catch (e) {}
   if (!j || !Array.isArray(j.choices)) {         // not found, not allowed, or no answer: Copy only
@@ -1357,15 +1395,27 @@ async function loadDest() {
   DEST_CHOICES = j.choices;
   if (!FILE_AT && j.path && ABS_PATH_RE.test(j.path)) FILE_AT = j.path;
   DEST_NONE = !j.owner && !j.opener;
-  const c = j.choices.find(x => x.room === j.room);
-  // A given room the hub knows keeps the name the opener gave it, if any.
-  DEST = c ? { room: c.room, name: (c.why === 'opener' && ROOM_NAME) || c.name } : { room: '', name: '' };
+  let c = j.choices.find(x => x.room === j.room && (x.thread || '') === (j.thread || '') && x.kind !== 'new');
+  // The place these comments were set to go to, if it is still offered; a
+  // thread gone since gives way to its main chat, and the tray says so.
+  const gone = Array.isArray(j.gone) ? j.gone : [];
+  const g = (saved && saved.thread && gone.find(x => x.id === saved.thread)) || (THREAD && gone.find(x => x.id === THREAD));
+  if (saved) {
+    const s = j.choices.find(x => destKey(x) === destKey(saved))
+      || (g && g.id === saved.thread && j.choices.find(x => x.kind === 'po' && x.room === saved.room));
+    if (s) c = s;
+  }
+  DEST_GONE = g ? { room: g.id === saved?.thread ? saved.room : ROOM, why: g.why,
+                    title: g.title || (g.id === saved?.thread ? saved.name : THREAD_NAME) || '' } : null;
+  // A given task chat the hub knows keeps the name the opener gave it, if any.
+  DEST = c ? { ...c, name: (c.why === 'opener' && c.kind === 'task' && ROOM_NAME) || c.name } : { room: '', name: '' };
   if (typeof renderTray === 'function') renderTray();
 }
 loadDest();
-function setDest(room) {
-  const c = DEST_CHOICES.find(x => x.room === room);
-  DEST = c ? { room: c.room, name: c.name } : { room: '', name: '' };
+function setDest(key) {
+  const c = DEST_CHOICES.find(x => destKey(x) === key);
+  DEST = c ? { ...c } : { room: '', name: '' };
+  destSave(c || null);
   renderTray();
 }
 // The line a link pointed at ("name.py:120"): marked, and scrolled into view.
@@ -1405,7 +1455,7 @@ function fvScrollOwner(main) {
   if (f) { try { return f.contentDocument ? f.contentDocument.scrollingElement : null; } catch (e) { return null; } }
   return document.scrollingElement;
 }
-function fileHref(p, line) { return FileLinks.href(resolvePath(p, FILE_BASE), { line, room: ROOM, cwd: CWD }); }
+function fileHref(p, line) { return FileLinks.href(resolvePath(p, FILE_BASE), { line, room: ROOM, cwd: CWD, thread: THREAD, threadName: THREAD_NAME }); }
 // The <base href> a rendered page gets, so its own relative pictures, styles
 // and stylesheet url()s load from its folder instead of about:srcdoc (which
 // resolves nowhere). /api/file-at/<style>/<folder segments...>/ mirrors the
@@ -1764,7 +1814,7 @@ function mdToHtml(src) {
 // files, and two lists.
 //   text:    {cid, at, start, end, quote, note, view, line?}
 //   element: {cid, at, kind: 'el', el: {tag, label, text, hint, near, path, html, line, box}, note, view}
-const FVC = cmtStore('cd-fvc:' + [ROOM, CWD, PATH_Q].map(encodeURIComponent).join(':') + ':', c => typeof c.note === 'string'
+const FVC = cmtStore(fvList(), c => typeof c.note === 'string'
   && (c.kind === 'el' ? !!(c.el && c.el.tag) : typeof c.quote === 'string' && Number.isFinite(c.start)));
 FVC.sync();
 const CMTS = FVC.list;
@@ -1872,22 +1922,53 @@ function selReact(r, data) {
   const s = (data.doc || document).getSelection(); if (s) s.removeAllRanges();
   submitCmts([cid]);
 }
-function dropCmts(cids) { FVC.remove(cids); cids.forEach(cid => LOST.delete(cid)); }
+function dropCmts(cids) {
+  FVC.remove(cids); cids.forEach(cid => LOST.delete(cid));
+  if (!CMTS.length) destSave(null);       // the place chosen was for these comments
+}
+const SEND_WORD = { thread: 'Send to thread', po: 'Send to main chat', task: 'Send to task', new: 'Send to new thread' };
+// The name of the PO chat ``room`` (its main chat's entry), for the chooser's groups.
+const destPoName = room => (DEST_CHOICES.find(x => x.kind === 'po' && x.room === room) || {}).name || 'PO';
+// The chooser's groups (#414), in the order of their first place: a PO chat
+// (the thread it was opened from with its main chat), Task, the PO chat's
+// threads latest first, then, under a rule, a new thread.
+function destGroup(c) {
+  if (c.kind === 'new') return '';
+  if (c.kind === 'task') return 'Task';
+  if (c.kind === 'thread' && c.why !== 'opener') {
+    const other = DEST_CHOICES.some(x => x.kind === 'thread' && x.why === 'opener');
+    return (other ? 'Other threads of ' : 'Threads of ') + destPoName(c.room) + ', latest first';
+  }
+  return destPoName(c.room);
+}
 function renderTray() {
   let tray = document.getElementById('cmt-tray');
   if (!CMTS.length) { if (tray) tray.remove(); return; }
   if (!tray) { tray = document.createElement('div'); tray.id = 'cmt-tray'; document.body.appendChild(tray); }
-  const dest = DEST.name ? 'Send to “' + DEST.name + '”' : 'Send to chat';
-  const send = DEST.room ? `<button class="cmt-submit" title="${esc(dest)}">${esc(dest)}</button>` : '';
+  // #414: the button names the kind of place, so it is never cut off; its tooltip the place.
+  const word = SEND_WORD[DEST.kind] || 'Send';
+  const send = DEST.room ? `<button class="cmt-submit" title="${esc('Send to “' + destLabel(DEST) + '”')}">${esc(word)}</button>` : '';
   // The chooser: when there is more than one place, or none chosen yet.
   let pick = '';
   if (DEST_CHOICES.length > 1 || (!DEST.room && DEST_CHOICES.length)) {
-    const opts = (DEST.room ? '' : '<option value="" selected>Choose a PO…</option>')
-      + DEST_CHOICES.map(c => {
-        const why = DEST_WHY[c.why] || '';
-        return `<option value="${esc(c.room)}"${c.room === DEST.room ? ' selected' : ''}>${esc(c.name)}${why ? ' (' + esc(why) + ')' : ''}</option>`;
-      }).join('');
-    pick = `<div class="cmt-dest">${DEST_NONE ? '<span class="cmt-dest-none">This file belongs to no task or project.</span>' : ''}<label>Send to <select class="cmt-dest-pick" aria-label="Where the comments go">${opts}</select></label></div>`;
+    let opts = DEST.room ? '' : '<option value="" selected>Choose a PO…</option>', grp = null, inGrp = false;
+    const here = destKey(DEST);
+    for (const c of DEST_CHOICES) {
+      const g = destGroup(c);
+      if (g !== grp) {
+        if (inGrp) opts += '</optgroup>';
+        grp = g; inGrp = !!g;
+        opts += g ? `<optgroup label="${esc(g)}">` : '<hr>';
+      }
+      const why = DEST_WHY[c.why] || '';
+      opts += `<option value="${esc(destKey(c))}"${destKey(c) === here ? ' selected' : ''}>${c.kind === 'new' ? '+ ' : ''}${esc(destLabel(c))}${why ? ' (' + esc(why) + ')' : ''}</option>`;
+    }
+    if (inGrp) opts += '</optgroup>';
+    const gone = DEST_GONE && DEST.kind === 'po' && DEST.room === DEST_GONE.room
+      ? `<div class="cmt-dest-gone" role="status">${esc(DEST_GONE.title ? 'The thread “' + DEST_GONE.title + '”' : 'The thread this file was opened from')} ${DEST_GONE.why === 'closed' ? 'was closed' : 'is no longer there'}: these go to the main chat.</div>` : '';
+    const hint = DEST.kind === 'new'
+      ? `<div class="cmt-dest-hint">Starts a thread named “${esc(DEST.name)}” in the ${esc(destPoName(DEST.room))} chat.</div>` : '';
+    pick = `<div class="cmt-dest">${DEST_NONE ? '<span class="cmt-dest-none">This file belongs to no task or project.</span>' : ''}<label>Send to <select class="cmt-dest-pick" aria-label="Where the comments go">${opts}</select></label>${gone}${hint}</div>`;
   } else if (DEST_STATE !== 'ok') {
     pick = `<div class="cmt-dest"><span class="cmt-dest-none">${DEST_STATE === 'pending' ? 'Finding where this file’s comments go…' : 'Could not find where this file’s comments go: copy them.'}</span></div>`;
   } else if (DEST_NONE) {
@@ -2283,7 +2364,8 @@ const FV_WAIT = new Set();
 async function submitCmts(only) {
   if (FV_SENDING) { if (only) only.forEach(cid => FV_WAIT.add(cid)); else FV_AGAIN = true; return; }
   const groups = only ? [CMTS.filter(c => only.includes(c.cid))]
-    : DEST.room ? [CMTS.filter(c => !c.react), ...CMTS.filter(c => c.react).map(c => [c])] : [CMTS.slice()];
+    // A new thread is one message: each reaction on its own would start a thread of its own.
+    : DEST.room && DEST.kind !== 'new' ? [CMTS.filter(c => !c.react), ...CMTS.filter(c => c.react).map(c => [c])] : [CMTS.slice()];
   FV_SENDING = true;
   let ok = true;
   try {
@@ -2310,7 +2392,7 @@ async function copyCmts() {
 // One message of comments; true when it went (or the hub holds it).
 async function sendCmts(list) {
   const body = buildBody(list);
-  const to = DEST.room, toName = DEST.name;
+  const to = DEST.room, toName = DEST.room ? destLabel(DEST) : '', dest = DEST;
   if (!to) {
     try { await navigator.clipboard.writeText(body); toast('No chat chosen to send to — comments copied.'); }
     catch (e) { showFallback('No chat chosen to send to. Copy your comments:', body); }
@@ -2324,7 +2406,19 @@ async function sendCmts(list) {
   const key = 'fv:' + sent.join(',');
   try {
     // Given up after 20 s (sendJson): the copy fallback shows instead of nothing.
-    const r = await sendJson('/api/room/resume', { roomId: to, text: body, to: '', key });
+    // #414: into a thread as its own box sends (session.html sendResuming):
+    // the hub tells the PO which thread; one with no point yet goes with its
+    // first message's link. A new thread is named after the file.
+    const req = { roomId: to, text: body, to: '', key };
+    if (dest.kind === 'thread' && dest.thread) {
+      req.thread = dest.thread;
+      if (!dest.hasPoints && dest.root) req.text = location.origin + '/session?room=' + encodeURIComponent(to) + '&msg='
+        + encodeURIComponent(dest.root).replace(/%3A/gi, ':') + '\n\n' + body;
+    } else if (dest.kind === 'new') {
+      req.newThread = true;
+      req.threadName = dest.name;
+    }
+    const r = await sendJson('/api/room/resume', req);
     const j = r.data;
     if (!r.ok || !j || j.error) {
       // Refused but held by the hub: shown in the task's chat as not
@@ -2334,6 +2428,8 @@ async function sendCmts(list) {
       return true;
     }
     dropCmts(sent); clearHl(); remarkAll(); renderTray(); toast(toName ? '✓ Comments sent to “' + toName + '”' : '✓ Comments sent to the chat');
+    // The thread just started is listed now: the chooser is asked again.
+    if (dest.kind === 'new') loadDest();
     return true;
   } catch (e) {
     // No answer: they may have arrived. The same comments again have the same key, so they count once.
