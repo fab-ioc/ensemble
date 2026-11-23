@@ -2810,6 +2810,85 @@ const fvChg = window.fvChg = (() => {
     if (top > 0) s.scrollTop = top + (on ? 1 : -1) * (parseFloat(getComputedStyle(b).getPropertyValue('--fv-chg-h')) || 0);
   }
   async function start() { S.seen = await version(); S.checkedAt = Date.now(); }
+  // A rendered HTML page is a document of its own: what is typed into its
+  // forms is not heard by this page's update rule. Its input counts as input
+  // here, and a form with something typed in it holds the reload off as typed
+  // text does; a Reload puts what was typed back into the new page.
+  let frameInputAt = 0;
+  const edited = new WeakSet();               // documents whose contenteditable was typed in
+  const frameDoc = () => { try { const f = document.querySelector('main iframe.file'); return (f && f.contentDocument) || null; } catch (e) { return null; } };
+  const FIELDS = 'input, textarea, select, [contenteditable]:not([contenteditable="false"])';
+  const NOT_TYPED = /^(hidden|button|submit|reset|image)$/;
+  function watchFrame(doc) {
+    if (!doc) return;
+    for (const t of ['input', 'keydown', 'pointerdown', 'wheel']) doc.addEventListener(t, () => { frameInputAt = Date.now(); }, true);
+    doc.addEventListener('input', e => { if (e.target && e.target.isContentEditable) edited.add(doc); }, true);
+  }
+  function changed(el) {
+    const tag = el.tagName;
+    if (tag === 'SELECT') {
+      // With no option marked selected, a single select starts on its first
+      // option that can be chosen.
+      const opts = [...el.options], marked = opts.some(o => o.defaultSelected);
+      const first = !el.multiple && !marked ? opts.findIndex(o => !o.disabled) : -1;
+      return opts.some((o, i) => o.selected !== (o.defaultSelected || i === first));
+    }
+    if (tag === 'TEXTAREA') return el.value !== el.defaultValue;
+    if (tag === 'INPUT') {
+      const t = (el.type || '').toLowerCase();
+      if (NOT_TYPED.test(t)) return false;
+      if (t === 'checkbox' || t === 'radio') return el.checked !== el.defaultChecked;
+      if (t === 'file') return !!(el.files && el.files.length);
+      return el.value !== el.defaultValue;
+    }
+    return false;
+  }
+  function frameHolds() {
+    const d = frameDoc();
+    if (!d) return false;
+    if (edited.has(d)) return true;
+    try { return [...d.querySelectorAll('input, textarea, select')].some(changed); } catch (e) { return false; }
+  }
+  // Each field by its id, else its name, else its place among its kind.
+  function fieldKeys(d) {
+    const seen = new Map();
+    return [...d.querySelectorAll(FIELDS)].map(el => {
+      const k = el.id ? 'id:' + el.id
+        : el.isContentEditable && !/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) ? 'ce:'
+        : el.name ? 'n:' + el.tagName + ':' + el.name : 't:' + el.tagName + ':' + (el.type || '');
+      const n = seen.get(k) || 0; seen.set(k, n + 1);
+      return [k + '#' + n, el];
+    });
+  }
+  function frameState() {
+    const d = frameDoc();
+    if (!d || !frameHolds()) return null;
+    const keep = new Map(), ce = edited.has(d);
+    for (const [k, el] of fieldKeys(d)) {
+      if (el.tagName === 'SELECT') { if (changed(el)) keep.set(k, { sel: [...el.options].map(o => o.selected) }); }
+      else if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
+        const t = (el.type || '').toLowerCase();
+        if (!changed(el) || t === 'file') continue;
+        keep.set(k, t === 'checkbox' || t === 'radio' ? { checked: el.checked } : { value: el.value });
+      } else if (ce && el.isContentEditable) keep.set(k, { html: el.innerHTML });
+    }
+    return { keep, ce };
+  }
+  function frameRestore(st) {
+    const d = frameDoc();
+    if (!st || !d) return;
+    for (const [k, el] of fieldKeys(d)) {
+      const v = st.keep.get(k);
+      if (!v) continue;
+      try {
+        if (v.sel && el.tagName === 'SELECT' && el.options.length === v.sel.length) [...el.options].forEach((o, i) => { o.selected = v.sel[i]; });
+        else if ('checked' in v && 'checked' in el) el.checked = v.checked;
+        else if ('value' in v && 'value' in el) el.value = v.value;
+        else if ('html' in v && el.isContentEditable) el.innerHTML = v.html;
+      } catch (e) {}
+    }
+    if (st.ce) edited.add(d);
+  }
   async function reload() {
     if (S.reloading) return;
     S.reloading = true;
@@ -2837,11 +2916,20 @@ const fvChg = window.fvChg = (() => {
     if (!S.pending || S.reloading) return;
     // The update reload loads the whole page anyway.
     if (ensUpd.pending || ensUpd.reloading) return;
-    if (document.hidden ? ensUpd.holdingText() : (ensUpd.busy() || ensUpd.idleFor() < QUIET_MS)) return;
+    if (frameHolds()) return;                // typed into the page's own form
+    if (document.hidden ? ensUpd.holdingText() : (ensUpd.busy() || ensUpd.idleFor() < QUIET_MS || Date.now() - frameInputAt < QUIET_MS)) return;
     reload();
   }
   async function tick() {
-    if (S.reloading || !S.seen) return;
+    if (S.reloading) return;
+    if (!S.seen) {
+      // The first ask failed (the hub restarting, the network gone a moment):
+      // ask again at each tick until there is a version to compare with.
+      if (S.checking) return;
+      S.checking = true;
+      try { const v = await version(); if (v && !S.seen) { S.seen = v; S.checkedAt = Date.now(); } } finally { S.checking = false; }
+      return;
+    }
     if (S.pending) { maybe(); return; }
     if (S.checking || Date.now() - S.checkedAt < CHECK_MS) return;
     S.checking = true; S.checkedAt = Date.now();
@@ -2855,7 +2943,7 @@ const fvChg = window.fvChg = (() => {
       }
     } finally { S.checking = false; }
   }
-  return Object.assign(S, { version, start, reload, maybe, tick, show });
+  return Object.assign(S, { version, start, reload, maybe, tick, show, watchFrame, frameHolds, frameState, frameRestore });
 })();
 document.getElementById('fv-reload').addEventListener('click', () => fvChg.reload());
 document.getElementById('fv-chg').addEventListener('click', () => fvChg.reload());   // the whole line; the button is where the keyboard lands
@@ -2994,9 +3082,12 @@ document.getElementById('fv-chg').addEventListener('click', () => fvChg.reload()
   const isMd = lang === 'markdown', isHtml = ext === 'html' || ext === 'htm', isCsv = ext === 'csv' || ext === 'tsv';
   const layOut = () => lang === 'json' && !['jsonl', 'ndjson'].includes(ext) ? jsonLayout(text, res.truncated) : '';
   let laidOut = layOut();
-  const views = isMd || isHtml ? [['preview', 'Preview'], ['source', 'Source']]
+  // A JSON file has its Formatted view only while it parses: a reload can
+  // take it away or give it back.
+  const viewsOf = () => isMd || isHtml ? [['preview', 'Preview'], ['source', 'Source']]
     : isCsv ? [['table', 'Table'], ['source', 'Source']]
     : laidOut ? [['pretty', 'Formatted'], ['source', 'As written']] : null;
+  let views = viewsOf();
   let view = views && !LINE ? views[0][0] : 'source';
   if (START.view === 'source' || (views && views.some(v => v[0] === START.view))) view = START.view;
   // The marked line of each code view: the linked one to start with, then the
@@ -3090,6 +3181,7 @@ document.getElementById('fv-chg').addEventListener('click', () => fvChg.reload()
       mountSel(); SEL.watch(ifr);
       FC.attach(ifr, text); FC.render(); renderTray();
       try { ifr.contentDocument.addEventListener('scroll', onScroll, true); ifr.contentDocument.addEventListener('keydown', fvOnKey, true); } catch (e) {}
+      try { fvChg.watchFrame(ifr.contentDocument); } catch (e) {}
       putBack();
       report();
     });
@@ -3140,10 +3232,11 @@ document.getElementById('fv-chg').addEventListener('click', () => fvChg.reload()
     else { renderPage(); setMeta('HTML · ' + linesOf(countLines(text))); }
     report();
   }
-  if (views) {
+  function viewButtons() {
     const seg = document.getElementById('views');
-    seg.hidden = false;
-    views.forEach(([v, label]) => {
+    seg.textContent = '';
+    seg.hidden = !views;
+    (views || []).forEach(([v, label]) => {
       const b = document.createElement('button');
       b.className = 'btn';
       b.dataset.view = v;
@@ -3152,6 +3245,7 @@ document.getElementById('fv-chg').addEventListener('click', () => fvChg.reload()
       seg.appendChild(b);
     });
   }
+  viewButtons();
   // Wrapping changes only how the rows lay out, not the text, so comments and
   // the mark stay. The line at the top of the view stays at the top.
   document.getElementById('wrap').onclick = () => {
@@ -3187,10 +3281,15 @@ document.getElementById('fv-chg').addEventListener('click', () => fvChg.reload()
     res = r; text = r.text;
     noteTruncated();
     laidOut = layOut();
+    if (!!views !== !!viewsOf()) { views = viewsOf(); viewButtons(); }
     if (view === 'pretty' && !laidOut) view = 'source';
+    // What was typed into a rendered page's form goes into the new page.
+    const typed = fvChg.frameState();
     pendingTop = top;
     paint();
-    if (!main.querySelector('iframe.file')) putBack();
+    const ifr = main.querySelector('iframe.file');
+    if (ifr) ifr.addEventListener('load', () => fvChg.frameRestore(typed), { once: true });
+    else putBack();
     renderTray();
     return true;
   };

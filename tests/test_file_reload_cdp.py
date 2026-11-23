@@ -218,6 +218,63 @@ async function main() {
     await p.ev(`document.getElementById('fv-reload').click(), 1`);
     await p.until(`document.querySelector('img.file').naturalWidth === 2`);
     out.png = await p.ev(`({ w: document.querySelector('img.file').naturalWidth, line: !document.getElementById('fv-chg').hidden })`);
+
+    // An HTML page with a form: what is typed in it holds the reload off, and a
+    // Reload puts it into the new page.
+    const FD = `document.querySelector('iframe.file').contentDocument`;
+    const form = v => `<h1>Form ${v}</h1><form><input id="q"><input name="who"><textarea name="t"></textarea>
+      <input type="checkbox" id="c"><select id="s"><option>a</option><option>b</option></select></form><div id="ed" contenteditable>edit me</div>`;
+    write(A.html, form('one'));
+    await p.go(A.htmlUrl, `typeof fvChg !== 'undefined' && fvChg.seen && document.querySelector('iframe.file')`);
+    await p.until(`${FD}.getElementById('q') && /Form one/.test(${FD}.body.textContent)`);
+    out.formFresh = await p.ev(`fvChg.frameHolds()`);
+    await p.ev(`(() => { const d = ${FD}, w = d.defaultView, put = (el, f) => { f(el); el.dispatchEvent(new w.Event('input', { bubbles: true })); };
+      put(d.getElementById('q'), e => { e.value = 'typed words'; }); put(d.querySelector('[name=who]'), e => { e.value = 'fab'; });
+      put(d.querySelector('textarea'), e => { e.value = 'a longer note'; }); put(d.getElementById('c'), e => { e.checked = true; });
+      put(d.getElementById('s'), e => { e.selectedIndex = 1; }); put(d.getElementById('ed'), e => { e.innerHTML = 'edited <b>here</b>'; }); return 1; })()`);
+    out.formHolds = await p.ev(`fvChg.frameHolds()`);
+    write(A.html, form('two'));
+    await p.ev(CHECK('window'));
+    await sleep(5600);                       // quiet longer than the idle rule
+    await p.ev(`(() => { ensUpd.idleFor = () => 1e9; fvChg.maybe(); return 1; })()`);
+    await sleep(800);
+    out.formHeld = await p.ev(`({ old: /Form one/.test(${FD}.body.textContent), line: !document.getElementById('fv-chg').hidden })`);
+    await p.ev(`document.getElementById('fv-reload').click(), 1`);
+    await p.until(`/Form two/.test(${FD}.body.textContent) && ${FD}.getElementById('q').value`);
+    out.formAfter = await p.ev(`(() => { const d = ${FD}; return { q: d.getElementById('q').value, who: d.querySelector('[name=who]').value, t: d.querySelector('textarea').value,
+      c: d.getElementById('c').checked, s: d.getElementById('s').selectedIndex, ed: d.getElementById('ed').innerHTML, holds: fvChg.frameHolds(),
+      line: !document.getElementById('fv-chg').hidden }; })()`);
+
+    // A JSON file: Formatted is there while it parses, and comes back.
+    const jsonState = `(() => { const seg = document.getElementById('views'); return { views: [...seg.children].map(b => b.dataset.view), segHidden: seg.hidden,
+      view: CUR_VIEW, text: document.querySelector('main').textContent }; })()`;
+    // Formatted is offered for a long minified line only (jsonLayout).
+    const big = k => JSON.stringify(Object.fromEntries([[k, 1], ...Array.from({ length: 12 }, (_, i) => ['field' + i, 'value number ' + i])]));
+    write(A.json, big('alpha'));
+    await p.go(A.jsonUrl, `typeof fvChg !== 'undefined' && fvChg.seen && document.querySelector('.code .ln-row')`);
+    out.json = [await p.ev(jsonState)];
+    write(A.json, big('alpha').slice(0, -1) + ',');
+    await p.ev(CHECK('window'));
+    await p.ev(`document.getElementById('fv-reload').click(), 1`);
+    await p.until(`!document.body.classList.contains('fv-chg') && /alpha/.test(document.querySelector('main').textContent) && CUR_VIEW === 'source'`);
+    out.json.push(await p.ev(jsonState));
+    write(A.json, big('beta'));
+    await p.ev(CHECK('window'));
+    await p.ev(`document.getElementById('fv-reload').click(), 1`);
+    await p.until(`/beta/.test(document.querySelector('main').textContent)`);
+    out.json.push(await p.ev(jsonState));
+    await p.ev(`(() => { document.querySelector('#views [data-view=pretty]').click(); return 1; })()`);
+    out.json.push(await p.ev(jsonState));
+
+    // The first ask for the version fails: it is asked again, and a change is still seen.
+    await p.ev(`(async () => { const f = window.fetch; window.fetch = (u, o) => String(u).includes('/api/file/version') ? Promise.reject(new Error('down')) : f(u, o);
+      fvChg.seen = 'x'; await fvChg.start(); window.__failedSeen = fvChg.seen; window.fetch = f; return 1; })()`);
+    out.retry = { failed: await p.ev(`window.__failedSeen`) };
+    await p.ev(`(async () => { await fvChg.tick(); return 1; })()`);
+    out.retry.after = await p.ev(`!!fvChg.seen`);
+    write(A.json, big('gamma'));
+    await p.ev(CHECK('window'));
+    out.retry.line = await p.ev(`fvChg.pending && !document.getElementById('fv-chg').hidden`);
     await p.close();
   } finally {
     ch.kill();
@@ -288,6 +345,7 @@ class InChrome(unittest.TestCase):
                 "html": str(html), "htmlOld": f"<h1>Old page</h1>{tall}", "htmlNew": f"<h1>New page</h1>{tall}",
                 "code": str(code), "codeOld": rows, "codeNew": "# CHANGED\n" + rows,
                 "png": str(png), "png1": PNG_1.hex(), "png2": PNG_2.hex(),
+                "json": str(files / "data.json"), "jsonUrl": f"{b}/fileview?path={quote(str(files / 'data.json'))}",
                 "mdUrl": f"{b}/fileview?path={quote(str(md))}", "hostUrl": f"{b}/__host",
                 "htmlUrl": f"{b}/fileview?path={quote(str(html))}", "codeUrl": f"{b}/fileview?path={quote(str(code))}",
                 "pngUrl": f"{b}/fileview?path={quote(str(png))}"}
@@ -352,6 +410,28 @@ class InChrome(unittest.TestCase):
         self.assertEqual(self.got["pngBefore"], 1)
         self.assertTrue(self.got["pngLine"])
         self.assertEqual(self.got["png"], {"w": 2, "line": False})
+
+    def test_an_html_pages_form_holds_the_reload_and_comes_back(self):
+        self.assertFalse(self.got["formFresh"], "an untouched form holds nothing")
+        self.assertTrue(self.got["formHolds"])
+        self.assertEqual(self.got["formHeld"], {"old": True, "line": True}, "typed into the page's form: no reload by itself")
+        self.assertEqual(self.got["formAfter"], {"q": "typed words", "who": "fab", "t": "a longer note", "c": True, "s": 1,
+                                                 "ed": "edited <b>here</b>", "holds": True, "line": False})
+
+    def test_json_formatted_comes_and_goes_with_whether_it_parses(self):
+        valid, broken, again, pretty = self.got["json"]
+        self.assertEqual(valid["views"], ["pretty", "source"])
+        self.assertEqual(valid["view"], "pretty")
+        self.assertEqual((broken["views"], broken["segHidden"], broken["view"]), ([], True, "source"), "no Formatted for a file that does not parse")
+        self.assertEqual((again["views"], again["segHidden"], again["view"]), (["pretty", "source"], False, "source"), "back once it parses; the view stays")
+        self.assertEqual(pretty["view"], "pretty")
+        self.assertIn("beta", pretty["text"])
+
+    def test_a_failed_first_version_is_asked_again(self):
+        r = self.got["retry"]
+        self.assertEqual(r["failed"], "", "the failed ask leaves no version")
+        self.assertTrue(r["after"], "the next tick asks again")
+        self.assertTrue(r["line"], "and a change after that is seen")
 
 
 if __name__ == "__main__":
