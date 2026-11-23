@@ -3089,7 +3089,11 @@ const cardTextHtml = (text, self, n) => cardText(text, self, n).html;
 const cardWords = (text, self, n) => hubUrlWords(String(text ?? '').replace(CARD_MD_LINK_RE, (m, words) => words), self, n);
 // ---- Card text: end --------------------------------------------------------
 const fileBase = () => (ROOM_OBJ && ROOM_OBJ.cwd) || '';
-const fileHref = (p, line) => FileLinks.href(p, { line, room: ROOM, cwd: fileBase() });
+// A link in one thread of a PO chat names that thread too (#414, the CEO's P444):
+// the file view then sends its comments into the thread, not the main chat.
+const fileThread = () => THREAD_MODE ? (THREAD || (THREAD_MID ? 'm:' + THREAD_MID : '')) : '';
+const fileHref = (p, line) => FileLinks.href(p, { line, room: ROOM, cwd: fileBase(), thread: fileThread(),
+  threadName: fileThread() && typeof THR_INFO !== 'undefined' && THR_INFO ? THR_INFO.title || '' : '' });
 function mdToHtml(src) {
   // The whole message read once for the paths its "..." abbreviations stand for.
   if (!PATH_ABBR) return withPathAbbrevs(src, () => mdToHtml(src));

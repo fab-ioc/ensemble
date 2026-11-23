@@ -9832,7 +9832,19 @@ def resolve_file_ref(raw: str, room_id: str = "", cwd: str = "") -> Path | None:
     return resolve_file_ref_how(raw, room_id, cwd)[0]
 
 
-def file_owner_info(raw: str, room_id: str = "", cwd: str = "") -> dict:
+def _thread_gone(room_id: str, room: dict | None, tid: str) -> str:
+    """#414: "closed" or "gone" for a thread of PO chat ``room_id`` that the
+    file view would send into but that is put away or deleted since; "" while
+    it is live, or when the threads cannot be read (the send goes as asked)."""
+    try:
+        places = threads.file_places(room_id, room, [tid], 0)
+    except Exception as e:      # noqa: BLE001 — not known: not refused
+        print(f"[file-owner] {room_id}: thread {tid!r} not checked: {e!r}", flush=True)
+        return ""
+    return str(((places or {}).get("asked") or {}).get(tid, {}).get("gone") or "")
+
+
+def file_owner_info(raw: str, room_id: str = "", cwd: str = "", thread: str = "", pick: str = "") -> dict:
     """GET /api/file/owner (#297): where a comment made on this file in the
     file view goes. The path is the one the viewer shows (resolved as
     /api/file resolves it); its owner is file_owner.owner's (a task, else its
@@ -9840,7 +9852,19 @@ def file_owner_info(raw: str, room_id: str = "", cwd: str = "") -> dict:
     the default first: the room the viewer was opened from when it is one
     (it was chosen in context), then the owner, then the other POs that hold
     the file; with no owner, every project's PO. ``room`` is the default's
-    id, or "" when the person has to pick."""
+    id, or "" when the person has to pick.
+
+    Threads (#414, the CEO's P444): ``thread`` is the thread of the PO chat
+    ``room_id`` the viewer was opened from. While it is live it is the
+    default (kind "thread", why "opener", ``room`` its chat and ``thread``
+    its id), its chat's main chat next (why "main", the default in its place
+    once it is gone). ``threadRoom`` is the PO chat whose
+    threads are offered (the opener's when opened from one of its threads,
+    else the PO chat of the file's owner, else the opener's): after the places above come its live threads, latest first
+    (FILE_THREADS at most; why "thread"), then a new thread named after the
+    file (kind "new"). ``pick`` is the thread the tray last sent to: listed
+    too while live. Each of the two that is gone is in ``gone``
+    ({id, title, why: closed | gone}); the main chat then stands in for it."""
     fp, _ = resolve_file_ref_how(raw, room_id=room_id, cwd=cwd, dirs=True) if raw else (None, "")
     path = str(fp) if fp is not None else ""
     projects = load_projects()
@@ -9873,7 +9897,48 @@ def file_owner_info(raw: str, room_id: str = "", cwd: str = "") -> dict:
             seen.add(e["room"])
             choices.append({**e, "why": why})
 
-    add(opener, "opener")
+    # The PO chat whose threads are offered.
+    by_pid = {pr.get("id"): pr for pr in projects}
+    thr_room = ""
+    # Opened from one of its threads, that PO chat; else the PO chat of the
+    # file's owner (P444: the PO chat that owns the file, whichever chat it was
+    # opened from), then the opener's.
+    thread_po = opener if opener and opener["kind"] == "po" and (thread or "").strip() else None
+    for e in (thread_po, own, opener, opener and {"kind": "task", "projectId": opener["projectId"]}):
+        if not e:
+            continue
+        rid = e["room"] if e["kind"] == "po" else (by_pid.get(e.get("projectId")) or {}).get("poRoomId") or ""
+        if rid and rid in {r["id"] for r in rooms}:
+            thr_room = rid
+            break
+    thread, pick = (thread or "").strip(), (pick or "").strip()
+    if not opener or opener["kind"] != "po":
+        thread = ""
+    places = None
+    if thr_room:
+        try:
+            places = threads.file_places(thr_room, chatroom.get_room(thr_room, public=False),
+                                         [t for t in (thread, pick) if t])
+        except Exception as e:      # noqa: BLE001 — no thread offered; the rooms still are
+            print(f"[file-owner] {thr_room}: threads not read: {e!r}", flush=True)
+    asked = (places or {}).get("asked") or {}
+    thr_pid = next((pr.get("id") or "" for pr in projects if pr.get("poRoomId") == thr_room), "")
+
+    def thread_entry(meta: dict, why: str) -> dict:
+        return {"room": thr_room, "thread": meta["id"], "name": meta.get("title") or "Thread",
+                "kind": "thread", "projectId": thr_pid, "why": why, "root": meta.get("root") or "",
+                "hasPoints": bool(meta.get("points"))}
+
+    gone = [{"id": t, "title": asked[t].get("title") or "", "why": asked[t]["gone"]}
+            for t in (thread, pick) if t and "gone" in (asked.get(t) or {})]
+    gone = list({g["id"]: g for g in gone}.values())
+    opened = asked.get(thread) if thread and places is not None else None
+    live = opened is not None and "gone" not in opened
+    if live:
+        choices.append(thread_entry(opened, "opener"))
+    # Opened from a thread, its chat is the main chat beside it (or in its
+    # place, when it is gone), not where the file was opened.
+    add(opener, "main" if thread and places is not None else "opener")
     add(own, "owner")
     for e in others:
         add(e, "po")
@@ -9882,9 +9947,18 @@ def file_owner_info(raw: str, room_id: str = "", cwd: str = "") -> dict:
             if pr.get("poRoomId") and pr["poRoomId"] in {r["id"] for r in rooms}:
                 add({"room": pr["poRoomId"], "name": file_owner.po_name(pr), "kind": "po",
                      "projectId": pr.get("id") or ""}, "pick")
-    default = opener or own
+    if places is not None:
+        listed = [m for m in places.get("listed") or [] if m["id"] != thread]
+        mine = asked.get(pick) if pick and pick != thread else None
+        if mine is not None and "gone" not in mine and all(m["id"] != pick for m in listed):
+            listed.append(mine)
+        choices.extend(thread_entry(m, "thread") for m in listed)
+        choices.append({"room": thr_room, "kind": "new", "name": Path(path).name if path else "Thread",
+                        "projectId": thr_pid, "why": "new"})
+    default = choices[0] if choices and choices[0]["why"] in ("opener", "main") else own
     return {"path": path, "owner": own, "opener": opener, "openerGone": bool(room_id) and opener is None,
-            "room": default["room"] if default else "", "choices": choices}
+            "room": default["room"] if default else "", "thread": (default or {}).get("thread") or "",
+            "threadRoom": thr_room if places is not None else "", "gone": gone, "choices": choices}
 
 
 def _readable_check():
@@ -10050,7 +10124,8 @@ _FILE_DRAG_TEXT_EXTS = {
 }
 
 
-def file_owner_answer(raw: str, room_id: str = "", cwd: str = "") -> tuple[int, dict]:
+def file_owner_answer(raw: str, room_id: str = "", cwd: str = "", thread: str = "",
+                      pick: str = "") -> tuple[int, dict]:
     """GET /api/file/owner's status and body: the file APIs' boundary first
     (no path 400, no such file 404, outside what the viewer may read 403, as
     /api/file/download), then file_owner_info for the file found."""
@@ -10061,7 +10136,7 @@ def file_owner_answer(raw: str, room_id: str = "", cwd: str = "") -> tuple[int, 
         return 404, {"error": "not_found"}
     if not workspace_access_ok(str(fp)):
         return 403, {"error": "path_not_allowed"}
-    return 200, file_owner_info(str(fp), room_id=room_id, cwd=cwd)
+    return 200, file_owner_info(str(fp), room_id=room_id, cwd=cwd, thread=thread, pick=pick)
 
 
 def file_download_target(raw: str, room_id: str = "", cwd: str = "") -> tuple[int, Path | None]:
@@ -19636,7 +19711,9 @@ class Handler(BaseHTTPRequestHandler):
             q = parse_qs(u.query)
             self._send_json(*file_owner_answer((q.get("path", [""])[0] or "").strip(),
                                                room_id=(q.get("room", [""])[0] or "").strip(),
-                                               cwd=(q.get("cwd", [""])[0] or "").strip()))
+                                               cwd=(q.get("cwd", [""])[0] or "").strip(),
+                                               thread=(q.get("thread", [""])[0] or "").strip()[:300],
+                                               pick=(q.get("pick", [""])[0] or "").strip()[:300]))
             return
         if p == "/api/file/suggest":
             # A missing path: the files of its name or a close one (moved, renamed).
@@ -20529,6 +20606,13 @@ class Handler(BaseHTTPRequestHandler):
                     # taken once. Its receipt says where it is.
                     return (200, {"ok": True, "duplicate": True,
                                   **({"send": prior} if prior else {})})
+                # #414: the file view's send into a thread asks for it live
+                # (``liveThread``): a thread closed or deleted since the tray
+                # was filled is refused, and the tray says so before sending.
+                if thread and data.get("liveThread") is True and not again:
+                    gone = _thread_gone(rid, room_full, thread)
+                    if gone:
+                        return (409, {"error": "thread_gone", "threadGone": gone, "thread": thread})
                 if again:
                     text, to = prior["text"], prior.get("to") or ""
                 else:

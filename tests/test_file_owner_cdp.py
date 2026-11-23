@@ -70,7 +70,7 @@ async function page(c) {
 const ADD = `(() => { FVC.put({ cid: FVC.id(), at: FVC.now(), note: 'Please check this.', view: CUR_VIEW, start: -1, end: -1, quote: '' }); renderTray(); return 1; })()`;
 const TRAY = `(() => { const t = document.getElementById('cmt-tray'); if (!t) return null;
   const b = t.querySelector('.cmt-submit'), s = t.querySelector('.cmt-dest-pick'), n = t.querySelector('.cmt-dest-none');
-  return { send: b ? b.textContent : null, copy: !!t.querySelector('.cmt-copy'), none: n ? n.textContent : null,
+  return { send: b ? b.textContent : null, title: b ? b.title : null, copy: !!t.querySelector('.cmt-copy'), none: n ? n.textContent : null,
     opts: s ? [...s.options].map(o => [o.value, o.textContent, o.selected]) : null }; })()`;
 const sent = async p => p.ev(`fetch('/__sent').then(r => r.json())`);
 async function main() {
@@ -112,7 +112,7 @@ async function main() {
     await p.until(`DEST_CHOICES.length > 1`);
     await p.ev(ADD);
     out.fromTask = await p.ev(TRAY);
-    await p.ev(`(() => { const s = document.querySelector('.cmt-dest-pick'); s.value = ${JSON.stringify(A.po)}; s.dispatchEvent(new Event('change')); return 1; })()`);
+    await p.ev(`(() => { const s = document.querySelector('.cmt-dest-pick'); s.value = ${JSON.stringify(A.po + '||')}; s.dispatchEvent(new Event('change')); return 1; })()`);
     out.switched = await p.ev(TRAY);
     await p.ev(`document.querySelector('#cmt-tray .cmt-submit').click(), 1`);
     await p.until(`!document.getElementById('cmt-tray')`);
@@ -122,7 +122,7 @@ async function main() {
     await p.until(`DEST_CHOICES.length > 0`);
     await p.ev(ADD);
     out.outside = await p.ev(TRAY);
-    await p.ev(`(() => { const s = document.querySelector('.cmt-dest-pick'); s.value = ${JSON.stringify(A.po)}; s.dispatchEvent(new Event('change')); return 1; })()`);
+    await p.ev(`(() => { const s = document.querySelector('.cmt-dest-pick'); s.value = ${JSON.stringify(A.po + '||')}; s.dispatchEvent(new Event('change')); return 1; })()`);
     out.picked = await p.ev(TRAY);
     await p.ev(`document.querySelector('#cmt-tray .cmt-submit').click(), 1`);
     await p.until(`!document.getElementById('cmt-tray')`);
@@ -248,9 +248,13 @@ class InChrome(unittest.TestCase):
 
     def test_a_document_with_no_room_is_sent_to_its_po(self):
         g = self.got["doc"]
-        self.assertEqual(g["send"], "Send to “Motors PO”")
+        # #414: the button says what kind of place, its title names it; the
+        # chooser offers a new thread named after the file beside the main chat.
+        self.assertEqual(g["send"], "Send to main chat")
+        self.assertEqual(g["title"], "Send to “Motors PO · main chat”")
         self.assertTrue(g["copy"], "Copy stays beside Send")
-        self.assertIsNone(g["opts"], "one place: no chooser")
+        self.assertEqual(g["opts"], [[f"{self.po}||", "Motors PO · main chat", True],
+                                     [f"{self.po}||new", "+ New thread · “plan.md”", False]])
         s = self.got["docSent"]
         self.assertEqual(len(s), 1, s)
         self.assertEqual(s[0]["roomId"], self.po)
@@ -279,9 +283,10 @@ class InChrome(unittest.TestCase):
 
     def test_opened_from_a_task_it_stays_the_tasks_with_the_po_beside_it(self):
         g = self.got["fromTask"]
-        self.assertEqual(g["send"], "Send to “Gearbox”")
-        self.assertEqual([(o[0], o[2]) for o in g["opts"]], [(self.task, True), (self.po, False)])
-        self.assertEqual(self.got["switched"]["send"], "Send to “Motors PO”")
+        self.assertEqual(g["send"], "Send to task")
+        self.assertEqual(g["title"], "Send to “Gearbox”")
+        self.assertEqual([(o[0], o[2]) for o in g["opts"]][:2], [(f"{self.task}||", True), (f"{self.po}||", False)])
+        self.assertEqual(self.got["switched"]["send"], "Send to main chat")
         self.assertEqual(self.got["switchSent"][-1]["roomId"], self.po)
 
     def test_no_send_until_the_hub_says_where_and_none_when_it_cannot(self):
@@ -298,8 +303,8 @@ class InChrome(unittest.TestCase):
         self.assertTrue(g["copy"])
         self.assertEqual(g["none"], "This file belongs to no task or project.")
         self.assertEqual(g["opts"][0], ["", "Choose a PO…", True])
-        self.assertIn(self.po, [o[0] for o in g["opts"]])
-        self.assertEqual(self.got["picked"]["send"], "Send to “Motors PO”")
+        self.assertIn(f"{self.po}||", [o[0] for o in g["opts"]])
+        self.assertEqual(self.got["picked"]["send"], "Send to main chat")
         self.assertEqual(self.got["pickSent"][-1]["roomId"], self.po)
 
 

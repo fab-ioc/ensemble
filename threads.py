@@ -1948,6 +1948,44 @@ def _listed(idx: dict, tids) -> list[dict]:
                   key=lambda m: (m.get("updatedAt") or 0, m["id"]), reverse=True)
 
 
+FILE_THREADS = 5                # the PO chat's threads the file view's chooser lists (#414)
+
+
+def file_places(room_id: str, room: dict | None, asked=(), n: int = FILE_THREADS) -> dict | None:
+    """The threads a comment made in the file view may go to (#414, the
+    CEO's P444): ``listed``, the chat's live threads as the Threads list
+    shows them (latest message first, so the one used last leads), at most
+    ``n``; ``asked``, for each thread id in ``asked`` (the one the file was
+    opened from, the one the tray last sent to): its meta while it is live
+    (a thread started on a balloon and not written in yet too, as
+    :func:`thread_view` opens it), else ``{"gone": "closed", "title"}``
+    (put away) or ``{"gone": "gone"}`` (deleted, or never one). None for a chat that
+    is not threaded or cannot be read."""
+    if not is_threaded(room_id):
+        return None
+    idx = build(room_id, room, show_progress=False)
+    if idx is None:
+        return None
+    idx = _names_now(room_id, idx) or idx
+    names = None
+    out: dict = {}
+    for tid in dict.fromkeys(str(t or "") for t in asked):
+        if not tid or tid == "team:activity":
+            continue
+        th = idx["threads"].get(tid)
+        if th is not None:
+            out[tid] = {"gone": "closed", "title": th.get("title") or ""} if th.get("archived") else _meta(th)
+        elif tid.startswith("m:") and tid[2:] in idx["by_mid"] and tid[2:] not in idx.get("hidden", ()):
+            r = idx["by_mid"][tid[2:]]
+            if names is None:
+                names = load_side(room_id).get("names") or {}
+            out[tid] = {"id": tid, "root": r["mid"], "title": names.get(tid) or _words(r["turn"].get("text") or "") or "Thread",
+                        "points": [], "updatedAt": r["ts"], "new": True}
+        else:
+            out[tid] = {"gone": "gone"}
+    return {"listed": _listed(idx, _replied(idx))[:max(0, n)], "asked": out}
+
+
 def _unread(th: dict) -> bool:
     """A thread with replies not seen that rings the bell (not a put-away one)."""
     return th["id"] != "team:activity" and bool(th.get("unread")) and not th.get("archived")

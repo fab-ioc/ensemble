@@ -23,12 +23,15 @@
 // folder each RECHECK_MS. A hub older than /api/files/check
 // answers 404: then nothing is marked and every link stays as it was.
 const FileLinks = (() => {
-  // ?path=&line=&room=&roomName=&cwd=, in that order (tests compare hrefs).
+  // ?path=&line=&room=&roomName=&cwd=&thread=&threadName=, in that order (tests
+  // compare hrefs). thread: the PO chat's thread the link is in (#414), where
+  // the file view sends its comments.
   function href(path, o) {
     o = o || {};
     const q = (k, v) => (v ? '&' + k + '=' + encodeURIComponent(v) : '');
     return '/fileview?path=' + encodeURIComponent(String(path || '').trim()) + (o.line ? '&line=' + o.line : '')
-      + q('room', o.room) + q('roomName', o.roomName) + q('cwd', o.cwd);
+      + q('room', o.room) + q('roomName', o.roomName) + q('cwd', o.cwd)
+      + q('thread', o.thread) + q('threadName', o.threadName);
   }
   const SEP = '\u0001', BATCH = 80, RECHECK_MS = 10000;
   const MISSING_TITLE = 'This file does not exist yet';
