@@ -724,11 +724,14 @@
   .cmt-composer button { background:var(--surface); color:var(--fg); border:1px solid var(--border-strong); padding:5px 12px; border-radius:var(--r-200); cursor:pointer; font:inherit; }
   .cmt-composer .cmt-add { background:var(--accent); color:var(--accent-fg); border:none; }
   #cmt-tray { position:fixed; right:calc(12px + env(safe-area-inset-right, 0px)); bottom:calc(12px + env(safe-area-inset-bottom, 0px)); z-index:55; width:min(330px,92vw); max-height:60vh; display:flex; flex-direction:column; background:var(--surface-overlay); border:1px solid var(--border); border-radius:var(--r-300); box-shadow:var(--e-200); overflow:hidden; }
-  #cmt-tray .cmt-tray-head { display:flex; align-items:center; gap:6px; padding:9px 11px; border-bottom:1px solid var(--border); font-size:13px; }
+  #cmt-tray .cmt-tray-head { display:flex; align-items:center; gap:4px; padding:9px 9px 9px 11px; border-bottom:1px solid var(--border); font-size:13px; }
   #cmt-tray .grow { flex:1; }
-  #cmt-tray .cmt-submit { background:var(--accent); color:var(--accent-fg); border:none; padding:4px 12px; border-radius:6px; cursor:pointer; font:inherit; font-size:12px; }
-  #cmt-tray .cmt-submit { min-width:0; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  #cmt-tray .cmt-clear, #cmt-tray .cmt-copy { background:var(--surface); color:var(--fg); border:1px solid var(--border-strong); font-size:12px; padding:4px 10px; border-radius:6px; cursor:pointer; flex:none; }
+  /* #414: Send names the kind of place and is never cut (Send to new thread fits beside the
+     count, Copy and Clear in the tray's 330px); a font wider still cuts the count first. */
+  #cmt-tray .cmt-tray-head strong { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #cmt-tray .cmt-submit { background:var(--accent); color:var(--accent-fg); border:none; padding:4px 10px; border-radius:6px; cursor:pointer; font:inherit; font-size:12px; }
+  #cmt-tray .cmt-submit { flex:none; white-space:nowrap; }
+  #cmt-tray .cmt-clear, #cmt-tray .cmt-copy { background:var(--surface); color:var(--fg); border:1px solid var(--border-strong); font-size:12px; padding:4px 7px; border-radius:6px; cursor:pointer; flex:none; }
   /* Where the comments go (#297): a chooser when there is more than one place. */
   #cmt-tray .cmt-dest { display:flex; flex-direction:column; gap:var(--s-100); padding:var(--s-200) 11px; border-bottom:1px solid var(--border); font-size:var(--fs-200); color:var(--fg-muted); }
   #cmt-tray .cmt-dest label { display:flex; align-items:center; gap:var(--s-200); }

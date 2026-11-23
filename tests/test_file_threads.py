@@ -117,14 +117,15 @@ class FileThreads(tp._World):
         threads.archive(self.rid, ["P2"], now=self.t0 + 500)
         self.rebuild()
         j = self.owner(room=self.rid, thread="P2")
-        self.assertEqual(self.places(j), [("po", "", "opener"), ("thread", "P1", "thread"), ("new", "", "new")])
+        self.assertEqual(self.places(j), [("po", "", "main"), ("thread", "P1", "thread"), ("new", "", "new")])
         self.assertEqual(j["gone"], [{"id": "P2", "title": "Fix the login page", "why": "closed"}])
         self.assertEqual((j["room"], j["thread"]), (self.rid, ""))
 
     def test_a_deleted_or_unknown_thread_is_gone(self):
         j = self.owner(room=self.rid, thread="P9", pick="m:nope")
         self.assertEqual(sorted((g["id"], g["why"]) for g in j["gone"]), [("P9", "gone"), ("m:nope", "gone")])
-        self.assertEqual(self.places(j)[0], ("po", "", "opener"))
+        self.assertEqual(self.places(j)[0], ("po", "", "main"))
+        self.assertEqual((j["room"], j["thread"]), (self.rid, ""))
 
     def test_the_thread_last_sent_to_is_offered_beyond_the_five_listed(self):
         for i in range(6):

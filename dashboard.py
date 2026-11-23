@@ -9845,7 +9845,8 @@ def file_owner_info(raw: str, room_id: str = "", cwd: str = "", thread: str = ""
     Threads (#414, the CEO's P444): ``thread`` is the thread of the PO chat
     ``room_id`` the viewer was opened from. While it is live it is the
     default (kind "thread", why "opener", ``room`` its chat and ``thread``
-    its id), its chat's main chat next (why "main"). ``threadRoom`` is the PO chat whose
+    its id), its chat's main chat next (why "main", the default in its place
+    once it is gone). ``threadRoom`` is the PO chat whose
     threads are offered (the opener's, else the PO chat of the file's
     project): after the places above come its live threads, latest first
     (FILE_THREADS at most; why "thread"), then a new thread named after the
@@ -9919,7 +9920,9 @@ def file_owner_info(raw: str, room_id: str = "", cwd: str = "", thread: str = ""
     live = opened is not None and "gone" not in opened
     if live:
         choices.append(thread_entry(opened, "opener"))
-    add(opener, "main" if live else "opener")
+    # Opened from a thread, its chat is the main chat beside it (or in its
+    # place, when it is gone), not where the file was opened.
+    add(opener, "main" if thread and places is not None else "opener")
     add(own, "owner")
     for e in others:
         add(e, "po")
@@ -9936,7 +9939,7 @@ def file_owner_info(raw: str, room_id: str = "", cwd: str = "", thread: str = ""
         choices.extend(thread_entry(m, "thread") for m in listed)
         choices.append({"room": thr_room, "kind": "new", "name": Path(path).name if path else "Thread",
                         "projectId": thr_pid, "why": "new"})
-    default = choices[0] if choices and choices[0]["why"] == "opener" else own
+    default = choices[0] if choices and choices[0]["why"] in ("opener", "main") else own
     return {"path": path, "owner": own, "opener": opener, "openerGone": bool(room_id) and opener is None,
             "room": default["room"] if default else "", "thread": (default or {}).get("thread") or "",
             "threadRoom": thr_room if places is not None else "", "gone": gone, "choices": choices}

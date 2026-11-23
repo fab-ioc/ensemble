@@ -37,7 +37,7 @@ const ADD = note => `(() => { FVC.put({ cid: FVC.id(), at: FVC.now(), note: ${JS
 const TRAY = `(() => { const t = document.getElementById('cmt-tray'); if (!t) return null;
   const b = t.querySelector('.cmt-submit'), s = t.querySelector('.cmt-dest-pick');
   const gone = t.querySelector('.cmt-dest-gone'), hint = t.querySelector('.cmt-dest-hint');
-  return { send: b ? b.textContent : null, title: b ? b.title : null,
+  return { send: b ? b.textContent : null, title: b ? b.title : null, cut: b ? b.scrollWidth > b.clientWidth : null,
     groups: s ? [...s.querySelectorAll('optgroup')].map(g => [g.label, [...g.querySelectorAll('option')].map(o => o.textContent)]) : null,
     picked: s ? s.value : null, items: t.querySelectorAll('.cmt-item').length,
     gone: gone ? gone.textContent : null, hint: hint ? hint.textContent : null }; })()`;
@@ -224,6 +224,7 @@ class InChrome(unittest.TestCase):
     def test_a_new_thread_is_named_after_the_file(self):
         g = self.got["fresh"]
         self.assertEqual(g["send"], "Send to new thread")
+        self.assertFalse(g["cut"], "the longest Send word fits the tray, not cut")
         self.assertEqual(g["hint"], "Starts a thread named “plan.md” in the Motors PO chat.")
         s = self.got["freshSent"]
         self.assertEqual((s["roomId"], s.get("newThread"), s.get("threadName")), (self.po, True, "plan.md"))
