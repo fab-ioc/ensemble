@@ -39,7 +39,7 @@ async function capture(name, where, { width = 1440, height = 900, run, crop, req
 }
 
 try {
-  await capture('overview', '/');
+  await capture('overview', '/', { requireVisible: '.ibx-row' });
   await capture('board', '/', { run: `PD.dock.reveal('board'); setViewMode('board'); document.querySelector('.pd-board-max')?.click()` });
   await capture('inbox', `/?inbox=${data.project}`);
   await capture('po-chat', `/session?room=${data.po}&msg=${data.ask}&part=ask:0`);
