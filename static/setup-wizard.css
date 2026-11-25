@@ -5,7 +5,7 @@
   padding: var(--s-400); background: var(--bg); color: var(--fg);
 }
 #setup-wizard .wz-card {
-  width: min(520px, 100%); height: min(720px, calc(var(--vv-h, 100dvh) - 2 * var(--s-400)));
+  width: min(520px, 100%); height: min(720px, calc(var(--vv-h, 100dvh) - 2 * var(--s-400) - var(--vv-safe, env(safe-area-inset-bottom, 0px))));
   display: flex; flex-direction: column; min-height: 0;
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-300); box-shadow: var(--e-100);
 }
@@ -15,6 +15,7 @@
 #setup-wizard .wz-body { flex: 1; min-height: 0; overflow-y: auto; padding: var(--s-600); }
 #setup-wizard .wz-overline { color: var(--fg-muted); font-size: var(--fs-100); font-weight: 600; letter-spacing: .05em; text-transform: uppercase; margin-bottom: var(--s-300); }
 #setup-wizard h2 { font-size: var(--fs-500); line-height: 1.2; font-weight: 600; margin: 0 0 var(--s-300); }
+#setup-wizard h2:focus { outline: none; }
 #setup-wizard p { margin: 0 0 var(--s-400); color: var(--fg-subtle); }
 #setup-wizard .wz-note { background: var(--surface-sunken); border-radius: var(--r-200); padding: var(--s-300); margin: var(--s-400) 0; color: var(--fg-subtle); overflow-wrap: anywhere; }
 #setup-wizard .wz-muted { font-size: var(--fs-200); color: var(--fg-muted); }
@@ -42,7 +43,7 @@
 #setup-wizard .wz-progress b.active { background: var(--accent); }
 #setup-wizard .wz-foot { min-height: 64px; display: flex; align-items: center; gap: var(--s-200); border-top: 1px solid var(--border); padding: 0 var(--s-400); }
 #setup-wizard .wz-foot .grow { flex: 1; }
-#setup-wizard button { min-height: 32px; padding: 0 var(--s-300); border-radius: var(--r-200); font: 500 var(--fs-300) Arial, sans-serif; cursor: pointer; }
+#setup-wizard button { min-height: 32px; padding: 0 var(--s-300); border-radius: var(--r-200); font: 500 var(--fs-300) var(--font-sans); cursor: pointer; }
 #setup-wizard .wz-default { border: 1px solid var(--border-strong); background: var(--surface); color: var(--fg); }
 #setup-wizard .wz-primary { border: 1px solid var(--accent); background: var(--accent); color: var(--accent-fg); }
 #setup-wizard button:focus-visible, #setup-wizard :is(input,select):focus-visible { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); outline: none; }

@@ -34,6 +34,7 @@ class SetupWizardInChrome(unittest.TestCase):
             mock.patch.object(dashboard, "SESSION_PROJECTS_FILE", state / "session_projects.json"),
             mock.patch.object(dashboard, "SETTINGS_FILE", state / "settings.json"),
             mock.patch.object(dashboard, "_SETUP_FRESH_AT_BOOT", True),
+            mock.patch.object(dashboard, "_BIND_OVERRIDE", "127.0.0.1"),
             mock.patch.object(dashboard, "LABELS_FILE", state / "labels.json"),
             mock.patch.object(dashboard, "PROJ_DIR", base / "transcripts"),
             mock.patch.object(dashboard, "CS_ROOT", base / "cs"),
@@ -88,10 +89,13 @@ class SetupWizardInChrome(unittest.TestCase):
         self.assertEqual(self.got["settings"]["theme"], "paper")
         self.assertIn(True, self.got["settings"]["notifyDeviceChoices"].values())
         self.assertTrue(self.got["settings"]["remoteAccessEnabled"])
+        self.assertTrue(self.got["remoteOverrideShown"])
         self.assertTrue(self.got["settings"]["startAtSignIn"])
         self.assertFalse(self.got["done"]["show"])
         self.assertTrue(self.got["done"]["done"])
         self.assertFalse(self.got["later"]["show"])
+        self.assertEqual(self.got["savedWeightShown"], "10")
+        self.assertEqual(self.got["weightAfterRerun"], 10)
         self.assertEqual(self.got["afterPhoneSkip"], "codex")
         self.assertTrue(self.got["projectCreated"])
 

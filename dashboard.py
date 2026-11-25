@@ -968,6 +968,27 @@ PARENTS_FILE = DASHBOARD_DIR / "parents.json"  # child_sid -> parent_sid
 ARCHIVED_FILE = DASHBOARD_DIR / "archived.json"      # list of archived session ids
 SETTINGS_FILE = DASHBOARD_DIR / "settings.json"      # user preferences (openMode, …)
 _SETUP_FRESH_AT_BOOT = not SETTINGS_FILE.exists()
+_BIND_OVERRIDE = ""
+
+
+def _setup_after_migration() -> None:
+    """A migrated install had state before this process began, even if Ensemble did not."""
+    global _SETUP_FRESH_AT_BOOT
+    if SETTINGS_FILE.exists() or (DASHBOARD_DIR / legacy_install.MARKER_NAME).exists():
+        _SETUP_FRESH_AT_BOOT = False
+
+
+def _setup_tailnet_address() -> str:
+    """A usable address for another device, preferring Tailscale Serve."""
+    served = hub_links.https_address()
+    if served:
+        return f"https://{served}"
+    names = hub_links.origins().get("names") or []
+    name = next((x for x in names if x.endswith(".ts.net")), "")
+    if name:
+        return f"http://{name}:{HUB_PORT}"
+    ip = _detect_tailscale_ip()
+    return f"http://{ip}:{HUB_PORT}" if ip else ""
 PROJECTS_FILE = DASHBOARD_DIR / "projects.json"      # registered projects: [{id,name,path,isGit,createdAt}]
 SESSION_PROJECTS_FILE = DASHBOARD_DIR / "session_projects.json"  # {sessionId|roomId: projectId}
 STATIC_DIR = Path(__file__).parent
@@ -20359,11 +20380,14 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/settings":
             # Include the *resolved* operator display name so the UI can show the
             # human by name (nickname, else git user.name) instead of "user".
-            self._send_json(200, {**load_settings(), "operatorName": operator_name()})
+            self._send_json(200, {**load_settings(), "operatorName": operator_name(),
+                                  "bindOverride": _BIND_OVERRIDE})
             return
         if p == "/api/setup/status":
             self._send_json(200, {**setup_wizard_status(), "projectsRoot": str(PROJECTS_ROOT),
                                   "origins": hub_links.origins(),
+                                  "tailnetAddress": _setup_tailnet_address(),
+                                  "bindOverride": _BIND_OVERRIDE,
                                   "autostart": app_setup.autostart_status(app_version.app_executable())
                                   if app_version.packaged() else {"enabled": False, "supported": False}})
             return
@@ -20478,12 +20502,25 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(data, dict):
                 self._send_json(400, {"error": "expected_object"})
                 return
+            if "projectsRoot" in data or "remoteAccessEnabled" in data:
+                refusal = self._page_refusal()
+                if refusal:
+                    self._send_json(403, {"error": "forbidden", "message": refusal})
+                    return
+            if "startAtSignIn" in data:
+                # The PO may manage hub restart policy through its bearer token;
+                # page callers must also pass the peer-process check.
+                refusal = self._restart_refusal() if self._bearer_token() else self._page_refusal()
+                if refusal:
+                    self._send_json(403, {"error": "forbidden", "message": refusal})
+                    return
             if "projectsRoot" in data:
                 root = data["projectsRoot"]
                 if not isinstance(root, str) or len(root) > 500 or any(ch in root for ch in "\n\r\0"):
                     self._send_json(400, {"error": "invalid_projects_root"})
                     return
-                root = os.path.abspath(os.path.expanduser(root.strip())) if root.strip() else ""
+                root = os.path.expanduser(root.strip())
+                root = os.path.abspath(root if os.path.isabs(root) else HOME / root) if root else ""
                 if not projects_root_change_allowed(root):
                     self._send_json(400, {"error": "projects_root_not_empty", "message":
                                           "Choose an empty folder before making a project."})
@@ -20508,7 +20545,7 @@ class Handler(BaseHTTPRequestHandler):
             if why:
                 self._send_json(400, {"error": "unknown_model", "message": why})
                 return
-            self._send_json(200, save_settings(data))
+            self._send_json(200, {**save_settings(data), "bindOverride": _BIND_OVERRIDE})
             return
         if p.startswith("/api/jira-links/"):
             sid = p[len("/api/jira-links/"):]
@@ -25291,6 +25328,7 @@ def _listen_or_exit(host: str, port: int) -> HubServer:
 
 
 def main():
+    global _BIND_OVERRIDE
     global _LOG_FILE, ACCESS_TOKEN, HUB_PORT
     if os.environ.get("ENSEMBLE_PTY_PREFLIGHT"):
         # The project list calls git status. A probe must not refresh a real
@@ -25317,8 +25355,10 @@ def main():
     # tailnet listener once the IP appears. Loopback always comes up immediately.
     if "--bind" in args:
         host = args[args.index("--bind") + 1]
+        _BIND_OVERRIDE = host
     else:
-        host = os.environ.get("ENSEMBLE_BIND", "tailscale" if load_settings().get("remoteAccessEnabled") else "127.0.0.1")
+        _BIND_OVERRIDE = os.environ.get("ENSEMBLE_BIND", "")
+        host = _BIND_OVERRIDE or ("tailscale" if load_settings().get("remoteAccessEnabled") else "127.0.0.1")
     tailnet = host.lower() in ("tailscale", "ts")
     # --log <path>: redirect stdout/stderr to a file. Required under pythonw.exe
     # (Windows autostart), which has no console to write to.
@@ -25475,6 +25515,8 @@ def main():
             print(note, flush=True)
     except Exception as e:
         print(f"claude-dashboard migration skipped: {e}", flush=True)
+    finally:
+        _setup_after_migration()
     # What earlier hubs read of each transcript: the first task list reads
     # only what changed since (ED-200).
     filefacts.use_file(DASHBOARD_DIR / "cache" / "file-facts.json")

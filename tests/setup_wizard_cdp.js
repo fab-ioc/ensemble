@@ -66,7 +66,7 @@ async function main() {
       if (i === 5) await set('#wz-root', A.root);
       if (i === 6) await click('[data-wz-theme="paper"]');
       if (i === 7) await ev(`NT.sub = {test:true}; document.querySelector('#wz-notify').checked = true`);
-      if (i === 8) await click('#wz-remote');
+      if (i === 8) { result.remoteOverrideShown = await ev(`document.querySelector('#setup-wizard .wz-note')?.textContent.includes('bind override (127.0.0.1)')`); await click('#wz-remote'); }
       if (i === 9) await click('#wz-autostart');
       const oldTitle = s.title;
       await click(i === 1 ? '[data-wz-action="skip"]' : '[data-wz-action="next"]');
@@ -75,7 +75,13 @@ async function main() {
     result.settings = await settings();
     await click('[data-wz-action="board"]'); await until(`document.getElementById('setup-wizard').hidden`);
     result.done = await ev(`fetch('/api/setup/status').then(r => r.json())`);
+    await ev(`fetch('/api/settings', {method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({claudePlanWeight:10})})`);
     await ev(`SetupWizard.rerun()`); await until(shown);
+    for (let i=0; i<3; i++) { const title = (await state()).title; await click('[data-wz-action="skip"]');
+      await until(`document.querySelector('#setup-wizard h2')?.textContent !== ${JSON.stringify(title)}`); }
+    result.savedWeightShown = await ev(`document.querySelector('#wz-claude-weight').value`);
+    await click('[data-wz-action="next"]'); await until(`document.querySelector('#setup-wizard h2')?.textContent === 'How should work be shared?'`);
+    result.weightAfterRerun = (await settings()).claudePlanWeight;
     await click('[data-wz-action="later"]'); await until(`document.getElementById('setup-wizard').hidden`);
     result.later = await ev(`fetch('/api/setup/status').then(r => r.json())`);
 

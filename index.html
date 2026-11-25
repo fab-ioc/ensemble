@@ -9656,6 +9656,10 @@ function renderPrefs() {
   if (rootSave) rootSave.disabled = !!PROJECTS?.projects?.length;
   const remote = document.getElementById('pref-remote-enabled');
   if (remote) remote.checked = !!PREFS.remoteAccessEnabled;
+  const remoteNote = document.getElementById('pref-remote-note');
+  if (remoteNote) remoteNote.textContent = PREFS.bindOverride
+    ? `This launch uses a bind override (${PREFS.bindOverride}), which takes priority over this saved choice. The choice applies at the next launch without an override.`
+    : 'The hub listens on your tailnet after its next launch. Its access token stays in the protected access-token.txt file on this computer.';
   const br = document.getElementById('pref-backup-remote');
   if (br && document.activeElement !== br) br.value = PREFS.backupRemote || '';
   const bi = document.getElementById('pref-backup-interval');
