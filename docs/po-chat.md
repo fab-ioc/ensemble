@@ -4,7 +4,7 @@
 
 The project's PO chat is where you discuss work. A message can become a numbered point, such as P12, so it remains visible until answered. Threads keep one topic together; comments on a passage can link back to the exact message.
 
-![The Recipe Box PO chat with a reply, point and question cards](images/po-chat.png)
+![An open Ask card in the Recipe Box PO chat](images/po-chat.png)
 
 ## How to discuss a change
 

@@ -2,7 +2,7 @@
 
 Ensemble is a local dashboard for projects worked on by coding agents. A project has a product owner (PO) chat and a board of tasks; Claude Code and Codex can own tasks, review changes, report back and carry work across long sessions. The hub runs on your machine and serves a browser page you can open from another device on your tailnet.
 
-![Paper-theme view of a fictional Recipe Box project with its PO chat and Ask cards](docs/images/overview.png)
+![Paper-theme view of a fictional Recipe Box project](docs/images/overview.png)
 
 ## What you can do
 

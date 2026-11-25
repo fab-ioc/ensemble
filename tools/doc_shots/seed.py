@@ -42,7 +42,7 @@ def task(hub: Hub, pid: str, title: str, spec: str, workflow: str,
     return room
 
 
-def seed(hub: Hub) -> dict:
+def seed_usage(hub: Hub) -> None:
     now = int(time.time())
     usage = {"asOf": now, "rateLimits": {
         "five_hour": {"used_percentage": 42, "resets_at": now + 7200},
@@ -50,6 +50,9 @@ def seed(hub: Hub) -> dict:
     folder = hub.state / "usage"
     folder.mkdir(parents=True, exist_ok=True)
     (folder / "claude-rate-limits.json").write_text(json.dumps(usage), encoding="utf-8")
+
+
+def seed(hub: Hub) -> dict:
 
     p = hub.post("/api/projects/new", {"name": "Recipe Box", "kind": "code"})["project"]
     pid = p["id"]
@@ -79,7 +82,7 @@ def seed(hub: Hub) -> dict:
                                   "newThread": True, "threadName": "Vegetarian recipes"})
     transcript(hub.home, po_seat["cwd"], po_seat["sessionId"],
                "I will track the vegetarian filter in its own thread so the decisions stay together.")
-    hub.mcp(po_agent["token"], "ensemble_ask", {"questions": [{
+    ask = hub.mcp(po_agent["token"], "ensemble_ask", {"questions": [{
         "question": "Which ingredient list should the first release use?",
         "options": [{"label": "Local sample", "detail": "A small list included with the app", "recommended": True},
                     {"label": "Imported file", "detail": "Let people choose a file"}]}]})
@@ -89,6 +92,8 @@ def seed(hub: Hub) -> dict:
     active = task(hub, pid, "Add ingredient search",
                   "# Goal\nFind recipes by ingredient.\n\n# Acceptance\n- Search ignores case.\n- Tests cover a match and no match.\n",
                   "inprogress", "highest", True, True)
+    prompt = hub.post("/api/room/say", {"roomId": active["id"],
+                                             "text": "Please check ingredient search against the acceptance criteria."})
     owner = agent(hub, active["participants"][0]["sessionId"])
     hub.mcp(owner["token"], "chat_send", {"to": "all", "message":
         "## Progress\n\nThe search function is in place. I am checking the tests and preparing a commit for review."})
@@ -129,4 +134,5 @@ def seed(hub: Hub) -> dict:
         hub.post("/api/projects/new", {"name": "Field Journal", "kind": "documents"})
     except RuntimeError:
         pass
-    return {"project": pid, "po": po_id, "active": active["id"], "file": str(code / "src" / "search.py")}
+    return {"project": pid, "po": po_id, "active": active["id"], "file": str(code / "src" / "search.py"),
+            "ask": ask["messageId"], "progress": prompt["result"]["message"]["id"]}

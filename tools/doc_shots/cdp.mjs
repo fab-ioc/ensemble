@@ -3,12 +3,19 @@
 // shot list needs (navigate, evaluate, click, type, screenshot).
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 
 export const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 export async function launch({ chrome, port, width = 1440, height = 900 }) {
+  const occupied = await new Promise(resolve => {
+    const s = net.connect({ host: '127.0.0.1', port });
+    s.once('connect', () => { s.destroy(); resolve(true); });
+    s.once('error', () => { s.destroy(); resolve(false); });
+  });
+  if (occupied) throw new Error(`Chrome debug port ${port} is in use; choose --chrome-port`);
   const prof = fs.mkdtempSync(path.join(os.tmpdir(), 'ens-doc-chrome-'));
   // The seed tests/chrome_profile.py writes (no blank-password probe on Windows).
   fs.writeFileSync(path.join(prof, 'Local State'), JSON.stringify({ password_manager: {
@@ -21,7 +28,10 @@ export async function launch({ chrome, port, width = 1440, height = 900 }) {
     try { const r = await fetch(`http://127.0.0.1:${port}/json/version`); if (r.ok) version = await r.json(); } catch {}
     if (!version) await sleep(200);
   }
-  if (!version) { proc.kill(); throw new Error(`Chrome did not answer on ${port}`); }
+  if (!version || proc.exitCode !== null) {
+    proc.kill(); fs.rmSync(prof, { recursive: true, force: true });
+    throw new Error(`the demo Chrome did not answer on ${port}`);
+  }
   const close = async () => { proc.kill(); await sleep(400); fs.rmSync(prof, { recursive: true, force: true }); };
   return { port, close };
 }

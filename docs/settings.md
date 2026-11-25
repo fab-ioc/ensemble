@@ -2,7 +2,7 @@
 
 ## What it is
 
-Settings holds appearance, notifications, agents, editor, backups and other preferences. The appearance choices include Light, Dark, Dim, Paper, Contrast, Fjord, IntelliJ Dark and System.
+Settings holds appearance, notifications, agents, editor, backups and other preferences. The appearance choices include Light, Dark, Dim, Paper, High contrast, Fjord, IntelliJ Dark and Match system.
 
 ![Appearance settings with Paper selected](images/settings-themes.png)
 

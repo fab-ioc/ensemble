@@ -19,6 +19,10 @@ if "--version" in args:
     print("2.1.0 (Claude Code)" if kind == "claude" else "codex-cli 0.80.0")
     sys.exit(0)
 
+if kind == "codex" and args[-3:] == ["mcp", "list", "--json"]:
+    print("[]")  # The disposable agent has no configured external servers.
+    sys.exit(0)
+
 if kind == "codex" and args[:1] == ["app-server"]:
     week = int(time.time()) + 4 * 86400
     pool = {"limitId": "codex", "limitName": None, "normalModelSlug": None,

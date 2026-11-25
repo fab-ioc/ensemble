@@ -4,7 +4,7 @@
 
 The top bar's plan chip shows the hub's latest Claude and Codex allowance readings. The hub uses them when selecting a task's owner and reviewer from the preferred line-up, while preserving a human choice to keep particular agents.
 
-![Plan usage chip at the top of the demo dashboard](images/overview.png)
+![Open Plan allowance tray with the demo usage windows](images/usage-plan.png)
 
 ## How to read it
 
