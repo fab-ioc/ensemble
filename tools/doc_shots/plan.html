@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Search release plan</title>
+<style>
+  body { margin: 0; background: #fbf8f1; color: #2b2a26; font: 16px/1.55 Georgia, "Times New Roman", serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 32px 24px 48px; }
+  h1 { font-size: 30px; margin: 0 0 4px; }
+  .sub { color: #6b665c; margin: 0 0 24px; }
+  h2 { font-size: 20px; margin: 28px 0 8px; border-bottom: 1px solid #e3dccd; padding-bottom: 4px; }
+  ul { padding-left: 22px; }
+  .risk { background: #fff3d6; border-left: 4px solid #d9a441; padding: 10px 14px; }
+  svg { width: 100%; height: auto; display: block; margin: 8px 0; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Ingredient search: release plan</h1>
+  <p class="sub">Recipe Box · prepared by the PO for the first release</p>
+
+  <h2>Goal</h2>
+  <p>People type one ingredient and see every recipe that uses it. The first release searches the small sample list that ships with the app.</p>
+
+  <h2>Steps</h2>
+  <svg viewBox="0 0 700 110" role="img" aria-label="Three steps: build search, write tests, add the vegetarian filter">
+    <g font-family="Georgia, serif" font-size="15" fill="#2b2a26">
+      <rect x="10" y="25" width="190" height="60" rx="8" fill="#e8f0e3" stroke="#6f8f5f"/>
+      <text x="105" y="52" text-anchor="middle">1. Build search</text>
+      <text x="105" y="72" text-anchor="middle" font-size="12" fill="#55704a">in progress</text>
+      <rect x="255" y="25" width="190" height="60" rx="8" fill="#f2ede2" stroke="#a39a86"/>
+      <text x="350" y="52" text-anchor="middle">2. Write tests</text>
+      <text x="350" y="72" text-anchor="middle" font-size="12" fill="#6b665c">to do</text>
+      <rect x="500" y="25" width="190" height="60" rx="8" fill="#f2ede2" stroke="#a39a86"/>
+      <text x="595" y="52" text-anchor="middle">3. Vegetarian filter</text>
+      <text x="595" y="72" text-anchor="middle" font-size="12" fill="#6b665c">backlog</text>
+      <path d="M200 55 H250 M445 55 H495" stroke="#8a8270" stroke-width="2" marker-end="url(#a)"/>
+    </g>
+    <defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#8a8270"/></marker></defs>
+  </svg>
+
+  <h2>Acceptance</h2>
+  <ul>
+    <li>Search ignores letter case: “Lemon” and “lemon” find the same recipes.</li>
+    <li>An ingredient no recipe uses shows a friendly empty message.</li>
+    <li>Tests cover a match, a miss and mixed case.</li>
+  </ul>
+
+  <h2>Risks</h2>
+  <p class="risk">Plural ingredient names may not match: a search for tomatoes would miss a recipe that lists tomato.</p>
+
+  <h2>Later</h2>
+  <p>Saved favourites and a shopping list grouped by recipe follow once search is merged.</p>
+</main>
+</body>
+</html>

@@ -44,6 +44,31 @@ The repository keeps these root modules in place because tests, packaging and im
 | `packaging/`, `.github/workflows/release.yml` | The PyInstaller build, the Windows installer (Inno Setup) and the release workflow |
 | `LICENSE` | MIT |
 
+## Adding an agent
+
+Claude Code and Codex are two implementations of one agent interface, `AgentType` in `agents/base.py`. It is kept apart from the operating-system terminal layer in `backends/`: `backends/` decides *where* a session runs (a terminal window on Windows, macOS or Linux, or the headless runner), `agents/` decides *what* runs in it. A backend never needs to know which CLI it hosts.
+
+An agent class says:
+
+| Member | What it gives the hub |
+|---|---|
+| `key`, `display_name` | The kind's name in seats, line-ups and labels |
+| `installed()` | Whether the CLI is on this machine |
+| `list_sessions(limit)` | The CLI's own past sessions, as `AgentSession` rows, for session history and adopting a session |
+| `launch_argv(cwd, prompt, extra)` | The command that starts a new session |
+| `resume_argv(session_id, extra)` | The command that resumes a session by its id |
+| `ensure_trusted(cwd)` (optional) | Clears the CLI's first-run trust prompt so an unattended launch does not wait on it |
+
+Register the class in `_REGISTRY` in `agents/__init__.py`; `/api/agents` and `get_agent()` then know it.
+
+That is the start, not the whole job. Today these parts of the hub name Claude and Codex directly, and a third kind needs code in each:
+
+- **Launching a hub agent** (`dashboard.py`): the `ensemble` MCP server is wired per CLI (a `--mcp-config` file for Claude, `-c mcp_servers…` for Codex), and so are the model and effort flags and the sign-in check.
+- **Models**: `agent_models.py` (`KINDS`) and the model pickers in Settings → Agent models.
+- **Usage and pacing**: `usage.py` reads each CLI's plan allowance in its own way, and `plan_weights.py`, `pacing.py` and the owner choice in `rotation.py` (`_OTHER_KIND`) balance work between exactly these two kinds.
+- **Idle and attention**: `attention.py` and `agent_hooks.py` recognise each CLI's prompt and status (Claude through its hooks, Codex through its terminal).
+- **Pages**: the agent pickers and labels in `index.html` and `session.html`.
+
 ## Run the tests
 
 From the repository root, run:
