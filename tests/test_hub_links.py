@@ -62,9 +62,9 @@ FULL = _Hub(questions={(ROOM, "abc123def456"): QUESTIONS, (ROOM, "long00000000")
             rooms={TASK: {"id": TASK, "no": 18, "title": "Billing export"}, ROOM: {"id": ROOM, "title": "PO"}})
 
 
-# This machine is "box" on its tailnet (tailscale says box.tail1234.ts.net),
+# This machine is "box" on its tailnet (tailscale says box.example-tailnet.ts.net),
 # and the hub has not been reached at any address yet.
-TS = "box.tail1234.ts.net"
+TS = "box.example-tailnet.ts.net"
 
 
 def _reset():
@@ -96,24 +96,24 @@ class Origins(unittest.TestCase):
         _reset()
 
     def test_the_same_short_name_in_another_tailnet_is_another_machine(self):
-        # Review 3: box.other-tailnet.ts.net is not this box; neither a link to
+        # Review 3: box.other-example-tailnet.ts.net is not this box; neither a link to
         # it nor a proxy header naming it makes it the hub.
-        for u in (f"http://box.other-tailnet.ts.net:8765/?task={TASK}", f"https://box.other-tailnet.ts.net/?task={TASK}",
-                  f"https://box.other-tailnet.ts.net:9443/session?room={TASK}"):
+        for u in (f"http://box.other-example-tailnet.ts.net:8765/?task={TASK}", f"https://box.other-example-tailnet.ts.net/?task={TASK}",
+                  f"https://box.other-example-tailnet.ts.net:9443/session?room={TASK}"):
             with self.subTest(url=u):
                 self.assertIsNone(hub_links.target(u))
-        self.assertFalse(hub_links.own_host("box.other-tailnet.ts.net"))
-        hub_links.seen("box.other-tailnet.ts.net:9443", "https")
-        hub_links.seen("box.other-tailnet.ts.net:8765", local=("127.0.0.1", 8765))
+        self.assertFalse(hub_links.own_host("box.other-example-tailnet.ts.net"))
+        hub_links.seen("box.other-example-tailnet.ts.net:9443", "https")
+        hub_links.seen("box.other-example-tailnet.ts.net:8765", local=("127.0.0.1", 8765))
         self.assertEqual(hub_links.origins()["seen"], [])
-        self.assertIsNone(hub_links.target(f"https://box.other-tailnet.ts.net:9443/session?room={TASK}"))
+        self.assertIsNone(hub_links.target(f"https://box.other-example-tailnet.ts.net:9443/session?room={TASK}"))
         # Without tailscale's word, this machine's own tailnet name is not guessed either.
         hub_links._TS_NAMES.clear()
         self.assertIsNone(hub_links.target(f"http://{TS}:8765/?task={TASK}"))
 
     def test_the_hubs_port_on_this_machine(self):
         for u in ("http://127.0.0.1:8765/", "http://localhost:8765/", "http://[::1]:8765/", "http://box:8765/",
-                  "http://box.lan:8765/", "http://box.tail1234.ts.net:8765/"):
+                  "http://box.lan:8765/", "http://box.example-tailnet.ts.net:8765/"):
             with self.subTest(url=u):
                 self.assertIsNotNone(hub_links.target(u))
 
@@ -121,10 +121,10 @@ class Origins(unittest.TestCase):
         paths = (f"/session?room={ROOM}&msg=abc123def456&part=ask:0", f"/session?room={TASK}",
                  f"/?task={TASK}", "/fileview?path=%2Fx%2Fplan.md", "/")
         hosts = ("http://localhost:5173", "http://127.0.0.1:3000", "http://[::1]:5173", "http://box:5173",
-                 "http://localhost", "https://other.tail1234.ts.net", "http://other.tail1234.ts.net:8765",
-                 "http://box.tail1234.ts.net:3000",
+                 "http://localhost", "https://other.example-tailnet.ts.net", "http://other.example-tailnet.ts.net:8765",
+                 "http://box.example-tailnet.ts.net:3000",
                  # another service on this machine's tailnet name, until tailscale says it is the hub (review 2)
-                 "https://box.tail1234.ts.net", "https://box.tail1234.ts.net:5173",
+                 "https://box.example-tailnet.ts.net", "https://box.example-tailnet.ts.net:5173",
                  # a tailnet or LAN address the hub is not known to listen on: another machine's
                  "http://100.101.102.103:8765", "http://192.168.1.5:8765")
         for h in hosts:
@@ -139,26 +139,26 @@ class Origins(unittest.TestCase):
         self.assertIsNone(hub_links.target(u))
         hub_links.seen("127.0.0.1:9443")
         self.assertEqual(hub_links.target(u), {"task": TASK})
-        hub_links.seen("box.tail1234.ts.net:8443", "https")
-        self.assertEqual(hub_links.target(f"https://box.tail1234.ts.net:8443/?task={TASK}"), {"task": TASK})
-        self.assertIsNone(hub_links.target(f"https://box.tail1234.ts.net/?task={TASK}"))
+        hub_links.seen("box.example-tailnet.ts.net:8443", "https")
+        self.assertEqual(hub_links.target(f"https://box.example-tailnet.ts.net:8443/?task={TASK}"), {"task": TASK})
+        self.assertIsNone(hub_links.target(f"https://box.example-tailnet.ts.net/?task={TASK}"))
         self.assertIn("[::1]:8765", (hub_links.seen("[::1]:8765"), hub_links.origins())[1]["seen"])
 
     def test_a_proxy_header_naming_another_machine_is_not_noted(self):
         # A token holder's X-Forwarded-Host (review 2): it names another machine.
-        for host in ("other.tail1234.ts.net", "evil.example:8765", "example.com:443", "100.101.102.103:8765",
+        for host in ("other.example-tailnet.ts.net", "evil.example:8765", "example.com:443", "100.101.102.103:8765",
                      "192.168.1.5:8765"):
             with self.subTest(host=host):
                 hub_links.seen(host, "https")
                 hub_links.seen(host)
                 self.assertEqual(hub_links.origins()["seen"], [])
-        self.assertIsNone(hub_links.target(f"https://other.tail1234.ts.net/session?room={TASK}"))
+        self.assertIsNone(hub_links.target(f"https://other.example-tailnet.ts.net/session?room={TASK}"))
 
     def test_a_direct_request_counts_on_the_socket_it_came_in_on(self):
         lan = f"http://192.168.1.5:8765/?task={TASK}"
         hub_links.seen("192.168.1.9:8765", local=("192.168.1.5", 8765))     # not the address it came in on
         hub_links.seen("box:5173", local=("127.0.0.1", 8765))               # not the port it came in on
-        hub_links.seen("other.tail1234.ts.net:8765", local=("100.64.1.2", 8765))
+        hub_links.seen("other.example-tailnet.ts.net:8765", local=("100.64.1.2", 8765))
         self.assertEqual(hub_links.origins()["seen"], [])
         hub_links.seen("192.168.1.5:8765", local=("::ffff:192.168.1.5", 8765))
         self.assertEqual(hub_links.target(lan), {"task": TASK})
@@ -175,18 +175,18 @@ class Origins(unittest.TestCase):
         self.assertNotIn("0.0.0.0:8765", hub_links.origins()["seen"])
 
     def test_what_tailscale_says_serves_the_hub(self):
-        status = {"Self": {"DNSName": "ensemble-hub.tail1234.ts.net."}}
+        status = {"Self": {"DNSName": "ensemble-hub.example-tailnet.ts.net."}}
         serve = {"TCP": {"443": {"HTTPS": True}, "8443": {"HTTPS": True}},
-                 "Web": {"ensemble-hub.tail1234.ts.net:8443": {"Handlers": {"/": {"Proxy": "http://127.0.0.1:8765"}}},
-                         "ensemble-hub.tail1234.ts.net:443": {"Handlers": {"/": {"Proxy": "http://127.0.0.1:5173"}}}}}
+                 "Web": {"ensemble-hub.example-tailnet.ts.net:8443": {"Handlers": {"/": {"Proxy": "http://127.0.0.1:8765"}}},
+                         "ensemble-hub.example-tailnet.ts.net:443": {"Handlers": {"/": {"Proxy": "http://127.0.0.1:5173"}}}}}
         hub_links.learn_tailscale(status, serve)
-        at = "https://ensemble-hub.tail1234.ts.net"
+        at = "https://ensemble-hub.example-tailnet.ts.net"
         self.assertEqual(hub_links.target(f"{at}:8443/?task={TASK}"), {"task": TASK})
         self.assertIsNone(hub_links.target(f"{at}/?task={TASK}"), "443 serves another program")
-        self.assertEqual(hub_links.target(f"http://ensemble-hub.tail1234.ts.net:8765/?task={TASK}"), {"task": TASK})
-        self.assertIn("ensemble-hub.tail1234.ts.net", hub_links.origins()["names"])
+        self.assertEqual(hub_links.target(f"http://ensemble-hub.example-tailnet.ts.net:8765/?task={TASK}"), {"task": TASK})
+        self.assertIn("ensemble-hub.example-tailnet.ts.net", hub_links.origins()["names"])
         # Its tailnet name, from a proxy here, is now this machine's.
-        hub_links.seen("ensemble-hub.tail1234.ts.net:9443", "https")
+        hub_links.seen("ensemble-hub.example-tailnet.ts.net:9443", "https")
         self.assertEqual(hub_links.target(f"{at}:9443/?task={TASK}"), {"task": TASK})
         hub_links.learn_tailscale(None, {"Web": {"x:1": None, "y": {"Handlers": {"/": {"Proxy": "localhost:8765"}}}}})
 
@@ -201,13 +201,13 @@ class Origins(unittest.TestCase):
 class OwnHost(unittest.TestCase):
     def test_this_machines_names(self):
         for h in ("127.0.0.1", "127.3.4.5", "localhost", "LOCALHOST", "[::1]", "::1", "box", "box.lan",
-                  "box.tail1234.ts.net", "box.tail1234.ts.net."):
+                  "box.example-tailnet.ts.net", "box.example-tailnet.ts.net."):
             with self.subTest(host=h):
                 self.assertTrue(hub_links.own_host(h))
 
     def test_other_hosts(self):
         for h in ("", "github.com", "example.com", "100.64.0.1", "100.100.12.34", "10.0.0.5", "192.168.1.2",
-                  "other.tail1234.ts.net", "ts.net.example.com", "localhost.example.com", "box.example.com"):
+                  "other.example-tailnet.ts.net", "ts.net.example.com", "localhost.example.com", "box.example.com"):
             with self.subTest(host=h):
                 self.assertFalse(hub_links.own_host(h))
 
@@ -227,8 +227,8 @@ class Name(unittest.TestCase):
             self.assertEqual(hub_links.name(NIX_FILE), "plan.md")
             self.assertEqual(hub_links.name("http://127.0.0.1:8765/fileview?path=%2Fhome%2Fsam%2FDocuments%2F"), "Documents")
             self.assertEqual(hub_links.name(f"{BASE}/"), "Ensemble")
-            self.assertEqual(hub_links.name("http://box.tail1234.ts.net:8765/"), "Ensemble")
-            self.assertEqual(hub_links.name("http://box.tail1234.ts.net:8765/session?room=" + TASK), "#18 Billing export")
+            self.assertEqual(hub_links.name("http://box.example-tailnet.ts.net:8765/"), "Ensemble")
+            self.assertEqual(hub_links.name("http://box.example-tailnet.ts.net:8765/session?room=" + TASK), "#18 Billing export")
 
     def test_a_long_question_is_clipped(self):
         with mock.patch.object(hub_links, "_d", FULL):
@@ -260,7 +260,7 @@ class Name(unittest.TestCase):
         for u in ("https://github.com/acme/x/issues/1", f"https://example.com/session?room={ROOM}&msg=abc&part=ask:0",
                   "https://example.com/fileview?path=%2Fetc%2Fpasswd", "ftp://127.0.0.1/x", "not a url",
                   # A dev server on this machine is another website: only the hub's port is the hub's page.
-                  "http://localhost:5173/", "http://127.0.0.1:3000/app?x=1", "http://box.tail1234.ts.net:3000/"):
+                  "http://localhost:5173/", "http://127.0.0.1:3000/app?x=1", "http://box.example-tailnet.ts.net:3000/"):
             with self.subTest(url=u):
                 self.assertIsNone(hub_links.name(u))
                 self.assertIsNone(hub_links.target(u))

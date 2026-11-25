@@ -54,10 +54,10 @@ class FoldTest(unittest.TestCase):
         cases = [
             agent("m01", "Re P5: done, live now.", True, re=["P5"]),
             agent("m02", "Ask: which one?", True, ask=True),
-            agent("m03", "See [the plan](/home/fab/Docs/plan.html).", True),
+            agent("m03", "See [the plan](/home/alex/Docs/plan.html).", True),
             agent("m04", "Built at https://example.org/x", True),
-            agent("m05", "[image] /home/fab/shot.png", True),
-            agent("m06", "The drawing is /home/fab/Ensemble Projects/Docs/#402 plan.png now", True),
+            agent("m05", "[image] /home/alex/shot.png", True),
+            agent("m06", "The drawing is /home/alex/Ensemble Projects/Docs/#402 plan.png now", True),
             # Review 1: a relative or bare file name is a file too.
             agent("m09", "See src/report.md", True),
             agent("m10", "README.md is updated.", True),

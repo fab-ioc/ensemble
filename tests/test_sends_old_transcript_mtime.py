@@ -22,7 +22,7 @@ REAL_SESSION_STAT = points._session_stat
 SID = "01a18c09-cc9b-7df3-ab34-a79442c0dbd7"
 MESSAGES = [
     ("P11", "2026-11-09T15:44:51.141Z", "2026-11-09T15:44:52.813Z",
-     "2026-11-09T15:48:06.256Z", "can you check why epyc-32 is so high in CPU ?\n\n[point P11]"),
+     "2026-11-09T15:48:06.256Z", "can you check why devbox is so high in CPU ?\n\n[point P11]"),
     ("P12", "2026-11-09T15:48:55.032Z", "2026-11-09T15:48:56.111Z",
      "2026-11-09T15:49:44.606Z", "## Review comments (1)\n\n**1.** > Windows Defender\n\n"
      "can thie be disabled when running tests ? and on anything related to opten and ensemble platforms ?"

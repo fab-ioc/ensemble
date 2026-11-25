@@ -131,7 +131,7 @@ class Store(_Notify):
         self.assertTrue(a)
 
     def test_clip(self):
-        self.assertEqual(notify.clip("See [the plan](https://x/y) in /home/fab/p/a.md now", 80),
+        self.assertEqual(notify.clip("See [the plan](https://x/y) in /home/alex/p/a.md now", 80),
                          "See the plan in … now")
         self.assertEqual(notify.clip("**Done**\nsecond line", 80), "Done")
         self.assertEqual(notify.clip("a" * 50, 10), "a" * 9 + "…")
@@ -345,7 +345,7 @@ class PoReplies(_Notify):
         return first + self.look(list(rows))
 
     def test_a_reply_to_the_person_notifies_once(self):
-        self.reply("Yes: **on track** for Friday, see /home/fab/x/plan.md")
+        self.reply("Yes: **on track** for Friday, see /home/alex/x/plan.md")
         evs = self.settle()
         self.assertEqual(len(evs), 1)
         ev = evs[0]

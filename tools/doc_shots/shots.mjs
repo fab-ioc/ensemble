@@ -12,9 +12,10 @@ const page = await tab(Number(debugPort));
 const url = (where) => `${base}${where}`;
 const shots = [];
 
-async function capture(name, where, { width = 1440, height = 900, run, crop, requireVisible } = {}) {
+async function capture(name, where, { width = 1440, height = 900, run, afterLoad, crop, requireVisible, expected } = {}) {
   await page.size(width, height, width < 600);
   await page.go(url(where), 2400);
+  if (afterLoad) await afterLoad();
   if (run) { await page.eval(run); await sleep(900); }
   if (requireVisible) await page.until(`(() => { const el = document.querySelector(${JSON.stringify(requireVisible)});
     return !!el && el.getBoundingClientRect().height > 80; })()`);
@@ -25,7 +26,9 @@ async function capture(name, where, { width = 1440, height = 900, run, crop, req
       .flatMap(x => ['href','src','title','aria-label','data-path'].map(a => x.getAttribute(a) || ''))
       .join(' ').slice(0, 150000)})`);
   if (check.theme !== 'paper') throw new Error(`${name}: theme is ${check.theme}`);
-  const leaked = new RegExp(['epyc', 'fab' + 'io', '/home/' + 'fab', 'tail' + '4f', 'token' + '='].join('|'), 'i')
+  if (expected && !check.visible.includes(expected)) throw new Error(`${name}: missing ${expected}`);
+  const owner = String.fromCharCode(102, 97, 98);
+  const leaked = new RegExp(['epyc', owner + 'io', '/home/' + owner, 'tail' + '4f', 'token' + '='].join('|'), 'i')
     .exec([check.visible, check.title, check.values, check.attrs].join(' '));
   if (leaked) throw new Error(`${name}: private text ${leaked[0]}`);
   const file = path.join(out, `${name}.png`);
@@ -37,6 +40,40 @@ async function capture(name, where, { width = 1440, height = 900, run, crop, req
     height: Math.min(height - Math.max(0, Math.floor(box.y - 12)), Math.ceil(box.height + 24)) });
   shots.push({ name, page: where, width, height, title: check.title });
 }
+
+const wizardStep = index => `(async () => {
+  await SetupWizard.rerun();
+  for (let i = 0; i < ${index}; i++) {
+    document.querySelector('#setup-wizard [data-wz-action="skip"]').click();
+    await new Promise(resolve => setTimeout(resolve, 120));
+  }
+  return document.querySelector('#setup-wizard #wz-title')?.textContent;
+})()`;
+
+const passageComment = `(async () => {
+  const t = [...document.querySelectorAll('#msgs .msg .text.md')]
+    .find(e => e.textContent.includes('The search function is in place'));
+  if (!t) throw Error('demo message missing');
+  t.scrollIntoView({block:'center'});
+  const walker = document.createTreeWalker(t, NodeFilter.SHOW_TEXT);
+  let node;
+  while ((node = walker.nextNode())) {
+    const start = node.nodeValue.indexOf('search function');
+    if (start >= 0) { getSelection().setBaseAndExtent(node, start, node, start + 15); break; }
+  }
+  if (!node) throw Error('demo passage missing');
+  await new Promise(resolve => setTimeout(resolve, 350));
+  const button = document.querySelector('.sel-bar:not([hidden]) .sel-cmt:not([hidden])');
+  if (!button) throw Error('passage comment control missing');
+  button.click();
+  await new Promise(resolve => setTimeout(resolve, 200));
+  const input = document.querySelector('.cmt-composer textarea');
+  if (!input) throw Error('passage composer missing');
+  input.value = 'Please check the empty ingredient case too.';
+  input.dispatchEvent(new InputEvent('input', {bubbles:true}));
+  document.querySelector('.cmt-composer .cmt-add').click();
+  return true;
+})()`;
 
 try {
   await capture('overview', '/', { requireVisible: '.ibx-row' });
@@ -58,6 +95,27 @@ try {
     { width: 390, height: 844 });
   await capture('inbox-phone', `/?inbox=${data.project}`, { width: 390, height: 844 });
   await capture('po-chat-phone', `/session?room=${data.po}&msg=${data.ask}&part=ask:0`, { width: 390, height: 844 });
+  await capture('setup-welcome', '/', { run: wizardStep(0), expected: 'One hub for your AI team' });
+  await capture('setup-board-word', '/', { run: wizardStep(2), expected: 'What do you call a board?' });
+  await capture('setup-theme', '/', { run: wizardStep(6), expected: 'How should Ensemble look?' });
+  await capture('setup-welcome-phone', '/', { width: 390, height: 844, run: wizardStep(0), expected: 'One hub for your AI team' });
+  await capture('passage-review-comment', `/session?room=${data.active}&msg=${data.progress}`,
+    { run: passageComment, expected: 'Please check the empty ingredient case too.' });
+  await capture('file-changed-notice', `/fileview?path=${encodeURIComponent(data.file)}&line=5`, {
+    afterLoad: async () => {
+      fs.appendFileSync(data.file, '\n# Demo change waiting to be reloaded.\n');
+      const time = Date.now() / 1000 + 2;
+      fs.utimesSync(data.file, time, time);
+    },
+    run: `(async () => {
+      ensUpd.lastInput = Date.now();
+      fvChg.checkedAt = 0;
+      await fvChg.tick();
+      const notice = document.getElementById('fv-chg');
+      if (notice.hidden) throw Error('file change was not detected: ' + JSON.stringify({seen:fvChg.seen, now:await fvChg.version(), pending:fvChg.pending}));
+      return notice.textContent;
+    })()`,
+    expected: 'This file changed' });
 } finally {
   page.close();
   await browser.close();

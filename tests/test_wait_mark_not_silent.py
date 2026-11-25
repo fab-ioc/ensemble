@@ -19,7 +19,7 @@ import dashboard
 import stall
 from test_ask_to_po import _Stall
 
-_REAL_PLACES = (Path("/Users/fab/ensemble"), Path.home() / ".ensemble")
+_REAL_PLACES = (Path("/Users/alex/ensemble"), Path.home() / ".ensemble")
 
 
 class _Silent(_Stall):

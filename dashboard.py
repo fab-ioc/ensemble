@@ -6381,7 +6381,7 @@ NOTIFY_TEXT_MAX = 2000
 NOTIFY_PER_HOUR = 20            # per room and sender
 # A sender into a room that may send more: (room id, sender lowercased) -> lines
 # an hour. Swann bot into opTen's PO chat: a request's follow-ups must wake the
-# PO at once (fab, opTen P1324), so 60 an hour (opTen PO, 11-22).
+# PO at once (alex, opTen P1324), so 60 an hour (opTen PO, 11-22).
 NOTIFY_PER_HOUR_FOR = {("room-3f303104", "swann bot (discord)"): 60}
 
 

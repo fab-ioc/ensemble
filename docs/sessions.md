@@ -12,6 +12,10 @@ Each running task has a session page with its chat, agent state and a live termi
 2. Read the messages to see the owner's progress and reviewer feedback. Open the terminal panel to see the agent's live output.
 3. If the session has stopped, type in its message box and send to resume it with your instruction. Check the task state before sending a second message.
 
+Select part of an agent message to add a review comment. The selected passage stays highlighted while your comment waits in the tray.
+
+![A review comment attached to a passage in a task message](images/passage-review-comment.png)
+
 ![The task view on a phone](images/task-session-phone.png)
 
 ![The demo agent's terminal in its task session](images/task-terminal.png)

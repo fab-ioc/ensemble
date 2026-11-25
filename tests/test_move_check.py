@@ -85,16 +85,16 @@ class MapOldPath(unittest.TestCase):
         home, root = Path("/home/x"), Path("/home/x/EnsembleProjects")
         self.assertEqual(mc.map_old_path(r"C:\Users\u\EnsembleProjects\P\t\repo", home, root)[0],
                          root / "P" / "t" / "repo")
-        self.assertEqual(mc.map_old_path("C:/Users/u/IdeaProjects/app", home, root),
-                         [home / "IdeaProjects" / "app"])
+        self.assertEqual(mc.map_old_path("C:/Users/u/CodeProjects/app", home, root),
+                         [home / "CodeProjects" / "app"])
         self.assertEqual(mc.map_old_path(r"\\?\C:\Users\u\dev\x", home, root), [home / "dev" / "x"])
         self.assertEqual(mc.map_old_path(r"D:\Code\x", home, root), [])
         self.assertEqual(mc.map_old_path("relative/x", home, root), [])
 
     def test_posix_paths_for_a_windows_home(self):
-        home = Path("C:/Users/w")
+        home = Path("C:/Users/alex/")
         root = home / "EnsembleProjects"
-        self.assertEqual(mc.map_old_path("/Users/m/EnsembleProjects/P", home, root)[0], root / "P")
+        self.assertEqual(mc.map_old_path("/Users/alex/EnsembleProjects/P", home, root)[0], root / "P")
         self.assertEqual(mc.map_old_path("/home/l/dev/ensemble", home, root),
                          [home / "dev" / "ensemble"])
 

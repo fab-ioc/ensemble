@@ -23,16 +23,25 @@ GIT = shutil.which("git")
 
 # Built from pieces so this file does not match itself.
 PERSONAL = re.compile("|".join([
-    "fab" + "io",
+    "fa" + "bio",
+    r"\bfa" + r"b\b(?!-ioc)",
     "epyc" + "-32",
     "tail" + "4f8740",
-    r"\.ts" + r"\.net",
     "Idea" + "Projects",
+    r"/home/" + "fa" + "b" + r"(?:/|\b)",
     # Any Windows home folder; one without a drive, or a macOS one, unless it is a
     # placeholder (`<name>`, `$USER`).
-    r"[A-Za-z]:(?:\\\\|\\|/)+Users\b",
-    r"(?<![\w.~])(?:\\\\|\\|/)Users(?:\\\\|\\|/)+(?!<|\$|%)[A-Za-z]",
+    r"[A-Za-z]:(?:\\\\|\\|/)+Users(?:\\\\|\\|/)+(?!<|\$|%|(?:alex|me|u|w|sam|someone)(?=[/\\]|$))[A-Za-z]",
+    r"(?<![\w.~])(?:\\\\|\\|/)Users(?:\\\\|\\|/)+(?!<|\$|%|(?:alex|me|u|w|sam|someone)(?=[/\\]|$))[A-Za-z]",
 ]), re.I)
+TAILNET_HOST = re.compile(r"\b(?:[A-Za-z0-9-]+\.)*(?P<tailnet>[A-Za-z0-9-]+)\.ts" + r"\.net\b", re.I)
+EXAMPLE_TAILNETS = {"example-tailnet", "other-example-tailnet"}
+
+
+def personal_hit(line: str):
+    """Allow fictional tailnets and a bare suffix, but catch every other name."""
+    return PERSONAL.search(line) or next(
+        (m for m in TAILNET_HOST.finditer(line) if m.group("tailnet").lower() not in EXAMPLE_TAILNETS), None)
 
 
 def tracked() -> list[str]:
@@ -80,19 +89,26 @@ class Readme(unittest.TestCase):
             except (UnicodeDecodeError, OSError):
                 continue          # images and other binaries
             for no, line in enumerate(text.splitlines(), 1):
-                if PERSONAL.search(line):
+                if personal_hit(line):
                     hits.append(f"{rel}:{no}: {line.strip()[:120]}")
         self.assertEqual(hits, [])
 
     def test_the_pattern_catches_what_it_is_for(self):
         u = "Us" + "ers"          # pieces, so this test's own source is not a hit
         bs = "\\"
-        for bad in ("C:" + bs + u + bs + "alex" + bs + "x", "C:" + bs + u + bs + "me", "C:/" + u + "/me",
-                    "C:" + bs * 2 + u + bs * 2 + "alex", "/" + u + "/alex/x", bs + u + bs + "alex" + bs + "x",
-                    bs * 2 + u + bs * 2 + "alex", "x = '" + bs * 2 + u + bs * 2 + "alex'", "host.tailnet" + ".ts" + ".net"):
-            self.assertTrue(PERSONAL.search(bad), bad)
-        for ok in ("D:\\work\\.ensemble", "<drive>:\\Users\\<u>", "/Users/<name>/x", "~/EnsembleProjects", "a /api/users/1"):
-            self.assertFalse(PERSONAL.search(ok), ok)
+        for bad in ("C:" + bs + u + bs + "rachel" + bs + "x", "C:" + bs + u + bs + "rachel", "C:/" + u + "/rachel",
+                    "C:" + bs * 2 + u + bs * 2 + "rachel", "/" + u + "/rachel/x", bs + u + bs + "rachel" + bs + "x",
+                    bs * 2 + u + bs * 2 + "rachel", "x = '" + bs * 2 + u + bs * 2 + "rachel'", "host.tailnet" + ".ts" + ".net"):
+            self.assertTrue(personal_hit(bad), bad)
+        for ok in ("D:\\work\\.ensemble", "<drive>:\\Users\\<u>", "/Users/<name>/x", "~/EnsembleProjects", "a /api/users/1",
+                   "devbox.example-tailnet.ts.net", "C:" + bs + u + bs + "alex" + bs + "project"):
+            self.assertFalse(personal_hit(ok), ok)
+        self.assertTrue(personal_hit("devbox.my-example-tailnet" + ".ts" + ".net"))
+        self.assertTrue(personal_hit("devbox.tail" + "4f8740.ts" + ".net"))
+        self.assertTrue(personal_hit("C:" + bs + u + bs + "alex-smith" + bs + "project"))
+        self.assertTrue(personal_hit("/home/" + "fa" + "b" + "/project"))
+        self.assertTrue(personal_hit("Fa" + "b, please check"))
+        self.assertFalse(personal_hit("https://github.com/fab-ioc/ensemble"))
 
 
 if __name__ == "__main__":

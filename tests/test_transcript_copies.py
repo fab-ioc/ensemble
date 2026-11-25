@@ -1,6 +1,6 @@
 """ED-355: one session id in two project folders resolves to the live copy.
 
-A Tasse Ticino PO's conversation was held both in its Linux project folder
+A Recipe Box PO's conversation was held both in its Linux project folder
 (written now) and in a Windows-era folder (stale since 11-11). The hub kept the
 stale one, so the PO's chat showed none of its turns and every message was
 typed again."""
@@ -25,10 +25,10 @@ from tests.test_never_dropped import Harness
 REAL_FIND = dashboard.find_transcript
 REAL_READ_SESSION_TURNS = dashboard.read_session_turns
 REAL_SESSION_STAT = points._session_stat
-SID = "003d5fe9-deb6-4716-baf6-45e94631dc57"
-STALE_DIR = "C--Users-fabio-EnsembleProjects-Tasse-Ticino-code"
-LIVE_DIR = "-home-fab-EnsembleProjects-Tasse-Ticino-code"
-LIVE_CWD = "/home/fab/EnsembleProjects/Tasse-Ticino/code"
+SID = "11111111-2222-4333-8444-555555555555"
+STALE_DIR = "C--Users-alex-EnsembleProjects-Recipe-Box-code"
+LIVE_DIR = "-home-alex-EnsembleProjects-Recipe-Box-code"
+LIVE_CWD = "/home/alex/EnsembleProjects/Recipe-Box/code"
 
 
 def forget() -> None:
@@ -55,7 +55,7 @@ class Copies(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.proj = Path(self.temp.name) / "projects"
         self.proj.mkdir()
-        # No room holds the id here (the real rooms folder may: it is a real id).
+        # No room holds this fictional id.
         self.patches = [mock.patch.object(dashboard, "PROJ_DIR", self.proj),
                         mock.patch.object(dashboard, "_session_input_context", lambda sid: ("", ""))]
         for p in self.patches:
@@ -92,11 +92,11 @@ class Copies(unittest.TestCase):
         with mock.patch("builtins.print"):
             dashboard.find_transcript(SID)
         self.assertEqual(dashboard.find_transcript(SID, cwd=LIVE_CWD), self.live)
-        self.assertEqual(dashboard.find_transcript(SID, cwd="C:\\Users\\fabio\\EnsembleProjects\\Tasse-Ticino\\code"),
+        self.assertEqual(dashboard.find_transcript(SID, cwd="C:\\Users\\alex\\EnsembleProjects\\Recipe-Box\\code"),
                          self.stale)
         # Not when the seat's folder holds the older copy.
         os.utime(self.stale, (at - 100, at - 100))
-        self.assertEqual(dashboard.find_transcript(SID, cwd="C:\\Users\\fabio\\EnsembleProjects\\Tasse-Ticino\\code"),
+        self.assertEqual(dashboard.find_transcript(SID, cwd="C:\\Users\\alex\\EnsembleProjects\\Recipe-Box\\code"),
                          self.live)
         # rotation asks with the seat's folder.
         with mock.patch.object(dashboard, "find_transcript", return_value=self.live) as ft:

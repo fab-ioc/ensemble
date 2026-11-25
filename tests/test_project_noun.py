@@ -72,7 +72,7 @@ class TheSetting(Isolated):
         saved = json.loads(Path(dashboard.SETTINGS_FILE).read_text(encoding="utf-8"))
         self.assertEqual(saved["projectNoun"], {"one": "Initiative", "many": "Initiatives"})
         # Another setting saved later keeps it.
-        dashboard.save_settings({"operatorNickname": "fab"})
+        dashboard.save_settings({"operatorNickname": "alex"})
         self.assertEqual(dashboard.load_settings()["projectNoun"]["one"], "Initiative")
 
     def test_spaces_are_tidied(self):

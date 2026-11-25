@@ -35,7 +35,7 @@ sys.path.insert(0, str(ROOT))
 import dashboard  # noqa: E402
 import hub_links  # noqa: E402
 
-NAME = "epyc-32.tail4f8740.ts.net"
+NAME = "devbox.example-tailnet.ts.net"
 TS_IP = "100.102.197.23"
 MAC = "100.87.122.45"
 TOKEN = "tok-for-tests-0123456789"

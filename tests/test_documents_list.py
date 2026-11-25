@@ -116,8 +116,8 @@ out.shownHome = wsRowsHtml(tv, 'C:\\home');
 // Landed on main.
 const files = n => Array.from({ length: n }, (_, i) => ({ path: 'f' + i + '.py', status: i ? 'M' : 'A' }));
 const log = { ref: 'main', commits: [
-  { sha: 'a'.repeat(40), time: 1790000000, author: 'fab', subject: 'Merge #90: hand an owner over', no: 90, files: files(10), more: 0 },
-  { sha: 'b'.repeat(40), time: 1780000000, author: 'fab', subject: 'Tidy up', no: null, files: files(1), more: 0 },
+  { sha: 'a'.repeat(40), time: 1790000000, author: 'alex', subject: 'Merge #90: hand an owner over', no: 90, files: files(10), more: 0 },
+  { sha: 'b'.repeat(40), time: 1780000000, author: 'alex', subject: 'Tidy up', no: null, files: files(1), more: 0 },
 ] };
 out.log = chLogHtml(log, 'ED', new Set(), { file: 'f0.py', sha: 'b'.repeat(40) });
 out.logOpen = chLogHtml(log, 'ED', new Set(['a'.repeat(40)]), { file: '', sha: '' });
@@ -236,7 +236,7 @@ class ThePureParts(unittest.TestCase):
         a = commits[0]
         self.assertIn('<a class="tno" href="#" data-task="ED-90"', a)
         self.assertIn(">hand an owner over</span>", a)
-        self.assertIn('title="Merge #90: hand an owner over · aaaaaaaaaa · fab"', a)
+        self.assertIn('title="Merge #90: hand an owner over · aaaaaaaaaa · alex"', a)
         self.assertEqual(a.count('class="chf'), 8, "the first 8 files")
         self.assertIn('>+2 more</button>', a)
         self.assertIn('data-file="f0.py" data-commit="' + "a" * 40 + '"', a)

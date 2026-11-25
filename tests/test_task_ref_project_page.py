@@ -163,7 +163,7 @@ class WhichProject(unittest.TestCase):
             mock.patch.object(chatroom, "ROOMS_DIR", base / "rooms"),
             mock.patch.object(dashboard, "load_live", lambda: []),
             mock.patch.object(dashboard, "_read_agent_session_files", lambda *a, **k: []),
-            mock.patch.object(dashboard, "operator_name", return_value="fab"),
+            mock.patch.object(dashboard, "operator_name", return_value="alex"),
             mock.patch.object(dashboard.Handler, "_agent_peer", lambda h: ""),
             mock.patch.object(dashboard.Handler, "log_message", lambda *a, **k: None),
             mock.patch.dict(os.environ, {"CODEX_HOME": str(base / "codex")}),
