@@ -11,6 +11,7 @@ Ensemble is a local dashboard for projects worked on by coding agents. A project
 - [Talk to a project's PO](docs/po-chat.md) in threads and track your points.
 - [Answer decisions in the Inbox](docs/inbox.md) with choice and Yes/No cards.
 - [Read and comment on project files](docs/files.md) and [open live task sessions](docs/sessions.md).
+- [Set up a new hub with the first-run wizard](docs/setup-wizard.md), and revisit its choices in Settings.
 - [Use it remotely](docs/remote-security.md), [watch plan usage](docs/usage.md), and [choose a theme](docs/settings.md).
 
 ## Quick start
@@ -25,6 +26,6 @@ cd ensemble
 # .\ensemble.ps1 start            # Windows PowerShell
 ```
 
-Open `http://127.0.0.1:8765` on the hub machine. Install and login to Claude Code or Codex before starting agent work. See [Getting started](docs/getting-started.md) for platform details and your first project.
+Open `http://127.0.0.1:8765` on the hub machine. On a new hub with no projects, the setup wizard opens. Install and sign in to Claude Code or Codex before starting agent work. See [Getting started](docs/getting-started.md) for platform details and your first project.
 
 [User guide](docs/README.md) · [Contributor guide](docs/developer.md) · [MIT license](LICENSE)

@@ -56,7 +56,7 @@ def main() -> None:
                         str(state_file), str(shot_dir), args.chrome, str(args.chrome_port)], check=True)
         manifest = json.loads((shot_dir / "manifest.json").read_text(encoding="utf-8"))
         pngs = list(shot_dir.glob("*.png"))
-        if len(manifest) != 15 or {x["name"] + ".png" for x in manifest} != {x.name for x in pngs}:
+        if len(manifest) != 21 or {x["name"] + ".png" for x in manifest} != {x.name for x in pngs}:
             raise RuntimeError("the screenshot set is incomplete")
         for file in pngs:
             im = Image.open(file)

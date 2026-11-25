@@ -197,7 +197,7 @@ class Transcripts(unittest.TestCase):
 
 def room(rid, no, title, spec="", msgs=(), parts=(), pid="p1", **kw):
     return {"id": rid, "no": no, "projectId": pid, "title": title, "spec": spec, "updatedAt": no,
-            "messages": [{"id": f"m{i}", "ts": i, "from": "fab", "to": "claude", "text": t}
+            "messages": [{"id": f"m{i}", "ts": i, "from": "alex", "to": "claude", "text": t}
                          for i, t in enumerate(msgs)],
             "participants": list(parts), **kw}
 

@@ -451,7 +451,7 @@ class LiveMeansInTheRunningHub(unittest.TestCase):
         d = tempfile.TemporaryDirectory()
         self.addCleanup(d.cleanup)
         self.top = Path(d.name).resolve()
-        for real in (Path("/Users/fab/ensemble"), Path.home() / ".ensemble"):
+        for real in (Path("/Users/alex/ensemble"), Path.home() / ".ensemble"):
             self.assertNotIn(real.resolve(), [self.top, *self.top.parents])
         self.hub, self.project = self.top / "hub", self.top / "project"
         self.hub.mkdir()

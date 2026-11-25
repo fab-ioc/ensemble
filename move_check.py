@@ -94,9 +94,9 @@ def map_old_path(old: str, home: Path, root: Path) -> list[Path]:
     the folder its project.json is in, wherever the root was copied to):
 
       1. anything under a folder named like the projects root
-         (``C:\\Users\\u\\EnsembleProjects\\X\\y``) → ``<root>/X/y``;
-      2. anything under a home folder (``C:\\Users\\u\\rest``,
-         ``/Users/u/rest``, ``/home/u/rest``) → ``<home>/rest``.
+         (``C:\\Users\\<name>\\EnsembleProjects\\X\\y``) → ``<root>/X/y``;
+      2. anything under a home folder (``C:\\Users\\<name>\\rest``,
+         ``/Users/<name>/rest``, ``/home/<name>/rest``) → ``<home>/rest``.
 
     The candidates in that order, each different from ``old``; a path on
     another drive outside a home (``D:\\Code\\x``) has none."""

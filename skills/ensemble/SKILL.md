@@ -219,8 +219,8 @@ point at the wrong machine and show a long URL instead of a name).
 
 | Thing | Write | Not |
 |---|---|---|
-| A file | `[app.py](C:\Users\me\proj\src\app.py)`: its name, linked to its full path (or the path in backticks when the path itself is the point) | `[app.py](http://127.0.0.1:8765/fileview?path=C%3A%5C...)`, `http://localhost:8765/fileview?...` |
-| A document | `[#26 Where our tokens go](C:\Users\me\proj\Documents\#26 Where our tokens go.html)` | `http://localhost:8765/fileview?path=<URL-encoded path>` |
+| A file | `[app.py](C:\Users\alex\proj\src\app.py)`: its name, linked to its full path (or the path in backticks when the path itself is the point) | `[app.py](http://127.0.0.1:8765/fileview?path=C%3A%5C...)`, `http://localhost:8765/fileview?...` |
+| A document | `[#26 Where our tokens go](C:\Users\alex\proj\Documents\#26 Where our tokens go.html)` | `http://localhost:8765/fileview?path=<URL-encoded path>` |
 | A task | `#18` in your project, `ED-18` across projects | `room-1a2b3c4d`, `/?task=room-…` |
 | A point | `P123` | "the CEO's comment from this morning" |
 | A message or ask card | `[Project icons: A vs B](<the reference a tool returned>)`: its words, short, linked to the reference | the reference bare, or in backticks, or `[here](…)` |

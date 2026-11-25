@@ -35,7 +35,7 @@ const fileHref = (p, line) => '/fileview?path=' + encodeURIComponent(p) + (line 
 HUB_PORT = '8765';   // what /api/config says
 // This machine is "hub" on its tailnet, served at :9443 by tailscale serve and
 // bound to its tailnet address (P358).
-HUB_ORIGINS = {seen: ['hub.tail1234.ts.net:9443', '100.101.2.3:8765'], names: ['hub']};
+HUB_ORIGINS = {seen: ['hub.example-tailnet.ts.net:9443', '100.101.2.3:8765'], names: ['hub']};
 const render = t => {
   if (t.length > 1 && t.startsWith('`') && t.endsWith('`')) return codeSpanHtml(t.slice(1, -1));
   const keep = [];
@@ -50,7 +50,7 @@ ENC = quote(WIN, safe="")                      # C%3A%5CUsers%5C…
 ENC_SLASH = quote(WIN.replace("\\", "/"), safe="")   # C%3A%2FUsers%2F…
 REPORT = quote(r"C:\Users\me\notes\report.md", safe="")
 ROOM = "room-1a2b3c4d"
-TAILNET = "https://hub.tail1234.ts.net:9443"
+TAILNET = "https://hub.example-tailnet.ts.net:9443"
 ORIGINS = {"hub machine": "http://127.0.0.1:8765/session?room=" + ROOM,
            "another computer": TAILNET + "/session?room=" + ROOM}
 
@@ -166,10 +166,10 @@ class HubUrlNames(unittest.TestCase):
                f"see https://example.com/?task={ROOM} now",
                f"see https://example.com/fileview?path={ENC} now",
                # Another machine on the tailnet.
-               f"see https://other.tail1234.ts.net/?task={ROOM} now",
+               f"see https://other.example-tailnet.ts.net/?task={ROOM} now",
                # A machine of the same name in another tailnet (review 3), on the hub's port too.
-               f"see http://hub.other-tailnet.ts.net:8765/?task={ROOM} now",
-               f"see https://hub.other-tailnet.ts.net:9443/?task={ROOM} now"]
+               f"see http://hub.other-example-tailnet.ts.net:8765/?task={ROOM} now",
+               f"see https://hub.other-example-tailnet.ts.net:9443/?task={ROOM} now"]
         for where, r in self.both(ext).items():
             for case in ext:
                 with self.subTest(where=where, case=case):
@@ -272,7 +272,7 @@ class HubUrlNamesInChrome(Hub):
         # The hub's machine is "hub" on its tailnet: its tailnet links are the hub's (P358).
         p = mock.patch.object(dashboard.hub_links, '_own_names', lambda: frozenset({'hub'})); p.start(); self.addCleanup(p.stop)
         # tailscale serve gives it https on :9443 (what learn_tailscale reads from tailscale).
-        p = mock.patch.object(dashboard.hub_links, '_SEEN', {('hub.tail1234.ts.net', 9443)}); p.start(); self.addCleanup(p.stop)
+        p = mock.patch.object(dashboard.hub_links, '_SEEN', {('hub.example-tailnet.ts.net', 9443)}); p.start(); self.addCleanup(p.stop)
         rid = self.room('Task chat', self.ed)
         other = self.room('Another task', self.ed, numbered=True)
         first = chatroom.post_message(rid, 'claude', 'Plan is ready for a look.', to='user')['message']['id']

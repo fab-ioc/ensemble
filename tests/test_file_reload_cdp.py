@@ -229,7 +229,7 @@ async function main() {
     await p.until(`${FD}.getElementById('q') && /Form one/.test(${FD}.body.textContent)`);
     out.formFresh = await p.ev(`fvChg.frameHolds()`);
     await p.ev(`(() => { const d = ${FD}, w = d.defaultView, put = (el, f) => { f(el); el.dispatchEvent(new w.Event('input', { bubbles: true })); };
-      put(d.getElementById('q'), e => { e.value = 'typed words'; }); put(d.querySelector('[name=who]'), e => { e.value = 'fab'; });
+      put(d.getElementById('q'), e => { e.value = 'typed words'; }); put(d.querySelector('[name=who]'), e => { e.value = 'alex'; });
       put(d.querySelector('textarea'), e => { e.value = 'a longer note'; }); put(d.getElementById('c'), e => { e.checked = true; });
       put(d.getElementById('s'), e => { e.selectedIndex = 1; }); put(d.getElementById('ed'), e => { e.innerHTML = 'edited <b>here</b>'; }); return 1; })()`);
     out.formHolds = await p.ev(`fvChg.frameHolds()`);
@@ -462,7 +462,7 @@ class InChrome(unittest.TestCase):
         self.assertFalse(self.got["formFresh"], "an untouched form holds nothing")
         self.assertTrue(self.got["formHolds"])
         self.assertEqual(self.got["formHeld"], {"old": True, "line": True}, "typed into the page's form: no reload by itself")
-        self.assertEqual(self.got["formAfter"], {"q": "typed words", "who": "fab", "t": "a longer note", "c": True, "s": 1,
+        self.assertEqual(self.got["formAfter"], {"q": "typed words", "who": "alex", "t": "a longer note", "c": True, "s": 1,
                                                  "ed": "edited <b>here</b>", "holds": True, "line": False})
 
     def test_only_the_region_typed_in_is_carried(self):

@@ -11,3 +11,5 @@ The file viewer opens project files from the Files panel or a file link in a mes
 1. Open **Files** in a project, or select a file link in a chat message. Choose a file to see it with line numbers.
 2. Select the lines you want to discuss and use **Comment**. Choose **Send to** for the main PO chat, an existing thread, a new thread or a task, then send your note.
 3. If the file changes while the viewer is open, use **Reload** when the **This file changed** notice appears. Recheck line numbers before commenting on the new version.
+
+![The file changed notice in the viewer](images/file-changed-notice.png)

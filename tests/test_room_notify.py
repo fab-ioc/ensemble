@@ -172,7 +172,7 @@ class Notify(unittest.TestCase):
             for headers, client in (
                     ({"X-Ensemble-Token": "tok-123"}, "100.64.0.7"),
                     ({"X-Forwarded-For": "100.64.0.7", "X-Ensemble-Token": "tok-123"}, "127.0.0.1"),
-                    ({"Host": "box.tail.ts.net", "X-Ensemble-Token": "tok-123"}, "127.0.0.1"),
+                    ({"Host": "box.example-tailnet.ts.net", "X-Ensemble-Token": "tok-123"}, "127.0.0.1"),
                     ({}, "100.64.0.7")):
                 status, r = self.post({"roomId": self.rid, "sender": SENDER, "text": "hi"},
                                       headers=headers, client=client)

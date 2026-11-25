@@ -90,7 +90,7 @@ class Harness(unittest.TestCase):
             mock.patch.object(rotation, "_transcript_of", lambda part: (None, lambda p: {"turnOver": self.turn_over})),
             mock.patch.object(dashboard.attention, "looks_busy", lambda tail: False),
             mock.patch.object(dashboard, "_type_input", self.type_input),
-            mock.patch.object(dashboard, "operator_name", lambda: "Fab"),
+            mock.patch.object(dashboard, "operator_name", lambda: "Alex"),
         ]
         for p in new:
             p.start()

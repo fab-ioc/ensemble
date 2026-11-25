@@ -53,12 +53,12 @@ class SetupWizardSettings(unittest.TestCase):
 
     def test_tailnet_address_prefers_serve_then_name_then_ip(self):
         with mock.patch.object(dashboard, "HUB_PORT", 8765), \
-             mock.patch.object(dashboard.hub_links, "https_address", return_value="hub.example.ts.net") as serve, \
-             mock.patch.object(dashboard.hub_links, "origins", return_value={"seen": [], "names": ["host.example.ts.net"]}), \
+             mock.patch.object(dashboard.hub_links, "https_address", return_value="hub.example-tailnet.ts.net") as serve, \
+             mock.patch.object(dashboard.hub_links, "origins", return_value={"seen": [], "names": ["host.example-tailnet.ts.net"]}), \
              mock.patch.object(dashboard, "_detect_tailscale_ip", return_value="100.99.0.2"):
-            self.assertEqual(dashboard._setup_tailnet_address(), "https://hub.example.ts.net")
+            self.assertEqual(dashboard._setup_tailnet_address(), "https://hub.example-tailnet.ts.net")
             serve.return_value = ""
-            self.assertEqual(dashboard._setup_tailnet_address(), "http://host.example.ts.net:8765")
+            self.assertEqual(dashboard._setup_tailnet_address(), "http://host.example-tailnet.ts.net:8765")
             with mock.patch.object(dashboard.hub_links, "origins", return_value={"seen": [], "names": []}):
                 self.assertEqual(dashboard._setup_tailnet_address(), "http://100.99.0.2:8765")
 

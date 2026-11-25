@@ -76,16 +76,16 @@ class Folders(unittest.TestCase):
         kw = dict(hub_words=hub, task_dirs=tdirs, home=Path("/home/u"), root=root)
         self.assertEqual(ls.reason("Run the shell command", str(root / "Dash" / "send_now" / "m-claude"), **kw),
                          "task folder")
-        old = r"C:\Users\fabio\EnsembleProjects\Dash\send_now\m-claude-sendnow2"
+        old = r"C:\Users\alex\EnsembleProjects\Dash\send_now\m-claude-sendnow2"
         self.assertEqual(ls.reason("Without using any tools", old, **kw), "task folder")
-        self.assertEqual(ls.reason("hello", r"C:\Users\fabio\IdeaProjects\claude-dashboard-main", **kw), "")
+        self.assertEqual(ls.reason("hello", r"C:\Users\alex\CodeProjects\claude-dashboard-main", **kw), "")
         self.assertEqual(ls.reason("hello", str(root / "Dash"), **kw), "")
 
     def test_a_task_folder_recorded_elsewhere_maps_as_the_conversations_does(self):
         # The state copied to another home: both sides map to the same place.
         home, root = Path("/home/v"), Path("/home/v/EnsembleProjects")
         tdirs = ls.task_folders([{"taskDir": "/home/u/EnsembleProjects/Dash/send_now"}], [], home, root)
-        old = r"C:\Users\fabio\EnsembleProjects\Dash\send_now\m-claude-long"
+        old = r"C:\Users\alex\EnsembleProjects\Dash\send_now\m-claude-long"
         self.assertTrue(ls.in_task_folder(old, tdirs, home, root))
         # A project's own folder never becomes a task folder by mapping either.
         tdirs = ls.task_folders([{"taskDir": "/home/u/EnsembleProjects/Dash"}], ["/home/v/EnsembleProjects/Dash"],

@@ -33,7 +33,7 @@ except Exception:       # noqa: BLE001 — a unit test without the module
 
 _LINK = re.compile(r"\]\(|https?://", re.I)
 # An absolute path ending in a file name with an extension: /a/b.png,
-# ~/x/y.md, /home/fab/Ensemble Projects/Docs/#402 plan.html (spaces inside).
+# ~/x/y.md, /home/alex/Ensemble Projects/Docs/#402 plan.html (spaces inside).
 _PATH = re.compile(r"(?:^|[\s(\[`'\"])(?:~|/)[^\n`'\"()<>]*?/[^\n/`'\"()<>]+?\.[A-Za-z0-9]{1,8}\b")
 # A relative file name as the page links it (session.html LINK_RE): a path
 # with a folder (src/report.md, ./a/b.py), or a bare name with an extension

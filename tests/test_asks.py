@@ -84,7 +84,7 @@ FIXTURES = {
     "reminder": "Still waiting on you: which Ensemble you used.\n\nAsk: " + CARD_URL,
     "reminder_yesno": "**Ask (yes/no):** " + CARD_URL + "\n\nMore below.",
     "reminder_links": "1. **Ask:** [the card](" + CARD_URL + "), and <" + CARD_URL.replace("ask:0", "ask:1") + ">.",
-    "reminder_then_real": "Ask: " + CARD_URL + "\n\nAsk: Which hub sent them?\n- **Main** — epyc-32\n- **Other**",
+    "reminder_then_real": "Ask: " + CARD_URL + "\n\nAsk: Which hub sent them?\n- **Main** — devbox\n- **Other**",
     "question_with_link": "Ask: Is " + CARD_URL + " still right?",
     # Only a link, but not to a hub message: still a question (review 1).
     "other_link": "Ask: https://example.org/help",

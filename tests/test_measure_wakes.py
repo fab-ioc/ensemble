@@ -87,7 +87,7 @@ def _claude_rows() -> list[dict]:
         assistant(_at(22), "r5", [{"type": "tool_use", "name": "Bash",
                                   "input": {"command": "git diff main"}}], usage, stop="tool_use"),
         {"type": "user", "timestamp": _at(22), "message": {"content": [{"type": "tool_result", "content": "ok"}]}},
-        assistant(_at(23), "r6", [{"type": "text", "text": "Told fab. " * 20}], usage),
+        assistant(_at(23), "r6", [{"type": "text", "text": "Told alex. " * 20}], usage),
         user("[due] later", (END + timedelta(hours=1)).isoformat().replace("+00:00", "Z")),
         assistant(_at(24), "r7", [{"type": "text", "text": "after the window"}], usage),
     ]

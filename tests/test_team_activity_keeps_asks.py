@@ -49,7 +49,7 @@ REAL = [
      "When the engineer reports it done, I'll release it as v0.12.0:\n- merge it into `main`;\n"
      "- reopen the demo for you.\n\nI've noted this in the handover. #19 is still a draft waiting for you to start it."),
     ("Ensemble 10-01 16:48, after the restart helper's note", "helper", {},
-     "Fab, everything we built today is now live. The hub restarted at 16:47 and all ten running sessions "
+     "Alex, everything we built today is now live. The hub restarted at 16:47 and all ten running sessions "
      "came back on their own. Reload the page to see the changes.\n\n**What you'll see now:**\n"
      "- **Clean PO chat (P107):** a comment or follow-up of yours closes the point it answers."),
     ("Ensemble 10-02 09:21, on the Dock PO's message", "pomsg", {},
@@ -61,7 +61,7 @@ REAL = [
      "flagged.\n\nI've started #159 at high priority. I've answered the trading PO. The fix needs a hub "
      "restart once it's merged."),
     ("Ensemble 10-02 11:35, in the handover turn", "handover", {},
-     "Fab, the five tasks I started this morning (#158–#162) didn't do any work at first. They had no model "
+     "Alex, the five tasks I started this morning (#158–#162) didn't do any work at first. They had no model "
      "of their own, so they ran on Claude Code's default, Fable.\n\n**What I changed:**\n- Settings › Agent "
      "models › Claude is now Opus, so every agent the hub starts uses Opus unless you pick something else there."),
     ("Motors 10-02 06:59, in the handover turn", "handover", {},
@@ -72,7 +72,7 @@ REAL = [
      "- **Trading impact:** no orders are affected. The cost is wasted quote lines, which is part of why the "
      "chains you open get no quotes."),
     ("opTen 10-01 17:09, a new PO's first words", "rotation", {},
-     "I've taken over as PO and read the handover and roadmap.\n\n**Waiting on Fab:** a yes on P232, which "
+     "I've taken over as PO and read the handover and roadmap.\n\n**Waiting on Alex:** a yes on P232, which "
      "would replace the fixed product lists with anything TWS lists that has options."),
     ("opTen 10-02 00:16, on a due check", "due", {},
      "The first 2-hour watcher hit its time limit before the checkpoint runs finished.\n\nWhen it ends I'll "
@@ -127,7 +127,7 @@ vm.createContext(ctx);
 vm.runInContext(code + `
   globalThis.t = { CHAT_NAMES, forCeo, ceoWhy, gapsOf, gapRowHtml, gapAsksWords, pointMaps, setPoints: pv => { POINTS = pointMaps(pv); } };`, ctx);
 const T = ctx.t;
-Object.assign(T.CHAT_NAMES, { operator: 'fab', po: 'claude', taskNo: () => null });
+Object.assign(T.CHAT_NAMES, { operator: 'alex', po: 'claude', taskNo: () => null });
 // The asks as the ledgers held them: these open, in progress or answered; P248 dropped.
 const st = { P23: 'delivered', P77: 'open', P107: 'acked', P220: 'planned', P224: 'planned', P231: 'planned',
   P232: 'open', P243: 'planned', P245: 'delivered', P248: 'dropped' };
@@ -154,9 +154,9 @@ const closed = po('The handover lists P232 for the next session.', 'handover', {
 out.openAsk = T.forCeo(closed);
 T.setPoints({ items: [{ id: 'P232', state: 'acked', text: 'x', createdAt: 1, answers: [] }] });
 out.closedAsk = T.forCeo(closed);
-// "Fable" is not the person's name; "Fab," is.
-out.fable = T.forCeo(po('All five tasks hit the Fable limit.', 'pomsg', {}));
-out.fab = T.forCeo(po('Fab, the tasks are back.', 'pomsg', {}));
+// "Alexa" starts with the operator's name but is not the same word; "Alex," is.
+out.alexa = T.forCeo(po('All five tasks hit the Alexa limit.', 'pomsg', {}));
+out.alex = T.forCeo(po('Alex, the tasks are back.', 'pomsg', {}));
 // A gap names the asks its messages mention: plain ones, in one run.
 const items = plain.flatMap(pair).concat([hub('points', {}), Object.assign(hub('report', { reportKind: 'completed', taskId: 'room-o1' }), { text: "[report] completed from task 'x (sam P239)' (#1, claude): done" })]);
 const gaps = T.gapsOf(items, null);
@@ -209,8 +209,8 @@ class RealCases(unittest.TestCase):
         self.assertFalse(self.o["closedAsk"])
 
     def test_the_name_is_a_word(self):
-        self.assertFalse(self.o["fable"])
-        self.assertTrue(self.o["fab"])
+        self.assertFalse(self.o["alexa"])
+        self.assertTrue(self.o["alex"])
 
     def test_the_gap_names_the_asks_inside(self):
         self.assertEqual(self.o["gaps"], 1, "the plain ones and the hub lines are one run")

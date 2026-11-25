@@ -14,7 +14,7 @@ Checked:
 * main() loads it unconditionally, not only for a remote listener;
 * with the token as a hub without --bind and without ENSEMBLE_TOKEN gets it,
   a request shaped like tailscale serve's (loopback peer, X-Forwarded-For /
-  Tailscale-User-Login, Host epyc-32.tail4f8740.ts.net): /api/ptys is 401, a
+  Tailscale-User-Login, Host devbox.example-tailnet.ts.net): /api/ptys is 401, a
   page navigation gets the sign-in page; the same request with ?token= is
   swapped for the cookie, and with the cookie passes; loopback without proxy
   headers passes with no token;
@@ -45,7 +45,7 @@ sys.path.insert(0, str(ROOT))
 import dashboard  # noqa: E402
 from tests.test_app_install import Hub  # noqa: E402
 
-HOST = "epyc-32.tail4f8740.ts.net"
+HOST = "devbox.example-tailnet.ts.net"
 SERVE = {"Host": HOST, "X-Forwarded-For": "100.64.0.7", "X-Forwarded-Proto": "https",
          "X-Forwarded-Host": HOST, "Tailscale-User-Login": "someone@example.com"}
 NAV = {"Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document", "Accept": "text/html"}
