@@ -92,7 +92,7 @@ class MapOldPath(unittest.TestCase):
         self.assertEqual(mc.map_old_path("relative/x", home, root), [])
 
     def test_posix_paths_for_a_windows_home(self):
-        home = Path("C:/Users/alex/")
+        home = Path("C:/Users/sam/")
         root = home / "EnsembleProjects"
         self.assertEqual(mc.map_old_path("/Users/alex/EnsembleProjects/P", home, root)[0], root / "P")
         self.assertEqual(mc.map_old_path("/home/l/dev/ensemble", home, root),

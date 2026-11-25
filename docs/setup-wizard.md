@@ -12,6 +12,8 @@ The wizard checks which Claude Code and Codex CLIs are installed and signed in. 
 
 Each saved choice uses the same setting or device notification control as Settings. **Skip** keeps the current value. Remote use takes effect after the next hub launch; start at sign-in is available only for a supported installed app. The final screen lets you create the named project or open the board without one.
 
+**Set up later** closes the wizard and marks setup done. Use **Settings → Run setup again** to return.
+
 ## How to use it
 
 1. [Install and open Ensemble](getting-started.md). On a new hub with no projects, the Welcome screen opens automatically. Select **Get started**.

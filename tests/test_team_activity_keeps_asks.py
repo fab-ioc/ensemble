@@ -154,8 +154,8 @@ const closed = po('The handover lists P232 for the next session.', 'handover', {
 out.openAsk = T.forCeo(closed);
 T.setPoints({ items: [{ id: 'P232', state: 'acked', text: 'x', createdAt: 1, answers: [] }] });
 out.closedAsk = T.forCeo(closed);
-// "Fable" is not the person's name; "Alex," is.
-out.fable = T.forCeo(po('All five tasks hit the Fable limit.', 'pomsg', {}));
+// "Alexa" starts with the operator's name but is not the same word; "Alex," is.
+out.alexa = T.forCeo(po('All five tasks hit the Alexa limit.', 'pomsg', {}));
 out.alex = T.forCeo(po('Alex, the tasks are back.', 'pomsg', {}));
 // A gap names the asks its messages mention: plain ones, in one run.
 const items = plain.flatMap(pair).concat([hub('points', {}), Object.assign(hub('report', { reportKind: 'completed', taskId: 'room-o1' }), { text: "[report] completed from task 'x (sam P239)' (#1, claude): done" })]);
@@ -209,7 +209,7 @@ class RealCases(unittest.TestCase):
         self.assertFalse(self.o["closedAsk"])
 
     def test_the_name_is_a_word(self):
-        self.assertFalse(self.o["fable"])
+        self.assertFalse(self.o["alexa"])
         self.assertTrue(self.o["alex"])
 
     def test_the_gap_names_the_asks_inside(self):
