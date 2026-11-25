@@ -15,6 +15,6 @@ The hub can restart its own process safely, update an installed build and back u
    - **Every N minutes**: how often it runs (60 by default, at least 5).
    - Tick **enabled**: backup is off until you do. Use **Back up now** for an immediate run and read its status line.
 
-   The backup covers the whole projects folder (each project's `Documents/`, roadmap, handovers and review logs, see [where the agents' work is kept](files.md#where-the-agents-work-is-kept)) and exports each task's chat. Code checkouts (`repo/` folders) are left out: they have their own remote.
+   The backup covers the projects folder (each project's `Documents/`, roadmap, handovers and review logs, see [where the agents' work is kept](files.md#where-the-agents-work-is-kept)) and exports each task's chat. It leaves out code checkouts (`repo/` folders and any other folder that is its own Git repository: they have their own remote), symbolic links and junctions, files over 20 MB, and tool folders such as `node_modules/`, `.venv/` and agents' `.claude/` / `.codex/` state. Keep anything you need from those somewhere else.
 
 Keep the project repository's own Git remote and your backup destination under your control. A backup is a separate copy of project files, not a substitute for reviewing agent changes.

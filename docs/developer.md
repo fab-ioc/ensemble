@@ -46,7 +46,7 @@ The repository keeps these root modules in place because tests, packaging and im
 
 ## Adding an agent
 
-Claude Code and Codex are two implementations of one agent interface, `AgentType` in `agents/base.py`. It is kept apart from the operating-system terminal layer in `backends/`: `backends/` decides *where* a session runs (a terminal window on Windows, macOS or Linux, or the headless runner), `agents/` decides *what* runs in it. A backend never needs to know which CLI it hosts.
+Claude Code and Codex are two implementations of one agent interface, `AgentType` in `agents/base.py`. It is kept apart from the operating-system terminal layer in `backends/`: `backends/` decides *where* a session runs (a terminal window on Windows, macOS or Linux, or the headless runner), `agents/` decides *what* runs in it. A backend takes the agent's command as given, so a new agent's launch and resume commands pass through it unchanged; the Windows and macOS backends still keep a few older Claude-specific fallback paths, which a new agent does not use.
 
 An agent class says:
 

@@ -6,11 +6,11 @@ Ensemble is a local dashboard for projects worked on by coding agents. A project
 
 ## Why Ensemble
 
-- **You act as the CEO.** Each project has a PO agent that plans the work, writes task specs, starts tasks, reads the owners' reports and merges finished branches. You set direction in the [PO chat](docs/po-chat.md); decisions come to you as [Inbox cards](docs/inbox.md) with choices or Yes/No.
-- **The work lands in files you keep.** Plans, reports and design notes are written to the project's `Documents/` folder, with handovers and review logs beside them. [Open them rendered and comment on a passage](docs/files.md), and [back the whole folder up](docs/maintenance.md) to a Git remote of your own.
+- **You act as the CEO.** Give a project a PO agent and it plans the work, writes task specs, starts tasks, reads the owners' reports and merges finished branches. You set direction in the [PO chat](docs/po-chat.md); decisions come to you as [Inbox cards](docs/inbox.md) with choices or Yes/No.
+- **The work lands in files you keep.** Plans, reports and design notes are written to the project's `Documents/` folder, with handovers and review logs beside them. [Open them rendered and comment on a passage](docs/files.md), and [back them up](docs/maintenance.md) to a Git remote of your own.
 - **Long sessions do not get expensive.** A session that grows long writes a handover and a fresh one continues from it; reviewers start only when there is a commit to check. [How Ensemble saves tokens](docs/usage.md#how-ensemble-saves-tokens).
 - **Checks cost nothing when nothing changed.** Progress checks compare task facts without a model call and wake the PO only on news; a [cheap reader](docs/usage.md#how-ensemble-saves-tokens) can take file searches off a task owner.
-- **Work is paced across your plans.** [Weekly pacing](docs/usage.md#how-ensemble-saves-tokens) gives new tasks to the agent with allowance to spare and holds lower-priority work when both are running out.
+- **Work is paced across your plans.** [Weekly pacing](docs/usage.md#how-ensemble-saves-tokens) can shift a new task to the agent with more allowance to spare, and holds lower-priority work when both are running out.
 - **Review code without leaving the hub.** A task's [Changes panel](docs/sessions.md#review-a-tasks-code-in-the-hub) shows its diff; click a line to comment and send the notes to the owner, from a desktop or a phone.
 - **Claude Code and Codex today.** Both sit behind one agent interface; [adding another agent](docs/developer.md#adding-an-agent) starts there, and the guide lists what else still names these two.
 

@@ -18,12 +18,12 @@ The file viewer opens project files from the Files panel or a file link in a mes
 
 ## Where the agents' work is kept
 
-Every project has a home folder, `~/EnsembleProjects/<project>/`. Agents write their documents there rather than leaving them in a chat:
+Every project has a home folder in the hub's projects folder, `~/EnsembleProjects/<project>/` by default (you can choose another projects folder in the setup wizard or Settings, before the first project is created). Agents write their documents there rather than leaving them in a chat:
 
 | Path | What it holds |
 |---|---|
-| `Documents/` | Reports, plans and design notes, named after their task, such as `#12 Search release plan.html` or `.md`. The project's Workspace opens on this folder. |
+| `Documents/` | Reports, plans and design notes, named after their task, such as `#12 Search release plan.html` or `.md`. Open it from the project's Workspace (under **Tasks & notes** when the project's code lives elsewhere). |
 | `ROADMAP.md`, `PO-HANDOVER.md` | The PO's plan for the project and its notes for the next PO session |
 | One folder per task | `TASK-HANDOVER.md` (the owner's state when a session hands over) and `REVIEW-LOG.md` (every review verdict); a code task's checkout is its `repo/` folder |
 
-Because these are plain files, you can read them in any editor as well as in the viewer, and [back up the whole folder](maintenance.md) to a Git remote of your own.
+Because these are plain files, you can read them in any editor as well as in the viewer, and [back them up](maintenance.md) to a Git remote of your own.
