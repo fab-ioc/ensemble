@@ -77,6 +77,9 @@ def seed(hub: Hub) -> dict:
         '    return [name for name, items in RECIPES.items() if ingredient.lower() in items]\n',
         encoding="utf-8")
     (code / "README.md").write_text("# Recipe Box\n\nA small sample app for planning dinner.\n", encoding="utf-8")
+    # On main, so a task branch's Changes tab shows an edit to it, not a new file.
+    subprocess.run(["git", "-C", str(code), "add", "src/search.py", "README.md"], check=True, env=hub.env())
+    subprocess.run(["git", "-C", str(code), "commit", "-qm", "Add the sample recipes"], check=True, env=hub.env())
     po = hub.post("/api/room/new", {"title": "Recipe Box", "task": False, "projectId": pid,
                                     "agents": [{"agent": "claude", "role": "po"}],
                                     "workspace": "inplace"})["room"]
@@ -118,10 +121,21 @@ def seed(hub: Hub) -> dict:
     work = Path(active["cwd"])
     (work / "src").mkdir(exist_ok=True)
     (work / "src" / "search.py").write_text(
-        '"""Find a sample recipe by ingredient."""\n\n'
-        'def find(ingredient):\n    return ["Lemon pasta"] if ingredient.lower() == "lemon" else []\n',
+        '"""Find recipes by ingredient."""\n\n'
+        'RECIPES = {"Lemon pasta": ["lemon", "pasta"], "Tomato soup": ["tomato", "basil"]}\n\n'
+        'def find(ingredient):\n    """Return recipe names with this ingredient, ignoring case."""\n'
+        '    wanted = ingredient.strip().lower()\n'
+        '    if not wanted:\n        return []\n'
+        '    return [name for name, items in RECIPES.items() if wanted in items]\n',
         encoding="utf-8")
-    subprocess.run(["git", "-C", str(work), "add", "src/search.py"], check=True, env=hub.env())
+    (work / "tests").mkdir(exist_ok=True)
+    (work / "tests" / "test_search.py").write_text(
+        'from src.search import find\n\n\n'
+        'def test_match_ignores_case():\n    assert find("Lemon") == ["Lemon pasta"]\n\n\n'
+        'def test_no_match():\n    assert find("rice") == []\n',
+        encoding="utf-8")
+    subprocess.run(["git", "-C", str(work), "add", "src/search.py", "tests/test_search.py"],
+                   check=True, env=hub.env())
     subprocess.run(["git", "-C", str(work), "commit", "-qm", "Add ingredient search"],
                    check=True, env=hub.env())
     head = subprocess.check_output(["git", "-C", str(work), "rev-parse", "--short", "HEAD"],
@@ -155,5 +169,11 @@ def seed(hub: Hub) -> dict:
         hub.post("/api/projects/new", {"name": "Field Journal", "kind": "documents"})
     except RuntimeError:
         pass
+    # A plan page in the project's Documents folder, for the rendered file-viewer shot.
+    docs = next(x for x in hub.get("/api/projects")["projects"] if x["id"] == pid)["documentsDir"]
+    plan = Path(docs) / f"#{active['no']} Search release plan.html"
+    plan.parent.mkdir(parents=True, exist_ok=True)
+    plan.write_text((Path(__file__).with_name("plan.html")).read_text(encoding="utf-8"), encoding="utf-8")
     return {"project": pid, "po": po_id, "active": active["id"], "file": str(code / "src" / "search.py"),
+            "plan": str(plan),
             "ask": ask["messageId"], "progress": prompt["result"]["message"]["id"]}

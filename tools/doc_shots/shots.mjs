@@ -75,6 +75,56 @@ const passageComment = `(async () => {
   return true;
 })()`;
 
+// Wait for an element (or any truthy value) the page builds after a click.
+const waitFor = `async (f, ms = 10000) => {
+  const t = Date.now();
+  while (Date.now() - t < ms) { const x = f(); if (x) return x; await new Promise(r => setTimeout(r, 100)); }
+  throw Error('timed out: ' + f);
+}`;
+
+// A comment on one passage of a rendered HTML plan in the file viewer.
+const planComment = `(async () => {
+  const wait = ${waitFor};
+  const frame = await wait(() => {
+    const f = document.querySelector('main iframe.file');
+    return f && f.contentDocument && f.contentDocument.querySelector('.risk') && f;
+  });
+  const d = frame.contentDocument;
+  const words = 'Plural ingredient names may not match';
+  const walker = d.createTreeWalker(d.querySelector('.risk'), NodeFilter.SHOW_TEXT);
+  let node;
+  while ((node = walker.nextNode())) {
+    const start = node.nodeValue.indexOf(words);
+    if (start >= 0) { d.getSelection().setBaseAndExtent(node, start, node, start + words.length); break; }
+  }
+  if (!node) throw Error('demo plan passage missing');
+  const button = await wait(() => document.querySelector('.sel-bar:not([hidden]) .sel-cmt:not([hidden])'));
+  button.click();
+  const input = await wait(() => document.querySelector('.cmt-composer textarea'));
+  input.value = 'Match singular and plural forms before the first release.';
+  input.dispatchEvent(new InputEvent('input', {bubbles:true}));
+  document.querySelector('.cmt-composer .cmt-add').click();
+  await wait(() => d.querySelector('mark.cmt-hl') || document.querySelector('#cmt-tray .cmt-item, #cmt-tray li'));
+  return true;
+})()`;
+
+// The task's Changes pane (its side rail): the branch's diff against main with a comment on one line.
+const changesComment = `(async () => {
+  const wait = ${waitFor};
+  (await wait(() => document.querySelector('.dk-strip-btn[data-dk-auto="changes"]'))).click();
+  (await wait(() => [...document.querySelectorAll('.tch-files .chf[data-file]')]
+    .find(e => e.dataset.file.endsWith('src/search.py')))).click();
+  const row = await wait(() => [...document.querySelectorAll('.tch-diff .dr.k-add')]
+    .find(r => r.textContent.includes('if not wanted')));
+  row.querySelector('.dg').click();
+  const input = await wait(() => document.querySelector('.tch-diff .dcx textarea'));
+  input.value = 'Should a blank search show a hint instead of an empty list?';
+  input.dispatchEvent(new InputEvent('input', {bubbles:true}));
+  document.querySelector('.tch-diff .dcx .dcx-add').click();
+  await wait(() => document.querySelector('.tch-diff .dc'));
+  return true;
+})()`;
+
 try {
   await capture('overview', '/', { requireVisible: '.ibx-row' });
   await capture('board', '/', { run: `PD.dock.reveal('board'); setViewMode('board'); document.querySelector('.pd-board-max')?.click()` });
@@ -84,7 +134,10 @@ try {
     { run: `document.querySelector('#team-all')?.click()` });
   await capture('task-terminal', `/session?room=${data.active}&msg=${data.progress}&agent=claude`,
     { requireVisible: '#agentcol .agent.open .term' });
-  await capture('file-viewer', `/fileview?path=${encodeURIComponent(data.file)}&line=5`);
+  await capture('file-comment', `/fileview?path=${encodeURIComponent(data.plan)}`,
+    { run: planComment, expected: 'Match singular and plural forms before the first release.' });
+  await capture('task-changes', `/?task=${data.active}`,
+    { run: changesComment, expected: 'Should a blank search show a hint instead of an empty list?' });
   await capture('settings-themes', '/', { run: 'openSettings("appearance")' });
   await capture('settings-notifications', '/', { run: 'openSettings("notify")' });
   await capture('settings-backup', '/', { run: 'openSettings("backup")' });
