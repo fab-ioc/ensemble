@@ -35,3 +35,8 @@ __pycache__/
 
 # RTK command history written into the working folder
 rtk/
+
+# Local screenshot build inventory (contains a temporary demo path)
+docs/images/manifest.json
+docs/.images-*/
+docs/.images-previous/

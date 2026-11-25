@@ -1,8 +1,8 @@
 """The README a colleague reads first stays true to the repository, and the
 shipped files carry no one's name, machine or home folder.
 
-* every relative link and image in README.md points at a tracked file;
-* every file or folder named in its layout table exists;
+* every relative link and image in README.md and docs/*.md points at a tracked file;
+* every file or folder named in the developer layout table exists;
 * no tracked file except LICENSE names the person, their machines, their
   tailnet or a home folder of theirs.
 
@@ -18,6 +18,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 README = (ROOT / "README.md").read_text(encoding="utf-8")
+DEVELOPER = (ROOT / "docs" / "developer.md").read_text(encoding="utf-8")
 GIT = shutil.which("git")
 
 # Built from pieces so this file does not match itself.
@@ -47,15 +48,19 @@ class Readme(unittest.TestCase):
         self.dirs = {q.as_posix() for f in self.files for q in Path(f).parents if q.as_posix() != "."}
 
     def test_relative_links_and_images_resolve_to_tracked_files(self):
-        targets = re.findall(r"!?\[[^\]]*\]\(([^)\s]+)\)", README)
-        local = [t.split("#")[0] for t in targets if not re.match(r"[a-z]+:", t) and not t.startswith("#")]
-        self.assertIn("docs/board.png", local)
-        self.assertIn("docs/po-chat.png", local)
-        for t in local:
-            self.assertTrue(t in self.files or t.rstrip("/") in self.dirs, f"README links to {t}, not a tracked file")
+        pages = [ROOT / "README.md", *sorted((ROOT / "docs").glob("*.md"))]
+        for page in pages:
+            body = page.read_text(encoding="utf-8")
+            for target in re.findall(r"!?\[[^\]]*\]\(([^)\s]+)\)", body):
+                if re.match(r"[a-z]+:", target) or target.startswith("#"):
+                    continue
+                rel = (page.parent / target.split("#")[0]).resolve().relative_to(ROOT).as_posix()
+                self.assertTrue(rel in self.files or rel.rstrip("/") in self.dirs,
+                                f"{page.relative_to(ROOT)} links to {target}, not a tracked file")
+        self.assertIn("docs/images/overview.png", README)
 
     def test_the_layout_names_only_what_exists(self):
-        section = README.split("## Layout of the repository", 1)[1].split("\n## ", 1)[0]
+        section = DEVELOPER.split("## Layout of the repository", 1)[1].split("\n## ", 1)[0]
         names = [n for cell in re.findall(r"^\| ([^|]+) \|", section, re.M)
                  for n in re.findall(r"`([^`]+)`", cell)]
         self.assertGreater(len(names), 20)
