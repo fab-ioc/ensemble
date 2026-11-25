@@ -19,6 +19,13 @@ if "--version" in args:
     print("2.1.0 (Claude Code)" if kind == "claude" else "codex-cli 0.80.0")
     sys.exit(0)
 
+if kind == "claude" and args[:2] == ["auth", "status"]:
+    print('{"loggedIn": true}')
+    sys.exit(0)
+if kind == "codex" and args[:2] == ["login", "status"]:
+    print("Logged in with a demo account")
+    sys.exit(0)
+
 if kind == "codex" and args[-3:] == ["mcp", "list", "--json"]:
     print("[]")  # The disposable agent has no configured external servers.
     sys.exit(0)

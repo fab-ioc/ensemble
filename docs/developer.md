@@ -62,7 +62,7 @@ Install Chrome or Chromium, Node 20+ and Pillow (`python3 -m pip install Pillow`
 python3 tools/doc_shots/run.py
 ```
 
-This creates a fresh fictional hub under `/tmp`, on port 8791, with stand-ins for `claude`, `codex` and `tailscale`. It never uses the live hub or a real agent account. Headless Chrome uses port 9341. Override occupied ports with `--port` and `--chrome-port`. The command rebuilds every `docs/images/*.png` shot and checks that each page has the Paper theme and contains none of the known personal-data markers. The images are palettized and optimized with Pillow. Review a contact sheet or the images themselves after UI changes, then run `python3 -m unittest tests.test_readme` to check links.
+This creates a fresh fictional hub under `/tmp`, on port 8791, with stand-ins for `claude`, `codex` and `tailscale`. It never uses the live hub or a real agent account. Headless Chrome uses port 9341. Override occupied ports with `--port` and `--chrome-port`. The command rebuilds every `docs/images/*.png` shot and checks that each page has the Paper theme and contains none of the known personal-data markers. The images are palettized and optimized with Pillow. Review a contact sheet or the images themselves after UI changes, then run `python3 -m unittest tests.test_readme.Readme.test_relative_links_and_images_resolve_to_tracked_files` to check links.
 
 ## Releasing
 

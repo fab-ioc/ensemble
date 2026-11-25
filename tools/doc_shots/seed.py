@@ -22,12 +22,24 @@ def transcript(home: Path, cwd: str, sid: str, words: str) -> None:
 
 
 def agent(hub: Hub, sid: str, kind: str = "claude") -> dict:
+    if not sid:
+        raise RuntimeError(f"demo {kind} has no session ID")
     for _ in range(100):
         found = [a for a in hub.agents() if a["sid"] == sid and a["kind"] == kind]
         if found:
             return found[-1]
         time.sleep(.15)
     raise RuntimeError(f"demo {kind} did not launch for {sid}")
+
+
+def new_agent(hub: Hub, after: int, kind: str) -> dict:
+    """Find a newly launched Codex, which has no session ID at launch."""
+    for _ in range(100):
+        found = [a for a in hub.agents()[after:] if a["kind"] == kind and a["token"]]
+        if found:
+            return found[-1]
+        time.sleep(.15)
+    raise RuntimeError(f"demo {kind} reviewer did not launch")
 
 
 def task(hub: Hub, pid: str, title: str, spec: str, workflow: str,
@@ -45,8 +57,8 @@ def task(hub: Hub, pid: str, title: str, spec: str, workflow: str,
 def seed_usage(hub: Hub) -> None:
     now = int(time.time())
     usage = {"asOf": now, "rateLimits": {
-        "five_hour": {"used_percentage": 42, "resets_at": now + 7200},
-        "seven_day": {"used_percentage": 61, "resets_at": now + 360000}}}
+        "five_hour": {"used_percentage": 22, "resets_at": now + 7200},
+        "seven_day": {"used_percentage": 20, "resets_at": now + 360000}}}
     folder = hub.state / "usage"
     folder.mkdir(parents=True, exist_ok=True)
     (folder / "claude-rate-limits.json").write_text(json.dumps(usage), encoding="utf-8")
@@ -94,7 +106,11 @@ def seed(hub: Hub) -> dict:
                   "inprogress", "highest", True, True)
     prompt = hub.post("/api/room/say", {"roomId": active["id"],
                                              "text": "Please check ingredient search against the acceptance criteria."})
-    owner = agent(hub, active["participants"][0]["sessionId"])
+    live_room = hub.get(f"/api/room?id={active['id']}")
+    engineer = next(p for p in live_room["participants"] if p.get("role") == "engineer")
+    if engineer["agent"] != "claude":
+        raise RuntimeError(f"demo engineer changed to {engineer['agent']}; adjust the fictional usage")
+    owner = agent(hub, engineer["sessionId"], engineer["agent"])
     hub.mcp(owner["token"], "chat_send", {"to": "all", "message":
         "## Progress\n\nThe search function is in place. I am checking the tests and preparing a commit for review."})
     hub.mcp(owner["token"], "ensemble_report", {"kind": "update", "state": "Search built; review next.",
@@ -110,15 +126,20 @@ def seed(hub: Hub) -> dict:
                    check=True, env=hub.env())
     head = subprocess.check_output(["git", "-C", str(work), "rev-parse", "--short", "HEAD"],
                                    text=True, env=hub.env()).strip()
-    hub.mcp(owner["token"], "chat_send", {"to": "codex", "message":
+    review_room = hub.get(f"/api/room?id={active['id']}")
+    reviewer = next(p for p in review_room["participants"] if p.get("role") == "reviewer")
+    before_review = len(hub.agents())
+    hub.mcp(owner["token"], "chat_send", {"to": reviewer["identity"], "message":
         f"## Review request\n\nPlease review commit `{head}` for ingredient search. Check matching and case handling."})
-    review_room = next(r for r in hub.get("/api/rooms") if r["id"] == active["id"])
-    reviewer = next((p for p in review_room["participants"] if p.get("identity") == "codex"), None)
-    if reviewer and reviewer.get("sessionId"):
-        reviewer_agent = agent(hub, reviewer["sessionId"], "codex")
-        hub.mcp(reviewer_agent["token"], "review_done", {"verdict": "approve",
-            "summary": "The sample search matches the brief.",
-            "findings": "## Findings\n\nThe case-insensitive match works for the sample recipe. No blocking findings."})
+    reviewer_agent = new_agent(hub, before_review, reviewer["agent"])
+    hub.mcp(reviewer_agent["token"], "review_done", {"verdict": "approve",
+        "summary": "The sample search matches the brief.",
+        "findings": "## Findings\n\nThe case-insensitive match works for the sample recipe. No blocking findings."})
+    checked = hub.get(f"/api/room?id={active['id']}")
+    words = "\n".join(m.get("text", "") for m in checked.get("messages", []))
+    for phrase in ("The search function is in place", "Search progress", "The sample search matches the brief"):
+        if phrase not in words:
+            raise RuntimeError(f"demo task is missing its {phrase!r} message")
     task(hub, pid, "Write search tests", "Cover matches, case and missing ingredients.", "todo", "high")
     task(hub, pid, "Add saved favourites", "Save favourite recipes locally.", "backlog")
     task(hub, pid, "Review recipe labels", "Check labels and empty states.", "inreview")

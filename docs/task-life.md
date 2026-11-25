@@ -4,7 +4,7 @@
 
 A task begins with a written spec. Its owner does the work in a task workspace; an optional reviewer checks a commit when the owner asks. The owner sends a completion, blocker or question report to the project PO. In a code project, the PO merges the branch and the card reaches Done when the merge is seen. A documents project has no merge, so its card can be moved to Done directly.
 
-![A task session with a linked request and point status](images/task-session.png)
+![A task session with the owner's report and review](images/task-session.png)
 
 ## How to follow a task
 

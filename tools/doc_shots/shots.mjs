@@ -41,7 +41,8 @@ try {
   await capture('board', '/', { run: `PD.dock.reveal('board'); setViewMode('board'); document.querySelector('.pd-board-max')?.click()` });
   await capture('inbox', `/?inbox=${data.project}`);
   await capture('po-chat', `/session?room=${data.po}&msg=${data.ask}&part=ask:0`);
-  await capture('task-session', `/session?room=${data.active}&msg=${data.progress}`);
+  await capture('task-session', `/session?room=${data.active}&msg=${data.progress}`,
+    { run: `document.querySelector('#team-all')?.click()` });
   await capture('task-terminal', `/session?room=${data.active}&msg=${data.progress}&agent=claude`,
     { run: `document.querySelector('#agentcol .agent .ah')?.click()` });
   await capture('file-viewer', `/fileview?path=${encodeURIComponent(data.file)}&line=5`);
