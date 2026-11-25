@@ -9,6 +9,7 @@
 <script src="/static/noun.js"></script>
 <script src="/static/hub-resilience.js"></script>
 <script src="/static/frame-guard.js"></script>
+<link rel="stylesheet" href="/static/setup-wizard.css">
 <script>
 // Appearance, resolved before first paint so the page never flashes the wrong
 // theme. A theme is a complete token set under :root[data-theme="<name>"].
@@ -5386,6 +5387,18 @@ window.DOC_LISTENERS_PAUSED = false;
             title="A window of its own, with its own icon in the dock or taskbar, and no address bar; its pop-out panels too">Install app</button>
     <p class="cfg-hint" id="install-app-hint" aria-live="polite"></p>
     <label class="autostart-row" hidden><input type="checkbox" id="autostart-toggle"> Start Ensemble when I sign in</label>
+    <button type="button" class="po-btn def" id="setup-run-again">Run setup again</button>
+  </div>
+  <div class="settings-section" id="settings-projects">
+    <h4 data-noun="{Projects} folder">Projects folder</h4>
+    <label class="pref-label" for="pref-projects-root" data-noun="Where {projects} live">Where projects live</label>
+    <div class="pref-row"><input type="text" id="pref-projects-root" autocomplete="off" spellcheck="false"><button type="button" class="po-btn def" id="pref-projects-root-save">Save folder</button></div>
+    <p class="cfg-hint" id="pref-projects-root-note" data-noun="Choose an empty folder before creating {a project}. An existing {projects} folder stays where it is.">Choose an empty folder before creating a project. An existing projects folder stays where it is.</p>
+  </div>
+  <div class="settings-section" id="settings-remote">
+    <h4>Remote use</h4>
+    <label><input type="checkbox" id="pref-remote-enabled"> Use Ensemble on my tailnet</label>
+    <p class="cfg-hint" id="pref-remote-note">The hub listens on your tailnet after its next launch. Its access token stays in the protected access-token.txt file on this computer.</p>
   </div>
   <!-- Notifications on this device (#359): drawn by ntPaint from /api/notify. -->
   <div class="settings-section" id="settings-notify">
@@ -5477,7 +5490,7 @@ window.DOC_LISTENERS_PAUSED = false;
       <span><input type="number" id="pref-idle-alert" min="0" max="1440" step="5"
              placeholder="20" autocomplete="off"> <span class="pref-label">minutes</span></span>
     </div>
-    <p class="cfg-hint">A running agent that does nothing this long moves to Waiting and its PO gets one line, at most one an hour per project. Repeats back off to every 6 hours. A wait the PO or the owner marked does not count. The smallest value is 5. 0 = off.</p>
+    <p class="cfg-hint" data-noun="A running agent that does nothing this long moves to Waiting and its PO gets one line, at most one an hour per {project}. Repeats back off to every 6 hours. A wait the PO or the owner marked does not count. The smallest value is 5. 0 = off.">A running agent that does nothing this long moves to Waiting and its PO gets one line, at most one an hour per project. Repeats back off to every 6 hours. A wait the PO or the owner marked does not count. The smallest value is 5. 0 = off.</p>
     <h5 class="sp-sub">Weekly pacing</h5>
     <!-- ED-164: spread each kind's 7-day allowance over the week. -->
     <div class="pref-row" style="margin-top: 14px;">
@@ -5501,7 +5514,7 @@ window.DOC_LISTENERS_PAUSED = false;
         <option value="hold">Hold new work</option>
       </select>
     </div>
-    <p class="cfg-hint">When every usable agent kind is projected to run out before its reset, new work of medium or lower priority waits and starts by itself once the projection recovers. Highest and high priority, running tasks, reviews, handovers and a Start from this page are never held. Tell only tells each PO and holds nothing.</p>
+    <p class="cfg-hint">When every usable agent kind is forecast to run out before its reset, new work of medium or lower priority waits and starts by itself once the forecast recovers. Highest and high priority, running tasks, reviews, handovers and a Start from this page are never held. Tell only tells each PO and holds nothing.</p>
     <div class="pref-row">
       <label class="pref-label" for="pref-balance-margin">Switch hysteresis</label>
       <span><input type="number" id="pref-balance-margin" min="0" max="100" step="1"
@@ -5656,6 +5669,7 @@ window.DOC_LISTENERS_PAUSED = false;
         <button type="button" data-one="Project" data-many="Projects">Project</button>
         <button type="button" data-one="Initiative" data-many="Initiatives">Initiative</button>
         <button type="button" data-one="Epic" data-many="Epics">Epic</button>
+        <button type="button" data-one="Product" data-many="Products">Product</button>
         <button type="button" data-one="Workstream" data-many="Workstreams">Workstream</button>
         <button type="button" data-val="other">Other</button>
       </div>
@@ -5746,6 +5760,7 @@ window.DOC_LISTENERS_PAUSED = false;
   </div>
 </div>
 </div>
+<div id="setup-wizard" hidden aria-label="First-run setup"></div>
 <main>
   <section id="view"></section>
   <!-- The workspace panel is a sibling of #view, not part of it. Every other
@@ -5779,6 +5794,7 @@ window.DOC_LISTENERS_PAUSED = false;
 <dialog id="modal"></dialog>
 <aside id="detail-panel"></aside>
 <div id="detail-panel-resize" title="Drag to resize" aria-label="Resize detail panel"></div>
+<script src="/static/setup-wizard.js"></script>
 <script>
 // An element by selector: in this page, else in a popped-out panel's window
 // (a dialog or menu opened there; see "The PO screen as panels").
@@ -9633,6 +9649,13 @@ function renderPrefs() {
     });
   }
   // Backup of the projects root (git). Only the remote URL is stored server-side.
+  const root = document.getElementById('pref-projects-root');
+  if (root && document.activeElement !== root) root.value = PREFS.projectsRoot || RUNTIME_CFG?.projectsRoot || '';
+  if (root) root.disabled = !!PROJECTS?.projects?.length;
+  const rootSave = document.getElementById('pref-projects-root-save');
+  if (rootSave) rootSave.disabled = !!PROJECTS?.projects?.length;
+  const remote = document.getElementById('pref-remote-enabled');
+  if (remote) remote.checked = !!PREFS.remoteAccessEnabled;
   const br = document.getElementById('pref-backup-remote');
   if (br && document.activeElement !== br) br.value = PREFS.backupRemote || '';
   const bi = document.getElementById('pref-backup-interval');
@@ -10101,12 +10124,27 @@ async function initAutostart() {
   box.checked = !!st.enabled;
   box.addEventListener('change', async () => {
     try {
-      const r = await fetch('/api/app/autostart', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-                                                    body: JSON.stringify({ enabled: box.checked }) });
+      const r = await fetch('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                                             body: JSON.stringify({ startAtSignIn: box.checked }) });
       const body = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(body.message || body.error || `HTTP ${r.status}`);
-      box.checked = !!body.enabled;
+      box.checked = !!body.startAtSignIn;
     } catch (e) { box.checked = !box.checked; toast('Not changed: ' + e.message, 5000, 'err'); }
+  });
+}
+function initSetupSettings() {
+  const root = document.getElementById('pref-projects-root');
+  const rootSave = document.getElementById('pref-projects-root-save');
+  rootSave?.addEventListener('click', async () => {
+    try {
+      const want = root.value.trim();
+      const r = await api('/api/settings', {method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({projectsRoot:want})});
+      PREFS = r; renderPrefs(); toast('Projects folder saved', 2500, 'ok');
+    } catch(e) { toast('Projects folder not changed: ' + e.message, 5000, 'err'); }
+  });
+  document.getElementById('pref-remote-enabled')?.addEventListener('change', async ev => {
+    try { await setPref('remoteAccessEnabled', ev.target.checked); }
+    catch(e) { ev.target.checked = !ev.target.checked; }
   });
 }
 // A restart at a safe point (restart_drain.py): while the hub drains, the
@@ -26717,6 +26755,8 @@ const SP_ICONS = {
   backup: '<path d="M7 18a5 5 0 0 1-.5-9.97A6 6 0 0 1 18 9a4.5 4.5 0 0 1-.5 9z"/><path d="M12 16v-5M9.5 13.5 12 11l2.5 2.5"/>',
   prune: '<rect x="3" y="13" width="18" height="7" rx="2"/><path d="m5 13 2-8h10l2 8M17 16.5h.01"/>',
   runtime: '<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.01"/>',
+  projects: '<path d="M3 7h7l2 2h9v10H3z"/><path d="M3 7V5h7l2 2"/>',
+  remote: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/>',
 };
 const SP = { tab: '', opener: null };
 const spSections = () => [...document.querySelectorAll('#sp-pages > .settings-section')];
@@ -27137,6 +27177,7 @@ async function ntTurnOn() {
   const r = await ntPost('/api/notify/subscribe', { subscription: sub.toJSON(), label: ntLabel() });
   if (!r.ok) return 'Not turned on: ' + (r.data.message || `the hub answered ${r.status}`) + '.';
   NT.hub = r.data;
+  await ntSaveChoice(true);
   ntChanged();
   return 'On. Send a test to check it arrives.';
 }
@@ -27148,8 +27189,21 @@ async function ntTurnOff() {
     try { await sub.unsubscribe(); } catch (e) { /* the hub has forgotten it anyway */ }
   }
   NT.sub = null;
+  await ntSaveChoice(false);
   ntChanged();
   return 'Off: this device gets no notifications.';
+}
+function ntDeviceId() {
+  try {
+    let id = localStorage.getItem('ens-notify-device-id');
+    if (!id) { id = crypto.randomUUID(); localStorage.setItem('ens-notify-device-id', id); }
+    return id;
+  } catch(e) { return 'this-browser'; }
+}
+async function ntSaveChoice(enabled) {
+  const old = PREFS || await api('/api/settings');
+  const choices = {...(old.notifyDeviceChoices || {}), [ntDeviceId()]: !!enabled};
+  PREFS = await api('/api/settings', {method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({notifyDeviceChoices:choices})});
 }
 document.getElementById('settings-notify').addEventListener('change', ev => {
   if (ev.target.id !== 'nt-on') return;
@@ -29267,6 +29321,7 @@ if ('serviceWorker' in navigator) {
   noteLastUpdate();
   checkAgents(false);
   initAutostart();
+  initSetupSettings();
   document.getElementById('agents-recheck')?.addEventListener('click', () => checkAgents(true));
   document.getElementById('agents-banner-dismiss')?.addEventListener('click', () => {
     const b = document.getElementById('agents-banner');
@@ -29274,10 +29329,12 @@ if ('serviceWorker' in navigator) {
     b.hidden = true;
   });
   await refresh();
+  const wizardStatus = await api('/api/setup/status').catch(() => ({show:false}));
   const firstAttn = updateRoomsBadge();     // paint Needs you on the first screen
   // /?task=room-... — a task link opened in a tab of its own; also ?task=ED-18,
   // or ?task=18&project=proj-…, and &agent= to open it at an agent.
   const deepQs = new URLSearchParams(location.search);
+  const deepSetupBypass = location.hash === '#needs' || /^#settings-[a-z-]+$/.test(location.hash);
   const deepTask = deepQs.get('task');
   if (deepTask) {
     history.replaceState(null, '', location.pathname);
@@ -29353,7 +29410,7 @@ if ('serviceWorker' in navigator) {
     history.replaceState(null, '', location.pathname + location.search);
     if (!PROJECTS) await refreshProjects();
     swShowNeeds();
-  } else if (!deepTask && window.ensBootOpen !== false) {   // false: a test's page starts on none
+  } else if (!deepTask && !wizardStatus.show && window.ensBootOpen !== false) {   // false: a test's page starts on none
     // A desktop opens on the list plus the last conversation, else the first
     // Needs you entry (#135); a phone on the last conversation, else a PO's
     // (#307). Which items are a PO's is known with the projects.
@@ -29366,6 +29423,7 @@ if ('serviceWorker' in navigator) {
     }
   }
   // The first screen is set: what the page opened on is on screen (tests wait for it).
+  if (!deepTask && !deepRoom && !deepTopic && !deepInbox && !deepSetupBypass) await SetupWizard.start(wizardStatus);
   window.ensBooted = true;
 })();
 // The poll also asks, every 30 s, whether the page on disk is still this one.

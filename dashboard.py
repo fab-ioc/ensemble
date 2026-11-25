@@ -967,6 +967,7 @@ JIRA_UNLINKS_FILE = DASHBOARD_DIR / "jira_unlinks.json"  # {sid: [tickets]} user
 PARENTS_FILE = DASHBOARD_DIR / "parents.json"  # child_sid -> parent_sid
 ARCHIVED_FILE = DASHBOARD_DIR / "archived.json"      # list of archived session ids
 SETTINGS_FILE = DASHBOARD_DIR / "settings.json"      # user preferences (openMode, …)
+_SETUP_FRESH_AT_BOOT = not SETTINGS_FILE.exists()
 PROJECTS_FILE = DASHBOARD_DIR / "projects.json"      # registered projects: [{id,name,path,isGit,createdAt}]
 SESSION_PROJECTS_FILE = DASHBOARD_DIR / "session_projects.json"  # {sessionId|roomId: projectId}
 STATIC_DIR = Path(__file__).parent
@@ -977,6 +978,7 @@ STATIC_DIR = Path(__file__).parent
 # page gets written into its <meta name="ensemble-pages"> at serve time, so an
 # open tab can tell when the page it runs is no longer the one on disk.
 PAGE_FILES = ("index.html", "session.html", "fileview.html", "static/hub-resilience.js", "static/filedrag.js",
+              "static/setup-wizard.js", "static/setup-wizard.css",
               "static/feedback.js", "static/feedback.css", "static/whatsnew.js", "static/whatsnew.css",
               "static/hl.js", "static/comments.js", "static/attach.js", "static/actions.js",
               "static/selbar.js", "static/noun.js", "static/taskcard.js", "static/pointrefs.js",
@@ -2411,6 +2413,14 @@ _SETTINGS_DEFAULTS = {
     # computer; "pane" gives every open chat pane its own box, aimed at it.
     # A phone always has one box.
     "sendBox": "workspace",
+    # A pending first run survives a hub restart. Existing installs have neither
+    # marker and are never offered setup automatically.
+    "setupWizardPending": False,
+    "setupWizardDone": False,
+    "projectsRoot": "",  # empty = the platform's default projects folder
+    "remoteAccessEnabled": False,
+    "startAtSignIn": False,
+    "notifyDeviceChoices": {},
 }
 # An accent is an opaque colour a primary button can be painted with: #rgb or
 # #rrggbb, a CSS colour name, rgb(r g b) or hsl(h s% l%) (commas or spaces).
@@ -2536,6 +2546,35 @@ def load_settings() -> dict:
     return out
 
 
+def setup_wizard_status() -> dict:
+    """Only a truly new hub, or one already marked pending, opens setup."""
+    settings = load_settings()
+    if settings["setupWizardDone"]:
+        return {"show": False, "done": True}
+    if load_projects():
+        return {"show": False, "done": False}
+    pending = settings["setupWizardPending"]
+    if not pending and _SETUP_FRESH_AT_BOOT:
+        settings = save_settings({"setupWizardPending": True})
+        pending = settings["setupWizardPending"]
+    return {"show": bool(pending), "done": False}
+
+
+def projects_root_change_allowed(path: str) -> bool:
+    """A new projects home must be unused and traversable, or not exist yet."""
+    if not path or path == str(PROJECTS_ROOT):
+        return True
+    if load_projects():
+        return False
+    try:
+        with os.scandir(path) as entries:
+            return next(entries, None) is None
+    except FileNotFoundError:
+        return True
+    except OSError:
+        return False
+
+
 PINNED_MAX = 200
 
 
@@ -2551,6 +2590,13 @@ def clean_pinned_projects(v) -> list:
         if len(out) >= PINNED_MAX:
             break
     return out
+
+
+# The projects folder is read from the same settings file before any project
+# scan. A change on a fresh hub is also applied to this process after save.
+_saved_projects_root = load_settings().get("projectsRoot")
+if isinstance(_saved_projects_root, str) and os.path.isabs(_saved_projects_root):
+    PROJECTS_ROOT = Path(_saved_projects_root)
 
 
 def set_project_pins(data) -> tuple[int, dict]:
@@ -3128,7 +3174,9 @@ def save_settings(settings: dict) -> dict:
 
 
 def _save_settings_locked(settings: dict, pins: list | None = None) -> dict:
+    global PROJECTS_ROOT
     current = load_settings()
+    projects_root_changed = False
     if pins is not None:
         current["pinnedProjects"] = clean_pinned_projects(pins)
     for change in _agent_model_changes(settings):
@@ -3224,8 +3272,21 @@ def _save_settings_locked(settings: dict, pins: list | None = None) -> dict:
             except (TypeError, ValueError):
                 continue
             v = 0 if v <= 0 else max(5, min(1440, v))
-        if k in ("backupEnabled", "rtkForTasks", "readerForTasks", "paceWeek"):
+        if k in ("backupEnabled", "rtkForTasks", "readerForTasks", "paceWeek",
+                 "setupWizardPending", "setupWizardDone", "remoteAccessEnabled", "startAtSignIn"):
             v = bool(v)
+        if k == "notifyDeviceChoices":
+            if not isinstance(v, dict) or len(v) > 30 or any(
+                    not isinstance(device, str) or len(device) > 80
+                    or not isinstance(enabled, bool) for device, enabled in v.items()):
+                continue
+        if k == "projectsRoot":
+            if not isinstance(v, str) or len(v) > 500 or any(ch in v for ch in "\n\r\0"):
+                continue
+            v = os.path.abspath(os.path.expanduser(v.strip())) if v.strip() else ""
+            if not projects_root_change_allowed(v):
+                continue
+            projects_root_changed = True
         if k == "preferAgent" and v not in PREFER_CHOICES:
             continue
         if k == "paceBrake" and v not in pacing.MODES:
@@ -3286,6 +3347,8 @@ def _save_settings_locked(settings: dict, pins: list | None = None) -> dict:
             tmp.unlink()
     # The pool Codex is judged by follows the model chosen here.
     usage.remark_codex()
+    if projects_root_changed:
+        PROJECTS_ROOT = Path(current["projectsRoot"]) if current["projectsRoot"] else HOME / f"{APP_NAME}Projects"
     return current
 
 
@@ -20298,6 +20361,12 @@ class Handler(BaseHTTPRequestHandler):
             # human by name (nickname, else git user.name) instead of "user".
             self._send_json(200, {**load_settings(), "operatorName": operator_name()})
             return
+        if p == "/api/setup/status":
+            self._send_json(200, {**setup_wizard_status(), "projectsRoot": str(PROJECTS_ROOT),
+                                  "origins": hub_links.origins(),
+                                  "autostart": app_setup.autostart_status(app_version.app_executable())
+                                  if app_version.packaged() else {"enabled": False, "supported": False}})
+            return
         if p == "/api/agent-models":
             # What Settings offers for the model hub-launched agents run on:
             # per kind the choice, the agent's own default and its models.
@@ -20325,6 +20394,7 @@ class Handler(BaseHTTPRequestHandler):
                 "stateDir": str(DASHBOARD_DIR),
                 "sessionsDir": str(SESS_DIR),
                 "projectsDir": str(PROJ_DIR),
+                "projectsRoot": str(PROJECTS_ROOT),
                 "csRoot": str(CS_ROOT),
                 "presetsDir": str(PRESETS_DIR),
                 "logFile": str(_LOG_FILE if _LOG_FILE else DEFAULT_LOG_FILE),
@@ -20408,6 +20478,30 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(data, dict):
                 self._send_json(400, {"error": "expected_object"})
                 return
+            if "projectsRoot" in data:
+                root = data["projectsRoot"]
+                if not isinstance(root, str) or len(root) > 500 or any(ch in root for ch in "\n\r\0"):
+                    self._send_json(400, {"error": "invalid_projects_root"})
+                    return
+                root = os.path.abspath(os.path.expanduser(root.strip())) if root.strip() else ""
+                if not projects_root_change_allowed(root):
+                    self._send_json(400, {"error": "projects_root_not_empty", "message":
+                                          "Choose an empty folder before making a project."})
+                    return
+                data["projectsRoot"] = root
+            if "startAtSignIn" in data:
+                if not app_version.packaged():
+                    self._send_json(400, {"error": "autostart_unsupported", "message":
+                                          "Start at sign-in is available in the installed app."})
+                    return
+                try:
+                    status = app_setup.set_autostart(bool(data["startAtSignIn"]),
+                                                     app_version.app_executable(), HUB_PORT,
+                                                     _LOG_FILE or DEFAULT_LOG_FILE)
+                except OSError as e:
+                    self._send_json(500, {"error": "autostart_failed", "message": str(e)})
+                    return
+                data["startAtSignIn"] = bool(status.get("enabled"))
             # A model the agent does not offer is refused, and says so; nothing
             # of the change is saved.
             why = agent_models_error(data)
@@ -25224,7 +25318,7 @@ def main():
     if "--bind" in args:
         host = args[args.index("--bind") + 1]
     else:
-        host = os.environ.get("ENSEMBLE_BIND", "127.0.0.1")
+        host = os.environ.get("ENSEMBLE_BIND", "tailscale" if load_settings().get("remoteAccessEnabled") else "127.0.0.1")
     tailnet = host.lower() in ("tailscale", "ts")
     # --log <path>: redirect stdout/stderr to a file. Required under pythonw.exe
     # (Windows autostart), which has no console to write to.
