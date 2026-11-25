@@ -12,10 +12,12 @@ const page = await tab(Number(debugPort));
 const url = (where) => `${base}${where}`;
 const shots = [];
 
-async function capture(name, where, { width = 1440, height = 900, run, crop } = {}) {
+async function capture(name, where, { width = 1440, height = 900, run, crop, requireVisible } = {}) {
   await page.size(width, height, width < 600);
   await page.go(url(where), 2400);
   if (run) { await page.eval(run); await sleep(900); }
+  if (requireVisible) await page.until(`(() => { const el = document.querySelector(${JSON.stringify(requireVisible)});
+    return !!el && el.getBoundingClientRect().height > 80; })()`);
   const check = await page.eval(`({theme: document.documentElement.getAttribute('data-theme'),
     visible: document.body.innerText.slice(0, 150000), title: document.title,
     values: [...document.querySelectorAll('input,textarea')].map(x => x.value).join(' '),
@@ -44,7 +46,7 @@ try {
   await capture('task-session', `/session?room=${data.active}&msg=${data.progress}`,
     { run: `document.querySelector('#team-all')?.click()` });
   await capture('task-terminal', `/session?room=${data.active}&msg=${data.progress}&agent=claude`,
-    { run: `document.querySelector('#agentcol .agent .ah')?.click()` });
+    { requireVisible: '#agentcol .agent.open .term' });
   await capture('file-viewer', `/fileview?path=${encodeURIComponent(data.file)}&line=5`);
   await capture('settings-themes', '/', { run: 'openSettings("appearance")' });
   await capture('settings-notifications', '/', { run: 'openSettings("notify")' });
