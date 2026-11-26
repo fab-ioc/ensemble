@@ -155,8 +155,9 @@
     };
     el.addEventListener('touchend', end, { passive: true });
     el.addEventListener('touchcancel', end, { passive: true });
-    // Safari's own pinch events: stopped on the content, so the page keeps its size.
-    const stop = e => { e.preventDefault(); };
+    // Safari's own pinch events: stopped on the content (h.ok), so the page keeps
+    // its size there and zooms as usual elsewhere.
+    const stop = e => { if (!h.ok || h.ok(e)) e.preventDefault(); };
     el.addEventListener('gesturestart', stop, { passive: false });
     el.addEventListener('gesturechange', stop, { passive: false });
   }

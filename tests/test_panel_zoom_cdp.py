@@ -214,6 +214,9 @@ async function main() {
     await p.wheel(fr.x, fr.y, 100);
     html.wheel = await p.ev(`document.querySelector('iframe.file').contentDocument.body.style.zoom`);
     html.dpr = await p.ev(`devicePixelRatio`);
+    // Safari's gesture events in the page: stopped on its text, left alone on the comment layer.
+    html.gesture = await p.ev(`(() => { const d = document.querySelector('iframe.file').contentDocument; const g = el => { if (!el) return null; const e = new Event('gesturestart', { bubbles: true, cancelable: true }); el.dispatchEvent(e); return e.defaultPrevented; };
+      return { text: g(d.body.firstElementChild), layer: g(d.querySelector('ens-comments')) }; })()`);
 
     // ---- A CSV --------------------------------------------------------------
     await p.go(A.csvUrl, READY);
@@ -272,7 +275,7 @@ async function main() {
       // A click on line 3's gutter still opens the comment box on line 3.
       const row = [...box.querySelectorAll('.drv .dr[data-i]')].find(e => e.querySelector('.dg'));
       r.store = JSON.parse(localStorage.getItem('cd-zoom')).diff;
-      box.scrollTop = 0; window.__zbox = box;
+      box.scrollTop = 0; window.__zbox = box; window.__zrv = rv;
       return r; })()`);
     await p.shot('desktop-diff-125');
     // Ctrl + wheel and Ctrl + 0 on the diff.
@@ -282,11 +285,32 @@ async function main() {
     const dh = await p.ev(`(() => { const r = __zbox.querySelector('.drv-head .drv-path').getBoundingClientRect(); return { x: Math.round(r.left + 4), y: Math.round(r.top + r.height / 2) }; })()`);
     await p.wheel(dh.x, dh.y, -100);
     out.diff.header = await p.ev(`__zbox.querySelector('.drv').style.zoom`);
-    await p.ev(`(() => { __zbox.querySelector('.drv').focus(); return 1; })()`);
+    // A click on the pane below the lines: the box has the focus, the wheel and the keys zoom the diff.
+    await p.click(300, 300);
+    out.diff.blankFocus = await p.ev(`document.activeElement === __zbox`);
     await p.wheel(300, 300, -100);
     out.diff.wheel = await p.ev(`__zbox.querySelector('.drv').style.zoom`);
+    // A redraw (the box crossing the split width) keeps the focus in the box.
+    await p.ev(`(() => { drRerender(__zrv.view); return 1; })()`);
+    out.diff.redrawFocus = await p.ev(`document.activeElement === __zbox`);
+    await p.key('=', 'Equal', 187);
+    out.diff.redrawKey = await p.ev(`__zbox.querySelector('.drv').style.zoom`);
     await p.key('0', 'Digit0', 48);
     out.diff.reset = await p.ev(`({ zoom: __zbox.querySelector('.drv').style.zoom, dpr: devicePixelRatio })`);
+    // The mode switch clicked: the new bar's same button has the focus; the keys are the browser's there,
+    // and so on the bar's empty part.
+    const mb = await p.ev(`(() => { const r = __zbox.querySelector('.drv-mode [data-mode=unified]').getBoundingClientRect(); return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }; })()`);
+    await p.click(mb.x, mb.y);
+    out.diff.modeFocus = await p.ev(`(() => { const a = document.activeElement; return { mode: a && a.dataset.mode || null, split: !!__zbox.querySelector('.drv.split') }; })()`);
+    await p.key('=', 'Equal', 187);
+    const gr = await p.ev(`(() => { const r = __zbox.querySelector('.drv-head .grow').getBoundingClientRect(); return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }; })()`);
+    await p.click(gr.x, gr.y);
+    out.diff.barFocus = await p.ev(`document.activeElement === __zbox`);
+    await p.key('=', 'Equal', 187);
+    out.diff.barKeys = await p.ev(`__zbox.querySelector('.drv').style.zoom`);
+    // Safari's gesture events: stopped on the lines, left alone on the bar.
+    out.diff.gesture = await p.ev(`(() => { const g = el => { const e = new Event('gesturestart', { bubbles: true, cancelable: true }); el.dispatchEvent(e); return e.defaultPrevented; };
+      return { bar: g(__zbox.querySelector('.drv-head .drv-path')), lines: g(__zbox.querySelector('.drv .dr')) }; })()`);
     await p.close();
 
     // ---- A phone --------------------------------------------------------------
@@ -458,6 +482,7 @@ class InChrome(unittest.TestCase):
         self.assertEqual(h["key"], "1.5", "Ctrl + = in the page")
         self.assertEqual(h["wheel"], "1.25", "Ctrl + wheel over the page")
         self.assertEqual(h["dpr"], self.got["md"]["start"]["dpr"])
+        self.assertEqual(h["gesture"], {"text": True, "layer": False})
 
     def test_a_csv_zooms_its_table_at_the_code_level(self):
         self.assertEqual(self.got["csv"]["start"], "150%", "a CSV is read as code: code's level, last set by the wheel")
@@ -493,8 +518,15 @@ class InChrome(unittest.TestCase):
         self.assertEqual((d["headFontAfter"], d["headZoom"]), (d["headFont"], ""), "the bar keeps its size")
         self.assertEqual((d["split"], d["zoomSplit"], d["textSplit"]), (True, "1.25", "125%"), "kept across the mode switch")
         self.assertEqual(d["header"], "1.25", "keys on the bar and a wheel over it leave the diff alone")
+        self.assertTrue(d["blankFocus"], "a click below the lines focuses the box")
         self.assertEqual(d["wheel"], "1.5")
+        self.assertTrue(d["redrawFocus"], "a redraw keeps the focus in the box")
+        self.assertEqual(d["redrawKey"], "1.75", "and the keys still zoom it")
         self.assertEqual(d["reset"]["zoom"], "")
+        self.assertEqual(d["modeFocus"], {"mode": "unified", "split": False}, "the mode clicked keeps the focus in the new bar")
+        self.assertTrue(d["barFocus"])
+        self.assertEqual(d["barKeys"], "", "keys after a click on the bar are the browser's")
+        self.assertEqual(d["gesture"], {"bar": False, "lines": True})
 
     def test_a_phone_header_fits_and_the_menu_holds_the_rest(self):
         ph = self.got["phone"]

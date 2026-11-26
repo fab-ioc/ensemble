@@ -916,7 +916,7 @@ and the diff (`drZoom*` in `index.html`).
   nothing is shown (a folder, a missing or binary file).
 - **The steps are the browser's:** 50 67 75 80 90 100 110 125 150 175 200 250 300.
 - **Also:** Ctrl/⌘ + wheel over the content (a trackpad pinch arrives as that too), Ctrl/⌘ + = − 0 with
-  the focus in it (a click in the file focuses `main`, a click in a diff its `.drv`), two fingers on a
+  the focus in it (a click in the file focuses `main`, a click in a diff its box, kept through a redraw), two fingers on a
   touch screen (the content has `touch-action: pan-x pan-y`, the move is stopped there, the level
   follows the fingers and snaps to the nearest step). On the bars, in a field (`PanelZoom.editing`), a
   comment being written, the comment tray or layer and a menu, the browser's own zoom is untouched.

@@ -2044,7 +2044,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
      tray and the rest of the hub keep their size. */
   .drv-head .pz [data-pz=reset] { min-width: 48px; font-variant-numeric: tabular-nums; }
   .drv-head .pz button:disabled { color: var(--fg-disabled); cursor: default; background: transparent; }
-  .drv:focus { outline: none; }
+  .drz-box:focus { outline: none; }
   .drv-back { display: none; }
   .drv-path { font-family: var(--font-mono); color: var(--fg); overflow-wrap: anywhere; min-width: 0; }
   .drv-count { font-variant-numeric: tabular-nums; white-space: nowrap; }
@@ -13485,19 +13485,21 @@ function drZoomWire(v) {
   box._drZoomView = v;
   drZoomPut(v, drZoomPct());
   PanelZoom.wire(v.head.querySelector('.pz'), what => drZoomAct(v, what));
-  // A click in the lines gives .drv the focus, so Ctrl/⌘ + = − 0 zoom the
-  // diff there; on its bar, in a comment and everywhere else they are the
-  // browser's.
-  const drv = box.querySelector('.drv');
-  if (drv) drv.tabIndex = -1;
   if (box._drZoom) return;
   box._drZoom = true;
+  // A click in the diff (its lines or the pane below them) gives the box the
+  // focus, which outlives a redraw, so Ctrl/⌘ + = − 0 zoom the diff there.
+  // A click on the bar focuses the box too: remembered, so the keys stay the
+  // browser's there, as on a comment being written and everywhere else.
+  if (!box.hasAttribute('tabindex')) box.tabIndex = -1;
+  box.classList.add('drz-box');
+  box.addEventListener('pointerdown', e => { box._drZoomBar = !!(e.target.closest && e.target.closest('.drv-head')); }, true);
   // Two fingers zoom the diff, not the page: the browser keeps only panning here.
   if (window.matchMedia && matchMedia('(pointer: coarse)').matches) box.style.touchAction = 'pan-x pan-y';
   const cur = () => { const w = box._drZoomView; return w && w.rv.view === w && w.head && w.head.isConnected ? w : null; };
   // On the diff (its lines, its comments, the pane below them): not its bar,
   // not a comment being written.
-  const on = e => { const t = e.target; return !!(t && t.closest && !t.closest('.drv-head, .dcx') && !PanelZoom.editing(t)); };
+  const on = e => { const t = e.target; return !!(t && t.closest && !t.closest('.drv-head, .dcx') && !PanelZoom.editing(t) && !(t === box && e.type === 'keydown' && box._drZoomBar)); };
   PanelZoom.wheel(box, (dir, ev) => {
     const w = cur();
     if (w) drZoomSet(w, PanelZoom.step(w.zoom || 100, dir), { x: ev.clientX, y: ev.clientY });
@@ -13518,11 +13520,19 @@ function drZoomWire(v) {
 }
 // The same diff again in the other mode (the switch, or the box crossing
 // DR_SPLIT_MIN): the comment being written and the scroll position stay.
+// The focus stays in the box too: on the same button of the new bar (the mode
+// switch just clicked), else on the box, so Ctrl/⌘ + = − 0 keep reaching it.
 function drRerender(v) {
   if (v.rv.view !== v || !v.box.isConnected || !v.head || !v.head.isConnected) return;
-  const top = v.box.scrollTop;
-  const nv = drShow(v.rv, v.box, v.root, v.file, v.text, { draft: v.draft });
+  const top = v.box.scrollTop, box = v.box;
+  const a = document.activeElement, had = !!(a && box.contains(a));
+  const same = had && a !== box && a.closest('.drv-head') && (a.dataset.mode ? `.drv-mode [data-mode="${a.dataset.mode}"]` : a.dataset.pz ? `.pz [data-pz="${a.dataset.pz}"]` : '');
+  const nv = drShow(v.rv, box, v.root, v.file, v.text, { draft: v.draft });
   if (top) nv.box.scrollTop = top;
+  if (had && !box.contains(document.activeElement)) {
+    const b = same && nv.head && nv.head.querySelector(same);
+    (b || box).focus({ preventScroll: true });
+  }
 }
 function drSetMode(v, mode) {
   chSetPref('cd-diff-mode', mode === 'split' ? 'split' : 'unified');
