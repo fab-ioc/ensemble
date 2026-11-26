@@ -2040,6 +2040,11 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .drv-head .grow { flex: 1; }
   .drv-head .seg button { padding: 2px var(--s-200); font-size: var(--fs-200); }
   .drv-head .drv-mode[hidden] { display: none; }   /* .seg's own display would beat hidden */
+  /* Panel zoom (#423): − 100% + zooms the diff's lines alone; the bar, the
+     tray and the rest of the hub keep their size. */
+  .drv-head .pz [data-pz=reset] { min-width: 48px; font-variant-numeric: tabular-nums; }
+  .drv-head .pz button:disabled { color: var(--fg-disabled); cursor: default; background: transparent; }
+  .chp-dbox:focus { outline: none; }
   .drv-back { display: none; }
   .drv-path { font-family: var(--font-mono); color: var(--fg); overflow-wrap: anywhere; min-width: 0; }
   .drv-count { font-variant-numeric: tabular-nums; white-space: nowrap; }
@@ -5111,6 +5116,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
 <!-- Shared with fileview.html and session.html: the code highlighter, and the
      store that keeps review comments until they are delivered. -->
 <script src="/static/hl.js"></script>
+<script src="/static/panelzoom.js"></script>
 <link rel="stylesheet" href="/static/progress.css">
 <script src="/static/progress.js"></script>
 <script src="/static/comments.js"></script>
@@ -13398,7 +13404,7 @@ function drShow(rv, box, root, file, text, keep) {
     + (rv.back ? '<button type="button" class="rm-btn subtle drv-back" aria-label="Back to the files">‹ Files</button>' : '')
     + `<span class="drv-path" title="${esc(file)}">${esc(file)}</span>`
     + (content ? `<span class="drv-count">+${adds} −${dels}</span><span class="drv-hint">${hint}</span>` : '')
-    + '<span class="grow"></span>' + mode
+    + '<span class="grow"></span>' + (content && typeof PanelZoom !== 'undefined' ? PanelZoom.html({ tip: PanelZoom.TIP_DIFF }) : '') + mode
     + (rv.open && !/\/$/.test(file) ? '<button type="button" class="rm-btn subtle drv-open">Open file</button>' : '')
     + '</div><div class="drv-away" hidden></div>'
     + `<div class="drv${split ? ' split' : ''}" style="--gw:${Math.max(3, String(top).length)}ch">${body}</div>`;
@@ -13441,9 +13447,68 @@ function drShow(rv, box, root, file, text, keep) {
     const files = attFiles(e.dataTransfer);
     if (files.length) drAtt(v, v.draft).add(files, false);
   };
+  drZoomWire(v);
   drPaint(v);
   window.__drRenderMs = Math.round(performance.now() - t0);
   return v;
+}
+// Panel zoom (#423): the diff's lines (.drv) zoomed on their own, at the level
+// kept for diffs on this device (static/panelzoom.js). The box scrolls and is
+// not zoomed itself, so its scrollTop counts in screen pixels. Wheel, keys and
+// pinch are bound to the box once and act on the view it shows now.
+function drZoomPct() { return typeof PanelZoom === 'undefined' ? 100 : PanelZoom.get('diff'); }
+function drZoomPut(v, pct) {
+  const drv = v.box.querySelector('.drv');
+  if (drv) drv.style.zoom = Math.round(pct) === 100 ? '' : String(pct / 100);
+  v.zoom = pct;
+  PanelZoom.show(v.head && v.head.querySelector('.pz'), pct);
+}
+// The level changed: what is under (x, y), or the first lines showing, stays put.
+function drZoomSet(v, pct, at, live) {
+  if (!v.head || !v.head.isConnected) return;
+  const box = v.box, doc = box.ownerDocument;
+  if (!live) PanelZoom.set('diff', Math.round(pct));
+  let x = at && at.x, y = at && at.y;
+  if (!at) {
+    const r = box.getBoundingClientRect(), h = v.head.getBoundingClientRect();
+    x = r.left + Math.min(r.width / 2, 120); y = Math.min(r.bottom - 1, h.bottom + 12);
+  }
+  PanelZoom.keep(doc, box, x, y, () => drZoomPut(v, pct), () => 1);
+}
+function drZoomAct(v, what) {
+  const p = v.zoom || 100;
+  drZoomSet(v, what === 'reset' ? 100 : PanelZoom.step(p, what === 'in' ? 1 : -1));
+}
+function drZoomWire(v) {
+  if (typeof PanelZoom === 'undefined' || !v.content) return;
+  const box = v.box;
+  box._drZoomView = v;
+  drZoomPut(v, drZoomPct());
+  PanelZoom.wire(v.head.querySelector('.pz'), what => drZoomAct(v, what));
+  if (box._drZoom) return;
+  box._drZoom = true;
+  // A click in the diff gives the box the focus, so Ctrl/⌘ + = − 0 zoom it
+  // there and the hub everywhere else.
+  if (!box.hasAttribute('tabindex')) box.tabIndex = -1;
+  // Two fingers zoom the diff, not the page: the browser keeps only panning here.
+  if (window.matchMedia && matchMedia('(pointer: coarse)').matches) box.style.touchAction = 'pan-x pan-y';
+  const cur = () => { const w = box._drZoomView; return w && w.rv.view === w && w.head && w.head.isConnected ? w : null; };
+  PanelZoom.wheel(box, (dir, ev) => {
+    const w = cur();
+    if (w) drZoomSet(w, PanelZoom.step(w.zoom || 100, dir), { x: ev.clientX, y: ev.clientY });
+  }, ev => !!cur() && !(ev.target.closest && ev.target.closest('.dcx')));
+  box.addEventListener('keydown', e => {
+    const k = PanelZoom.keyOf(e), w = k && cur();
+    if (!w) return;
+    e.preventDefault();
+    e.stopPropagation();
+    drZoomAct(w, k);
+  });
+  PanelZoom.pinch(box, {
+    base: () => { const w = cur(); return w ? w.zoom || 100 : 100; },
+    live: (p, x, y) => { const w = cur(); if (w) drZoomSet(w, p, { x, y }, true); },
+    done: (p, x, y) => { const w = cur(); if (w) drZoomSet(w, p, { x, y }); },
+  });
 }
 // The same diff again in the other mode (the switch, or the box crossing
 // DR_SPLIT_MIN): the comment being written and the scroll position stay.

@@ -267,13 +267,17 @@ async function phone(c) {
   await p.ev('(() => { const x = document.querySelector(".cmt-composer .cmt-cancel"); if (x) x.click(); })(); 0');
   await p.ev('document.querySelector("iframe.file").contentDocument.getSelection().removeAllRanges(); 0');
   await sleep(400);
-  await p.tap(await p.centre('#cmt-pick'));
+  // On a phone the header keeps the name, the zoom and ⋯ (#423): Point is a row of ⋯.
+  out.pickHidden = await p.ev('getComputedStyle(document.getElementById("cmt-pick")).display');
+  out.pickBtn = await p.ev('(() => { const r = document.getElementById("out-menu").getBoundingClientRect(); return { w: r.width, h: r.height }; })()');
+  await p.tap(await p.centre('#out-menu'));
+  out.pickRow = await p.ev('(() => { const r = document.querySelector(".out-pop button[data-out=cmt-pick]").getBoundingClientRect(); return { w: r.width, h: r.height }; })()');
+  await p.tap(await p.centre('.out-pop button[data-out=cmt-pick]'));
   out.pickOn = await p.layer();
   await p.tap(await p.inFrame('#save'));
   out.elQuote = await p.composer();
   await p.shot('phone-2-point');
   out.composerBox = await p.ev('(() => { const r = document.querySelector(".cmt-composer").getBoundingClientRect(); return { l: r.left, r: r.right, t: r.top, vw: innerWidth }; })()');
-  out.pickBtn = await p.ev('(() => { const r = document.getElementById("cmt-pick").getBoundingClientRect(); return { w: r.width, h: r.height }; })()');
   out.scrollW = await p.ev('document.documentElement.scrollWidth');
   // A place found again is kept in this page only: storing it would set the
   // other tabs on the file marking and storing their own place back.
@@ -505,8 +509,10 @@ class InChrome(unittest.TestCase):
         self.assertEqual(g["quote"], "“Torque limits”")
         self.assertEqual(g["pickOn"]["pick"], "true")
         self.assertEqual(g["elQuote"], "On <button#save.btn.primary> “Save changes”")
-        self.assertGreaterEqual(g["pickBtn"]["w"], 44)
+        self.assertEqual(g["pickHidden"], "none", "on a phone Point is a row of ⋯ (#423)")
+        self.assertGreaterEqual(g["pickBtn"]["w"], 44, "⋯ is a finger's size")
         self.assertGreaterEqual(g["pickBtn"]["h"], 44)
+        self.assertGreaterEqual(g["pickRow"]["h"], 44, "and so is its Point row")
         self.assertLessEqual(g["composerBox"]["r"], g["composerBox"]["vw"])
         self.assertLessEqual(g["scrollW"], 390)
 

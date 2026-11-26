@@ -1004,6 +1004,7 @@ PAGE_FILES = ("index.html", "session.html", "fileview.html", "static/hub-resilie
               "static/hl.js", "static/comments.js", "static/attach.js", "static/actions.js",
               "static/selbar.js", "static/noun.js", "static/taskcard.js", "static/pointrefs.js",
               "static/pagekey.js", "static/filelinks.js", "static/progress.js", "static/progress.css",
+              "static/panelzoom.js",
               # The Dock library (static/dock, a vendored copy) that a project's
               # PO screen is built on: its modules and its stylesheet (its pop-out
               # page is a module too, popout-page.js, opened from a blob: URL).
