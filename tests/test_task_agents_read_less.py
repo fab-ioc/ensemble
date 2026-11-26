@@ -40,7 +40,8 @@ FLAG = ["-c", "tool_output_token_limit=4000"]
 
 
 def _settings(**over) -> dict:
-    return {**dashboard._SETTINGS_DEFAULTS, **over}
+    # These tests are about the caps; the cheap reader (on by default) is tested in test_task_reader.
+    return {**dashboard._SETTINGS_DEFAULTS, "cheapReader": False, **over}
 
 
 class CodexArgs(unittest.TestCase):
@@ -183,18 +184,21 @@ class ClaudeSettings(unittest.TestCase):
     def test_a_pilot_task_gets_the_read_cap_and_the_nag_strip(self):
         settings = self.settings(rtk=True)
         self.assert_read_cap(settings, "Read|Bash")
-        # rtk's rewrite still runs first, then the cap, then the attention hooks.
+        # The claude.ai guard (P469), then rtk's rewrite, then the cap, then
+        # the attention hooks.
         pre_entries = settings["hooks"]["PreToolUse"]
-        self.assertIn("hook claude", pre_entries[0]["hooks"][0]["command"])
-        self.assertEqual(pre_entries[1]["matcher"], "Read")
-        self.assertEqual(pre_entries[2]["matcher"], "AskUserQuestion|ExitPlanMode")
+        self.assertEqual(pre_entries[0]["matcher"], dashboard.artifact_guard.MATCHER)
+        self.assertIn("hook claude", pre_entries[1]["hooks"][0]["command"])
+        self.assertEqual(pre_entries[2]["matcher"], "Read")
+        self.assertEqual(pre_entries[3]["matcher"], "AskUserQuestion|ExitPlanMode")
 
     def test_a_task_outside_the_pilot_gets_the_read_cap_without_rtk(self):
         settings = self.settings(rtk=False, task=True)
         self.assert_read_cap(settings, "Read")           # no Bash: nothing of rtk's to strip
         self.assertNotIn("hook claude", json.dumps(settings))
-        self.assertEqual(settings["hooks"]["PreToolUse"][0]["matcher"], "Read")
-        self.assertEqual(settings["hooks"]["PreToolUse"][1]["matcher"], "AskUserQuestion|ExitPlanMode")
+        self.assertEqual(settings["hooks"]["PreToolUse"][0]["matcher"], dashboard.artifact_guard.MATCHER)
+        self.assertEqual(settings["hooks"]["PreToolUse"][1]["matcher"], "Read")
+        self.assertEqual(settings["hooks"]["PreToolUse"][2]["matcher"], "AskUserQuestion|ExitPlanMode")
         # Its own file, not the pilot's and not the POs'.
         self.assertTrue(dashboard.TASK_CLAUDE_SETTINGS.is_file())
         self.assertFalse(dashboard.RTK_CLAUDE_SETTINGS.exists())

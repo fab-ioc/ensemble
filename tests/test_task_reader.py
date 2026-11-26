@@ -1,12 +1,13 @@
-"""The cheap reader for task owners (#320).
+"""The cheap reader for POs and task owners (#320, #425 P469).
 
-* ``readerForTasks`` is off by default and saved as a bool;
-* with it on, a hub task's owner gets the reader: Claude a ``--plugin-dir``
+* ``cheapReader`` is on by default and saved as a bool; the old
+  ``readerForTasks`` key (False in every hub's settings.json) is ignored;
+* with it on, a PO room and a hub task's owner get the reader: Claude a ``--plugin-dir``
   whose agent runs on Haiku with Read, Grep and Glob only, plus the brief that names
   it; Codex the brief with the headless ``claude -p --model haiku`` line (only
   when ``claude`` is on PATH);
-* a reviewer, a PO room, an adopted session, and every launch with the
-  setting off, get neither;
+* a reviewer, an adopted session, and every launch with the setting off,
+  get neither;
 * the role reaches the wiring from a launch, and a resume keeps the plugin.
 """
 from __future__ import annotations
@@ -32,7 +33,7 @@ def _settings(**over) -> dict:
 class Reader(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
-        self.settings = _settings(readerForTasks=True)
+        self.settings = _settings()
         self.load = mock.patch.object(dashboard, "load_settings", side_effect=lambda: self.settings)
         for p in (self.load,
                   mock.patch.object(dashboard, "load_projects",
@@ -41,23 +42,43 @@ class Reader(unittest.TestCase):
                   mock.patch.object(dashboard, "READER_PLUGIN_DIR", self.tmp / "reader" / "ensemble-reader"),
                   mock.patch.object(dashboard, "TASK_CLAUDE_SETTINGS", self.tmp / "task.json"),
                   mock.patch.object(dashboard, "USAGE_CLAUDE_SETTINGS", self.tmp / "usage.json"),
+                  mock.patch.object(dashboard, "PO_CLAUDE_SETTINGS", self.tmp / "po.json"),
                   mock.patch.object(dashboard.shutil, "which", return_value="claude")):
             p.start()
             self.addCleanup(p.stop)
         self.task = {"id": "room-t", "launched": True}
 
-    def test_off_by_default_and_saved_as_a_bool(self):
-        self.assertIs(dashboard._SETTINGS_DEFAULTS["readerForTasks"], False)
-        self.settings = _settings()
+    def test_on_by_default_saved_as_a_bool_and_the_old_key_ignored(self):
+        self.assertIs(dashboard._SETTINGS_DEFAULTS["cheapReader"], True)
+        self.assertNotIn("readerForTasks", dashboard._SETTINGS_DEFAULTS)
+        self.settings = {**_settings(), "readerForTasks": False}   # an old hub's file
+        args, _, brief = dashboard._rtk_task_wiring(self.task, "claude", "engineer")
+        self.assertIn("--plugin-dir", args)
+        self.assertIn(dashboard.READER_AGENT, brief)
+        self.settings = _settings(cheapReader=False)
         args, _, brief = dashboard._rtk_task_wiring(self.task, "claude", "engineer")
         self.assertNotIn("--plugin-dir", args)
         self.assertNotIn(dashboard.READER_AGENT, brief)
         self.load.stop()
         with mock.patch.object(dashboard, "SETTINGS_FILE", self.tmp / "settings.json"), \
                 mock.patch.object(dashboard, "DASHBOARD_DIR", self.tmp):
-            self.assertIs(dashboard.save_settings({"readerForTasks": 1})["readerForTasks"], True)
-            self.assertIs(dashboard.save_settings({"readerForTasks": ""})["readerForTasks"], False)
+            self.assertIs(dashboard.save_settings({"cheapReader": 1})["cheapReader"], True)
+            self.assertIs(dashboard.save_settings({"cheapReader": ""})["cheapReader"], False)
         self.load.start()
+
+    def test_a_po_room_gets_the_reader_with_the_guarded_po_settings(self):
+        po = {"id": "room-po", "launched": True}
+        args, env, brief = dashboard._rtk_task_wiring(po, "claude", "")
+        self.assertEqual(args[:2], ["--settings", str(dashboard.PO_CLAUDE_SETTINGS)])
+        self.assertIn("--plugin-dir", args)
+        self.assertEqual(brief, dashboard.READER_BRIEF["claude"])
+        self.assertIn("artifact_guard.py", dashboard.PO_CLAUDE_SETTINGS.read_text(encoding="utf-8"))
+        _, _, brief = dashboard._rtk_task_wiring(po, "codex", "")
+        self.assertIn(dashboard.READER_BRIEF["codex"], brief)
+        self.settings = _settings(cheapReader=False)
+        args, _, brief = dashboard._rtk_task_wiring(po, "claude", "")
+        self.assertNotIn("--plugin-dir", args)
+        self.assertNotIn(dashboard.READER_AGENT, brief)
 
     def test_a_claude_owner_gets_the_plugin_and_the_brief(self):
         args, env, brief = dashboard._rtk_task_wiring(self.task, "claude", "engineer")
@@ -88,11 +109,11 @@ class Reader(unittest.TestCase):
             _, _, brief = dashboard._rtk_task_wiring(self.task, "codex", "engineer")
         self.assertNotIn("claude -p", brief)
 
-    def test_reviewers_pos_and_adopted_sessions_get_nothing(self):
-        po = {"id": "room-po", "launched": True}
+    def test_reviewers_and_adopted_sessions_get_nothing(self):
         adopted = {"id": "room-a"}
+        adopted_po = {"id": "room-po", "adopted": True}
         for room, role in ((self.task, "reviewer"), (self.task, "Reviewer 2"),
-                           (po, ""), (adopted, "engineer")):
+                           (adopted, "engineer"), (adopted_po, "")):
             for agent in ("claude", "codex"):
                 args, _, brief = dashboard._rtk_task_wiring(room, agent, role)
                 self.assertNotIn("--plugin-dir", args, (room, role, agent))
