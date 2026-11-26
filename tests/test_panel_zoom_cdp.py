@@ -309,6 +309,11 @@ async function main() {
     await p.key('=', 'Equal', 187);
     out.diff.barKeys = await p.ev(`__zbox.querySelector('.drv').style.zoom`);
     // Safari's gesture events: stopped on the lines, left alone on the bar.
+    // The box narrowed below side by side's width with the focus on Unified: the switch hides, the box keeps the focus.
+    out.diff.narrow = await p.ev(`(() => { __zbox.querySelector('.drv-mode [data-mode=unified]').focus(); const before = document.activeElement.dataset.mode;
+      __zbox.style.width = '800px'; drRerender(__zrv.view);
+      const r = { before, hidden: __zbox.querySelector('.drv-mode').hidden, box: document.activeElement === __zbox };
+      __zbox.style.width = '1000px'; return r; })()`);
     out.diff.gesture = await p.ev(`(() => { const g = el => { const e = new Event('gesturestart', { bubbles: true, cancelable: true }); el.dispatchEvent(e); return e.defaultPrevented; };
       return { bar: g(__zbox.querySelector('.drv-head .drv-path')), lines: g(__zbox.querySelector('.drv .dr')) }; })()`);
     await p.close();
@@ -341,6 +346,17 @@ async function main() {
     await q.ev(`document.querySelector('.out-pop [data-out=view-source]').click(), 1`);
     await q.until(`document.querySelector('.code .ln-row')`);
     out.phone.source = await q.ev(`({ view: CUR_VIEW, kind: FVZ.kind, menuGone: !document.querySelector('.out-pop') })`);
+    // Only what zooms stops the browser's pinch: a page's body (not its comment layer), a diff's lines (not its bar).
+    await q.go(A.htmlUrl, READY);
+    await q.until(`(() => { const f = document.querySelector('iframe.file'); return f && f.contentDocument && f.contentDocument.querySelector('ens-comments') && FVZ.kind === 'page' && f.contentDocument.body.style.touchAction; })()`);
+    out.phone.pageTouch = await q.ev(`(() => { const d = document.querySelector('iframe.file').contentDocument, w = d.defaultView, ta = e => w.getComputedStyle(e).touchAction;
+      return { body: ta(d.body), root: ta(d.documentElement), layer: ta(d.querySelector('ens-comments')) }; })()`);
+    await q.go(A.base + '/', `typeof drShow === 'function' && typeof PanelZoom !== 'undefined'`);
+    out.phone.diffTouch = await q.ev(`(() => {
+      const box = document.createElement('div'); box.style.cssText = 'position:fixed;left:0;top:0;width:360px;height:600px;overflow:auto;background:#fff;z-index:9999'; document.body.appendChild(box);
+      drShow(drReview('zoomph', { open: null, target: () => null }), box, 'root', 'src/app.py', ${JSON.stringify(A.diff)});
+      const ta = e => getComputedStyle(e).touchAction;
+      return { lines: ta(box.querySelector('.drv')), bar: ta(box.querySelector('.drv-head')), box: ta(box) }; })()`);
     await q.close();
   } finally {
     ch.kill();
@@ -527,6 +543,12 @@ class InChrome(unittest.TestCase):
         self.assertTrue(d["barFocus"])
         self.assertEqual(d["barKeys"], "", "keys after a click on the bar are the browser's")
         self.assertEqual(d["gesture"], {"bar": False, "lines": True})
+        self.assertEqual(d["narrow"], {"before": "unified", "hidden": True, "box": True}, "a hidden switch hands the focus to the box")
+
+    def test_only_what_zooms_stops_the_browsers_pinch(self):
+        ph = self.got["phone"]
+        self.assertEqual(ph["pageTouch"], {"body": "pan-x pan-y", "root": "auto", "layer": "auto"})
+        self.assertEqual(ph["diffTouch"], {"lines": "pan-x pan-y", "bar": "auto", "box": "auto"})
 
     def test_a_phone_header_fits_and_the_menu_holds_the_rest(self):
         ph = self.got["phone"]

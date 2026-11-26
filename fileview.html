@@ -2932,7 +2932,8 @@ function fvzWire(doc, frame) {
     },
     done: (p, x, y) => { cancelAnimationFrame(FVZ.raf); if (FVZ.kind) fvzSet(p, { x, y }); },
   });
-  if (frame && matchMedia('(pointer: coarse)').matches) { try { doc.documentElement.style.touchAction = 'pan-x pan-y'; } catch (e) {} }
+  // The page's body only: its comment layer (on the root) keeps the browser's pinch.
+  if (frame && matchMedia('(pointer: coarse)').matches) { try { doc.body.style.touchAction = 'pan-x pan-y'; } catch (e) {} }
 }
 (function fvzMount() {
   document.getElementById('fv-reload').insertAdjacentHTML('beforebegin', PanelZoom.html({ cls: 'btn', hidden: true }));
