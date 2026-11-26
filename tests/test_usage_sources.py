@@ -289,7 +289,8 @@ class LaunchSettingsTests(unittest.TestCase):
         with mock.patch.object(dashboard, "_rtk_task_room", return_value=True):
             args, env, brief = dashboard._rtk_task_wiring({"id": "room-x"}, "claude")
         settings = self.settings_of(args)
-        hook = settings["hooks"]["PreToolUse"][0]
+        self.assertEqual(settings["hooks"]["PreToolUse"][0]["matcher"], dashboard.artifact_guard.MATCHER)
+        hook = settings["hooks"]["PreToolUse"][1]
         self.assertEqual(hook["matcher"], "Bash")
         self.assertIn("hook claude", hook["hooks"][0]["command"])
         self.assertIn("usage_statusline.py", settings["statusLine"]["command"])

@@ -95,7 +95,7 @@ class ScriptArgvTest(unittest.TestCase):
 
     def test_every_script_the_hub_starts_is_runnable_in_the_app(self):
         import ensemble_app
-        for name in ("agent_hook", "task_tool_hook", "usage_statusline", "workspace_search",
+        for name in ("agent_hook", "task_tool_hook", "artifact_guard", "usage_statusline", "workspace_search",
                      "global_search", "app_update"):
             self.assertIn(name, ensemble_app.SCRIPTS)
 
