@@ -5,8 +5,14 @@ before the page loads; the test makes it say words (interim and final, cut the
 way Chrome and Safari cut them), fail and end, while the keys and clicks are
 real CDP input. Checked: the mic is live only with an engine on a secure page,
 otherwise greyed, a press saying why in the box (P387); words land at the
-caret, the ones still being heard selected; nothing is sent; a second press,
-Esc (without stopping the agent) and 4 s of silence stop it; a refused
+caret, the ones still being heard selected; nothing is sent; a second press
+and Esc (without stopping the agent) stop it, silence never does (P459): 20 s
+of it leaves it listening, an engine that ends by itself is started again at
+once with the words before and after kept once each (Chrome's and Safari's
+cuts, grey words at the end), the button on throughout and no-speech not
+shown, a press, Esc or a send after a restart stop it, and sessions that keep
+failing (ending at once, or refusing to start) back off and stop with a note;
+a refused
 microphone is one line in the box (no dialog), cleared by typing; a typed key
 ends listening and lands after the words; Send ends listening and sends the
 words once; Esc leaves an open menu to close first; a press while stopping
@@ -46,7 +52,7 @@ SEND_PATHS = ('/api/room/resume', '/api/room/command', '/api/room/interrupt')
 # recorded, and every POST recorded; a send and an agent stop are answered
 # here, so nothing reaches the hub's terminals.
 INIT = r"""(() => {
-  window.__posts = []; window.__dialogs = []; window.__recs = [];
+  window.__posts = []; window.__dialogs = []; window.__recs = []; window.__starts = [];
   for (const k of ['alert', 'confirm', 'prompt'])
     window[k] = (...a) => { window.__dialogs.push([k, String(a[0] || '')]); return k === 'confirm' ? false : null; };
   const realFetch = window.fetch.bind(window);
@@ -72,7 +78,11 @@ INIT = r"""(() => {
   class FakeRec {
     constructor() { this.lang = ''; this.continuous = false; this.interimResults = false; this.calls = [];
       this.onresult = null; this.onerror = null; this.onend = null; window.__recs.push(this); window.__rec = this; }
-    start() { this.calls.push('start'); this.startLang = this.lang; }
+    start() { this.calls.push('start'); this.startLang = this.lang; window.__starts.push(Date.now());
+      // ?: the test makes every start refuse (__startThrow) or end at once with a network error (__failFast).
+      if (window.__startThrow) throw new DOMException('recognition has already started', 'InvalidStateError');
+      // __failWords: each session hears a word, then fails the same way.
+      if (window.__failFast) setTimeout(() => { if (window.__failWords) window.__emit([['w', false]], 0, this); if (this.onerror) this.onerror({ error: 'network', message: '' }); if (this.onend) this.onend(new Event('end')); }, 30); }
     stop() { this.calls.push('stop'); }
     abort() { this.calls.push('abort'); }
   }
@@ -245,24 +255,131 @@ async function main() {
     await until(`window.__posts.some(p => p.path === '/api/room/interrupt')`, 'Esc stops the agent when not listening', 3000).catch(() => {});
     out.escControl = await st();
 
-    // 6. Silence: 4 s after the last words, stop; the engine never ending, it lets go 1.5 s later.
+    // 6. Silence never stops it (P459): 20 s with no words, still listening.
     await open();
     await click('#mic');
-    await emit([['hold on', false]]);
-    await sleep(3000);
-    out.silence3 = await st();
-    await sleep(1500);
-    out.silence45 = await st();
+    await emit([['hold on', true]]);
+    await sleep(20000);
+    out.silence20 = await st();
+    // A press stops it; an engine that never says it ended is let go 1.5 s later.
+    await click('#mic');
+    out.silenceStop = await st();
     await sleep(1800);
     out.silenceLetGo = await st();
-    // 8 s before the first words.
-    await ev(`(() => { edClear(); document.getElementById('input').focus(); return 0; })()`);
+
+    // 6b. The engine ends by itself: a new session goes on at once after the words, the button on throughout.
+    const NET = 'window.__starts.slice()';
+    await open();
+    await type('Note ');
     await click('#mic');
-    await sleep(6500);
-    out.first65 = await st();
-    await sleep(2000);
-    out.first85 = await st();
+    await ev(`(() => { window.__pressLog = []; const m = document.getElementById('mic');
+      new MutationObserver(() => window.__pressLog.push(m.getAttribute('aria-pressed'))).observe(m, {attributes: true, attributeFilter: ['aria-pressed']}); return 0; })()`);
+    // Chrome: a result per phrase; the session (a long one) ends after a no-speech error.
+    await emit([['one two', true], [' three', true]], 1);
+    await sleep(1100);
+    await ev(`window.__error('no-speech'); window.__end(); 0`);
+    out.restart1 = await st();
+    await sleep(150);
+    out.restart1b = await st();
+    // Safari: one growing result; the session ends (a network blip) while its words are still grey.
+    await emit([['four', false]]);
+    await emit([['four five', false]]);
+    out.restart2Grey = await st();
+    await ev(`window.__error('network'); window.__end(); 0`);
+    out.restart2Wait = await st();
+    await sleep(450);   // an error: the next session waits 250 ms
+    out.restart2 = await st();
+    await emit([['six', true]]);
+    out.restart3Said = await st();
+    // Its own time limit: an end with no error, then nothing more said.
+    await sleep(1100);
+    await ev(`window.__end(); 0`);
+    await sleep(150);
+    out.restart3 = {...await st(), log: await ev('window.__pressLog.slice()')};
+    await click('#mic');
+    await ev(`window.__end(); 0`);
+    await sleep(300);
+    out.restartStopped = {...await st(), log: await ev('window.__pressLog.slice()')};
+
+    // 6c. After a restart, Esc and a send still stop it.
+    await open();
+    await click('#mic');
+    await ev(`window.__end(); 0`);
+    await sleep(400);
+    await emit([['esc words', false]]);
+    await key('Escape');
+    await sleep(300);
+    out.restartEsc = await st();
     await ev('window.__end(); 0');
+    await sleep(200);
+    out.restartEscEnded = await st();
+    await open();
+    await click('#mic');
+    await ev(`window.__end(); 0`);
+    await sleep(400);
+    await emit([['send words', false]]);
+    await click('#send');
+    await until(`window.__posts.some(p => p.path === '/api/room/resume')`, 'the send', 5000).catch(() => {});
+    await sleep(500);
+    out.restartSend = await st();
+    await ev('window.__end(); 0');
+    await sleep(300);
+    out.restartSendEnded = await st();
+
+    // 6d. Sessions that keep failing at once (network): later and later, then it stops with a note.
+    await open();
+    await click('#mic');
+    await sleep(1100);
+    await ev('window.__starts = []; window.__failFast = true; window.__end(); 0');
+    await until(`document.getElementById('mic').getAttribute('aria-pressed') === 'false'`, 'gives up on the network', 10000).catch(() => {});
+    out.failNet = {...await st(), starts: await ev(NET)};
+    await sleep(2500);
+    out.failNetLater = {...await st(), starts: await ev(NET)};
+    await ev('window.__failFast = false; 0');
+    // A start refused every time (the same engine and a new one): it stops with a note, the words kept.
+    await open();
+    await click('#mic');
+    await emit([['kept', true]]);
+    await ev('window.__starts = []; window.__startThrow = true; window.__end(); 0');
+    await until(`document.getElementById('mic').getAttribute('aria-pressed') === 'false'`, 'gives up on starts', 10000).catch(() => {});
+    out.failThrow = {...await st(), starts: await ev(NET)};
+    await sleep(2500);
+    out.failThrowLater = {...await st(), starts: await ev(NET)};
+    await ev('window.__startThrow = false; 0');
+    // Sessions that each hear a word and then fail: the words stay, but it still backs off and stops.
+    await open();
+    await click('#mic');
+    await sleep(1100);
+    await ev('window.__starts = []; window.__failFast = true; window.__failWords = true; window.__end(); 0');
+    await until(`document.getElementById('mic').getAttribute('aria-pressed') === 'false'`, 'gives up with words', 10000).catch(() => {});
+    out.failWords = {...await st(), starts: await ev(NET)};
+    await sleep(2500);
+    out.failWordsLater = {...await st(), starts: await ev(NET)};
+    await ev('window.__failFast = false; window.__failWords = false; 0');
+    // The tab is hidden while it waits for the next session: none starts, listening ends.
+    await open();
+    await click('#mic');
+    await sleep(1100);
+    await ev('window.__starts = []; window.__startThrow = true; window.__end(); 0');
+    await sleep(80);
+    await ev(`(() => { window.__startThrow = false; Object.defineProperty(document, 'hidden', {value: true, configurable: true});
+      document.dispatchEvent(new Event('visibilitychange')); return 0; })()`);
+    out.hiddenWait = {...await st(), starts: await ev(NET)};
+    await sleep(800);
+    out.hiddenAfter = {...await st(), starts: await ev(NET)};
+    await ev(`(() => { delete document.hidden; return 0; })()`);
+    // A press while it waits between two failed sessions stops it at once.
+    await open();
+    await click('#mic');
+    await sleep(1100);
+    await ev('window.__starts = []; window.__failFast = true; window.__end(); 0');
+    await sleep(550);
+    out.failGap = {...await st(), starts: await ev(NET)};
+    await click('#mic');
+    out.failGapStop = await st();
+    await sleep(2500);
+    out.failGapLater = {...await st(), starts: await ev(NET)};
+    await ev('window.__failFast = false; 0');
 
     // 7. A refused microphone: one line in the box, no dialog; typing clears it.
     await open();
@@ -373,9 +490,10 @@ async function main() {
     out.selEsc = await st();
     await ev(SEL);
     await click('#mic');
-    await sleep(8300);
+    await ev(`window.__error('no-speech'); window.__end(); 0`);
+    await sleep(600);
     out.selSilent = await st();
-    await sleep(1700);
+    await click('#mic'); await ev('window.__end(); 0');
     out.selSilentGone = await st();
     await ev(SEL);
     await click('#mic');
@@ -411,7 +529,7 @@ async function main() {
     out.ptInterim = {...await st(), points: await ev(PTS)};
     await emit([['1. buy milk and eggs', true]]);
     out.ptFinal = {...await st(), points: await ev(PTS)};
-    await ev('window.__end(); 0');
+    await click('#mic'); await ev('window.__end(); 0');
     await sleep(200);
     out.ptEnded = {...await st(), points: await ev(PTS)};
     // A key typed over grey "1. buy" replaces it, as over any grey words: no point is made of them.
@@ -727,18 +845,86 @@ class Dictation(unittest.TestCase):
         # The control: not listening, the same Esc does stop the agent.
         self.assertEqual([s['path'] for s in g['escControl']['sends']], ['/api/room/interrupt'])
 
-    def test_6_silence_stops(self):
+    def test_6_silence_never_stops(self):
         g = self.got
-        self.assertEqual(g['silence3']['calls'], ['start'], 'still listening after 3 s')
-        self.assertEqual(g['silence3']['pressed'], 'true')
-        self.assertEqual(g['silence45']['calls'], ['start', 'stop'], 'stopped after 4 s of silence')
-        self.assertEqual(g['silence45']['pressed'], 'false')
+        s = g['silence20']
+        self.assertEqual((s['calls'], s['pressed'], s['live']), (['start'], 'true', True), '20 s of silence: still listening')
+        self.assertEqual((s['value'], s['hint']), ('hold on', ''))
+        self.assertEqual((g['silenceStop']['calls'], g['silenceStop']['pressed']), (['start', 'stop'], 'false'), 'a press stops it')
         self.assertEqual(g['silenceLetGo']['calls'], ['start', 'stop', 'abort'], 'an engine that never ends is let go')
         self.assertEqual(g['silenceLetGo']['value'], 'hold on')
         self.assertEqual((g['silenceLetGo']['start'], g['silenceLetGo']['end']), (7, 7))
         self.assertFalse(g['silenceLetGo']['live'])
-        self.assertEqual(g['first65']['calls'], ['start'], 'before the first words it waits 8 s')
-        self.assertEqual(g['first85']['calls'], ['start', 'stop'])
+
+    def test_6b_an_engine_end_starts_again_with_every_word_once(self):
+        g = self.got
+        r = g['restart1']
+        self.assertEqual((r['value'], r['pressed'], r['live']), ('Note one two three', 'true', True), 'the button stays on at the end')
+        self.assertEqual(r['hint'], '', 'no-speech is not shown')
+        r = g['restart1b']
+        self.assertEqual((r['calls'], r['recs'], r['pressed']), (['start', 'start'], 1, 'true'), 'a new session of the same engine')
+        self.assertEqual(g['restart2Grey']['value'], 'Note one two three four five')
+        self.assertEqual(g['restart2Grey']['sel'], 'four five')
+        w = g['restart2Wait']
+        self.assertEqual((w['calls'], w['pressed']), (['start', 'start'], 'true'), 'an error: it waits, still on')
+        r = g['restart2']
+        self.assertEqual(r['calls'], ['start', 'start', 'start'])
+        self.assertEqual((r['value'], r['sel'], r['hint']), ('Note one two three four five', '', ''), 'grey words at the end are kept as heard')
+        self.assertEqual((r['start'], r['end']), (len('Note one two three four five'),) * 2)
+        self.assertEqual(g['restart3Said']['value'], 'Note one two three four five six', 'every word once')
+        r = g['restart3']
+        self.assertEqual((r['calls'], r['pressed'], r['value']), (['start'] * 4, 'true', 'Note one two three four five six'))
+        self.assertNotIn('false', r['log'], 'no flicker: the button never went off')
+        r = g['restartStopped']
+        self.assertEqual((r['calls'], r['pressed'], r['live']), (['start'] * 4 + ['stop'], 'false', False), 'a press stops it, no new session')
+        self.assertEqual((r['value'], r['hint'], r['sends']), ('Note one two three four five six', '', []))
+        self.assertEqual(r['log'][-1], 'false')
+
+    def test_6c_esc_and_send_stop_it_after_a_restart(self):
+        g = self.got
+        e = g['restartEsc']
+        self.assertEqual((e['calls'], e['pressed'], e['sends']), (['start', 'start', 'stop'], 'false', []))
+        e = g['restartEscEnded']
+        self.assertEqual((e['calls'], e['pressed'], e['value']), (['start', 'start', 'stop'], 'false', 'esc words'))
+        s = g['restartSend']
+        self.assertEqual((s['calls'], s['pressed']), (['start', 'start', 'abort'], 'false'))
+        self.assertEqual(s['sends'], [{'path': '/api/room/resume', 'text': 'send words'}])
+        s = g['restartSendEnded']
+        self.assertEqual((s['calls'], s['pressed'], s['value']), (['start', 'start', 'abort'], 'false', ''), 'no new session after the send')
+
+    def test_6d_sessions_that_keep_failing_stop_with_a_note(self):
+        g = self.got
+        f = g['failNet']
+        self.assertEqual((f['pressed'], f['live']), ('false', False))
+        self.assertEqual(f['hint'], 'Dictation needs the network: the browser’s speech service did not answer.')
+        self.assertEqual(len(f['starts']), 5, 'the first new session at once, then four that each failed: the fifth failure stops it')
+        gaps = [b - a for a, b in zip(f['starts'], f['starts'][1:])]
+        self.assertGreaterEqual(gaps[0], 200, gaps)
+        self.assertTrue(all(b > a for a, b in zip(gaps, gaps[1:])), f'each wait is longer: {gaps}')
+        self.assertLess(f['starts'][-1] - f['starts'][0], 10000)
+        self.assertEqual(g['failNetLater']['starts'], f['starts'], 'and it does not try again')
+        t = g['failThrow']
+        self.assertEqual((t['pressed'], t['live'], t['value']), ('false', False, 'kept'))
+        self.assertEqual(t['hint'], 'Dictation stopped: the browser’s speech service kept failing.')
+        self.assertLessEqual(len(t['starts']), 10, 'five tries, each the same engine then a new one')
+        self.assertEqual(len(g['failThrowLater']['starts']), len(t['starts']))
+        w = g['failWords']
+        self.assertEqual((w['pressed'], w['live']), ('false', False), 'words in each session do not make it spin')
+        self.assertEqual(w['hint'], 'Dictation needs the network: the browser’s speech service did not answer.')
+        self.assertEqual(len(w['starts']), 5)
+        wgaps = [b - a for a, b in zip(w['starts'], w['starts'][1:])]
+        self.assertTrue(wgaps[0] >= 200 and all(b > a for a, b in zip(wgaps, wgaps[1:])), wgaps)
+        self.assertEqual(w['value'], 'w w w w w', 'one word per session, each kept once')
+        self.assertEqual(g['failWordsLater']['starts'], w['starts'])
+        h = g['hiddenWait']
+        self.assertEqual((h['pressed'], len(h['starts'])), ('true', 2), 'it waits: the same engine and a new one refused')
+        h = g['hiddenAfter']
+        self.assertEqual(len(h['starts']), 2, 'no session starts in a hidden tab')
+        self.assertEqual((h['pressed'], h['live'], h['hint']), ('false', False, ''))
+        self.assertEqual(g['failGap']['pressed'], 'true', 'still on while it waits')
+        self.assertEqual((g['failGapStop']['pressed'], g['failGapStop']['live']), ('false', False), 'a press in the wait stops it')
+        self.assertEqual(g['failGapLater']['starts'], g['failGap']['starts'], 'no session after it')
+        self.assertEqual(g['failGapLater']['hint'], '')
 
     def test_7_permission_denied_is_one_line(self):
         g = self.got
@@ -858,9 +1044,11 @@ class Dictation(unittest.TestCase):
         self.assertEqual((g['selDenied']['start'], g['selDenied']['end']), (6, 9), 'still selected')
         self.assertEqual(g['selEsc']['calls'], ['start', 'stop'])
         self.assertEqual((g['selEsc']['start'], g['selEsc']['end']), (6, 9))
-        self.assertEqual(g['selSilent']['calls'], ['start', 'stop'], '8 s with no words')
-        self.assertEqual(g['selSilentGone']['calls'], ['start', 'stop', 'abort'])
+        self.assertEqual((g['selSilent']['calls'], g['selSilent']['pressed']), (['start', 'start'], 'true'), 'a silent session ended: another one')
+        self.assertEqual((g['selSilent']['start'], g['selSilent']['end'], g['selSilent']['hint']), (6, 9, ''), 'still selected')
+        self.assertEqual(g['selSilentGone']['calls'], ['start', 'start', 'stop'])
         self.assertEqual(g['selSilentGone']['pressed'], 'false')
+        self.assertEqual((g['selSilentGone']['start'], g['selSilentGone']['end']), (6, 9))
         f = g['selFirst']
         self.assertEqual(f['value'], 'Hello small world', 'the first words replace the selection')
         self.assertEqual(f['sel'], 'small')
@@ -946,7 +1134,8 @@ class Dictation(unittest.TestCase):
         self.assertEqual((on['w'], on['h'], on['x']), (idle['w'], idle['h'], idle['x']), 'the button keeps its size and place')
         self.assertEqual((on['input'], on['send']), (idle['input'], idle['send']), 'the box does not move')
         self.assertEqual((on['text'], on['kids']), ('', 1), 'just the mic: no Listening pill')
-        self.assertEqual((on['label'], on['title']), ('Listening, press to stop', 'Listening, press to stop'))
+        self.assertEqual((on['label'], on['title']), ('Listening: press again or Esc to stop',) * 2)
+        self.assertNotIn('silence', (on['title'] + idle['title']).lower())
         self.assertEqual(idle['label'], 'Dictate')
         self.assertEqual(on['color'], on['accent'], 'the mic is in the accent')
         self.assertNotEqual(idle['color'], idle['accent'])
