@@ -10945,8 +10945,10 @@ const MIC_HARD = {
   'audio-capture': 'No microphone found.',
   'language-not-supported': 'Dictation does not support this browser’s language.',
 };
-// A session that ends within MIC_FAIL_MS with no words, or cannot start, failed:
-// the next one waits longer, and MIC_FAIL_MAX of them in MIC_FAIL_SPAN_MS stop it.
+// A session that ends within MIC_FAIL_MS or with an error (other than no-speech:
+// a silence), or cannot start, failed: the next one waits longer, and
+// MIC_FAIL_MAX of them in MIC_FAIL_SPAN_MS stop it. So a new session follows at
+// once only one that lasted, and restarts never spin.
 const MIC_FAIL_MS = 1000, MIC_FAIL_SPAN_MS = 10000, MIC_FAIL_MAX = 5;
 // Why dictation cannot work on this page, or '' when it can.
 function micUnavailable() {
@@ -11025,14 +11027,13 @@ function micHandlers(m, rec) {
     // Each session's results start empty: the words of the sessions before it
     // (m.prior) come first, so nothing heard is lost or written twice.
     const w = micWords(e.results);
-    if (w.heard || w.hearing) m.got = true;
     m.last = w;
     micWrite(micJoin(m.prior, w.heard), w.hearing);
   };
   rec.onerror = e => {
     if (!ours()) return;
     const err = (e && e.error) || '';
-    m.err = err;
+    m.err = m.endErr = err;
     // no-speech, network, aborted: the session ends and another one begins.
     if (MIC_HARD[err]) { m.hard = true; if (!document.hidden) micNote(MIC_HARD[err]); }
   };
@@ -11040,13 +11041,13 @@ function micHandlers(m, rec) {
     if (!ours()) return;
     m.live = false;
     if (m.stopping || m.hard || document.hidden) { micDone(); return; }
-    micAgain(m, !m.got && Date.now() - m.began < MIC_FAIL_MS);
+    micAgain(m, (m.endErr && m.endErr !== 'no-speech') || Date.now() - m.began < MIC_FAIL_MS);
   };
 }
 // Start m's session: the same engine object again, or a new one if it refuses.
 function micListen(m) {
   if (MIC !== m || m.stopping) return;
-  m.got = false;
+  m.endErr = '';
   m.last = { heard: '', hearing: '' };
   try { m.rec.start(); }
   catch (e) {
@@ -11059,7 +11060,7 @@ function micListen(m) {
 }
 // The engine ended without being stopped (a silence, its own time limit, a
 // network blip): the words so far are kept, and a new session begins after them
-// at once, the button still on. Failed sessions wait 250 ms, 500 ms, 1 s, 2 s;
+// at once, the button still on. After failed sessions it waits 250 ms, 500 ms, 1 s, 2 s;
 // the fifth in 10 s stops listening with a note.
 function micAgain(m, failed) {
   if (MIC !== m || m.stopping) return;
@@ -11078,7 +11079,9 @@ function micAgain(m, failed) {
     return;
   }
   clearTimeout(m.retry);
-  m.retry = setTimeout(() => micListen(m), failed ? Math.min(2000, 125 << m.fails.length) : 0);
+  // A tab hidden during the wait is not listened in: it ends there.
+  m.retry = setTimeout(() => { if (MIC === m && document.hidden) micDone(); else micListen(m); },
+    failed ? Math.min(2000, 125 << m.fails.length) : 0);
 }
 function micStart() {
   if (MIC) return;
@@ -11093,7 +11096,7 @@ function micStart() {
   const start = input.selectionStart ?? input.value.length;
   const end = input.selectionEnd ?? start;
   const m = { rec: null, start, text: input.value.slice(start, end), wrote: false, sel: [start, end], stopping: false,
-    timer: 0, retry: 0, live: false, began: 0, got: false, prior: '', last: { heard: '', hearing: '' }, fails: [], err: '', hard: false };
+    timer: 0, retry: 0, live: false, began: 0, prior: '', last: { heard: '', hearing: '' }, fails: [], err: '', hard: false };
   try { m.rec = micEngine(m); } catch (e) { micNote('Dictation is not available in this browser.'); return; }
   MIC = m;
   try { micListen(m); } catch (e) { MIC = null; micNote('Dictation could not start.'); micButton(); return; }
