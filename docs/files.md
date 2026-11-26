@@ -16,6 +16,10 @@ The file viewer opens project files from the Files panel or a file link in a mes
 
 ![The file changed notice in the viewer](images/file-changed-notice.png)
 
+## Zoom a file on its own
+
+Use **−** and **+** in the file's bar to make the file bigger or smaller without zooming the rest of Ensemble; click the percentage to go back to 100%. Ctrl (⌘ on a Mac) with the mouse wheel over the file, or Ctrl/⌘ with **+**, **−** and **0**, do the same, and on a touch screen two fingers on the file zoom it. A diff in **Changes** has the same control in its bar. The level is remembered on this device for each kind of file: pages, Markdown, code and text, pictures and diffs. A PDF uses the browser's own viewer and its zoom.
+
 ## Where the agents' work is kept
 
 Every project has a home folder in the hub's projects folder, `~/EnsembleProjects/<project>/` by default (you can choose another projects folder in the setup wizard or Settings, before the first project is created). Agents write their documents there rather than leaving them in a chat:

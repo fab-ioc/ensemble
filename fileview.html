@@ -591,6 +591,17 @@
   .seg .btn + .btn { margin-left:-1px; }
   .seg .btn:first-child { border-top-right-radius:0; border-bottom-right-radius:0; }
   .seg .btn:last-child { border-top-left-radius:0; border-bottom-left-radius:0; }
+  /* Panel zoom (#423): − 100% + zooms the file alone; the % is pressed while
+     the file is not at 100%, and a click on it puts it back. */
+  header .pz .btn { justify-content:center; padding:0 var(--s-200); font-variant-numeric:tabular-nums; }
+  header .pz [data-pz="reset"] { min-width:48px; }
+  header .pz .btn:disabled { color:var(--fg-disabled); cursor:default; background:var(--surface); }
+  /* A zoomed picture is wider than the pane: the pane scrolls it sideways. */
+  /* main keeps its width, so the picture's 100% fit stays the basis of every level. */
+  body.fv-zimg main { overflow-x:auto; }
+  /* main takes the focus on a click in the file, for Ctrl/⌘ + = − 0. */
+  main:focus { outline:none; }
+  body.fv-zimg img.file { max-width:none; }
   main { max-width:1040px; margin:0 auto; padding:var(--s-600) var(--s-400) 60px; }
   .err { color:var(--c-danger-fg); padding:var(--s-400); }
   /* What the viewer could not do, said out loud rather than silently. */
@@ -801,6 +812,18 @@
     /* Centred, the comment box sat under the keyboard it opens. */
     .cmt-composer { top: var(--s-300); transform: translateX(-50%); }
   }
+  /* Panel zoom on a touch screen (#423): two fingers on the file zoom the file
+     alone (PanelZoom.pinch), so the page's own pinch is off there; one finger
+     still scrolls both ways. A phone's narrow header keeps the name, the zoom
+     and ⋯: Reload, Point, Comment and Raw are rows of the ⋯ menu. */
+  @media (pointer: coarse) {
+    main, .code, .csv-wrap { touch-action: pan-x pan-y; }
+  }
+  @media (pointer: coarse) and (max-width: 520px) {
+    header #fv-reload, header #cmt-pick, header #cmt-file, header #raw, header #views, header #wrap { display: none; }
+    header #back .lbl { display: none; }
+    .out-pop .out-sep { height: 1px; margin: var(--s-100) 0; background: var(--border); }
+  }
   /* The line that says the file shown changed on disk (see "This file changed"
      in the script): it hangs under the header, as wide as the page, so it
      stays with the header when the page or the code scrolls; main makes room
@@ -838,24 +861,25 @@
 </head>
 <body>
 <header>
-  <a class="btn" id="back" hidden>‹&nbsp;Back</a>
+  <a class="btn" id="back" hidden>‹<span class="lbl">&nbsp;Back</span></a>
   <span class="name" id="name">file</span>
   <span class="meta" id="meta"></span>
   <span class="grow"></span>
   <span class="seg" id="views" hidden></span>
   <button class="btn" id="wrap" hidden aria-pressed="true" title="Wrap long lines to the width of the view">Wrap</button>
-  <button class="btn" id="fv-reload" type="button" title="Reload this file · keeps your place and your comments" aria-label="Reload this file"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9"/><path d="M12.5 1.8v2.7H9.8"/></svg></button>
+  <button class="btn" id="fv-reload" type="button" data-menu="Reload this file" title="Reload this file · keeps your place and your comments" aria-label="Reload this file"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9"/><path d="M12.5 1.8v2.7H9.8"/></svg></button>
   <button class="btn" id="cmt-pick" type="button" hidden aria-pressed="false" title="Comment on an element: point at a part of the page and click it (Esc leaves)"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l4 10 1.5-4L12.5 7.5z"/><path d="M9 9l4 4"/></svg><span class="lbl">&nbsp;Point</span></button>
   <button class="btn" id="cmt-file" title="Comment on this file as a whole">💬<span class="lbl">&nbsp;Comment</span></button>
-  <a class="btn" id="raw" target="_blank">Raw</a>
+  <a class="btn" id="raw" target="_blank" data-menu="Raw file">Raw</a>
   <a class="btn out" id="out-download" hidden title="Download the file, with its name, to send it to someone"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v8M4.5 6.5 8 10l3.5-3.5M2.5 13.5h11"/></svg><span class="lbl">&nbsp;Download</span></a>
   <button class="btn out" id="out-copy" type="button" hidden title="Copy the file’s content, to paste it into a mail or a chat"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><rect x="5" y="5" width="8.5" height="9" rx="1.5"/><path d="M3 11V3.5A1.5 1.5 0 0 1 4.5 2H10"/></svg><span class="lbl">&nbsp;Copy</span></button>
   <button class="btn out" id="out-share" type="button" hidden title="Share the file with another app"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 10V2M5 4.5 8 1.5l3 3M4.5 7H3.5v7h9V7h-1"/></svg><span class="lbl">&nbsp;Share…</span></button>
   <button class="btn" id="out-menu" type="button" hidden aria-haspopup="menu" aria-expanded="false" aria-label="Download, copy or share" title="Download, copy or share the file"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v8M4.5 6.5 8 10l3.5-3.5M2.5 13.5h11"/></svg>&nbsp;▾</button>
   <div id="fv-chg" role="status" hidden>This file changed · <button type="button">Reload</button></div>
 </header>
-<main id="main"><div class="err">Loading…</div></main>
+<main id="main" tabindex="-1"><div class="err">Loading…</div></main>
 <script src="/static/hl.js"></script>
+<script src="/static/panelzoom.js"></script>
 <script src="/static/selbar.js"></script>
 <script src="/static/comments.js"></script>
 <script src="/static/taskcard.js"></script>
@@ -2537,14 +2561,32 @@ function outMenuOpen() {
   if (document.querySelector('.out-pop')) { outMenuClose(true); return; }
   const pop = document.createElement('div');
   pop.className = 'out-pop'; pop.setAttribute('role', 'menu');
-  document.querySelectorAll('header .out').forEach(b => {
-    if (b.hidden) return;
-    const row = document.createElement('button');
-    row.type = 'button'; row.setAttribute('role', 'menuitem'); row.dataset.out = b.id;
-    row.innerHTML = b.querySelector('svg').outerHTML + esc(b.querySelector('.lbl').textContent.trim());
-    row.onclick = () => { outMenuClose(true); b.click(); };
-    if (b.id === 'out-share') { row.onpointerenter = row.onfocus = () => b.onfocus && b.onfocus(); }
-    pop.appendChild(row);
+  // On a phone the header keeps back, the name, the zoom and this menu (#423):
+  // the views (Preview, Source …) and Wrap come first here, the one showing
+  // checked, then Reload, Point, Comment and Raw, then Download, Copy, Share.
+  const phone = matchMedia('(pointer: coarse) and (max-width: 520px)').matches;
+  const views = document.getElementById('views'), wrap = document.getElementById('wrap');
+  const shown = b => b && !b.hidden && b.style.display !== 'none';
+  const groups = !phone ? [[...document.querySelectorAll('header .out')]] : [
+    [...(views.hidden ? [] : views.querySelectorAll('button')), wrap],
+    ['fv-reload', 'cmt-pick', 'cmt-file', 'raw'].map(id => document.getElementById(id)),
+    [...document.querySelectorAll('header .out')]];
+  groups.map(g => g.filter(shown)).filter(g => g.length).forEach((g, gi) => {
+    if (gi) { const sep = document.createElement('div'); sep.className = 'out-sep'; sep.setAttribute('role', 'separator'); pop.appendChild(sep); }
+    g.forEach(b => {
+      const row = document.createElement('button');
+      row.type = 'button'; row.dataset.out = b.id || ('view-' + b.dataset.view);
+      const toggle = b.hasAttribute('aria-pressed'), on = b.getAttribute('aria-pressed') === 'true';
+      row.setAttribute('role', toggle ? (b.dataset.view ? 'menuitemradio' : 'menuitemcheckbox') : 'menuitem');
+      if (toggle) row.setAttribute('aria-checked', String(on));
+      const icon = toggle ? `<span aria-hidden="true" style="width:14px">${on ? '✓' : ''}</span>`
+        : b.querySelector('svg') ? b.querySelector('svg').outerHTML : b.id === 'cmt-file' ? '<span aria-hidden="true">💬</span>' : '<span aria-hidden="true" style="width:14px"></span>';
+      const label = b.id === 'wrap' ? 'Wrap long lines' : b.dataset.menu || (b.querySelector('.lbl') ? b.querySelector('.lbl').textContent : b.textContent);
+      row.innerHTML = icon + esc(label.trim());
+      row.onclick = () => { outMenuClose(true); b.click(); };
+      if (b.id === 'out-share') { row.onpointerenter = row.onfocus = () => b.onfocus && b.onfocus(); }
+      pop.appendChild(row);
+    });
   });
   document.body.appendChild(pop);
   const r = btn.getBoundingClientRect();
@@ -2768,6 +2810,151 @@ function fvOnKey(ev) {
   host.postMessage({ type: 'fv-key', key: 'recent' }, location.origin);
 }
 document.addEventListener('keydown', fvOnKey, true);
+// ---- Panel zoom (#423, GitHub issue 69) -----------------------------------
+// The file zooms on its own: − 100% + in the header (before Reload), Ctrl/⌘ +
+// wheel over the file, Ctrl/⌘ + = − 0 with the focus in the file (a click in
+// it focuses main), two fingers on a touch screen. Over the header, a field
+// or the comment layer the browser keeps its own zoom. The level is kept per kind of file, on this
+// device (PanelZoom, static/panelzoom.js): a page (HTML rendered), Markdown,
+// code (source, formatted, CSV and text) and a picture. A PDF has the
+// browser's own viewer and zoom: no control. What zooms:
+//   code  the .code box itself (its rows, gutter included); a CSV its table
+//   md    the .md text, which rewraps to the pane
+//   page  the rendered page's body, so the comment layer (on its root) keeps
+//         its size and draws pins from the page's own rects
+//   img   the picture's width, fitted × the level; the pane scrolls sideways
+// Applied again after every paint (Reload, a view switch, fvChg) and when a
+// rendered page or a picture has loaded.
+const FVZ = { kind: '', pct: 100, seg: null, raf: 0 };
+function fvzTarget() {
+  const main = document.getElementById('main');
+  if (FVZ.kind === 'code') {
+    const b = main.querySelector('.code');
+    if (b) return { el: b, scroller: b, doc: document, self: true };
+    const t = main.querySelector('table.csv');
+    return t ? { el: t, scroller: main.querySelector('.csv-wrap'), doc: document } : null;
+  }
+  if (FVZ.kind === 'md') { const d = main.querySelector('.md'); return d ? { el: d, scroller: document.scrollingElement, doc: document } : null; }
+  if (FVZ.kind === 'page') {
+    const f = main.querySelector('iframe.file'); let d = null;
+    try { d = f && f.contentDocument; } catch (e) {}
+    return d && d.body ? { el: d.body, scroller: d.scrollingElement, doc: d, frame: f } : null;
+  }
+  if (FVZ.kind === 'img') { const i = main.querySelector('img.file'); return i ? { el: i, scroller: document.scrollingElement, xs: main, doc: document, img: true } : null; }
+  return null;
+}
+// The level on the element, without moving the scroll.
+function fvzPut(t, pct) {
+  const z = pct / 100;
+  if (t.img) {
+    const main = document.getElementById('main'), i = t.el;
+    document.body.classList.toggle('fv-zimg', pct !== 100);
+    if (pct === 100 || !i.naturalWidth) { i.style.width = ''; return; }
+    const cs = getComputedStyle(main);
+    // The picture as fitted at 100% (its border outside it, box-sizing being
+    // border-box), times the level.
+    const ic = getComputedStyle(i), edge = parseFloat(ic.borderLeftWidth) + parseFloat(ic.borderRightWidth) + parseFloat(ic.paddingLeft) + parseFloat(ic.paddingRight);
+    const room = main.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight) - edge;
+    i.style.width = Math.round(Math.min(i.naturalWidth, Math.max(1, room)) * z + edge) + 'px';
+    return;
+  }
+  t.el.style.zoom = pct === 100 ? '' : String(z);
+}
+// Where the view's place is kept when no pointer says: the middle of the
+// first lines showing.
+function fvzAnchor(t) {
+  if (t.frame) return { x: t.doc.defaultView.innerWidth / 2, y: 16 };
+  if (t.self || t.scroller !== document.scrollingElement) {
+    const r = t.scroller.getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + 16 };
+  }
+  const h = document.querySelector('header').getBoundingClientRect();
+  return { x: innerWidth / 2, y: h.bottom + 24 };
+}
+// Set the level: drawn on the file (keeping what is under `at`, else the
+// first lines showing, in place), shown on the control, and kept unless `live`
+// (a pinch still under way).
+function fvzSet(pct, at, live) {
+  pct = Math.max(PanelZoom.MIN, Math.min(PanelZoom.MAX, pct));
+  const t = fvzTarget();
+  FVZ.pct = pct;
+  PanelZoom.show(FVZ.seg, pct);
+  if (!live && FVZ.kind) PanelZoom.set(FVZ.kind, Math.round(pct));
+  if (!t) return;
+  const unit = () => (t.self ? (t.el.currentCSSZoom || pct / 100) : 1);
+  PanelZoom.keep(t.doc, t.scroller, (at || fvzAnchor(t)).x, (at || fvzAnchor(t)).y, () => fvzPut(t, pct), unit, t.xs);
+  if (t.frame) { try { FC.render(); } catch (e) {} }
+}
+function fvzAct(what, at) {
+  if (!FVZ.kind) return;
+  fvzSet(what === 'reset' ? 100 : PanelZoom.step(FVZ.pct, what === 'in' ? 1 : -1), at);
+}
+// A new view of the file: its kind's level, drawn without moving anything.
+// '' (a PDF, a folder, a missing or binary file) hides the control.
+function fvzKind(kind) {
+  FVZ.kind = kind || '';
+  if (FVZ.seg) FVZ.seg.hidden = !FVZ.kind;
+  if (!FVZ.kind) { document.body.classList.remove('fv-zimg'); return; }
+  FVZ.pct = PanelZoom.get(FVZ.kind);
+  PanelZoom.show(FVZ.seg, FVZ.pct);
+  const t = fvzTarget();
+  if (t) fvzPut(t, FVZ.pct);
+}
+// Whether an event is on the file itself: inside main (here) or anywhere in
+// a rendered page, not in a field, the comment tray or composer, a menu, or
+// the page's comment layer.
+function fvzOn(ev, frame) {
+  const t = ev.target;
+  if (!t || !t.closest || PanelZoom.editing(t)) return false;
+  if (frame) return !t.closest('ens-comments');
+  return !!t.closest('#main') && !t.closest('#cmt-tray, .cmt-composer, .out-pop');
+}
+// The wheel, the keys and a pinch, on this page and on a rendered page's own
+// document (its events do not reach this one).
+function fvzWire(doc, frame) {
+  PanelZoom.wheel(doc, (dir, ev) => {
+    if (!FVZ.kind) return;
+    fvzAct(dir > 0 ? 'in' : 'out', { x: ev.clientX, y: ev.clientY });
+  }, ev => !!FVZ.kind && fvzOn(ev, frame));
+  doc.addEventListener('keydown', ev => {
+    const what = FVZ.kind && PanelZoom.keyOf(ev);
+    if (!what || !fvzOn(ev, frame)) return;
+    ev.preventDefault();
+    fvzAct(what);
+  }, true);
+  PanelZoom.pinch(frame ? doc : document.getElementById('main'), {
+    ok: ev => fvzOn(ev, frame),
+    base: () => FVZ.pct,
+    live: (p, x, y) => {
+      if (!FVZ.kind) return;
+      cancelAnimationFrame(FVZ.raf);
+      FVZ.raf = requestAnimationFrame(() => fvzSet(p, { x, y }, true));
+    },
+    done: (p, x, y) => { cancelAnimationFrame(FVZ.raf); if (FVZ.kind) fvzSet(p, { x, y }); },
+  });
+  // The page's body only: its comment layer (on the root) keeps the browser's pinch.
+  if (frame && matchMedia('(pointer: coarse)').matches) { try { doc.body.style.touchAction = 'pan-x pan-y'; } catch (e) {} }
+}
+(function fvzMount() {
+  document.getElementById('fv-reload').insertAdjacentHTML('beforebegin', PanelZoom.html({ cls: 'btn', hidden: true }));
+  FVZ.seg = document.querySelector('header .pz');
+  FVZ.seg.id = 'fv-zoom';
+  PanelZoom.wire(FVZ.seg, what => fvzAct(what));
+  fvzWire(document, null);
+  // On a phone the menu also holds Reload, Point, Comment and Raw: it reads ⋯ (More).
+  const mb = document.getElementById('out-menu'), own = [mb.innerHTML, mb.getAttribute('aria-label'), mb.title];
+  const phone = matchMedia('(pointer: coarse) and (max-width: 520px)');
+  const label = () => {
+    const on = phone.matches;
+    mb.innerHTML = on ? '<span aria-hidden="true">⋯</span>' : own[0];
+    mb.setAttribute('aria-label', on ? 'More' : own[1]);
+    mb.title = on ? 'More: reload, comment, raw file, download, copy, share' : own[2];
+  };
+  label();
+  if (phone.addEventListener) phone.addEventListener('change', label);
+  // A fitted picture follows the pane's width.
+  addEventListener('resize', () => { if (FVZ.kind === 'img' && FVZ.pct !== 100) { const t = fvzTarget(); if (t) fvzPut(t, FVZ.pct); } });
+})();
 // A path that names nothing on the hub (a file a task has not written yet, or
 // one moved or renamed since the link was written): one panel that says so,
 // and the files it may have become — the same name (moved) or a close name
@@ -3208,13 +3395,13 @@ document.getElementById('fv-chg').addEventListener('click', () => fvChg.reload()
       if (!r2 || !r2.ok || !el) return false;
       const fresh = URL.createObjectURL(new Blob([await r2.arrayBuffer()], { type: MEDIA[ext] }));
       const old = el.src, s = fvScrollOwner(main), top = s ? s.scrollTop : 0;
-      el.addEventListener('load', () => { URL.revokeObjectURL(old); if (s) s.scrollTop = top; }, { once: true });
+      el.addEventListener('load', () => { URL.revokeObjectURL(old); if (ext !== 'pdf') fvzKind('img'); if (s) s.scrollTop = top; }, { once: true });
       el.src = fresh;
       return true;
     };
-    if (ext === 'pdf') { main.innerHTML = `<iframe class="file" src="${url}" title="${esc(base)}"></iframe>`; return; }
+    if (ext === 'pdf') { fvzKind(''); main.innerHTML = `<iframe class="file" src="${url}" title="${esc(base)}"></iframe>`; return; }
     main.innerHTML = `<img class="file" src="${url}" alt="${esc(base)}">`;
-    main.querySelector('img').addEventListener('load', () => { putBack(); reporting = true; report(); }, { once: true });
+    main.querySelector('img').addEventListener('load', () => { fvzKind('img'); putBack(); reporting = true; report(); }, { once: true });
     return;
   }
 
@@ -3294,7 +3481,9 @@ document.getElementById('fv-chg').addEventListener('click', () => fvChg.reload()
       if (!row) return;
       const sel = window.getSelection();
       if (sel && !sel.isCollapsed) return;
-      if (ev.clientX - box.getBoundingClientRect().left > parseFloat(getComputedStyle(row).paddingLeft)) return;
+      // The padding is in the box's own units, the pointer in the page's: zoomed (#423), they differ.
+      const z = box.currentCSSZoom || (FVZ.kind === 'code' ? FVZ.pct / 100 : 1);
+      if (ev.clientX - box.getBoundingClientRect().left > parseFloat(getComputedStyle(row).paddingLeft) * z) return;
       markRow(box, +row.dataset.n, false);
       marked[view] = +row.dataset.n;
       if (view === 'source' && !hitNow()) markHit(box, null);
@@ -3356,6 +3545,7 @@ document.getElementById('fv-chg').addEventListener('click', () => fvChg.reload()
       mountSel(); SEL.watch(ifr);
       FC.attach(ifr, text); FC.render(); renderTray();
       try { ifr.contentDocument.addEventListener('scroll', onScroll, true); ifr.contentDocument.addEventListener('keydown', fvOnKey, true); } catch (e) {}
+      try { fvzWire(ifr.contentDocument, ifr); fvzKind('page'); FC.render(); } catch (e) {}
       putBack();
       report();
     });
@@ -3404,6 +3594,8 @@ document.getElementById('fv-chg').addEventListener('click', () => fvChg.reload()
     else if (view === 'table') renderTable();
     else if (isMd) { renderMd(); setMeta('Markdown · ' + linesOf(countLines(text))); }
     else { renderPage(); setMeta('HTML · ' + linesOf(countLines(text))); }
+    // The view's own zoom level (a rendered page's again once it has loaded).
+    fvzKind(view === 'source' || view === 'pretty' || view === 'table' ? 'code' : isMd ? 'md' : 'page');
     report();
   }
   function viewButtons() {

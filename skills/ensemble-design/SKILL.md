@@ -903,6 +903,38 @@ A changed file in a Changes tab (the task's and the project's) reads as in an ID
   in chunks of 500 both ways: the largest merge of the week (5,784 lines) paints in under 100 ms in
   either mode.
 
+### Panel zoom (#423)
+
+A file or a diff zooms on its own, while the chat, the bars and the browser keep their size. One
+implementation, `static/panelzoom.js` (`PanelZoom`), used by the file view (`fvz*` in `fileview.html`)
+and the diff (`drZoom*` in `index.html`).
+
+- **The control:** − 100% + in a `.seg` (`PanelZoom.html()`): in the file view's header right before
+  Reload (`#fv-zoom`), in the diff's bar right before Unified | Side by side. The % is pressed
+  (`aria-pressed`, `--selected-bg`) while the level is not 100%, and a click on it goes back to 100%;
+  − and + are `--fg-disabled` at the ends. Hidden where the browser has its own zoom (a PDF) and where
+  nothing is shown (a folder, a missing or binary file).
+- **The steps are the browser's:** 50 67 75 80 90 100 110 125 150 175 200 250 300.
+- **Also:** Ctrl/⌘ + wheel over the content (a trackpad pinch arrives as that too), Ctrl/⌘ + = − 0 with
+  the focus in it (a click in the file focuses `main`, a click in a diff its box, kept through a redraw), two fingers on a
+  touch screen (the content has `touch-action: pan-x pan-y`, the move is stopped there, the level
+  follows the fingers and snaps to the nearest step). On the bars, in a field (`PanelZoom.editing`), a
+  comment being written, the comment tray or layer and a menu, the browser's own zoom is untouched.
+- **What zooms:** code, text and formatted JSON the `.code` box (gutter included); a CSV its table;
+  Markdown the `.md` text, which rewraps; a rendered page its frame's `body` (not its root, which holds
+  the comment layer); a picture its width, its 100% fit × the level, the pane (which keeps its width) scrolling it sideways; a diff
+  its `.drv` (the bar and the comment tray stay at 100%).
+- **What it keeps:** the element under the pointer (or the first lines showing, for a button or a key)
+  stays where it is (`PanelZoom.keep`). The level is kept per kind on this device (`localStorage`
+  `cd-zoom`: `page`, `md`, `code`, `img`, `diff`; 100% is no key), so every Markdown file opens at the
+  Markdown level, and it survives a Reload, a view switch and a mode switch.
+- **Code that maps a pointer to the content** multiplies the content's own lengths by
+  `currentCSSZoom` (the code gutter's click does).
+- **Phone (touch, ≤ 520px):** the file view's header keeps Back (shown as ‹ alone), the name, the zoom
+  (44px buttons) and ⋯ (`#out-menu`, aria-label More). ⋯ holds the rest in groups split by `.out-sep`:
+  the views (`menuitemradio`, ✓ on the one showing) and Wrap long lines (`menuitemcheckbox`); then
+  Reload, Point (`menuitemcheckbox`), Comment and Raw; then Download, Copy and Share.
+
 ### Line comments
 
 Comments on a diff's lines reach the task's owner. They are the chat's review comments, not a second
