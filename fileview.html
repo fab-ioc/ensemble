@@ -597,7 +597,10 @@
   header .pz [data-pz="reset"] { min-width:48px; }
   header .pz .btn:disabled { color:var(--fg-disabled); cursor:default; background:var(--surface); }
   /* A zoomed picture is wider than the pane: the pane scrolls it sideways. */
-  body.fv-zimg main { max-width:none; overflow-x:auto; }
+  /* main keeps its width, so the picture's 100% fit stays the basis of every level. */
+  body.fv-zimg main { overflow-x:auto; }
+  /* main takes the focus on a click in the file, for Ctrl/⌘ + = − 0. */
+  main:focus { outline:none; }
   body.fv-zimg img.file { max-width:none; }
   main { max-width:1040px; margin:0 auto; padding:var(--s-600) var(--s-400) 60px; }
   .err { color:var(--c-danger-fg); padding:var(--s-400); }
@@ -874,7 +877,7 @@
   <button class="btn" id="out-menu" type="button" hidden aria-haspopup="menu" aria-expanded="false" aria-label="Download, copy or share" title="Download, copy or share the file"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v8M4.5 6.5 8 10l3.5-3.5M2.5 13.5h11"/></svg>&nbsp;▾</button>
   <div id="fv-chg" role="status" hidden>This file changed · <button type="button">Reload</button></div>
 </header>
-<main id="main"><div class="err">Loading…</div></main>
+<main id="main" tabindex="-1"><div class="err">Loading…</div></main>
 <script src="/static/hl.js"></script>
 <script src="/static/panelzoom.js"></script>
 <script src="/static/selbar.js"></script>
@@ -2809,8 +2812,9 @@ function fvOnKey(ev) {
 document.addEventListener('keydown', fvOnKey, true);
 // ---- Panel zoom (#423, GitHub issue 69) -----------------------------------
 // The file zooms on its own: − 100% + in the header (before Reload), Ctrl/⌘ +
-// wheel anywhere on this view, Ctrl/⌘ + = − 0 with the focus in it, two
-// fingers on a touch screen. The level is kept per kind of file, on this
+// wheel over the file, Ctrl/⌘ + = − 0 with the focus in the file (a click in
+// it focuses main), two fingers on a touch screen. Over the header, a field
+// or the comment layer the browser keeps its own zoom. The level is kept per kind of file, on this
 // device (PanelZoom, static/panelzoom.js): a page (HTML rendered), Markdown,
 // code (source, formatted, CSV and text) and a picture. A PDF has the
 // browser's own viewer and zoom: no control. What zooms:
@@ -2896,25 +2900,30 @@ function fvzKind(kind) {
   const t = fvzTarget();
   if (t) fvzPut(t, FVZ.pct);
 }
-function fvzKey(ev) {
-  const what = FVZ.kind && PanelZoom.keyOf(ev);
-  if (!what) return;
-  ev.preventDefault();
-  fvzAct(what);
+// Whether an event is on the file itself: inside main (here) or anywhere in
+// a rendered page, not in a field, the comment tray or composer, a menu, or
+// the page's comment layer.
+function fvzOn(ev, frame) {
+  const t = ev.target;
+  if (!t || !t.closest || PanelZoom.editing(t)) return false;
+  if (frame) return !t.closest('ens-comments');
+  return !!t.closest('#main') && !t.closest('#cmt-tray, .cmt-composer, .out-pop');
 }
 // The wheel, the keys and a pinch, on this page and on a rendered page's own
 // document (its events do not reach this one).
 function fvzWire(doc, frame) {
-  const off = ev => {
-    const t = ev.target;
-    return !!(t && t.closest && t.closest('#cmt-tray, .cmt-composer, .out-pop'));
-  };
   PanelZoom.wheel(doc, (dir, ev) => {
     if (!FVZ.kind) return;
     fvzAct(dir > 0 ? 'in' : 'out', { x: ev.clientX, y: ev.clientY });
-  }, ev => !!FVZ.kind && !(frame ? false : off(ev)));
-  doc.addEventListener('keydown', fvzKey, true);
+  }, ev => !!FVZ.kind && fvzOn(ev, frame));
+  doc.addEventListener('keydown', ev => {
+    const what = FVZ.kind && PanelZoom.keyOf(ev);
+    if (!what || !fvzOn(ev, frame)) return;
+    ev.preventDefault();
+    fvzAct(what);
+  }, true);
   PanelZoom.pinch(frame ? doc : document.getElementById('main'), {
+    ok: ev => fvzOn(ev, frame),
     base: () => FVZ.pct,
     live: (p, x, y) => {
       if (!FVZ.kind) return;

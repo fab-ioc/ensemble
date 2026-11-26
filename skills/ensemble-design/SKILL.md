@@ -916,12 +916,13 @@ and the diff (`drZoom*` in `index.html`).
   nothing is shown (a folder, a missing or binary file).
 - **The steps are the browser's:** 50 67 75 80 90 100 110 125 150 175 200 250 300.
 - **Also:** Ctrl/⌘ + wheel over the content (a trackpad pinch arrives as that too), Ctrl/⌘ + = − 0 with
-  the focus in it (a click in a diff gives its box the focus), two fingers on a touch screen (the
-  content has `touch-action: pan-x pan-y`, the move is stopped there, the level follows the fingers
-  and snaps to the nearest step). Elsewhere the browser's own zoom is untouched.
+  the focus in it (a click in the file focuses `main`, a click in a diff its `.drv`), two fingers on a
+  touch screen (the content has `touch-action: pan-x pan-y`, the move is stopped there, the level
+  follows the fingers and snaps to the nearest step). On the bars, in a field (`PanelZoom.editing`), a
+  comment being written, the comment tray or layer and a menu, the browser's own zoom is untouched.
 - **What zooms:** code, text and formatted JSON the `.code` box (gutter included); a CSV its table;
   Markdown the `.md` text, which rewraps; a rendered page its frame's `body` (not its root, which holds
-  the comment layer); a picture its width, fitted × the level, the pane scrolling it sideways; a diff
+  the comment layer); a picture its width, its 100% fit × the level, the pane (which keeps its width) scrolling it sideways; a diff
   its `.drv` (the bar and the comment tray stay at 100%).
 - **What it keeps:** the element under the pointer (or the first lines showing, for a button or a key)
   stays where it is (`PanelZoom.keep`). The level is kept per kind on this device (`localStorage`

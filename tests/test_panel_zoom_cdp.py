@@ -131,7 +131,16 @@ async function main() {
     await p.ev(press('in'));
     md.plus = await p.ev(CTRL);
     md.zoomPlus = await p.ev(`document.querySelector('.md').style.zoom`);
-    await p.ev(`document.querySelector('main').focus(), 1`);
+    // Keys on the header (Reload focused) and a wheel over it are the browser's.
+    await p.ev(`document.getElementById('fv-reload').focus(), 1`);
+    await p.key('=', 'Equal', 187);
+    const hb = await p.ev(`(() => { const r = document.querySelector('header').getBoundingClientRect(); return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }; })()`);
+    await p.wheel(hb.x, hb.y, -100);
+    md.header = await p.ev(`document.querySelector('.md').style.zoom`);
+    // A click in the text gives main the focus: the keys zoom the file.
+    const tx = await p.ev(`(() => { const r = document.querySelector('.md p').getBoundingClientRect(); return { x: Math.round(r.left + 10), y: Math.round(r.top + 4) }; })()`);
+    await p.click(tx.x, tx.y);
+    md.focus = await p.ev(`document.activeElement && document.activeElement.id`);
     await p.key('=', 'Equal', 187);
     md.key = await p.ev(`document.querySelector('.md').style.zoom`);
     await p.key('0', 'Digit0', 48);
@@ -224,6 +233,17 @@ async function main() {
     img.pageScroll = await p.ev(`document.scrollingElement.scrollWidth > document.scrollingElement.clientWidth`);
     await p.ev(press('reset'));
     img.back = await p.ev(`document.querySelector('img.file').clientWidth`);
+    // A picture wider than the pane: every level is its 100% fit times the level, the pane in place.
+    await p.go(A.bigUrl, READY);
+    await p.until(`(() => { const i = document.querySelector('img.file'); return i && i.complete && i.naturalWidth && FVZ.kind === 'img'; })()`);
+    const bigAt = `({ w: document.querySelector('img.file').getBoundingClientRect().width, left: Math.round(document.getElementById('main').getBoundingClientRect().left), mw: document.getElementById('main').clientWidth })`;
+    img.big = { fit: await p.ev(bigAt) };
+    await p.ev(press('out'));
+    img.big.z90 = await p.ev(bigAt);
+    await p.ev(press('in')); await p.ev(press('in'));
+    img.big.z110 = await p.ev(bigAt);
+    img.big.edge = await p.ev(`(() => { const c = getComputedStyle(document.querySelector('img.file')); return parseFloat(c.borderLeftWidth) + parseFloat(c.borderRightWidth) + parseFloat(c.paddingLeft) + parseFloat(c.paddingRight); })()`);
+    await p.ev(press('reset'));
 
     // ---- A PDF --------------------------------------------------------------
     await p.go(A.pdfUrl, READY);
@@ -256,7 +276,13 @@ async function main() {
       return r; })()`);
     await p.shot('desktop-diff-125');
     // Ctrl + wheel and Ctrl + 0 on the diff.
-    await p.ev(`(() => { __zbox.focus(); return 1; })()`);
+    // On the diff's bar (the % focused, a wheel over it) the keys and wheel are the browser's.
+    await p.ev(`(() => { __zbox.querySelector('.drv-head .pz [data-pz=reset]').focus(); return 1; })()`);
+    await p.key('=', 'Equal', 187);
+    const dh = await p.ev(`(() => { const r = __zbox.querySelector('.drv-head .drv-path').getBoundingClientRect(); return { x: Math.round(r.left + 4), y: Math.round(r.top + r.height / 2) }; })()`);
+    await p.wheel(dh.x, dh.y, -100);
+    out.diff.header = await p.ev(`__zbox.querySelector('.drv').style.zoom`);
+    await p.ev(`(() => { __zbox.querySelector('.drv').focus(); return 1; })()`);
     await p.wheel(300, 300, -100);
     out.diff.wheel = await p.ev(`__zbox.querySelector('.drv').style.zoom`);
     await p.key('0', 'Digit0', 48);
@@ -355,6 +381,7 @@ class InChrome(unittest.TestCase):
         (files / "page.html").write_text("<h1>A page</h1>" + "".join(f"<p>Line {i} of the page.</p>" for i in range(120)), encoding="utf-8")
         (files / "data.csv").write_text("name,count\n" + "".join(f"row{i},{i}\n" for i in range(40)), encoding="utf-8")
         (files / "pic.png").write_bytes(_png(300, 120))
+        (files / "big.png").write_bytes(_png(2000, 200))
         (files / "doc.pdf").write_bytes(b"%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n")
 
         cls.server = ThreadingHTTPServer(("127.0.0.1", 0), dashboard.Handler)
@@ -364,7 +391,7 @@ class InChrome(unittest.TestCase):
         url = lambda n: f"{b}/fileview?path={quote(str(files / n))}"  # noqa: E731
         args = {**chrome_profile.node_args(), "tmp": cls.tmp.name, "base": b, "shots": os.environ.get("ENS_SHOTS", ""), "diff": DIFF,
                 "mdUrl": url("plan.md"), "codeUrl": url("run.py"), "htmlUrl": url("page.html"),
-                "csvUrl": url("data.csv"), "phoneUrl": url("plan.md") + "&back=" + quote(f"/fileview?path={quote(str(files))}"), "pngUrl": url("pic.png"), "pdfUrl": url("doc.pdf")}
+                "csvUrl": url("data.csv"), "phoneUrl": url("plan.md") + "&back=" + quote(f"/fileview?path={quote(str(files))}"), "pngUrl": url("pic.png"), "bigUrl": url("big.png"), "pdfUrl": url("doc.pdf")}
         out = subprocess.run([NODE, "-e", CDP_JS, json.dumps(args)], capture_output=True, encoding="utf-8", timeout=300)
         assert out.returncode == 0, out.stderr[-4000:]
         cls.got = json.loads(out.stdout.strip().splitlines()[-1])
@@ -391,6 +418,8 @@ class InChrome(unittest.TestCase):
 
     def test_the_keys(self):
         md = self.got["md"]
+        self.assertEqual(md["header"], "1.1", "keys on the header and a wheel over it leave the file alone")
+        self.assertEqual(md["focus"], "main", "a click in the text focuses the file")
         self.assertEqual(md["key"], "1.25", "Ctrl + = one step in")
         self.assertEqual((md["reset"]["text"], md["reset"]["pressed"]), ("100%", "false"), "Ctrl + 0 back to 100%")
         self.assertIsNone(md["reset"]["store"] and json.loads(md["reset"]["store"]).get("md"), "100% is not stored")
@@ -442,6 +471,14 @@ class InChrome(unittest.TestCase):
         self.assertFalse(i["pageScroll"], "the page itself does not scroll sideways")
         self.assertEqual(i["back"], 300)
 
+    def test_a_wide_picture_zooms_from_its_fit(self):
+        b = self.got["img"]["big"]
+        fit = b["fit"]["w"] - b["edge"]
+        self.assertLess(fit, 2000, "fitted to the pane at 100%")
+        for key, z in (("z90", 0.9), ("z110", 1.1)):
+            self.assertAlmostEqual(b[key]["w"] - b["edge"], fit * z, delta=2, msg=(key, b))
+            self.assertEqual((b[key]["left"], b[key]["mw"]), (b["fit"]["left"], b["fit"]["mw"]), "the pane stays where it was")
+
     def test_a_pdf_has_no_control(self):
         self.assertTrue(self.got["pdf"])
 
@@ -455,6 +492,7 @@ class InChrome(unittest.TestCase):
         self.assertEqual((d["zoom"], d["text"], d["store"]), ("1.25", "125%", 125))
         self.assertEqual((d["headFontAfter"], d["headZoom"]), (d["headFont"], ""), "the bar keeps its size")
         self.assertEqual((d["split"], d["zoomSplit"], d["textSplit"]), (True, "1.25", "125%"), "kept across the mode switch")
+        self.assertEqual(d["header"], "1.25", "keys on the bar and a wheel over it leave the diff alone")
         self.assertEqual(d["wheel"], "1.5")
         self.assertEqual(d["reset"]["zoom"], "")
 

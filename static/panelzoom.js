@@ -58,6 +58,12 @@
     return '';
   }
 
+  // A key or a wheel on a field being typed in (a comment, a search) is the
+  // field's own, never a zoom.
+  function editing(t) {
+    return !!(t && (t.isContentEditable || (t.closest && t.closest('input, textarea, select, [contenteditable]'))));
+  }
+
   const TIP = 'Zoom this file · Ctrl/⌘ + wheel · click for 100%';
   const TIP_DIFF = 'Zoom this diff · Ctrl/⌘ + wheel · click for 100%';
   // The control's markup: three buttons in a .seg. `cls` is the class the
@@ -121,14 +127,15 @@
   // (touch-action set by the page's CSS, and preventDefault on a two-finger
   // move), the level follows the fingers (live(pct, cx, cy)) and snaps to the
   // nearest step when they lift (done(pct, cx, cy)). base() is the level at
-  // the start. iOS Safari also gets its gesture events stopped.
+  // the start; h.ok(ev), when given, says whether a touch is on the content.
+  // iOS Safari also gets its gesture events stopped.
   function pinch(el, h) {
     if (!el || el._pzPinch) return;
     el._pzPinch = true;
     let d0 = 0, p0 = 100, cur = 100, cx = 0, cy = 0, on = false;
     const dist = t => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
     el.addEventListener('touchstart', ev => {
-      if (ev.touches.length !== 2) return;
+      if (ev.touches.length !== 2 || (h.ok && !h.ok(ev))) return;
       d0 = dist(ev.touches); p0 = cur = h.base(); on = d0 > 0;
       cx = (ev.touches[0].clientX + ev.touches[1].clientX) / 2;
       cy = (ev.touches[0].clientY + ev.touches[1].clientY) / 2;
@@ -182,5 +189,5 @@
     }
   }
 
-  window.PanelZoom = { STEPS, MIN, MAX, KINDS, TIP, TIP_DIFF, get, set, step, nearest, keyOf, html, show, wire, wheel, pinch, keep };
+  window.PanelZoom = { STEPS, MIN, MAX, KINDS, TIP, TIP_DIFF, get, set, step, nearest, keyOf, editing, html, show, wire, wheel, pinch, keep };
 })();

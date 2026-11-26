@@ -2044,7 +2044,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
      tray and the rest of the hub keep their size. */
   .drv-head .pz [data-pz=reset] { min-width: 48px; font-variant-numeric: tabular-nums; }
   .drv-head .pz button:disabled { color: var(--fg-disabled); cursor: default; background: transparent; }
-  .chp-dbox:focus { outline: none; }
+  .drv:focus { outline: none; }
   .drv-back { display: none; }
   .drv-path { font-family: var(--font-mono); color: var(--fg); overflow-wrap: anywhere; min-width: 0; }
   .drv-count { font-variant-numeric: tabular-nums; white-space: nowrap; }
@@ -13485,26 +13485,32 @@ function drZoomWire(v) {
   box._drZoomView = v;
   drZoomPut(v, drZoomPct());
   PanelZoom.wire(v.head.querySelector('.pz'), what => drZoomAct(v, what));
+  // A click in the lines gives .drv the focus, so Ctrl/⌘ + = − 0 zoom the
+  // diff there; on its bar, in a comment and everywhere else they are the
+  // browser's.
+  const drv = box.querySelector('.drv');
+  if (drv) drv.tabIndex = -1;
   if (box._drZoom) return;
   box._drZoom = true;
-  // A click in the diff gives the box the focus, so Ctrl/⌘ + = − 0 zoom it
-  // there and the hub everywhere else.
-  if (!box.hasAttribute('tabindex')) box.tabIndex = -1;
   // Two fingers zoom the diff, not the page: the browser keeps only panning here.
   if (window.matchMedia && matchMedia('(pointer: coarse)').matches) box.style.touchAction = 'pan-x pan-y';
   const cur = () => { const w = box._drZoomView; return w && w.rv.view === w && w.head && w.head.isConnected ? w : null; };
+  // On the diff (its lines, its comments, the pane below them): not its bar,
+  // not a comment being written.
+  const on = e => { const t = e.target; return !!(t && t.closest && !t.closest('.drv-head, .dcx') && !PanelZoom.editing(t)); };
   PanelZoom.wheel(box, (dir, ev) => {
     const w = cur();
     if (w) drZoomSet(w, PanelZoom.step(w.zoom || 100, dir), { x: ev.clientX, y: ev.clientY });
-  }, ev => !!cur() && !(ev.target.closest && ev.target.closest('.dcx')));
+  }, ev => !!cur() && on(ev));
   box.addEventListener('keydown', e => {
-    const k = PanelZoom.keyOf(e), w = k && cur();
+    const k = PanelZoom.keyOf(e), w = k && on(e) && cur();
     if (!w) return;
     e.preventDefault();
     e.stopPropagation();
     drZoomAct(w, k);
   });
   PanelZoom.pinch(box, {
+    ok: on,
     base: () => { const w = cur(); return w ? w.zoom || 100 : 100; },
     live: (p, x, y) => { const w = cur(); if (w) drZoomSet(w, p, { x, y }, true); },
     done: (p, x, y) => { const w = cur(); if (w) drZoomSet(w, p, { x, y }); },
