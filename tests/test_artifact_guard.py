@@ -52,6 +52,7 @@ class AsksForWebArtifact(unittest.TestCase):
                      # review 2: a later, unrelated no does not take the ask back
                      "Please publish the roadmap on claude.ai. Do not include secrets.",
                      "Publish it on claude.ai. Don't forget the chart.",
+                     "Publish it on claude.ai. Never mention the client.",
                      "Publish the Documents page to claude.ai"):
             self.assertTrue(artifact_guard.asks_for_web_artifact(text), text)
 
@@ -86,7 +87,22 @@ class AsksForWebArtifact(unittest.TestCase):
                      "Publish it on claude.ai. Actually, don't.",               # withdrawn
                      "Publish it on claude.ai. No.",
                      "Publish it on claude.ai. Never mind.",
-                     "Publish it on claude.ai. Don't publish the secrets."):
+                     "Publish it on claude.ai. Don't publish the secrets.",
+                     # review 3: clear refusals and cancellations withdraw
+                     "Publish it on claude.ai. No thanks.",
+                     "Publish it on claude.ai? No, thank you.",
+                     "publish it on claude.ai. NO THANKS",
+                     "Publish it on claude.ai. I'd rather not.",
+                     "Publish it on claude.ai. I\u2019d rather not!",
+                     "Publish it on claude.ai. I changed my mind.",
+                     "Publish it on claude.ai; I've changed my mind",
+                     "Publish it on claude.ai. Cancel that.",
+                     "Publish it on claude.ai. cancel that",
+                     "Publish it on claude.ai. Scratch that.",
+                     "Publish it on claude.ai. Don't bother.",
+                     "Publish it on claude.ai. No, keep the file local.",
+                     # known limit, a false deny on the safe side (PO ruling)
+                     "Publish it on claude.ai. Don't use my name."):
             self.assertFalse(artifact_guard.asks_for_web_artifact(text), text)
 
 

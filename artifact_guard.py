@@ -72,10 +72,15 @@ TIMEOUT_S = 6.0
 #   no LOCAL_PLACES word (folder, file, Documents, ...), since an artifact
 #   can be a local one;
 # * that sentence has no NEGATORS word (or a word ending in "n't") anywhere;
-# * no later sentence withdraws it: one with a negator that also names
-#   claude.ai or an artifact, has a VERBS verb other than "do", points back
-#   (it, that, this, them, mind), or says nothing else ("No.", "Actually,
-#   don't."). "Do not include secrets." is not a withdrawal;
+# * no later sentence withdraws it: one that cancels ("I changed my mind",
+#   "Cancel that", "scratch that", "hold off", "on second thought"), or any
+#   with a negator ("No thanks.", "I'd rather not.", "Actually, don't.")
+#   except a content rule: a sentence opening with don't / do not / never
+#   and a verb that is not WITHDRAW_VERBS (publish, make, do, mind, ...),
+#   naming no claude.ai or artifact and not pointing back (it, that, this,
+#   them). "Do not include secrets." is a rule; "Don't publish it." and
+#   "Don't include it." withdraw. Known limit (a false deny, on the safe
+#   side): "Don't use my name." withdraws, since "use" is a withdraw verb;
 # * and no mention anywhere is negated (a NEGATORS word among the six words
 #   before claude.ai, Claude Docs or artifact in its sentence).
 #
@@ -90,7 +95,9 @@ TIMEOUT_S = 6.0
 # artifact in the project Documents folder" (a local place), 'Please share
 # the phrase "publish it on claude.ai" in a local report' (quoted), "No
 # artifacts last time. This time, publish it as an artifact", "publish it on
-# claude.ai, not as a file", "Publish it on claude.ai. Actually, don't.", and
+# claude.ai, not as a file", "Publish it on claude.ai. Actually, don't.",
+# "Publish it on claude.ai. No thanks.", "Publish it on claude.ai. I changed
+# my mind.", and
 # any synonym ("a web page", "share it online").
 # Deliberately literal and on the safe side: a real ask in other words is
 # denied, and the CEO can say it again with claude.ai in it.
@@ -111,10 +118,13 @@ LEADS = frozenset({"please", "kindly", "now", "then", "and", "also", "so", "ok",
 LOCAL_PLACES = frozenset({"folder", "folders", "file", "files", "directory", "dir", "documents",
                           "repo", "repository", "disk", "local", "locally", "path", "worktree",
                           "branch", "here"})
-BACK_REFERENCES = frozenset({"it", "that", "this", "them", "mind"})
-FILLERS = frozenset({"actually", "wait", "sorry", "hmm", "oh", "um", "well", "on", "second",
-                     "thought", "thoughts", "scratch", "forget", "please", "ok", "okay", "so",
-                     "and", "but", "i", "you", "do", "we"})
+BACK_REFERENCES = frozenset({"it", "that", "this", "them"})
+WITHDRAW_VERBS = frozenset({"make", "create", "publish", "put", "post", "share", "turn", "build",
+                            "render", "upload", "save", "send", "move", "do", "mind", "bother",
+                            "go", "proceed", "worry", "use", "release", "show", "add"})
+_CANCEL = re.compile(r"\b(?:chang(?:e|ed|ing)\s+(?:my|our)\s+minds?|cancel\w*|scratch\s+that"
+                     r"|forget\s+(?:it|that|this|about)|hold\s+off|on\s+second\s+thoughts?"
+                     r"|never\s*mind|nevermind|wait)\b", re.I)
 _WINDOW = 6
 _VERB_REACH = 8
 
@@ -148,15 +158,27 @@ def _instruction(words: list[str], bare: bool) -> bool:
 
 
 def _withdraws(sentence: str) -> bool:
-    """Whether a sentence after an ask takes it back."""
+    """Whether a sentence after an ask takes it back: on the safe side, any
+    negated sentence does unless it is a content rule (see the comment above)."""
+    if _CANCEL.search(sentence):
+        return True
     words = _words(sentence)
     if not _negation(words):
         return False
     if _KEYWORD.search(sentence):
         return True
-    rest = [w for w in words if not (w in NEGATORS or w.endswith("n't"))]
-    return (any((w in VERBS and w != "do") or w in BACK_REFERENCES for w in rest)
-            or all(w in FILLERS for w in rest))
+    i = 0
+    while i < len(words) and words[i] in LEADS:
+        i += 1
+    if words[i:i + 1] in (["don't"], ["dont"], ["never"]):
+        i += 1
+    elif words[i:i + 2] == ["do", "not"]:
+        i += 2
+    else:
+        return True                         # "No thanks.", "I'd rather not."
+    verb, rest = words[i:i + 1], words[i + 1:]
+    return (not verb or verb[0] in WITHDRAW_VERBS or _negation(verb)
+            or any(w in BACK_REFERENCES for w in rest))
 
 
 def asks_for_web_artifact(text: str) -> bool:
