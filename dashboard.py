@@ -18842,6 +18842,22 @@ def slow_requests(window_s: float = 3600.0) -> dict:
             "by": dict(sorted(by.items(), key=lambda kv: -kv[1]["n"]))}
 
 
+# Terminal editing keys (backspace, Ctrl-U/W, cursor moves, escapes) can turn
+# the bytes written into a different submitted line, so a write holding any
+# is checked as if it were an ask (P469, review 2).
+_EDITING_CONTROLS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
+
+
+def _could_be_ask(text) -> bool:
+    """Whether a write could reach an agent as the CEO's claude.ai ask: it
+    passes artifact_guard.asks_for_web_artifact, or it holds a terminal
+    editing control that could turn it into one. Not a str: False."""
+    if not isinstance(text, str):
+        return False
+    return bool(_EDITING_CONTROLS.search(text)) or artifact_guard.asks_for_web_artifact(
+        input_provenance.normalize(text))
+
+
 class Handler(BaseHTTPRequestHandler):
     # Kept-alive connections and revalidated answers (#231). Every answer
     # says where it ends (Content-Length), or closes the connection after it.
@@ -19235,10 +19251,9 @@ class Handler(BaseHTTPRequestHandler):
         it, or a program on this machine the hub cannot tell. Such a write is
         journalled as the hub's instead, so an agent cannot type the request
         the claude.ai guard needs (_artifact_request_allowed). The sender is
-        looked up only for a write that would pass the test."""
+        looked up only for a write that could be one (_could_be_ask)."""
         try:
-            if not (isinstance(text, str)
-                    and artifact_guard.asks_for_web_artifact(input_provenance.normalize(text))):
+            if not _could_be_ask(text):
                 return False
             return bool(self._agent_peer())
         except Exception:                   # noqa: BLE001 — cannot tell: not the person's ask
@@ -23848,9 +23863,7 @@ class Handler(BaseHTTPRequestHandler):
                         # claude.ai publication, or when the line changed
                         # since its sender was checked and now is one.
                         not_person = agent_line or (
-                            submit_text != line_now
-                            and artifact_guard.asks_for_web_artifact(
-                                input_provenance.normalize(submit_text)))
+                            submit_text != line_now and _could_be_ask(submit_text))
                         submit_info = _origin_sender_info(submit_text, "hub" if not_person else "human")
                     if ((sess.meta or {}).get("agent") == "codex" and submit_text
                             and (hub_line or pending_hub)):
