@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import http.server
+import io
 import json
 import os
 import re
@@ -31,6 +32,8 @@ sys.path.insert(0, str(ROOT))
 
 import artifact_guard  # noqa: E402
 import dashboard  # noqa: E402
+import rotation  # noqa: E402
+from backends import ptyrun  # noqa: E402
 
 P469 = ("i see that ensemble still creates artifacts on the web, please don't allow claude "
         "to create anything outside ensemble, never create an artifact outside Ensemble")
@@ -39,11 +42,12 @@ P469 = ("i see that ensemble still creates artifacts on the web, please don't al
 class AsksForWebArtifact(unittest.TestCase):
     def test_explicit_asks_pass(self):
         for text in ("Make it a claude.ai artifact.",
-                     "publish the plan as an Artifact",
-                     "Put it in Claude Docs please",
-                     "can you share this on claude.ai?",
-                     "Write the roadmap. Then make an artifact of it.",
-                     "Don't write a file. Make an artifact."):   # the negation is another sentence
+                     "please publish the plan as an artifact",
+                     "Can you put it in Claude Docs?",
+                     "I want you to share it on claude.ai",
+                     "Write the roadmap. Then make a claude.ai artifact of it.",
+                     "could you make a Claude artifact of this",
+                     "Don't write a file. Publish it to claude.ai."):   # the no is an earlier sentence
             self.assertTrue(artifact_guard.asks_for_web_artifact(text), text)
 
     def test_negations_and_other_text_do_not(self):
@@ -58,10 +62,16 @@ class AsksForWebArtifact(unittest.TestCase):
                      "", "   ", None, 42):
             self.assertFalse(artifact_guard.asks_for_web_artifact(text), text)
 
-    def test_a_negated_mention_vetoes_and_a_mere_mention_is_no_ask(self):
-        for text in ("No artifacts last time. This time, publish it as an artifact.",
+    def test_mentions_and_withdrawn_asks_do_not(self):
+        for text in ("These documents are known as artifacts.",            # review 1
+                     "The instructions say to create an artifact in the project folder.",
+                     "Make a claude.ai artifact? No, save it in Documents.",
+                     "publish it on claude.ai, not as a file",
+                     "No artifacts last time. This time, publish it as an artifact.",
                      "ensemble still creates artifacts on the web",
                      "why are there artifacts on claude.ai?",
+                     "make it an artifact",                                # bare: may be local
+                     "save the CI artifacts",
                      "an artifact, please"):
             self.assertFalse(artifact_guard.asks_for_web_artifact(text), text)
 
@@ -75,8 +85,6 @@ class Handle(unittest.TestCase):
         ask = mock.Mock(return_value=False)
         for tool in ("Read", "Bash", "Agent", "Write", "mcp__ensemble__chat_send"):
             self.assertIsNone(artifact_guard.handle(self.event(tool), {}, ask))
-        self.assertIsNone(artifact_guard.handle({"hook_event_name": "PostToolUse",
-                                                 "tool_name": "Artifact"}, {}, ask))
         ask.assert_not_called()
 
     def test_read_only_calls_pass_without_asking(self):
@@ -130,13 +138,19 @@ class Main(unittest.TestCase):
         out = json.loads(res.stdout)
         self.assertEqual(out["hookSpecificOutput"]["permissionDecision"], "deny")
 
-    def test_other_tools_and_bad_input_print_nothing(self):
+    def test_another_tool_prints_nothing_and_bad_input_is_denied(self):
         env = {k: v for k, v in os.environ.items() if not k.startswith("ENSEMBLE_")}
         res = self.run_script({"hook_event_name": "PreToolUse", "tool_name": "Read"}, env)
         self.assertEqual((res.returncode, res.stdout), (0, b""))
-        res = subprocess.run([sys.executable, str(ROOT / "artifact_guard.py")], input=b"{not json",
-                             env=env, capture_output=True, timeout=30)
-        self.assertEqual((res.returncode, res.stdout), (0, b""))
+        for raw in (b"{not json", b"", b"[1]", b"[" * 5000 + b"]" * 5000,
+                    b'{"hook_event_name": "PreToolUse"}',
+                    b'{"hook_event_name": "PreToolUse", "tool_name": 3}',
+                    b'{"hook_event_name": "Other", "tool_name": "Artifact"}'):
+            res = subprocess.run([sys.executable, str(ROOT / "artifact_guard.py")], input=raw,
+                                 env=env, capture_output=True, timeout=30)
+            self.assertEqual(res.returncode, 0, raw[:40])
+            self.assertEqual(json.loads(res.stdout)["hookSpecificOutput"]["permissionDecision"],
+                             "deny", raw[:40])
 
 
 class AskHub(unittest.TestCase):
@@ -264,7 +278,7 @@ class RequestAllowed(unittest.TestCase):
         self.assertEqual(self.allowed(), (True, "asked"))
 
     def test_only_the_latest_typed_message_counts(self):
-        self.turns = [self.human("make it an artifact"), self.human("now fix the tests")]
+        self.turns = [self.human("publish it as an artifact"), self.human("now fix the tests")]
         self.assertEqual(self.allowed(), (False, "not_asked"))
         self.turns = [self.human(P469)]
         self.assertEqual(self.allowed(), (False, "not_asked"))
@@ -291,6 +305,83 @@ class RequestAllowed(unittest.TestCase):
         self.assertEqual(self.allowed(), (False, "not_guarded_room"))
         self.room = None
         self.assertEqual(self.allowed(), (False, "not_guarded_room"))
+
+
+class AgentCannotTypeTheAsk(unittest.TestCase):
+    """Review 1: an agent posting to the hub over loopback cannot type the
+    request the guard needs; its write is journalled as the hub's."""
+
+    class Session:
+        meta = {"room": "room-t", "identity": "claude"}
+        hub_line_typed = False
+        hub_line_text = ""
+        person_line_text = ""
+
+        def __init__(self):
+            self.writes = []
+
+        def alive(self):
+            return True
+
+        def write(self, data):
+            self.writes.append(data)
+            return True
+
+    def handler(self, peer=""):
+        h = dashboard.Handler.__new__(dashboard.Handler)
+        h._agent_peer = mock.Mock(return_value=peer)
+        return h
+
+    def post(self, sess, data, peer):
+        body = json.dumps({"id": "pty-x", "data": data}).encode()
+        h = self.handler(peer)
+        h.path, h.command, h.request_version = "/api/pty/input", "POST", "HTTP/1.1"
+        h.requestline = "POST /api/pty/input HTTP/1.1"
+        h.headers = {"Content-Length": str(len(body)), "Content-Type": "application/json",
+                     "Host": "127.0.0.1"}
+        h.rfile, h.wfile = io.BytesIO(body), io.BytesIO()
+        h.client_address = ("127.0.0.1", 50000)
+        h.log_message = lambda *a: None
+        with mock.patch.object(ptyrun, "get", lambda _id: sess), \
+                mock.patch.object(dashboard.Handler, "_pty_input_by_person", return_value=True), \
+                mock.patch.object(rotation, "room_rotating", return_value=False), \
+                mock.patch.object(dashboard, "note_answer"), \
+                mock.patch.object(dashboard, "reopen_done"):
+            h.do_POST()
+        return h
+
+    def kinds(self, chunks, peer):
+        sess = self.Session()
+        with mock.patch.object(dashboard, "_record_typed_input") as record:
+            handlers = [self.post(sess, c, peer) for c in chunks]
+        return [c.args[2]["kind"] for c in record.call_args_list], handlers
+
+    def test_the_helper_looks_the_sender_up_only_for_an_ask(self):
+        h = self.handler("an agent's process")
+        self.assertFalse(h._agent_asks_as_ceo("fix the tests"))
+        h._agent_peer.assert_not_called()
+        self.assertTrue(h._agent_asks_as_ceo("publish it on claude.ai"))
+        self.assertFalse(self.handler("")._agent_asks_as_ceo("publish it on claude.ai"))
+        h = self.handler()
+        h._agent_peer.side_effect = RuntimeError
+        self.assertTrue(h._agent_asks_as_ceo("publish it on claude.ai"))   # cannot tell: not the person
+        self.assertFalse(h._agent_asks_as_ceo(None))
+
+    def test_an_agents_ask_in_its_terminal_is_the_hubs(self):
+        self.assertEqual(self.kinds(["publish it on claude.ai\r"], "an agent")[0], ["hub"])
+        self.assertEqual(self.kinds(["publish it on claude.ai", "\r"], "an agent")[0], ["hub"])
+
+    def test_a_persons_ask_and_an_agents_other_line_stay_as_they_were(self):
+        self.assertEqual(self.kinds(["publish it on claude.ai", "\r"], "")[0], ["human"])
+        kinds, handlers = self.kinds(["fix the tests\r"], "an agent")
+        self.assertEqual(kinds, ["human"])
+        handlers[0]._agent_peer.assert_not_called()
+
+    def test_every_person_write_boundary_checks_it(self):
+        src = Path(dashboard.__file__).read_text(encoding="utf-8")
+        self.assertIn('if text and self._agent_asks_as_ceo(text):\n            extra["origin"] = "hub"', src)
+        self.assertIn("as_hub = bool(text and submit) and self._agent_asks_as_ceo(text)", src)
+        self.assertIn("self._agent_asks_as_ceo(line_now)", src)
 
 
 if __name__ == "__main__":

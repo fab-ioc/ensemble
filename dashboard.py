@@ -19228,6 +19228,22 @@ class Handler(BaseHTTPRequestHandler):
         """Why the program that sent this request counts as an agent, or ""."""
         return peer_process.from_agent(self.client_address[:2], self._server_end(), _agent_pids())
 
+    def _agent_asks_as_ceo(self, text) -> bool:
+        """P469: whether a write that would be journalled as the person's
+        (kind ``human``) asks for a claude.ai publication
+        (``artifact_guard.asks_for_web_artifact``) but an agent's process sent
+        it, or a program on this machine the hub cannot tell. Such a write is
+        journalled as the hub's instead, so an agent cannot type the request
+        the claude.ai guard needs (_artifact_request_allowed). The sender is
+        looked up only for a write that would pass the test."""
+        try:
+            if not (isinstance(text, str)
+                    and artifact_guard.asks_for_web_artifact(input_provenance.normalize(text))):
+                return False
+            return bool(self._agent_peer())
+        except Exception:                   # noqa: BLE001 — cannot tell: not the person's ask
+            return True
+
     def _agent_sender(self) -> int | None:
         """The agent process that sent this request, None when none did or
         it cannot tell."""
@@ -20821,6 +20837,8 @@ class Handler(BaseHTTPRequestHandler):
         quiet = data.get("quiet") is True
         # ``now``: Send now (send_now_way) — reach the busy agent at once.
         extra = {"now": True} if data.get("now") is True else {}
+        if text and self._agent_asks_as_ceo(text):
+            extra["origin"] = "hub"         # P469: not the person's ask (_agent_asks_as_ceo)
         # Sent from a thread's reply box of a PO chat (threads.py): the PO
         # is told which thread, the reply stays in it (``also``: and shows
         # in the chat too).
@@ -23773,6 +23791,11 @@ class Handler(BaseHTTPRequestHandler):
             submit_text = ""
             submit_info = None
             verify_codex = None
+            # P469: a person's line that asks for a claude.ai publication is
+            # checked for its sender here, outside the gate (a process lookup).
+            line_now = (getattr(sess, "person_line_text", "")
+                        + re.split(r"[\r\n]", str(typed), maxsplit=1)[0]) if submits else ""
+            agent_line = bool(line_now) and not hub_line and self._agent_asks_as_ceo(line_now)
             # Discover the rollout before taking the rotation gate: on a miss
             # this may inspect old rollouts, and no other terminal should wait.
             codex_rollout = ((None, -1) if (sess.meta or {}).get("agent") != "codex"
@@ -23821,7 +23844,14 @@ class Handler(BaseHTTPRequestHandler):
                     else:
                         current = re.split(r"[\r\n]", str(typed), maxsplit=1)[0]
                         submit_text = person_pending + current
-                        submit_info = _origin_sender_info(submit_text, "human")
+                        # Not the person's when an agent typed an ask for a
+                        # claude.ai publication, or when the line changed
+                        # since its sender was checked and now is one.
+                        not_person = agent_line or (
+                            submit_text != line_now
+                            and artifact_guard.asks_for_web_artifact(
+                                input_provenance.normalize(submit_text)))
+                        submit_info = _origin_sender_info(submit_text, "hub" if not_person else "human")
                     if ((sess.meta or {}).get("agent") == "codex" and submit_text
                             and (hub_line or pending_hub)):
                         path = getattr(sess, "hub_line_rollout_path", None)
@@ -24123,6 +24153,8 @@ class Handler(BaseHTTPRequestHandler):
             if not pid or (not text and not submit):
                 self._send_json(400, {"error": "missing_fields"})
                 return
+            # P469: looked up before the lock (a process lookup).
+            as_hub = bool(text and submit) and self._agent_asks_as_ceo(text)
             res = BACKEND.send_text(int(pid), text, submit=bool(submit))
             if res == "ok" and text and submit:
                 room_id, identity, session_id = _linked_input_context(int(pid))
@@ -24131,7 +24163,7 @@ class Handler(BaseHTTPRequestHandler):
                         with _INPUT_WRITE_LOCK:
                             input_provenance.record(
                                 room_id, identity, text,
-                                _input_sender_info(text, {"kind": "human"}),
+                                _input_sender_info(text, None if as_hub else {"kind": "human"}),
                                 session_id=session_id)
                     except Exception as exc:
                         print(f"[input-provenance] visible input not recorded: {exc!r}",

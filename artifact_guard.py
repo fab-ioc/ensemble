@@ -23,7 +23,9 @@ terminals) for the tools that publish to claude.ai (``GUARDED_NAMES``,
   know, this script run without the hub's environment. A deny is the safe
   side: it only stops a publication, and the agent writes a file instead.
 
-Standard library only; prints one JSON answer or nothing, and always exits 0.
+Input it cannot read (not JSON, no tool name, another event) is denied too:
+the hook runs only for the guarded tools. Standard library only; prints one
+JSON answer or nothing (a tool it does not guard), and always exits 0.
 """
 from __future__ import annotations
 
@@ -55,40 +57,70 @@ CHECK_PATH = "/api/agent/artifact-check"
 # moment. Claude Code's own limit on the hook is longer (dashboard).
 TIMEOUT_S = 6.0
 
-# What counts as asking. The CEO's latest typed message passes when it names
-# claude.ai, Claude Docs (or Doc), or an artifact as something to make: a
-# REQUEST_WORDS word (make, publish, as, ...) among the six words before that
-# keyword in its sentence, and none of NEGATORS (or a word ending in "n't")
-# there. A negated mention anywhere in the message vetoes it. So "make it a
-# claude.ai artifact", "publish the plan as an Artifact", "put it in Claude
-# Docs" pass; "never create an artifact outside Ensemble", "don't publish to
-# claude.ai", "no artifacts", a complaint that only names them ("ensemble
-# still creates artifacts on the web"), and any message without those words
-# do not; nor does the CEO's whole P469 message. Deliberately literal and on
-# the safe side: no synonyms ("a web page", "share it online" do not pass),
-# "No artifacts last time; this time make one" does not pass, and a request
-# word must be there ("an artifact, please" does not pass). A message that
-# uses "artifact" in another sense ("save the CI artifacts") can pass; the
-# agent still has to choose to publish, and the brief tells it not to unless
-# asked.
-_KEYWORD = re.compile(r"claude\.ai\b|\bclaude\s+docs?\b|\bartifacts?\b", re.I)
+# What counts as asking: an instruction, not a mention. The CEO's latest
+# typed message passes when one of its sentences is an instruction to put
+# something on claude.ai:
+#
+# * it opens with a VERBS verb (make, publish, put, ...), with nothing before
+#   it but LEADS words ("please", "can you", "I want you to", "then", ...);
+# * at most eight words after that verb comes claude.ai, Claude Docs (or Doc)
+#   or "Claude artifact(s)"; or the bare word artifact(s), but only after
+#   PUBLISH_VERBS (publish, share, post, upload), since a bare "create an
+#   artifact" may mean a local one;
+# * and nothing says no: no NEGATORS word (or a word ending in "n't") from
+#   the start of that sentence to the end of the message, and no negated
+#   mention anywhere (a NEGATORS word among the six words before claude.ai,
+#   Claude Docs or artifact in its sentence).
+#
+# Passes: "Make it a claude.ai artifact", "please publish the plan as an
+# artifact", "Can you put it in Claude Docs?", "Don't write a file. Publish it
+# to claude.ai." Does not pass: the CEO's whole P469 message, "never create an
+# artifact outside Ensemble", "don't publish to claude.ai", "These documents
+# are known as artifacts", "The instructions say to create an artifact in the
+# project folder", "Make a claude.ai artifact? No, save it in Documents",
+# "make it an artifact" (bare artifact without a publish verb), "No artifacts
+# last time. This time, publish it as an artifact", "publish it on claude.ai,
+# not as a file", and any synonym ("a web page", "share it online").
+# Deliberately literal and on the safe side: a real ask in other words is
+# denied, and the CEO can say it again with claude.ai in it.
+_KEYWORD = re.compile(r"claude\.ai\b|\bclaude\s+(?:docs?|artifacts?)\b|\b(?P<bare>artifacts?)\b",
+                      re.I)
 _SENTENCE_END = re.compile(r"[.!?;\n](?=\s|$)")
 _WORD = re.compile(r"[a-z]+(?:'[a-z]+)?")
 NEGATORS = frozenset({"never", "not", "no", "dont", "without", "avoid", "stop", "nor",
                       "instead", "rather", "unless", "except"})
-REQUEST_WORDS = frozenset({"make", "publish", "create", "put", "post", "share", "turn", "build",
-                           "render", "use", "upload", "save", "send", "write", "draw", "give",
-                           "want", "need", "like", "as", "into", "via"})
+VERBS = frozenset({"make", "create", "publish", "put", "post", "share", "turn", "build",
+                   "render", "upload", "save", "send", "move", "use", "do", "draw", "give"})
+PUBLISH_VERBS = frozenset({"publish", "share", "post", "upload"})
+LEADS = frozenset({"please", "kindly", "now", "then", "and", "also", "so", "ok", "okay", "yes",
+                   "just", "can", "could", "would", "will", "you", "i", "we", "let's", "lets",
+                   "us", "want", "need", "like", "i'd", "to", "go", "ahead", "finally", "next"})
 _WINDOW = 6
+_VERB_REACH = 8
 
 
-def _window(before: str) -> list[str]:
-    clause = _SENTENCE_END.split(before)[-1].lower().replace("\u2019", "'")
-    return _WORD.findall(clause)[-_WINDOW:]
+def _words(text: str) -> list[str]:
+    return _WORD.findall(text.lower().replace("\u2019", "'"))
 
 
-def _negated(words: list[str]) -> bool:
+def _negation(words) -> bool:
     return any(w in NEGATORS or w.endswith("n't") for w in words)
+
+
+def _sentence_start(text: str, pos: int) -> int:
+    ends = [m.end() for m in _SENTENCE_END.finditer(text, 0, pos)]
+    return ends[-1] if ends else 0
+
+
+def _instruction(words: list[str], bare: bool) -> bool:
+    """Whether the words of a sentence up to a keyword open with a request."""
+    for i, w in enumerate(words):
+        if w in VERBS:
+            return (len(words) - i <= _VERB_REACH
+                    and (not bare or w in PUBLISH_VERBS))
+        if w not in LEADS:
+            return False
+    return False
 
 
 def asks_for_web_artifact(text: str) -> bool:
@@ -96,10 +128,15 @@ def asks_for_web_artifact(text: str) -> bool:
     page or doc (see the comment above for what passes)."""
     if not isinstance(text, str) or not text.strip():
         return False
-    windows = [_window(text[:m.start()]) for m in _KEYWORD.finditer(text)]
-    if any(_negated(w) for w in windows):
-        return False
-    return any(REQUEST_WORDS.intersection(w) for w in windows)
+    asks = []
+    for m in _KEYWORD.finditer(text):
+        start = _sentence_start(text, m.start())
+        before = _words(text[start:m.start()])
+        if _negation(before[-_WINDOW:]):
+            return False                    # a negated mention vetoes the message
+        if _instruction(before, bool(m.group("bare"))):
+            asks.append(start)
+    return any(not _negation(_words(text[start:])) for start in asks)
 
 
 def guarded(tool: str) -> bool:
@@ -159,9 +196,13 @@ def ask_hub(env: dict, data: dict, timeout: float = TIMEOUT_S) -> bool:
 
 def handle(data, env: dict | None = None, ask=ask_hub) -> dict | None:
     """The hook's answer to one PreToolUse event: ``deny()`` or None (carry on)."""
+    # It runs only for the guarded tools (MATCHER), so input it cannot use is
+    # a guarded call it cannot read: denied, never let through.
     if not isinstance(data, dict) or data.get("hook_event_name") not in (None, "PreToolUse"):
-        return None
+        return deny()
     tool = data.get("tool_name")
+    if not isinstance(tool, str) or not tool:
+        return deny()
     if not guarded(tool):
         return None
     if read_only(tool, data.get("tool_input")):
@@ -173,9 +214,9 @@ def main() -> int:
     try:
         raw = sys.stdin.buffer.read()
         try:
-            data = json.loads(raw.decode("utf-8", errors="replace") or "{}")
-        except ValueError:
-            data = {}
+            data = json.loads(raw.decode("utf-8", errors="replace"))
+        except (ValueError, RecursionError):
+            data = None                     # unreadable: handle denies it
         out = handle(data)
     except BaseException:                                    # noqa: BLE001 — still the rule
         out = deny()
