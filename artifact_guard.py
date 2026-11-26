@@ -39,7 +39,9 @@ from urllib.parse import urlsplit
 DENY_REASON = (
     "Ensemble rule P171: no claude.ai artifact, page or doc unless the CEO asks for one "
     "in so many words. Write it as a file in the project's Documents folder (an .html page "
-    "for what can be shown, .md for text) and link it by name.")
+    "for what can be shown, .md for text) and link it by name. If the CEO did want it on "
+    "claude.ai, their latest typed message must say so plainly and name claude.ai (for example "
+    "\"Publish it on claude.ai\"), with nothing after it taking it back; ask them to say so.")
 
 # The tools that publish to claude.ai or act on what is published there.
 GUARDED_NAMES = frozenset({"Artifact", "ArtifactComments", "ArtifactData", "ArtifactCheck"})
