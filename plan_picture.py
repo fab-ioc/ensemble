@@ -160,9 +160,12 @@ def maybe_tick(now: float | None = None) -> None:
                 project = _project(pid)
                 if not project:
                     continue
+                before = json.dumps(rec.get("groups") or [])
                 _, sig, _ = _collect(project, rec, now)
                 if sig != rec.get("sig"):
                     _redraw(pid, state, now)
+                elif json.dumps(rec.get("groups") or []) != before:
+                    _save(state)   # a task gone for good, the page unchanged
             except Exception as exc:   # noqa: BLE001 — one project never stops the rest
                 _d.digest._log(f"plan picture {pid}: {str(exc)[:200]}")
 
@@ -284,14 +287,31 @@ def _state(room: dict, attn: dict, unmet: list[str]) -> tuple[str, str]:
     return "stopped", "Stopped"
 
 
+def _room_gone(rid: str) -> bool:
+    """True when a room's file is gone (the task was deleted); False when it
+    is there or cannot be checked (a read that failed just now)."""
+    try:
+        os.stat(_d.chatroom._room_path(rid))
+    except FileNotFoundError:
+        return True
+    except (OSError, ValueError):
+        return False
+    return False
+
+
 def _row(room: dict, rooms: dict, attn: dict, po_led: dict | None, pkey: str = "") -> dict:
     gates, unmet = [], []
     for g in room.get("after") or []:
-        target = rooms.get(g.get("task")) or _d.chatroom.get_room(g.get("task"), public=False,
-                                                                  messages=False)
-        if not target:
-            continue
+        tid = g.get("task") or ""
+        target = rooms.get(tid) or _d.chatroom.get_room(tid, public=False, messages=False)
         when = g.get("when", "merged")
+        if not target:
+            if _room_gone(tid):
+                continue   # a gate on a deleted task holds nothing
+            # Cannot be read just now: the gate stands, unconfirmed.
+            gates.append({"id": tid, "label": "a task", "when": when, "met": False, "unknown": True})
+            unmet.append("a task")
+            continue
         met = _gate_met(target, when)
         label = _d.task_label(target) or target.get("title", "")
         gates.append({"id": target["id"], "label": label, "when": when, "met": met})
@@ -323,12 +343,8 @@ def _collect(project: dict, rec: dict, now: float) -> tuple[dict, str, list]:
         one that cannot be read just now is left out of this drawing only."""
         room = rooms.get(rid) or _d.chatroom.get_room(rid, public=False, messages=False)
         if room is None:
-            try:
-                os.stat(_d.chatroom._room_path(rid))
-            except FileNotFoundError:
+            if _room_gone(rid):
                 gone.add(rid)
-            except OSError:
-                pass
             return None
         if _d._room_project_id(rid, room, links) != pid:
             gone.add(rid)
@@ -594,7 +610,8 @@ def _li(r: dict) -> str:
         meta.append(f'<span>merged {_when(r["doneAt"])}</span>' if r["merged"] and r["doneAt"]
                     else "<span>done</span>")
     for g in r["gates"]:
-        meta.append(f'<span>after {e(g["label"])} {e(g["when"])}{" ✓" if g["met"] else ""}</span>')
+        meta.append(f'<span>after {e(g["label"])} {e(g["when"])}{" ✓" if g["met"] else ""}'
+                    f'{" (cannot be read just now)" if g.get("unknown") else ""}</span>')
     out = (f'<li><span class="no">{e(r["no"])}</span><span class="t">{e(r["title"])}</span>'
            f'<span class="meta">{"".join(meta)}</span>')
     if r["ask"]:

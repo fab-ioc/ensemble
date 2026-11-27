@@ -320,6 +320,30 @@ class PlanPicture(unittest.TestCase):
         pp.maybe_tick(now=3 * 10 ** 10)
         self.assertEqual(pp._load()["p"]["groups"], [[a["id"]]])
 
+    def test_a_task_deleted_while_off_the_page_leaves_the_saved_plan(self):
+        a = self.room(1, "Alpha")
+        self.create(2, "Beta", after=[{"task": a["id"]}])
+        real = chatroom.get_room
+        with mock.patch.object(chatroom, "get_room",
+                               side_effect=lambda rid, **kw: None if rid == a["id"] else real(rid, **kw)):
+            pp.maybe_tick(now=10 ** 10)
+        # Deleted now: the page looks the same, the saved plan still drops it.
+        os.remove(chatroom._room_path(a["id"]))
+        pp.maybe_tick(now=2 * 10 ** 10)
+        self.assertNotIn(a["id"], [i for g in pp._load()["p"]["groups"] for i in g])
+
+    def test_an_unreadable_gate_keeps_its_task_waiting(self):
+        a = self.room(1, "Alpha")
+        self.create(2, "Beta", after=[{"task": a["id"]}])
+        real = chatroom.get_room
+        with mock.patch.object(chatroom, "get_room",
+                               side_effect=lambda rid, **kw: None if rid == a["id"] else real(rid, **kw)):
+            pp.maybe_tick(now=10 ** 10)
+        page = self.page()
+        self.assertIn(">WAITS FOR A TASK</text>", page)
+        self.assertIn("after a task merged (cannot be read just now)", page)
+        self.assertNotIn("Not started", page)
+
     def test_a_group_with_an_unreadable_task_does_not_retire(self):
         a = self.room(1, "Alpha", workflow="done", launched=True)
         self.create(2, "Beta", after=[{"task": a["id"]}])
