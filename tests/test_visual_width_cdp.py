@@ -110,7 +110,8 @@ const MEASURE = sel => `(() => { const m = document.getElementById('main'), cs =
     vw: innerWidth, mark: window.__mark || 0 }; })()`;
 const PLAN = `(() => { const f = document.querySelector('iframe.file'), d = f.contentDocument, sv = d.querySelector('.graph svg'), g = d.querySelector('.graph'), l = d.querySelector('.list');
   const sr = sv.getBoundingClientRect(), gr = g.getBoundingClientRect(), lr = l.closest('.panel').getBoundingClientRect();
-  return { frame: Math.round(f.getBoundingClientRect().width), svg: Math.round(sr.width), graphScrolls: g.scrollWidth > g.clientWidth,
+  const gs = getComputedStyle(g);
+  return { frame: Math.round(f.getBoundingClientRect().width), svg: Math.round(sr.width), room: Math.round(g.clientWidth - parseFloat(gs.paddingLeft) - parseFloat(gs.paddingRight)), graphScrolls: g.scrollWidth > g.clientWidth,
     docScrolls: d.scrollingElement.scrollWidth > d.scrollingElement.clientWidth,
     listBeside: lr.left >= gr.right - 1, listUnder: lr.top >= gr.bottom - 1 }; })()`;
 
@@ -315,11 +316,13 @@ class InChrome(unittest.TestCase):
         self.assertGreater(p2["1920"]["svg"], drawn, "and grows past its drawn size in a wide one")
         self.assertFalse(p2["1920"]["graphScrolls"])
 
-    def test_a_very_wide_plan_graph_is_held_at_the_most(self):
+    def test_a_very_wide_plan_graph_fits_a_wide_window(self):
         p8 = self.got["plan8"]
-        self.assertEqual(p8["1920"]["svg"], self.HI, ("never past 1600, whatever its text", p8))
         self.assertEqual(p8["1920"]["frame"], self.HI)
-        self.assertEqual(p8["900"]["svg"], self.HI, p8)
+        self.assertEqual(p8["1920"]["svg"], p8["1920"]["room"], ("the graph panel's whole width", p8))
+        self.assertGreaterEqual(p8["1920"]["svg"], plan_picture.GRAPH_ROOM)
+        self.assertFalse(p8["1920"]["graphScrolls"], "no scroll at 1920")
+        self.assertEqual(p8["900"]["svg"], plan_picture.GRAPH_ROOM, p8)
         self.assertTrue(p8["900"]["graphScrolls"], "then it scrolls in its panel")
         self.assertFalse(p8["900"]["docScrolls"])
 

@@ -278,12 +278,16 @@ class PlanPicture(unittest.TestCase):
                 for i in range(8)]
         self.assertEqual(pp.layout(many)["7"], (7, 0))
         w = pp.PAD * 2 + 8 * pp.BOX_W + 7 * pp.GAP
-        self.assertEqual(pp.graph_bounds(w), (pp.VISUAL_MAX, pp.VISUAL_MAX), "the most wins over 60%")
+        self.assertEqual(pp.graph_bounds(w), (pp.GRAPH_ROOM, pp.VISUAL_MAX), "the page's room wins over 60%")
+        # GRAPH_ROOM is the graph's room on a 1600 page, by the page's own CSS.
+        self.assertIn("padding:22px 24px 28px", pp._CSS)
+        self.assertIn(".panel{background:#fff;border:1px solid #DCDFE4;border-radius:10px;padding:14px 16px}", pp._CSS)
+        self.assertEqual(pp.GRAPH_ROOM, pp.VISUAL_MAX - 2 * 24 - 2 * 16 - 2 * 1 - 2 - 16)
         full = [dict(r, state="draft", word="not started", priority=3, owner="", points=[], days=None,
                      gates=[dict(g, label="#" + g["id"], when="merged", met=False) for g in r["gates"]])
                 for r in many]
         svg = re.search(r"<svg [^>]*>", pp.graph(full)[0]).group(0)
-        self.assertIn(f"min-width:{pp.VISUAL_MAX}px;max-width:{pp.VISUAL_MAX}px", svg)
+        self.assertIn(f"min-width:{pp.GRAPH_ROOM}px;max-width:{pp.VISUAL_MAX}px", svg)
         # At every number of columns the least never passes the most, nor the most 1600.
         for cols in range(1, 12):
             w = pp.PAD * 2 + cols * pp.BOX_W + (cols - 1) * pp.GAP

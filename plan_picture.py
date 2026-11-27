@@ -403,16 +403,22 @@ BOX_W, BOX_H, GAP, PITCH, TOP, PAD = 312, 112, 88, 136, 26, 4
 # file view's visual bounds (fileview.html's --visual-min and --visual-max: the
 # narrowest phone, and where lines and drawings stop stretching). The graph
 # scales with it, its text kept readable: never under 60% of its drawn size
-# nor over 125% (a smaller fit scrolls sideways in its panel). The most wins:
-# a graph wider than 1600 / 0.6 is held at 1600 whatever its text.
+# nor over 125% (a smaller fit scrolls sideways in its panel). The page at
+# its widest wins over the 60%: the least is never more than the graph's room
+# on a 1600 page (GRAPH_ROOM), so a very wide graph fits a wide window and
+# scrolls only in a narrower one.
 VISUAL_MIN, VISUAL_MAX = 320, 1600
 GRAPH_SHRINK, GRAPH_GROW = 0.6, 1.25
+# Less the page's and the graph panel's sides (_CSS: body padding 24, .panel
+# padding 16 and border 1, on each side), the file view's frame border (1 a
+# side) and a scrollbar (16): 1500.
+GRAPH_ROOM = VISUAL_MAX - 2 * (24 + 16 + 1) - 2 - 16
 
 
 def graph_bounds(width: int) -> tuple[int, int]:
     """The graph's least and most width on the page, for its drawn width."""
     hi = min(VISUAL_MAX, round(width * GRAPH_GROW))
-    lo = min(width, max(VISUAL_MIN, round(width * GRAPH_SHRINK)), hi)
+    lo = min(width, max(VISUAL_MIN, round(width * GRAPH_SHRINK)), GRAPH_ROOM)
     return lo, hi
 _NUMKEY = re.compile(r"(\d+)")
 
