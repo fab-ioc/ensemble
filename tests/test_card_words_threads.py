@@ -73,6 +73,33 @@ class CardWordsTogetherTest(unittest.TestCase):
         self.assertEqual(out["cards"], {})
         self.assertIn("s:3", tt.ThreadStaysTest.channel(out, recs))
 
+    def test_a_reply_naming_another_point_stays_where_that_point_is(self):
+        # Review 1: a P1 card, then a line about P2 (in the main chat): not the card's words.
+        recs, pts, sd = thread_and_main()
+        recs = recs + [po("s:3", 60, "For P2, the export ships Monday.")]
+        out = run_(recs, pts, sd, [card("c1", 56, pts=["P1"])])
+        self.assertEqual(out["cards"], {"c1": "P1"})
+        self.assertNotIn("s:3", out["threads"]["P1"]["members"])
+        self.assertIn("s:3", tt.ThreadStaysTest.channel(out, recs))
+
+    def test_the_line_before_a_card_its_points_placed_goes_with_it(self):
+        # Review 1: a kept pre-call line (it holds a link) in the main chat,
+        # then a P1 card in thread P1: the line is the card's words, in P1.
+        recs, pts, sd = thread_and_main()
+        recs = recs + [po("s:3", 55, "See [draft](https://example.test/draft).")]
+        out = run_(recs, pts, sd, [card("c1", 56, pts=["P1"])])
+        self.assertEqual(out["cards"], {"c1": "P1"})
+        self.assertIn("s:3", out["threads"]["P1"]["members"])
+        self.assertNotIn("s:3", tt.ThreadStaysTest.channel(out, recs))
+        self.assertNotIn("m:s:3", out["threads"])
+
+    def test_a_line_long_before_a_card_stays_in_the_main_chat(self):
+        recs, pts, sd = thread_and_main()
+        recs = recs + [po("s:3", 55, "See [draft](https://example.test/draft).")]
+        out = run_(recs, pts, sd, [card("c1", 55 + threads.ASK_JOIN_S + 5, pts=["P1"])])
+        self.assertNotIn("s:3", out["threads"]["P1"]["members"])
+        self.assertIn("s:3", tt.ThreadStaysTest.channel(out, recs))
+
 
 if __name__ == "__main__":
     unittest.main()

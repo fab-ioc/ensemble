@@ -37,6 +37,9 @@ PRE = "Before I build the task view, one choice is yours."
 TASK_CONTEXT = "The list can open on the board or on the task's chat."
 TASK_REPLY = "I build the rest meanwhile."
 TEAM_WORDS = "The review found two ways to fix the retry; both pass the tests."
+PO_PRE = "The release waits on one choice of yours."
+PO_PRE_CONTEXT = "Dark mode is ready; the print styles are not."
+PO_PRE_REPLY = "I keep building the print styles meanwhile."
 
 JS = chrome_profile.JS + r"""
 const { spawn } = require('child_process');
@@ -85,6 +88,27 @@ async function main() {
     // A link to the reply lands on the card's balloon.
     out.landed = await p.evalIn(`(() => { const r = (LAST_ITEMS || []).find(m => m.joined && m.joined.length); return r ? { card: r.id, joined: r.joined, into: JOINED_INTO.get(r.joined[r.joined.length - 1]) } : null; })()`);
     await p.shot('po-reply-joins');
+    // Review 1: a line no longer joined (a thread started on it) is a
+    // balloon again, and a link to it no longer goes to the card.
+    out.stale = await p.evalIn(`(() => { const c = LAST_ITEMS.find(m => m.joined && m.joined.length); const rid = c.joined[c.joined.length - 1];
+      const card = Object.assign({}, c, { joined: undefined, steps: undefined, text: 'Q' });
+      const line = { id: rid, from: c.from, ts: c.ts + 1, text: 'words', thr: ['m:' + rid] };
+      const g = GOTO; const first = joinAskWords([card, line]).length; const into = JOINED_INTO.get(rid);
+      THR_META['m:' + rid] = { chosen: true };
+      const second = joinAskWords([card, line]).length; GOTO = rid; joinAskWords([card, line]); const goto = GOTO;
+      GOTO = g; delete THR_META['m:' + rid];
+      return { first, into, second, goto, rid, card: c.id }; })()`);
+    await send('Target.closeTarget', { targetId: p.targetId });
+    // A link to the joined reply, opened: it lands on the card's balloon.
+    p = await open(A.po + '&msg=' + encodeURIComponent(out.landed.joined[out.landed.joined.length - 1]));
+    out.linkLanded = await p.until('typeof LANDED !== "undefined" && LANDED && LANDED.mid');
+    await send('Target.closeTarget', { targetId: p.targetId });
+    // A PO turn with a line before the call: that line (a step of the reply)
+    // reads in the card's balloon, above the context, not under "N steps".
+    p = await open(A.pre);
+    await p.until(`[...document.querySelectorAll('#msgs .msg')].some(b => b.querySelector('.qa') && b.innerText.includes(${JSON.stringify(A.preReply)}))`);
+    await sleep(300);
+    out.pre = await p.look();
     await send('Target.closeTarget', { targetId: p.targetId });
     // A task's one-agent chat: the line before the call, the context, the reply.
     p = await open(A.task);
@@ -180,6 +204,20 @@ class CardWordsInChrome(unittest.TestCase):
             [{"label": "CSV now, JSON Monday", "recommended": True}, {"label": "Both on Monday"}])
         cls.po_reply = json.dumps(_turn("assistant", REPLY, time.time() + 2))
 
+        # A PO turn: a line, the call, the reply (the line is a step of the reply).
+        ok, third, _ = dashboard.register_project("Print")
+        assert ok, third
+        cls.pre = solo("Print PO", "pre-sid", "Product owner", third)
+        ok, why = dashboard.set_project_po(third["id"], cls.pre)
+        assert ok, why
+        pre_file = tdir / "pre-sid.jsonl"
+        pre_file.write_text("".join(json.dumps(t | {"sessionId": "pre-sid"}) + "\n" for t in [
+            _turn("user", "Is the theme work done?", now - 6),
+            _turn("assistant", PO_PRE, now - 2, stop="tool_use")]), encoding="utf-8")
+        ask(cls.pre, PO_PRE_CONTEXT, "Ship dark mode first?", [{"label": "Yes"}, {"label": "Wait"}], third)
+        with pre_file.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(_turn("assistant", PO_PRE_REPLY, time.time() + 1) | {"sessionId": "pre-sid"}) + "\n")
+
         # A task's one-agent chat: a line, the call, the reply.
         cls.task = solo("Task view", "task-sid", "Engineer", other)
         task_file = tdir / "task-sid.jsonl"
@@ -218,7 +256,7 @@ class CardWordsInChrome(unittest.TestCase):
         args = {**chrome_profile.node_args(), "tmp": str(base),
                 "base": f"http://127.0.0.1:{server.server_address[1]}", "shots": shots,
                 "po": cls.po, "poFile": str(cls.po_file), "poReply": cls.po_reply, "reply": REPLY,
-                "task": cls.task, "taskReply": TASK_REPLY, "team": cls.team}
+                "task": cls.task, "taskReply": TASK_REPLY, "team": cls.team, "pre": cls.pre, "preReply": PO_PRE_REPLY}
         path = base / "cardwords_cdp.js"
         path.write_text(JS, encoding="utf-8")
         run = subprocess.run([NODE, str(path), json.dumps(args)], capture_output=True, encoding="utf-8", timeout=300)
@@ -247,6 +285,26 @@ class CardWordsInChrome(unittest.TestCase):
         self.assertEqual(len(self.holding(after, REPLY)), 1, "no second balloon for the reply")
         landed = self.got["landed"]
         self.assertEqual(landed["into"], landed["card"], "a link to the reply finds the card's balloon")
+
+    def test_a_line_no_longer_joined_is_a_balloon_and_its_link_lands_on_it(self):
+        st = self.got["stale"]
+        self.assertEqual((st["first"], st["into"]), (1, st["card"]), st)
+        self.assertEqual(st["second"], 2, "a thread on the line: a balloon again")
+        self.assertEqual(st["goto"], st["rid"], "its link lands on the line, not the card")
+
+    def test_a_link_to_the_joined_reply_lands_on_the_card(self):
+        self.assertEqual(self.got["linkLanded"], self.got["landed"]["card"])
+
+    def test_a_po_line_before_the_call_reads_above_the_card(self):
+        pre = self.got["pre"]
+        cards = [b for b in pre if b["cards"]]
+        self.assertEqual(len(cards), 1, pre)
+        text = cards[0]["text"]
+        order = [text.index(PO_PRE), text.index(PO_PRE_CONTEXT), text.index(PO_PRE_REPLY),
+                 text.index("Ship dark mode first?")]
+        self.assertEqual(order, sorted(order), text)
+        for words in (PO_PRE, PO_PRE_REPLY):
+            self.assertEqual(len(self.holding(pre, words)), 1, words)
 
     def test_a_task_chat_joins_the_line_before_the_call_and_the_reply(self):
         task = self.got["task"]

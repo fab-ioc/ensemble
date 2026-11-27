@@ -7305,7 +7305,12 @@ document.addEventListener('click', e => {
 // thread's first reply).
 // bottom: the view has entries after it (a link's window): a row newer than
 // its last entry is not drawn at its end, where it is not (P414, #396).
-function withHubRows(items, room, hub, top = false, bottom = false) { return joinAskWords(hubRowsIn(items, room, hub, top, bottom)); }
+// drop: the rows drawn elsewhere (a card in its thread), left out before
+// the words around a card join it, so no line goes with a card not shown.
+function withHubRows(items, room, hub, top = false, bottom = false, drop = null) {
+  const rows = hubRowsIn(items, room, hub, top, bottom);
+  return joinAskWords(drop ? rows.filter(m => !drop(m)) : rows);
+}
 function hubRowsIn(items, room, hub, top, bottom) {
   if (!hub && room === ROOM_OBJ && roomHasOlder() && items.length) {
     const first = items.find(m => m.ts), oldest = (room.messages || [])[0];
@@ -7357,6 +7362,9 @@ function askJoinable(m, card, room) {
   return !asksOf(m).length;
 }
 function joinAskWords(items, room = false) {
+  // The map holds the joins drawn now: a line no longer joined (a thread
+  // started on it) is a balloon again, and a link to it lands on it.
+  for (const m of items) if (m && m.id) JOINED_INTO.delete(m.id);
   if (!items.some(m => m && Array.isArray(m.asks))) return items;
   if (JOINED_INTO.size > 2000) JOINED_INTO = new Map();
   const out = [];
@@ -7369,12 +7377,25 @@ function joinAskWords(items, room = false) {
     const post = askJoinable(nx, c, room) && nx.ts >= c.ts ? nx : null;
     if (post) i++;
     if (!pre && !post) { out.push(c); continue; }
+    // A PO reply folds its turn's lines into steps (#402): the one written
+    // just before the call is the card's words, drawn above it, not a step.
+    // (A link to a step lands on its owner, here the card, step:<mid> part.)
+    let steps = post && Array.isArray(post.steps) ? post.steps : null, preStep = null;
+    if (!pre && steps) {
+      const at = s => Date.parse((s && s.timestamp) || '') / 1000;
+      const k = steps.reduce((b, s, n) => at(s) <= c.ts && c.ts - at(s) <= ASK_JOIN_S && (b < 0 || at(s) >= at(steps[b])) ? n : b, -1);
+      const s = k >= 0 ? steps[k] : null;
+      if (s && (s.text || '').trim() && !/(^|\n)[\s*_>]*re\s+P\d+/i.test(s.text)) {
+        preStep = s;
+        steps = steps.filter((_, n) => n !== k);
+      }
+    }
     const own = ASK_STOCK_RE.test(c.text || '') ? '' : (c.text || '');
-    const text = [pre && pre.text, own, post && post.text].filter(t => t && t.trim()).join('\n\n');
+    const text = [pre ? pre.text : preStep && preStep.text, own, post && post.text].filter(t => t && t.trim()).join('\n\n');
     const ids = [pre, post].filter(Boolean).map(m => m.id);
     for (const id of ids) JOINED_INTO.set(id, c.id);
-    if (post && post.steps && typeof STEPS_OPEN !== 'undefined' && STEPS_OPEN.has(post.id)) STEPS_OPEN.add(c.id);
-    out.push(Object.assign({}, c, { text, joined: ids }, post && post.steps ? { steps: post.steps } : {}));
+    if (post && steps && typeof STEPS_OPEN !== 'undefined' && STEPS_OPEN.has(post.id)) STEPS_OPEN.add(c.id);
+    out.push(Object.assign({}, c, { text, joined: ids }, steps ? { steps: steps.length ? steps : undefined } : {}));
   }
   if (GOTO && JOINED_INTO.has(GOTO)) GOTO = JOINED_INTO.get(GOTO);
   return out;
@@ -8302,7 +8323,7 @@ function thrDraw(roomTs, d = THR_VIEW) {
       // A channel drawn from its start: a card asked before its first
       // message (a PO's first question) goes above it, not nowhere (P417).
       const inThread = (d && d.cardThreads) || {};
-      items = withHubRows(items, ROOM_OBJ, THR_HUB, !THR_BEFORE, !!THR_AFTER).filter(m => !inThread[m.id]);
+      items = withHubRows(items, ROOM_OBJ, THR_HUB, !THR_BEFORE, !!THR_AFTER, m => !!inThread[m.id]);
     } else if (THR_HUB.size) {
       // The thread's own cards (the hub's hubRows), among its balloons by
       // time; one older than its first, above it when the view starts there.

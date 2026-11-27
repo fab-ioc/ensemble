@@ -97,12 +97,16 @@ def seed(hub: Hub) -> dict:
                                   "newThread": True, "threadName": "Vegetarian recipes"})
     transcript(hub.home, po_seat["cwd"], po_seat["sessionId"],
                "I will track the vegetarian filter in its own thread so the decisions stay together.")
-    ask = hub.mcp(po_agent["token"], "ensemble_ask", {"questions": [{
-        "question": "Which ingredient list should the first release use?",
-        "options": [{"label": "Local sample", "detail": "A small list included with the app", "recommended": True},
-                    {"label": "Imported file", "detail": "Let people choose a file"}]}]})
-    hub.mcp(po_agent["token"], "ensemble_ask", {"questions": [{
-        "question": "Should search ignore letter case?", "yesno": True}]})
+    ask = hub.mcp(po_agent["token"], "ensemble_ask", {
+        "context": "The search needs a list of ingredients to match against. A sample list ships today; "
+                   "reading a file needs an import screen first.",
+        "questions": [{
+            "question": "Which ingredient list should the first release use?",
+            "options": [{"label": "Local sample", "detail": "A small list included with the app", "recommended": True},
+                        {"label": "Imported file", "detail": "Let people choose a file"}]}]})
+    hub.mcp(po_agent["token"], "ensemble_ask", {
+        "context": "Ignoring case finds \"Tomato\" when someone types \"tomato\"; it costs nothing in speed.",
+        "questions": [{"question": "Should search ignore letter case?", "yesno": True}]})
 
     active = task(hub, pid, "Add ingredient search",
                   "# Goal\nFind recipes by ingredient.\n\n# Acceptance\n- Search ignores case.\n- Tests cover a match and no match.\n",
