@@ -51,6 +51,9 @@ class Cdp {
   send(method, params = {}, sessionId) { const id = ++this.id; return new Promise((res, rej) => { this.waits.set(id, { res, rej }); this.ws.send(JSON.stringify({ id, method, params, sessionId })); }); }
 }
 const out = {};
+const fs = require('fs');
+// ENSEMBLE_CFL_SHOTS=<folder>: the page before and after the first click, as PNGs.
+async function shot(S, name) { if (!A.shots) return; const r = await S('Page.captureScreenshot', { format: 'png' }); fs.writeFileSync(A.shots + '/' + name + '.png', Buffer.from(r.data, 'base64')); }
 async function main() {
   const { ch, ws } = await launch();
   const c = new Cdp(ws); await c.open();
@@ -86,6 +89,7 @@ async function main() {
     await until('[...WS_VIEWS.values()].some(v => v.el && v.el.isConnected)', 30000);
     await until(`!${FR}.contentDocument.querySelector('a.file-link:not(.file-missing)[href*="GONE"]')`, 10000);
     await sleep(800);
+    await linkAt('README.md'); await sleep(300); await shot(S, 'before');
     out.pages0 = await pages();
     out.files0 = await files();
 
@@ -94,6 +98,7 @@ async function main() {
     await until('[...PD.rt.keys()].some(k => k.startsWith("file:"))', 15000);
     await sleep(600);
     out.files1 = await files();
+    await sleep(900); await shot(S, 'after');
     out.pages1 = await pages();
     out.where1 = await evalIn(`(() => { const id = [...PD.rt.keys()].find(k => k.startsWith("file:"));
       const p = PD.rt.get(id).v.panels.get(id.slice(5)) || null, el = document.querySelector('.wfp');
@@ -145,6 +150,11 @@ async function main() {
     await S('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true });
     await until('isPhone()', 10000);
     out.phone = await evalIn(`pdOpenFileLink(FileLinks.href(${JSON.stringify(A.own)}))`);
+    if (A.shots) {   // before: the link opened a tab of its own, the file view
+      await S('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });
+      const href = await evalIn(`[...${FR}.contentDocument.querySelectorAll('a.file-link')].find(x => x.textContent.trim().endsWith('README.md')).href`);
+      await S('Page.navigate', { url: href }); await sleep(2500); await shot(S, 'before-tab');
+    }
     out.exceptions = c.errors.map(e => (e.exceptionDetails && (e.exceptionDetails.exception && e.exceptionDetails.exception.description || e.exceptionDetails.text)) || '');
   } finally {
     try { ch.kill(); } catch (e) {}
@@ -177,7 +187,7 @@ class ChatFileLink(unittest.TestCase):
         base = Path(cls.tmp.name)
         args = {**chrome_profile.node_args(), "tmp": cls.tmp.name, "base": f"http://127.0.0.1:{cls.server.server_address[1]}",
                 "proj": cls.proj, "own": str(home / "OWN.md"),
-                "task": cls.task, "task_file": str(home / "TASK.md")}
+                "task": cls.task, "task_file": str(home / "TASK.md"), "shots": os.environ.get("ENSEMBLE_CFL_SHOTS", "")}
         script = base / "cfl_cdp.js"
         script.write_text(CDP_JS, encoding="utf-8")
         out = subprocess.run([NODE, str(script), json.dumps(args)], capture_output=True, encoding="utf-8", timeout=300)
