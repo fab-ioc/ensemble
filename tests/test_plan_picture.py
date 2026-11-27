@@ -251,6 +251,57 @@ class PlanPicture(unittest.TestCase):
         self.assertIn('name="viewport"', page)
         self.assertIn("@media (max-width:1100px)", page)
 
+    def test_the_graph_is_fluid_within_the_visual_bounds(self):
+        """#427 (GitHub issue 70): the page and its graph fit the width they
+        are shown at, between the file view's bounds; no fixed width."""
+        t1, t2, t3, t4, t5 = self.recipe_box()
+        pp._redraw("p", {"p": {"groups": [[t1["id"], t2["id"], t3["id"], t4["id"], t5["id"]]]}}, 0)
+        page = self.page()
+        svg = re.search(r"<svg [^>]*>", page).group(0)
+        vb = re.search(r'viewBox="0 0 (\d+) (\d+)"', svg)
+        self.assertTrue(vb, svg)
+        drawn = int(vb.group(1))
+        self.assertIn('width="100%"', svg)
+        self.assertNotIn("height=", svg.replace("viewBox", ""), "the height follows the width")
+        lo = int(re.search(r"min-width:(\d+)px", svg).group(1))
+        hi = int(re.search(r"max-width:(\d+)px", svg).group(1))
+        self.assertEqual((lo, hi), pp.graph_bounds(drawn))
+        self.assertEqual(lo, min(drawn, max(pp.VISUAL_MIN, round(drawn * pp.GRAPH_SHRINK))))
+        self.assertEqual(hi, min(pp.VISUAL_MAX, round(drawn * pp.GRAPH_GROW)))
+        self.assertLess(lo, drawn, "it shrinks in a narrow panel")
+        self.assertGreater(hi, drawn, "and grows in a wide one")
+        self.assertIn(".graph svg{display:block;width:100%;height:auto}", page)
+        self.assertIn(f"min-width:{pp.VISUAL_MIN}px;max-width:{pp.VISUAL_MAX}px", page)
+        self.assertNotIn("max-width:none", page)
+        # A wide graph never passes the most; a one-box graph never under its size.
+        many = [{"id": str(i), "no": f"#{i}", "title": "t", "gates": [{"id": str(i - 1)}] if i else []}
+                for i in range(8)]
+        self.assertEqual(pp.layout(many)["7"], (7, 0))
+        w = pp.PAD * 2 + 8 * pp.BOX_W + 7 * pp.GAP
+        self.assertEqual(pp.graph_bounds(w), (pp.GRAPH_ROOM, pp.VISUAL_MAX), "the page's room wins over 60%")
+        # GRAPH_ROOM is the graph's room on a 1600 page, by the page's own CSS.
+        self.assertIn("padding:22px 24px 28px", pp._CSS)
+        self.assertIn(".panel{background:#fff;border:1px solid #DCDFE4;border-radius:10px;padding:14px 16px}", pp._CSS)
+        self.assertEqual(pp.GRAPH_ROOM, pp.VISUAL_MAX - 2 * 24 - 2 * 16 - 2 * 1 - 2 - 16)
+        full = [dict(r, state="draft", word="not started", priority=3, owner="", points=[], days=None,
+                     gates=[dict(g, label="#" + g["id"], when="merged", met=False) for g in r["gates"]])
+                for r in many]
+        svg = re.search(r"<svg [^>]*>", pp.graph(full)[0]).group(0)
+        self.assertIn(f"min-width:{pp.GRAPH_ROOM}px;max-width:{pp.VISUAL_MAX}px", svg)
+        # At every number of columns the least never passes the most, nor the most 1600.
+        for cols in range(1, 12):
+            w = pp.PAD * 2 + cols * pp.BOX_W + (cols - 1) * pp.GAP
+            lo, hi = pp.graph_bounds(w)
+            self.assertLessEqual(lo, hi, cols)
+            self.assertLessEqual(hi, pp.VISUAL_MAX, cols)
+            self.assertGreaterEqual(lo, min(w, pp.VISUAL_MIN), cols)
+
+    def test_the_bounds_are_the_file_views(self):
+        fv = (Path(pp.__file__).parent / "fileview.html").read_text(encoding="utf-8")
+        m = re.search(r"--visual-min:\s*(\d+)px;\s*--visual-max:\s*(\d+)px;", fv)
+        self.assertTrue(m)
+        self.assertEqual((int(m.group(1)), int(m.group(2))), (pp.VISUAL_MIN, pp.VISUAL_MAX))
+
     def test_titles_and_questions_are_escaped(self):
         a = self.room(1, "<b>bold</b> & \"quoted\"")
         self.create(2, "Two", after=[{"task": a["id"]}])
