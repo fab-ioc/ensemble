@@ -9,6 +9,7 @@ The file viewer opens project files from the Files panel or a file link in a mes
 ## How to read and comment on a file
 
 1. Open **Files** in a project, or select a file link in a chat message. Choose a file to open it.
+   On a computer, a file link in a chat (the PO's, a thread, a task's, or a card in them) opens the file as a panel at the right of the conversation, as Files does; a file already open there comes to the front, at the line the link names. Ctrl-click (⌘-click on a Mac) or middle-click a link to open it in a new browser tab instead. On a phone, and for a file that is not there yet or a folder, the link opens in a new tab.
 2. An HTML page opens in **Preview**: it is shown sandboxed, with its scripts off. Use **Source** to see its markup with line numbers.
 3. Select the passage or lines you want to discuss and use **Comment**, then write your note. The passage stays highlighted with a number, and the note waits in the comment tray, so you can add more before sending.
 4. Choose **Send to** for the main PO chat, an existing thread, a new thread or a task, then send your notes together.

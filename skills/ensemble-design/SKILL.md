@@ -586,6 +586,15 @@ they like: nothing here asks them to write differently.
   paints a link it has asked about before at once (no flicker on a redraw), and asks again about
   the missing ones at most every 10 s, so the chip goes the moment the task writes the file. That
   recheck only looks where the path is written (`"tail": false`), never searches by name.
+- **Where a click opens it** (#428): a plain click on a file link in a chat or a card (a path's
+  picture counts as its link) on a computer with the dock opens the file as the Files tool does: a
+  `file:<path>` panel at the right of the conversation (`wsPanelWhere`), the one already open revealed,
+  at the link's line, in the task's Files when the link is in the task's chat in the middle, else in
+  the project's. The page asks the hub where the file is (`/api/file/version`'s `path`), so a relative
+  link opens where the viewer would; it asks before the click (pointer over, focus, button down) so the
+  click decides at once, and a click before the answer is a new tab. Ctrl/⌘, Shift, Alt, a middle click, a phone, a popped-out window,
+  a page without the dock, a folder, a file not written yet or not readable: a new tab, as before.
+  The Files tool's own "Open in its own tab" stays a tab.
 - **Missing panel** (the file view, when nothing is there): "<name> does not exist (yet)", the path
   the link holds, the files of that name (moved) and of a close name (renamed, or the same `#N` in front) as
   rows that open them, and a **Check again** button. When exactly one file has that name, the view
