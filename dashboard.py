@@ -10323,10 +10323,14 @@ _FILE_DRAG_TEXT_EXTS = {
 
 
 def file_owner_answer(raw: str, room_id: str = "", cwd: str = "", thread: str = "",
-                      pick: str = "") -> tuple[int, dict]:
+                      pick: str = "", at: str = "") -> tuple[int, dict]:
     """GET /api/file/owner's status and body: the file APIs' boundary first
     (no path 400, no such file 404, outside what the viewer may read 403, as
-    /api/file/download), then file_owner_info for the file found."""
+    /api/file/download), then file_owner_info for the file found.
+
+    ``at`` (#429, GitHub issue 72): the conversation on screen beside a file
+    panel of the dashboard. ``room_id`` still resolves the path; ``at`` is
+    then the opener the default comes from (``thread`` one of its threads)."""
     if not (raw or "").strip():
         return 400, {"error": "missing_path"}
     fp, _ = resolve_file_ref_how(raw, room_id=room_id, cwd=cwd, dirs=True)
@@ -10334,7 +10338,7 @@ def file_owner_answer(raw: str, room_id: str = "", cwd: str = "", thread: str = 
         return 404, {"error": "not_found"}
     if not workspace_access_ok(str(fp)):
         return 403, {"error": "path_not_allowed"}
-    return 200, file_owner_info(str(fp), room_id=room_id, cwd=cwd, thread=thread, pick=pick)
+    return 200, file_owner_info(str(fp), room_id=at or room_id, cwd=cwd, thread=thread, pick=pick)
 
 
 def file_download_target(raw: str, room_id: str = "", cwd: str = "") -> tuple[int, Path | None]:
@@ -19947,7 +19951,8 @@ class Handler(BaseHTTPRequestHandler):
                                                room_id=(q.get("room", [""])[0] or "").strip(),
                                                cwd=(q.get("cwd", [""])[0] or "").strip(),
                                                thread=(q.get("thread", [""])[0] or "").strip()[:300],
-                                               pick=(q.get("pick", [""])[0] or "").strip()[:300]))
+                                               pick=(q.get("pick", [""])[0] or "").strip()[:300],
+                                               at=(q.get("at", [""])[0] or "").strip()[:300]))
             return
         if p == "/api/file/suggest":
             # A missing path: the files of its name or a close one (moved, renamed).

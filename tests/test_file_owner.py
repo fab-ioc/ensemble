@@ -185,6 +185,21 @@ class TheHubsAnswer(unittest.TestCase):
         self.assertEqual(code, 200)
         self.assertEqual([(c["room"], c["why"]) for c in got["choices"]], [(self.po, "pick")])
 
+    # #429 (GitHub issue 72): beside a file panel, the conversation on screen
+    # is the opener; the chat that opened the viewer still resolves its path.
+    def test_the_conversation_on_screen_is_the_opener(self):
+        with mock.patch.object(self.d, "workspace_access_ok", lambda *a, **k: True):
+            code, got = self.d.file_owner_answer("a.py", room_id=self.task, at=self.po)
+        self.assertEqual(code, 200)
+        self.assertEqual(got["path"], str(self.mine))
+        self.assertEqual(got["room"], self.po)
+        self.assertEqual(got["choices"][0]["why"], "opener")
+
+    def test_no_conversation_on_screen_keeps_the_viewers_own(self):
+        with mock.patch.object(self.d, "workspace_access_ok", lambda *a, **k: True):
+            code, got = self.d.file_owner_answer("a.py", room_id=self.task)
+        self.assertEqual((code, got["room"]), (200, self.task))
+
 
 if __name__ == "__main__":
     unittest.main()
