@@ -33,6 +33,12 @@ def _task_tool_hook(argv: list[str]) -> None:
     sys.exit(task_tool_hook.main())
 
 
+def _artifact_guard(argv: list[str]) -> None:
+    import artifact_guard
+    _utf8_stdio()
+    sys.exit(artifact_guard.main())
+
+
 def _usage_statusline(argv: list[str]) -> None:
     import usage_statusline
     sys.exit(usage_statusline.main(argv))
@@ -76,6 +82,7 @@ SCRIPTS = {
     "restart_helper": _restart_helper,
     "agent_hook": _agent_hook,
     "task_tool_hook": _task_tool_hook,
+    "artifact_guard": _artifact_guard,
     "usage_statusline": _usage_statusline,
     "workspace_search": _workspace_search,
     "global_search": _global_search,

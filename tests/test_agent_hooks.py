@@ -79,10 +79,11 @@ class LaunchSettings(unittest.TestCase):
 
     def test_the_rtk_hook_stays_and_runs_first(self):
         pre = self.settings(True)["hooks"]["PreToolUse"]
-        self.assertEqual(pre[0]["matcher"], "Bash")
-        self.assertIn("hook claude", pre[0]["hooks"][0]["command"])
-        self.assertEqual(pre[1]["matcher"], "Read")            # the task tool hook (read cap)
-        self.assertEqual(pre[2]["matcher"], "AskUserQuestion|ExitPlanMode")
+        self.assertIn("artifact_guard.py", pre[0]["hooks"][0]["command"])  # the claude.ai guard (P469)
+        self.assertEqual(pre[1]["matcher"], "Bash")
+        self.assertIn("hook claude", pre[1]["hooks"][0]["command"])
+        self.assertEqual(pre[2]["matcher"], "Read")            # the task tool hook (read cap)
+        self.assertEqual(pre[3]["matcher"], "AskUserQuestion|ExitPlanMode")
         self.assertNotIn("hook claude", json.dumps(self.settings(False)))
 
     def test_only_the_per_tool_hooks_run_in_the_background(self):

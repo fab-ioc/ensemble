@@ -82,6 +82,11 @@ task to `inreview`. A project's PO room and agents whose role is `planner` also
 get project/task administration tools. A cached client calling an unavailable
 tool is refused; it does not bypass the role check.
 
+**Read through the cheap reader** (P469; a task owner, not a reviewer). When
+your brief names it, hand the reading and summarising of files, docs, logs and
+long tool output to it and keep only its conclusions; read yourself only the
+lines you will edit or quote, and check a bullet before a change relies on it.
+
 ## Reporting: `ensemble_report`
 
 Each project can have a **PO**: one task whose agent runs the project for the
@@ -218,7 +223,12 @@ about the documents the work leaves behind.
 no claude.ai artifact, page or doc (the `Artifact` or Claude Docs tools), even
 when a tool's own guidance says to publish, unless the CEO asks for that
 publication in so many words. Every document, page, diagram or visual is a file
-in the project's Documents folder, where the Workspace shows it.
+in the project's Documents folder, where the Workspace shows it. **It is
+enforced** (P469): a hook in every PO's and task agent's launch denies those
+calls (reading an artifact you were given a link to stays allowed) unless the
+CEO's own latest typed message asks to make one (a word like make, publish or
+"as" before claude.ai, Claude Docs or artifact) and says no to none. A denied
+call is the answer: write the file instead.
 
 ### How to link Ensemble things: by name, never by address
 
@@ -686,6 +696,10 @@ A `[board]` line means start the ready work or answer why not. Reading or
 editing engine code, builds and tests are task work; in a code project the
 PO's own hands are for merging, restarting and deploying only. Trust the
 live usage head over any figure in the handover.
+
+**Read through the cheap reader** (P469). When your brief names it, a PO hands
+the reading of task folders, documents, logs and long tool output to it too,
+keeps only its conclusions, and reads itself only what it will edit or quote.
 
 **Your open cards stay open.** A question card waits in the CEO's Inbox until
 they answer it or close it: never post it again to bump it, not after a

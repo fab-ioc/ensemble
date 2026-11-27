@@ -85,6 +85,7 @@ import agents
 import agent_models
 # What each Claude agent last said about itself through its hooks.
 import agent_hooks
+import artifact_guard
 # Notifications on the person's devices (Web Push, #359).
 import notify
 # A Claude model at its own limit: seen, remembered, seated around (ED-159).
@@ -2368,10 +2369,14 @@ _SETTINGS_DEFAULTS = {
     # Compress noisy command output for hub-launched task owners/reviewers.
     # PO rooms, adopted sessions and ordinary user terminals are never wired.
     "rtkForTasks": True,
-    # A cheap Haiku reader for task owners (#320): a "reader" agent for Claude
-    # and a headless `claude -p --model haiku` line for Codex, with a brief that
-    # says when to use it. Off by default: in the trial a sweep took longer.
-    "readerForTasks": False,
+    # A cheap Haiku reader for PO rooms and task owners (#320, P469): a
+    # "reader" agent for Claude and a headless `claude -p --model haiku` line
+    # for Codex, with a brief that says to hand it the reading of files and
+    # resources. On by default since P469 (it was ``readerForTasks``, off by
+    # default and for task owners only: every hub wrote that False into its
+    # settings file, so the old key is dropped rather than carried over, and
+    # it leaves the file at the next save).
+    "cheapReader": True,
     # The plan picture (#426, P469/P470): the hub draws a PO's plan as
     # "PO Plan.html" in the project's Documents folder, from the board, with no
     # model call. On by default; off draws nothing and says nothing.
@@ -3300,7 +3305,7 @@ def _save_settings_locked(settings: dict, pins: list | None = None) -> dict:
             except (TypeError, ValueError):
                 continue
             v = 0 if v <= 0 else max(5, min(1440, v))
-        if k in ("backupEnabled", "rtkForTasks", "readerForTasks", "planPicture", "paceWeek",
+        if k in ("backupEnabled", "rtkForTasks", "cheapReader", "planPicture", "paceWeek",
                  "setupWizardPending", "setupWizardDone", "remoteAccessEnabled", "startAtSignIn"):
             v = bool(v)
         if k == "notifyDeviceChoices":
@@ -3511,7 +3516,8 @@ POINTS_NOTE = (
 NO_WEB_ARTIFACT_NOTE = (
     "Never publish anything as a claude.ai artifact, page or doc (the Artifact or Claude Docs "
     "tools) unless the CEO asks for that publication in so many words: every document, "
-    "page or visual you make is a file in the project's Documents folder.")
+    "page or visual you make is a file in the project's Documents folder. A hook enforces "
+    "it: such a call is denied unless the CEO's own latest message asks for one.")
 
 # Visual first (P371): what can be shown is a static HTML page in Documents (a
 # file the file view renders with scripts off, not a claude.ai Artifact), text
@@ -3561,9 +3567,12 @@ RTK_CLAUDE_SETTINGS = RTK_DIR / "claude-task-settings.json"
 # the read cap and the attention hooks, no rtk.
 TASK_CLAUDE_SETTINGS = DASHBOARD_DIR / "hooks" / "claude-task-settings.json"
 USAGE_CLAUDE_SETTINGS = DASHBOARD_DIR / "usage" / "claude-agent-settings.json"
+# The same for a PO room, with the claude.ai guard (artifact_guard.py, P469).
+PO_CLAUDE_SETTINGS = DASHBOARD_DIR / "usage" / "claude-po-settings.json"
 USAGE_STATUSLINE_SCRIPT = Path(__file__).resolve().parent / "usage_statusline.py"
 AGENT_HOOK_SCRIPT = Path(__file__).resolve().parent / "agent_hook.py"
 TASK_TOOL_HOOK_SCRIPT = Path(__file__).resolve().parent / "task_tool_hook.py"
+ARTIFACT_GUARD_SCRIPT = Path(__file__).resolve().parent / "artifact_guard.py"
 
 
 def _script_command(name: str, path: Path) -> str:
@@ -3611,6 +3620,14 @@ def _hub_task_room(room: dict) -> bool:
         return False
     rid = room.get("id", "")
     return not any((p.get("poRoomId") or "") == rid for p in load_projects())
+
+
+def _po_room(room: dict) -> bool:
+    """Whether ``room`` is a project's PO room (not one adopted from history)."""
+    if room.get("adopted"):
+        return False
+    rid = str(room.get("id") or "").strip()
+    return bool(rid) and rid in _po_room_ids(load_projects())
 
 
 def _rtk_task_room(room: dict) -> bool:
@@ -3729,12 +3746,84 @@ def _agent_hooks() -> dict:
     return hooks
 
 
+ARTIFACT_CHECK_PATH = artifact_guard.CHECK_PATH
+
+
+def _pty_owner(pty_id: str):
+    """``(room, identity)`` of a terminal the hub owns, or None."""
+    sess = ptyrun.get(pty_id)
+    meta = (sess.meta or {}) if sess is not None else {}
+    return (meta.get("room", ""), meta.get("identity", "")) if meta.get("room") else None
+
+
+def _ceo_latest_message(session_id: str) -> str | None:
+    """The text of the last user turn of this Claude conversation that the
+    hub's input journal recorded as typed by the person (input_provenance,
+    kind ``human`` from a record, never a guess from the words), or None."""
+    tpath = find_transcript(session_id) if session_id else None
+    if tpath is None:
+        return None
+    for turn in reversed(claude_turns_classified(tpath)):
+        if (turn.get("role") == "user" and turn.get("kind") == "human"
+                and turn.get("provenance") == "record"):
+            return str(turn.get("text") or "")
+    return None
+
+
+def _artifact_request_allowed(payload, owner) -> tuple[bool, str]:
+    """Whether the claude.ai guard may let a call through (P171, P469): the
+    post comes from a terminal the hub owns, for its own room, seat and
+    conversation, in a PO room or a hub task, and the CEO's latest typed
+    message there asks for a claude.ai artifact, page or doc
+    (``artifact_guard.asks_for_web_artifact``). ``(allow, why)``."""
+    if not isinstance(payload, dict):
+        return False, "bad_payload"
+    room_id, identity, pty_id, session_id = (
+        payload.get(k).strip() if isinstance(payload.get(k), str) else ""
+        for k in ("room", "identity", "ptyId", "sessionId"))
+    if not (room_id and identity and pty_id and session_id):
+        return False, "bad_payload"
+    try:
+        owned = owner(pty_id)
+    except Exception:                       # noqa: BLE001 — not known is not allowed
+        owned = None
+    if not owned or tuple(owned) != (room_id, identity):
+        return False, "unknown_agent"
+    if _session_input_context(session_id) != (room_id, identity):
+        return False, "not_this_seat"
+    room = chatroom.get_room(room_id, public=False)
+    if not room or not (_hub_task_room(room) or _po_room(room)):
+        return False, "not_guarded_room"
+    text = _ceo_latest_message(session_id)
+    if text is None:
+        return False, "no_ceo_message"
+    if not artifact_guard.asks_for_web_artifact(text):
+        return False, "not_asked"
+    return True, "asked"
+
+
 def _agent_hook_env(port: int, room_id: str, identity: str) -> dict:
     """What ``agent_hook.py`` needs to say who it is, for a Claude agent's
     environment. Its terminal's id is added by the terminal itself
     (``ENSEMBLE_PTY_ID``, backends/ptyrun.py)."""
     return {"ENSEMBLE_HOOK_URL": f"http://127.0.0.1:{port}/api/agent/hook",
             "ENSEMBLE_HOOK_ROOM": room_id, "ENSEMBLE_HOOK_IDENTITY": identity}
+
+
+# Claude Code's own limit on the claude.ai guard; the script gives up on the
+# hub sooner (artifact_guard.TIMEOUT_S) and then denies.
+_ARTIFACT_GUARD_TIMEOUT = 10
+
+
+def _artifact_guard_hook() -> dict:
+    """The PreToolUse entry of the claude.ai guard (artifact_guard.py, P171 /
+    P469): every call of a tool that publishes to claude.ai is denied unless
+    it only reads or the CEO's latest typed message asks for it. For PO rooms
+    and task agents only; adopted sessions never get it."""
+    command = _script_command("artifact_guard", ARTIFACT_GUARD_SCRIPT)
+    return {"matcher": artifact_guard.MATCHER,
+            "hooks": [{"type": "command", "command": command,
+                       "timeout": _ARTIFACT_GUARD_TIMEOUT}]}
 
 
 def _task_tool_hook_command(cap: bool = True) -> str:
@@ -3758,10 +3847,10 @@ def _task_claude_settings(rtk: bool) -> Path:
     """Write the hub-owned, launch-only Claude settings file for a task agent
     (owner or reviewer): the task tool hook (task_tool_hook.py: the read cap,
     and with rtk the nag strip), the RTK hook when the task is in the RTK
-    pilot, plus the usage status line and the attention hooks every
-    hub-launched Claude gets. Claude takes one ``--settings`` source, so all
-    of them live in this one file; the pilot's file and the other one are two
-    files, each written whole."""
+    pilot, the claude.ai guard (_artifact_guard_hook), plus the usage status
+    line and the attention hooks every hub-launched Claude gets. Claude takes
+    one ``--settings`` source, so all of them live in this one file; the
+    pilot's file and the other one are two files, each written whole."""
     hooks = _agent_hooks()
     tool_hook = _task_tool_hook_command()
     cap_on = "--bytes 0 " not in tool_hook
@@ -3777,6 +3866,8 @@ def _task_claude_settings(rtk: bool) -> Path:
             "matcher": "Read",
             "hooks": [{"type": "command", "command": tool_hook, "timeout": _AGENT_HOOK_TIMEOUT}],
         })
+    # First of all: a denied call needs no other hook.
+    pre.insert(0, _artifact_guard_hook())
     # The read cap's note, and rtk's nag out of Bash results (only where rtk
     # runs). In the agent's way on purpose (not ``async``): its note and its
     # cleaned result must be there when the model reads the result.
@@ -3797,12 +3888,16 @@ def _rtk_claude_settings() -> Path:
     return _task_claude_settings(True)
 
 
-def _usage_claude_settings() -> Path:
-    """The launch-only Claude settings file for agents outside the RTK pilot
-    (POs, adopted sessions, tasks with RTK off): the usage status line and the
-    attention hooks."""
-    return _write_settings_file(USAGE_CLAUDE_SETTINGS, {
-        "hooks": _agent_hooks(),
+def _usage_claude_settings(guard: bool = False) -> Path:
+    """The launch-only Claude settings file for agents that are not a task's
+    (PO rooms, adopted sessions): the usage status line and the attention
+    hooks. ``guard`` (a PO room): also the claude.ai guard, in a file of its
+    own, so an adopted session never gets it."""
+    hooks = _agent_hooks()
+    if guard:
+        hooks.setdefault("PreToolUse", []).insert(0, _artifact_guard_hook())
+    return _write_settings_file(PO_CLAUDE_SETTINGS if guard else USAGE_CLAUDE_SETTINGS, {
+        "hooks": hooks,
         "statusLine": _claude_status_line(),
     })
 
@@ -3816,45 +3911,53 @@ READER_PLUGIN_DIR = DASHBOARD_DIR / "reader" / "ensemble-reader"
 READER_AGENT = "ensemble-reader:reader"
 READER_PLUGIN_JSON = {
     "name": "ensemble-reader",
-    "version": "1.0.0",
-    "description": "A cheap read-only reader for Ensemble task agents.",
+    "version": "1.1.0",
+    "description": "A cheap read-only reader for Ensemble POs and task owners.",
 }
 READER_AGENT_MD = """---
 name: reader
-description: Cheap read-only explorer on Haiku. Use it for "where is X / how does Y work" sweeps over several files. Not for the lines you will edit, not for reviews.
+description: Cheap read-only reader on Haiku. Hand it the reading and summarising of files, docs, logs and saved tool output, and "where is X / how does Y work" sweeps. Not for the lines you will edit or quote, not for reviews.
 model: haiku
 tools: Read, Grep, Glob
 ---
-You are a read-only code reader. Answer the question you are given by searching and reading the repository. Never change a file and never run a command that changes anything. Reply with short bullets only: each names file:line and says in one line what is there. No file bodies and no long quotes. Say so when you are not sure of something.
+You are a read-only reader. Answer the question you are given by searching and reading the files it is about (code, docs, notes, logs, saved tool output). Never change a file and never run a command that changes anything. Reply with short bullets only: each names file:line and says in one line what is there or what it means. No file bodies and no long quotes. Say so when you are not sure of something.
 """
+# The reader gets no WebFetch (P469, considered): Claude's WebFetch already
+# answers a question about a page on a small model and hands back only that
+# answer, so a reader in between would save nothing, and the reader stays an
+# agent that cannot reach the network.
 READER_BRIEF = {
     "claude": (
         f"A cheap reader is available: the Agent tool with subagent_type `{READER_AGENT}` "
-        "runs on Haiku and answers with file:line bullets. Use it for \"where is X / how "
-        "does Y work\" sweeps over several files instead of reading and searching them "
-        "yourself. Read the lines you will edit yourself, and check a bullet before a "
-        "change relies on it. Never use it for a review."
+        "runs on Haiku and answers with file:line bullets. Hand it the reading and "
+        "summarising of files, docs, logs and long tool output (saved to a file), and "
+        "\"where is X / how does Y work\" sweeps, instead of reading them yourself; keep "
+        "only its conclusions. Read yourself only the lines you will edit or quote, and "
+        "check a bullet before a change relies on it. For a web page, ask WebFetch a "
+        "question rather than for the page. Never use it for a review."
     ),
     "codex": (
-        "A cheap reader is available for \"where is X / how does Y work\" sweeps over "
-        "several files: `echo \"<question>\" | claude -p --model haiku --tools "
-        "Read,Grep,Glob --strict-mcp-config --no-session-persistence` (run it in the "
-        "repository; it reads, never edits, and answers with file:line bullets). Use it "
-        "instead of dumping and searching many files yourself. Read the lines you will "
-        "edit yourself, and check a bullet before a change relies on it. Never use it "
-        "for a review."
+        "A cheap reader is available: `echo \"<question>\" | claude -p --model haiku "
+        "--tools Read,Grep,Glob --strict-mcp-config --no-session-persistence` (run it in "
+        "the folder the files are in; it reads, never edits, and answers with file:line "
+        "bullets). Hand it the reading and summarising of files, docs, logs and long "
+        "command output (saved to a file), and \"where is X / how does Y work\" sweeps, "
+        "instead of dumping them yourself; keep only its conclusions. Read yourself only "
+        "the lines you will edit or quote, and check a bullet before a change relies on "
+        "it. Never use it for a review."
     ),
 }
 
 
 def _reader_task(room: dict, role: str) -> bool:
-    """Whether this launch gets the cheap reader: the setting is on and it is
-    a hub task's owner (not a reviewer, a PO room or an adopted session)."""
-    if not load_settings().get("readerForTasks", False):
+    """Whether this launch gets the cheap reader: the setting is on (it is by
+    default) and it is a PO room or a hub task's owner (not a reviewer: a
+    review reads for itself; not an adopted session)."""
+    if not load_settings().get("cheapReader", True):
         return False
     if str(role or "").lower().startswith("reviewer"):
         return False
-    return _hub_task_room(room)
+    return _hub_task_room(room) or _po_room(room)
 
 
 def _reader_plugin() -> Path:
@@ -3871,13 +3974,15 @@ def _rtk_task_wiring(room: dict, agent_key: str,
     The argv is Claude's one ``--settings`` file, which every hub-launched
     Claude gets: the usage status line and the attention hooks; for a task
     agent (owner or reviewer, not a PO room or an adopted session) also the
-    read cap, and the RTK hook when the task is in the RTK pilot. The
+    read cap, and the RTK hook when the task is in the RTK pilot; for a task
+    agent and a PO room the claude.ai guard (artifact_guard.py). The
     environment is RTK's, for covered tasks only. The brief is what the agent
     is told at launch: RTK's line when covered, and for Codex how to get at
     shell output its cap cut (a brief is the first prompt's business, so a
-    resumed conversation is not told again). With ``readerForTasks`` on, a
-    task owner (``role`` not a reviewer's) also gets the cheap reader: Claude
-    the plugin that defines it, and both the line that says when to use it.
+    resumed conversation is not told again). With ``cheapReader`` on (the
+    default), a PO room and a task owner (``role`` not a reviewer's) also get
+    the cheap reader: Claude the plugin that defines it, and both the line that
+    says when to use it.
     """
     rtk = _rtk_task_room(room)
     task = rtk or _hub_task_room(room)
@@ -3899,7 +4004,8 @@ def _rtk_task_wiring(room: dict, agent_key: str,
         briefs.append(READER_BRIEF.get(agent_key, READER_BRIEF["codex"]))
     args: list[str] = []
     if agent_key == "claude":
-        settings = _task_claude_settings(rtk) if task else _usage_claude_settings()
+        settings = (_task_claude_settings(rtk) if task
+                    else _usage_claude_settings(guard=_po_room(room)))
         args = ["--settings", str(settings)]
         if reader:
             args += ["--plugin-dir", str(_reader_plugin())]
@@ -18743,6 +18849,22 @@ def slow_requests(window_s: float = 3600.0) -> dict:
             "by": dict(sorted(by.items(), key=lambda kv: -kv[1]["n"]))}
 
 
+# Terminal editing keys (backspace, Ctrl-U/W, cursor moves, escapes) can turn
+# the bytes written into a different submitted line, so a write holding any
+# is checked as if it were an ask (P469, review 2).
+_EDITING_CONTROLS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
+
+
+def _could_be_ask(text) -> bool:
+    """Whether a write could reach an agent as the CEO's claude.ai ask: it
+    passes artifact_guard.asks_for_web_artifact, or it holds a terminal
+    editing control that could turn it into one. Not a str: False."""
+    if not isinstance(text, str):
+        return False
+    return bool(_EDITING_CONTROLS.search(text)) or artifact_guard.asks_for_web_artifact(
+        input_provenance.normalize(text))
+
+
 class Handler(BaseHTTPRequestHandler):
     # Kept-alive connections and revalidated answers (#231). Every answer
     # says where it ends (Content-Length), or closes the connection after it.
@@ -19129,6 +19251,21 @@ class Handler(BaseHTTPRequestHandler):
         """Why the program that sent this request counts as an agent, or ""."""
         return peer_process.from_agent(self.client_address[:2], self._server_end(), _agent_pids())
 
+    def _agent_asks_as_ceo(self, text) -> bool:
+        """P469: whether a write that would be journalled as the person's
+        (kind ``human``) asks for a claude.ai publication
+        (``artifact_guard.asks_for_web_artifact``) but an agent's process sent
+        it, or a program on this machine the hub cannot tell. Such a write is
+        journalled as the hub's instead, so an agent cannot type the request
+        the claude.ai guard needs (_artifact_request_allowed). The sender is
+        looked up only for a write that could be one (_could_be_ask)."""
+        try:
+            if not _could_be_ask(text):
+                return False
+            return bool(self._agent_peer())
+        except Exception:                   # noqa: BLE001 — cannot tell: not the person's ask
+            return True
+
     def _agent_sender(self) -> int | None:
         """The agent process that sent this request, None when none did or
         it cannot tell."""
@@ -19171,8 +19308,9 @@ class Handler(BaseHTTPRequestHandler):
             if p.startswith("/api/"):
                 self._send_starting(503)
                 return True
-        elif p == "/api/agent/hook" and not startup.is_booted():
-            # Never held: the agent's tool call waits for its hook.
+        elif p in ("/api/agent/hook", ARTIFACT_CHECK_PATH) and not startup.is_booted():
+            # Never held: the agent's tool call waits for its hook (the
+            # claude.ai guard reads this answer as no).
             self._send_starting(503)
             return True
         if startup.wait_booted(STARTUP_WRITE_WAIT_S):
@@ -20721,6 +20859,8 @@ class Handler(BaseHTTPRequestHandler):
         quiet = data.get("quiet") is True
         # ``now``: Send now (send_now_way) — reach the busy agent at once.
         extra = {"now": True} if data.get("now") is True else {}
+        if text and self._agent_asks_as_ceo(text):
+            extra["origin"] = "hub"         # P469: not the person's ask (_agent_asks_as_ceo)
         # Sent from a thread's reply box of a PO chat (threads.py): the PO
         # is told which thread, the reply stays in it (``also``: and shows
         # in the chat too).
@@ -23365,6 +23505,9 @@ class Handler(BaseHTTPRequestHandler):
             # Several per tool call, and none changes a session listing.
             self._agent_hook()
             return
+        if urlparse(self.path).path == ARTIFACT_CHECK_PATH:
+            self._artifact_check()
+            return
         try:
             self._do_POST()
         finally:
@@ -23418,13 +23561,16 @@ class Handler(BaseHTTPRequestHandler):
             # already kept, and a traceback per hook would only fill the log.
             self.close_connection = True
 
-    def _agent_hook_answer(self) -> None:
+    def _agent_hook_body(self) -> tuple[bool, object]:
+        """``(ok, payload)`` of a hook script's post: this machine only, never
+        from a page on another site, a short JSON body. When not ok, the
+        refusal has been answered."""
         if not self._is_local():
             self._send_json(403, {"error": "loopback_only"})
-            return
+            return False, None
         if self.headers.get("Origin") and not self._same_origin_request():
             self._send_json(403, {"error": "cross_origin"})
-            return
+            return False, None
         raw = self.headers.get("Content-Length")
         try:                                # isdigit() also passes "²", int() does not
             ln = int(raw) if raw is not None and str(raw).strip().isdigit() else 0
@@ -23433,17 +23579,37 @@ class Handler(BaseHTTPRequestHandler):
         if ln > _AGENT_HOOK_MAX_BODY:
             self.close_connection = True        # unread, so not reusable
             self._send_json(413, {"error": "too_large"})
-            return
+            return False, None
         try:
             payload = json.loads(self.rfile.read(ln).decode("utf-8")) if ln else None
         except (ValueError, OSError, RecursionError):       # deep nesting is bad JSON too
             self._send_json(400, {"error": "bad_json"})
-            return
+            return False, None
+        return True, payload
 
-        def owner(pty_id: str):
-            sess = ptyrun.get(pty_id)
-            meta = (sess.meta or {}) if sess is not None else {}
-            return (meta.get("room", ""), meta.get("identity", "")) if meta.get("room") else None
+    def _artifact_check(self) -> None:
+        """POST /api/agent/artifact-check — the claude.ai guard
+        (artifact_guard.py) asking whether a call that publishes to claude.ai
+        may go through: ``{room, identity, ptyId, sessionId, tool, action}``.
+        Answers ``{"allow": bool, "why": str}``; the guard denies on anything
+        but ``allow: true``."""
+        try:
+            ok, payload = self._agent_hook_body()
+            if not ok:
+                return
+            try:
+                allow, why = _artifact_request_allowed(payload, _pty_owner)
+            except Exception:               # noqa: BLE001 — a check that fails is a no
+                allow, why = False, "error"
+            self._send_json(200, {"allow": allow, "why": why})
+        except OSError:
+            self.close_connection = True
+
+    def _agent_hook_answer(self) -> None:
+        ok, payload = self._agent_hook_body()
+        if not ok:
+            return
+        owner = _pty_owner
         try:
             res = agent_hooks.record(payload, owner)
         except Exception:                   # whatever it was, it is not the agent's problem
@@ -23647,6 +23813,11 @@ class Handler(BaseHTTPRequestHandler):
             submit_text = ""
             submit_info = None
             verify_codex = None
+            # P469: a person's line that asks for a claude.ai publication is
+            # checked for its sender here, outside the gate (a process lookup).
+            line_now = (getattr(sess, "person_line_text", "")
+                        + re.split(r"[\r\n]", str(typed), maxsplit=1)[0]) if submits else ""
+            agent_line = bool(line_now) and not hub_line and self._agent_asks_as_ceo(line_now)
             # Discover the rollout before taking the rotation gate: on a miss
             # this may inspect old rollouts, and no other terminal should wait.
             codex_rollout = ((None, -1) if (sess.meta or {}).get("agent") != "codex"
@@ -23695,7 +23866,12 @@ class Handler(BaseHTTPRequestHandler):
                     else:
                         current = re.split(r"[\r\n]", str(typed), maxsplit=1)[0]
                         submit_text = person_pending + current
-                        submit_info = _origin_sender_info(submit_text, "human")
+                        # Not the person's when an agent typed an ask for a
+                        # claude.ai publication, or when the line changed
+                        # since its sender was checked and now is one.
+                        not_person = agent_line or (
+                            submit_text != line_now and _could_be_ask(submit_text))
+                        submit_info = _origin_sender_info(submit_text, "hub" if not_person else "human")
                     if ((sess.meta or {}).get("agent") == "codex" and submit_text
                             and (hub_line or pending_hub)):
                         path = getattr(sess, "hub_line_rollout_path", None)
@@ -23997,6 +24173,8 @@ class Handler(BaseHTTPRequestHandler):
             if not pid or (not text and not submit):
                 self._send_json(400, {"error": "missing_fields"})
                 return
+            # P469: looked up before the lock (a process lookup).
+            as_hub = bool(text and submit) and self._agent_asks_as_ceo(text)
             res = BACKEND.send_text(int(pid), text, submit=bool(submit))
             if res == "ok" and text and submit:
                 room_id, identity, session_id = _linked_input_context(int(pid))
@@ -24005,7 +24183,7 @@ class Handler(BaseHTTPRequestHandler):
                         with _INPUT_WRITE_LOCK:
                             input_provenance.record(
                                 room_id, identity, text,
-                                _input_sender_info(text, {"kind": "human"}),
+                                _input_sender_info(text, None if as_hub else {"kind": "human"}),
                                 session_id=session_id)
                     except Exception as exc:
                         print(f"[input-provenance] visible input not recorded: {exc!r}",

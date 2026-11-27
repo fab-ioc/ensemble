@@ -332,7 +332,9 @@ class PtyInputEndpointFilter(unittest.TestCase):
             rid = chatroom.create_room(
                 "Edited", [{"identity": "claude", "agent": "claude", "role": "engineer"}])["id"]
             sess = Session(rid)
-            with mock.patch.object(dashboard, "note_answer"):
+            # The cursor key makes the Enter's sender looked up (P469): the page's.
+            with mock.patch.object(dashboard, "note_answer"), \
+                    mock.patch.object(dashboard.Handler, "_agent_peer", return_value=""):
                 self.post(sess, "[digest] genuie")
                 self.post(sess, "\x1b[D", terminalKey=True)
                 self.post(sess, "n")
