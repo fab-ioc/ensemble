@@ -13,6 +13,7 @@ The file viewer opens project files from the Files panel or a file link in a mes
 2. An HTML page opens in **Preview**: it is shown sandboxed, with its scripts off. Use **Source** to see its markup with line numbers.
 3. Select the passage or lines you want to discuss and use **Comment**, then write your note. The passage stays highlighted with a number, and the note waits in the comment tray, so you can add more before sending.
 4. Choose **Send to** for the main PO chat, an existing thread, a new thread or a task, then send your notes together.
+   In a file panel beside a conversation, **Send to** starts on the conversation on screen: the thread you are reading, or the main chat when no thread is open. It follows you when you open another thread or go back to the main chat. Once you pick a place yourself, that place stays for as long as the panel is open. A file in its own browser tab keeps the place you picked for it, as before.
 5. A page or a picture takes the width of the panel or window it is shown in, and follows it as you resize. It is never narrower than 320 pixels (in a narrower panel it scrolls sideways) and never wider than 1600 pixels (in a wider window it stays centred). A picture is never shown larger than its own size unless you zoom it.
 6. If the file changes while the viewer is open, use **Reload** when the **This file changed** notice appears. Recheck the passage before commenting on the new version.
 

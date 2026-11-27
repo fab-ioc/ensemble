@@ -989,7 +989,10 @@ them), the same tray, the same `## Review comments (N)` message.
   line (`.cmt-dest-gone`: `--c-warning-bg`/`--c-warning-fg`) and its main chat stands in; a new thread
   says what it will be called in a muted line (`.cmt-dest-hint`). The place picked is kept with the
   comments across a reload and forgotten when the tray empties; the last-used thread is never the
-  default, only first in its list.
+  default, only first in its list. **In a dock file panel** (#429) the default is the conversation
+  on screen beside it (the Send box's chat, else the thread in place or main chat of the PO's tab),
+  and it follows that conversation until a place is picked by hand in the panel; that pick lasts
+  while the panel does and is not kept per file.
 - **Phone:** every diff line is `--touch-min` tall, since a tap on it starts a comment (a line that
   wraps is taller anyway); comment cards span the width, every control is `--touch-min`, the comment
   field is `--fs-400`.
