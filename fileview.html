@@ -314,6 +314,14 @@
     --lh-400: 24px;
     --fs-500: 20px;
     --s-050: 2px; --s-100: 4px; --s-200: 8px; --s-400: 16px; --s-600: 24px;
+    /* A visual (a rendered page, a picture) takes its pane's width between
+       these two (#427, GitHub issue 70). The least is the narrowest phone's
+       width: a page laid out for a phone still reads, and a phone of 360 to
+       430 never scrolls it sideways; under it the visual keeps this width and
+       scrolls sideways in its own pane. The most stops lines and drawings
+       stretching on a wide screen, the visual centred beyond it. The same
+       numbers are plan_picture.VISUAL_MIN and VISUAL_MAX. */
+    --visual-min: 320px; --visual-max: 1600px;
     /* Code. Only this page highlights code, so these live here and nowhere
        else. One hue per job and no red, which means "wrong". Every colour is
        measured on --surface, --surface-sunken and --bg of its theme: 5:1 or
@@ -601,16 +609,26 @@
   body.fv-zimg main { overflow-x:auto; }
   /* main takes the focus on a click in the file, for Ctrl/⌘ + = − 0. */
   main:focus { outline:none; }
-  body.fv-zimg img.file { max-width:none; }
+  body.fv-zimg img.file { max-width:none; min-width:0; }
   main { max-width:1040px; margin:0 auto; padding:var(--s-600) var(--s-400) 60px; }
+  /* A visual fits its pane (#427): main lets it be as wide as the pane, the
+     visual itself holds the bounds; under the least it scrolls sideways in
+     main, never the page. */
+  main:has(> iframe.file, > img.file) { max-width:none; overflow-x:auto; }
+  main:has(> iframe.file, > img.file) > .note { max-width:var(--visual-max); margin-left:auto; margin-right:auto; }
   .err { color:var(--c-danger-fg); padding:var(--s-400); }
   /* What the viewer could not do, said out loud rather than silently. */
   .note { margin:0 0 var(--s-300); padding:var(--s-200) var(--s-300); border:1px solid var(--border); border-left:3px solid var(--border-strong);
     border-radius:var(--r-200); background:var(--surface-sunken); font-size:var(--fs-200); color:var(--fg-muted); }
   .note div + div { margin-top:var(--s-100); }
   .note a { color:var(--link); }
-  img.file, iframe.file { max-width:100%; border:1px solid var(--border); border-radius:var(--r-300); background:#FFFFFF; } /* document paper, not chrome */
-  iframe.file { width:100%; height:calc(100vh - 96px); }
+  img.file, iframe.file { display:block; margin:0 auto; border:1px solid var(--border); border-radius:var(--r-300); background:#FFFFFF; } /* document paper, not chrome */
+  /* A page takes the pane's width, between the bounds. */
+  iframe.file { width:100%; min-width:var(--visual-min); max-width:var(--visual-max); height:calc(100vh - 96px); }
+  /* A picture never grows past its own size (--img-w, its width with its
+     border, set once it has loaded): it shrinks with the pane down to the
+     least, or its own size when that is smaller. */
+  img.file { height:auto; max-width:min(100%, var(--visual-max)); min-width:min(var(--visual-min), var(--img-w, 0px)); }
 
   /* ---- Code: an editor, not a card ---------------------------------------
      The code fills the page under the header and scrolls on its own, so the
@@ -2887,16 +2905,29 @@ function fvzPut(t, pct) {
   if (t.img) {
     const main = document.getElementById('main'), i = t.el;
     document.body.classList.toggle('fv-zimg', pct !== 100);
+    if (i.naturalWidth) {
+      const ic0 = getComputedStyle(i);
+      i.style.setProperty('--img-w', (i.naturalWidth + parseFloat(ic0.borderLeftWidth) + parseFloat(ic0.borderRightWidth) + parseFloat(ic0.paddingLeft) + parseFloat(ic0.paddingRight)) + 'px');
+    }
     if (pct === 100 || !i.naturalWidth) { i.style.width = ''; return; }
     const cs = getComputedStyle(main);
     // The picture as fitted at 100% (its border outside it, box-sizing being
     // border-box), times the level.
     const ic = getComputedStyle(i), edge = parseFloat(ic.borderLeftWidth) + parseFloat(ic.borderRightWidth) + parseFloat(ic.paddingLeft) + parseFloat(ic.paddingRight);
     const room = main.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight) - edge;
-    i.style.width = Math.round(Math.min(i.naturalWidth, Math.max(1, room)) * z + edge) + 'px';
+    i.style.width = Math.round(fvImgFit(i, room, edge) * z + edge) + 'px';
     return;
   }
   t.el.style.zoom = pct === 100 ? '' : String(z);
+}
+// A picture's width at 100% (#427), its border left out: the pane's room,
+// held between the visual bounds (--visual-min, --visual-max), and never
+// past the picture's own width. The same as the stylesheet draws it.
+function fvImgFit(i, room, edge) {
+  const rs = getComputedStyle(document.documentElement);
+  const lo = parseFloat(rs.getPropertyValue('--visual-min')) || 320, hi = parseFloat(rs.getPropertyValue('--visual-max')) || 1600;
+  const nat = i.naturalWidth;
+  return Math.max(1, Math.min(nat, hi - edge, Math.max(room, Math.min(lo - edge, nat))));
 }
 // Where the view's place is kept when no pointer says: the middle of the
 // first lines showing.

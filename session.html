@@ -12741,6 +12741,31 @@ document.addEventListener('click', ev => {
   ev.preventDefault();
   openTaskFrom(a);
 });
+// A file link (a balloon's, a card's; a path's picture is its link), plainly
+// clicked inside the dashboard: the dashboard opens it as a file panel of its
+// dock, at the right of this conversation, as its Files tool does (#428). It
+// says no on a phone, without the dock, or for a link that is no file's, and
+// the link opens a tab as before; a modifier or a middle click is a link.
+// The dashboard asks the hub where the file is before the click (the pointer
+// over the link, the link focused, the button down), so the click decides at
+// once and a tab stays the browser's own.
+function fileLinkOf(t) {
+  let a = t && t.closest && t.closest('a[href]');
+  if (a && a.matches('.path-img > a.att-thumb')) a = a.parentElement.querySelector('a.file-link');
+  return a && !a.classList.contains('file-missing') && !a.hasAttribute('download') ? a : null;
+}
+['pointerover', 'focusin', 'pointerdown'].forEach(type => document.addEventListener(type, ev => {
+  const a = fileLinkOf(ev.target);
+  if (!a) return;
+  try { dashboardHost()?.pdFileLinkAsk?.(a.href); } catch (e) {}
+}, true));
+document.addEventListener('click', ev => {
+  if (ev.defaultPrevented || ev.button !== 0 || ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return;
+  const a = fileLinkOf(ev.target), host = a && dashboardHost();
+  let mine = false;
+  try { mine = !!(host && typeof host.pdOpenFileLink === 'function' && host.pdOpenFileLink(a.href)); } catch (e) {}
+  if (mine) ev.preventDefault();
+});
 TaskCard.init({ open: openTaskFrom, openPoint: a => refClickHandler({ target: a, button: 0, preventDefault() {} }) });
 document.addEventListener('keydown', ev => {
   if ((ev.key === 'Enter' || ev.key === ' ') && ev.target.matches('.msg-fold[role="button"]')) {

@@ -192,6 +192,15 @@ for tasks and POs alike). Prefer a visual.
   inline SVG for diagrams, no scripts, no external loads (no CDN, no web
   fonts), light theme, readable at phone width. It is a file the hub's file
   view shows rendered (scripts off), never a claude.ai Artifact (see below).
+- **The page is fluid** (#427, GitHub issue 70): the file view gives it the
+  width of its panel, from 320px (a phone) to 1600px, so lay it out to that
+  width, never at a fixed one. Its outer box takes
+  `min-width:320px; max-width:1600px; margin:0 auto`, nothing in it sets a
+  wider fixed `width`, columns wrap or stack when narrow (a grid with
+  `minmax(0,…)` or a media query), and an inline SVG has a `viewBox` and
+  `width:100%; height:auto` (a `min-width` where its text would get too small:
+  it then scrolls sideways in its own box). A PNG made from a drawing page is
+  still rendered at 1440px wide.
 - Plain text that is not better shown (a spec, notes, a log, a long
   explanation) is **Markdown** (`.md`), as before.
 - **Every plan, without being asked** (P469), comes with a visual page: at

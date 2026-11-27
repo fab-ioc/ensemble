@@ -586,6 +586,15 @@ they like: nothing here asks them to write differently.
   paints a link it has asked about before at once (no flicker on a redraw), and asks again about
   the missing ones at most every 10 s, so the chip goes the moment the task writes the file. That
   recheck only looks where the path is written (`"tail": false`), never searches by name.
+- **Where a click opens it** (#428): a plain click on a file link in a chat or a card (a path's
+  picture counts as its link) on a computer with the dock opens the file as the Files tool does: a
+  `file:<path>` panel at the right of the conversation (`wsPanelWhere`), the one already open revealed,
+  at the link's line, in the task's Files when the link is in the task's chat in the middle, else in
+  the project's. The page asks the hub where the file is (`/api/file/version`'s `path`), so a relative
+  link opens where the viewer would; it asks before the click (pointer over, focus, button down) so the
+  click decides at once, and a click before the answer is a new tab. Ctrl/⌘, Shift, Alt, a middle click, a phone, a popped-out window,
+  a page without the dock, a folder, a file not written yet or not readable: a new tab, as before.
+  The Files tool's own "Open in its own tab" stays a tab.
 - **Missing panel** (the file view, when nothing is there): "<name> does not exist (yet)", the path
   the link holds, the files of that name (moved) and of a close name (renamed, or the same `#N` in front) as
   rows that open them, and a **Check again** button. When exactly one file has that name, the view
@@ -903,6 +912,19 @@ A changed file in a Changes tab (the task's and the project's) reads as in an ID
   in chunks of 500 both ways: the largest merge of the week (5,784 lines) paints in under 100 ms in
   either mode.
 
+### Visuals fit their pane (#427)
+
+A rendered page and a picture in the file view take the width of their pane (a side panel, a tab, a
+window), between `--visual-min` (320px, the narrowest phone: a page laid out for a phone still reads,
+and a phone of 360 to 430 never scrolls it sideways) and `--visual-max` (1600px: lines and drawings stop
+stretching, the visual centred beyond it). Both are on `fileview.html`'s `:root`, and
+`plan_picture.VISUAL_MIN` / `VISUAL_MAX` repeat them for the computed plan page (a test holds them equal).
+Under the least the visual keeps it and scrolls sideways in `main`, never the page. A picture never
+grows past its own width (`--img-w`, set on load). It follows a resize at once, with no script for a
+page and CSS alone for a picture at 100%. Markdown keeps its reading column (820px) and code its editor.
+A drawing page is fluid itself: no fixed page width, `min-width` and `max-width` with the same bounds,
+SVG by `viewBox` at `width: 100%`; its PNG is still rendered at 1440px wide.
+
 ### Panel zoom (#423)
 
 A file or a diff zooms on its own, while the chat, the bars and the browser keep their size. One
@@ -922,7 +944,7 @@ and the diff (`drZoom*` in `index.html`).
   comment being written, the comment tray or layer and a menu, the browser's own zoom is untouched.
 - **What zooms:** code, text and formatted JSON the `.code` box (gutter included); a CSV its table;
   Markdown the `.md` text, which rewraps; a rendered page its frame's `body` (not its root, which holds
-  the comment layer); a picture its width, its 100% fit × the level, the pane (which keeps its width) scrolling it sideways; a diff
+  the comment layer); a picture its width, its 100% fit (the pane between the visual bounds, #427) × the level, the pane (which keeps its width) scrolling it sideways; a diff
   its `.drv` (the bar and the comment tray stay at 100%).
 - **What it keeps:** the element under the pointer (or the first lines showing, for a button or a key)
   stays where it is (`PanelZoom.keep`). The level is kept per kind on this device (`localStorage`
