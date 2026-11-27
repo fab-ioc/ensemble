@@ -71,7 +71,7 @@ class _Cards(_World):
         ctx = {"room": room, "identity": "claude", "part": part, "projectId": ""}
         handler = types.SimpleNamespace(_ring_recipients=lambda *a: [], _ring_report=lambda *a: [])
         with mock.patch.object(ensemble_tools, "_project_po", return_value=None):
-            return ensemble_tools._ask(ctx, {"questions": questions}, handler)["messageId"]
+            return ensemble_tools._ask(ctx, {"context": "Why it is asked.", "questions": questions}, handler)["messageId"]
 
 
 class PickAny(_Cards):
@@ -104,7 +104,7 @@ class PickAny(_Cards):
         with mock.patch.object(ensemble_tools, "_projects", return_value={"p": {"id": "p"}}), \
                 mock.patch.object(ensemble_tools, "_project_po", return_value=po), \
                 mock.patch.object(ensemble_tools, "_report", side_effect=lambda c, a, h, **k: got.update(a) or {"messageId": "m1"}):
-            ensemble_tools._ask(ctx, {"questions": [{"question": "Which formats?", "multiSelect": True,
+            ensemble_tools._ask(ctx, {"context": "Why it is asked.", "questions": [{"question": "Which formats?", "multiSelect": True,
                                                      "options": [{"label": "CSV"}, {"label": "JSON"}]}]},
                                 types.SimpleNamespace(headers={}))
         self.assertIn("1. Which formats? (pick any)\n   - CSV\n   - JSON", got["text"])

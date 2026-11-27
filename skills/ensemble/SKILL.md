@@ -1161,9 +1161,14 @@ the hub nudged an idle owner and it did not carry on: look at it, steer it or
 stop it.
 
 **Asking the product owner to decide.** Call `ensemble_ask` with the question,
-its options (2–6, one may be `recommended`) or `yesno: true`, and optional
-Markdown context. It posts a quick-answer card; their click sends the answer
-and closes the ask. A question sent without options gets Yes and No when it is
+its options (2–6, one may be `recommended`) or `yesno: true`, and its
+explanation in `context` (Markdown, required: a call without it is refused).
+It posts a quick-answer card with the explanation above it in one balloon;
+their click sends the answer and closes the ask. Put everything that explains
+the question in `context`, not in your turn's text: that text arrives seconds
+after the card, and the chat joins the line you write just before the call and
+your reply just after it to the card's balloon, so do not repeat the
+explanation there. A question sent without options gets Yes and No when it is
 a yes/no question; any other comes back with a `warnings` line and a card with
 a comment box only, so give the options. In a plain
 reply, use the `Ask:` format below. Never put a question to them in prose.
