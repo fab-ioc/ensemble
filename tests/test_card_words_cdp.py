@@ -64,10 +64,12 @@ async function main() {
   ws.onmessage = ev => { const m = JSON.parse(ev.data); if (m.id && waits.has(m.id)) { const w = waits.get(m.id); waits.delete(m.id); m.error ? w.rej(new Error(m.error.message)) : w.res(m.result); } };
   const send = (method, params = {}, sessionId) => { const i = ++id; return new Promise((res, rej) => { waits.set(i, { res, rej }); ws.send(JSON.stringify({ id: i, method, params, sessionId })); }); };
   const out = {};
-  const open = async (room, w = 1200, h = 700) => {
+  // focus: what document.hasFocus says (the page in front, for seen marks), set before the page runs.
+  const open = async (room, w = 1200, h = 700, focus = null) => {
     const { targetId } = await send('Target.createTarget', { url: 'about:blank' });
     const { sessionId } = await send('Target.attachToTarget', { targetId, flatten: true });
     await send('Page.enable', {}, sessionId);
+    if (focus !== null) await send('Page.addScriptToEvaluateOnNewDocument', { source: `Document.prototype.hasFocus = () => ${!!focus};` }, sessionId);
     await send('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: 1.5, mobile: false }, sessionId);
     const evalIn = async expr => { const r = await send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true }, sessionId); if (r.exceptionDetails) throw new Error(expr.slice(0, 120) + ' :: ' + JSON.stringify(r.exceptionDetails).slice(0, 600)); return r.result.value; };
     const until = async (expr, ms = 40000) => { const t = Date.now(); while (Date.now() - t < ms) { let v = null; try { v = await evalIn(expr); } catch (e) {} if (v) return v; await sleep(150); } throw new Error('timeout: ' + expr + ' :: ' + JSON.stringify(await look().catch(() => null)) + ' :: ' + JSON.stringify(await evalIn(DEBUG).catch(e => String(e)))); };
@@ -128,13 +130,34 @@ async function main() {
     await send('Target.closeTarget', { targetId: p.targetId });
     // A PO thread: the line before the call, the card and the reply are one
     // balloon in the thread the person started.
-    p = await open(A.thr + '&thread=P1');
+    p = await open(A.thr + '&thread=P1', 1200, 700, true);
     await p.until(`[...document.querySelectorAll('#msgs .msg')].some(b => b.querySelector('.qa') && b.innerText.includes(${JSON.stringify(A.thrReply)}))`);
     await sleep(300);
     out.thread = await p.look();
     out.threadMode = await p.evalIn('THREAD_MODE');
     out.threadBar = await p.evalIn(`[...document.querySelectorAll('#msgs .msg')].filter(b => b.querySelector('.qa')).map(b => [...b.querySelectorAll('.pt-bar')].map(x => x.innerText).join(' | ')).join(' || ')`);
+    // Review 3: the joined answer (implicit, "on it") is still being worked
+    // on while its agent works: no Ack yet; done once it stops.
+    out.working = await p.evalIn(`(() => { const p = POINTS.byId.get('P1'), a = curAnswer(p), was = TAIL_WORKING;
+      PT_SETTLED.delete(a.mid);
+      TAIL_WORKING = [{ identity: 'claude', ptyId: 'x' }];
+      const busy = ptStillWorking(p, POINTS), busyBar = pointBarHtml({ id: a.mid }, POINTS, x => x);
+      TAIL_WORKING = [];
+      const idle = ptStillWorking(p, POINTS), idleBar = pointBarHtml({ id: a.mid }, POINTS, x => x);
+      TAIL_WORKING = was;
+      return { mid: a.mid, how: a.how, busy, idle, busyAck: busyBar.includes('Ack'), idleAck: idleBar.includes('Ack'),
+               drawnAs: (ptDrawn(POINTS, a.mid) || {}).id, cardShown: !!document.querySelector('#msgs .msg[data-mid="' + a.mid + '"]') }; })()`);
+    // Review 3: the joined answer on screen is seen (the hub told its own mid).
+    await p.until(`(POINTS.byId.get('P1') || {}).seen`, 20000);
+    out.seenScreen = true;
     await p.shot('po-thread-one-balloon');
+    await send('Target.closeTarget', { targetId: p.targetId });
+    // Review 3: a link to the joined answer lands on its card and sees it
+    // (the page not in front: no screen mark).
+    p = await open(A.thrLink + '&thread=P1&msg=' + encodeURIComponent(A.thrLinkMid), 1200, 700, false);
+    const landed = await p.until('LANDED && LANDED.mid', 20000);
+    await p.until(`(POINTS.byId.get('P1') || {}).seen`, 20000);
+    out.seenLink = { landed, card: await p.evalIn(`JOINED_INTO.get(${JSON.stringify(A.thrLinkMid)})`) };
     await send('Target.closeTarget', { targetId: p.targetId });
     // A task's one-agent chat: the line before the call, the context, the reply.
     p = await open(A.task);
@@ -246,25 +269,31 @@ class CardWordsInChrome(unittest.TestCase):
 
         # A PO thread: the person's P1 sent as a new thread; the PO's line,
         # its card about P1 and the reply.
-        ok, fourth, _ = dashboard.register_project("Charts")
-        assert ok, fourth
-        cls.thr = solo("Charts PO", "thr-sid", "Product owner", fourth)
-        ok, why = dashboard.set_project_po(fourth["id"], cls.thr)
-        assert ok, why
-        t0 = now - 120
-        q, ids = points.take(chatroom.get_room(cls.thr, public=False), THR_TOPIC, key="P1", now=t0, sid="thr-sid")
-        assert ids == ["P1"], ids
-        threads.note_send(cls.thr, "", "P1", ids, False, q, now=t0, new=True)
-        thr_file = tdir / "thr-sid.jsonl"
-        thr_file.write_text("".join(json.dumps(t | {"sessionId": "thr-sid"}) + "\n" for t in [
-            _turn("user", q, t0 + 1), _turn("assistant", THR_PRE, now - 2, stop="tool_use")]), encoding="utf-8")
-        room = chatroom.get_room(cls.thr, public=False)
-        ensemble_tools._ask({"room": room, "identity": "claude", "part": room["participants"][0], "projectId": fourth["id"]},
-                            {"context": THR_CONTEXT, "points": ["P1"], "questions": [
-                                {"question": "Wider chart, legend below it?", "options": [{"label": "Yes"}, {"label": "No"}]}]}, handler)
-        with thr_file.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(_turn("assistant", THR_REPLY, time.time() + 1) | {"sessionId": "thr-sid"}) + "\n")
-        points.sync(cls.thr, force=True)
+        def po_thread(name, sid):
+            ok, proj, _ = dashboard.register_project(name)
+            assert ok, proj
+            rid = solo(name + " PO", sid, "Product owner", proj)
+            ok, why = dashboard.set_project_po(proj["id"], rid)
+            assert ok, why
+            t0 = now - 120
+            q, ids = points.take(chatroom.get_room(rid, public=False), THR_TOPIC, key="P1", now=t0, sid=sid)
+            assert ids == ["P1"], ids
+            threads.note_send(rid, "", "P1", ids, False, q, now=t0, new=True)
+            f = tdir / (sid + ".jsonl")
+            f.write_text("".join(json.dumps(t | {"sessionId": sid}) + "\n" for t in [
+                _turn("user", q, t0 + 1), _turn("assistant", THR_PRE, now - 2, stop="tool_use")]), encoding="utf-8")
+            room = chatroom.get_room(rid, public=False)
+            ensemble_tools._ask({"room": room, "identity": "claude", "part": room["participants"][0], "projectId": proj["id"]},
+                                {"context": THR_CONTEXT, "points": ["P1"], "questions": [
+                                    {"question": "Wider chart, legend below it?", "options": [{"label": "Yes"}, {"label": "No"}]}]}, handler)
+            with f.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(_turn("assistant", THR_REPLY, time.time() + 1) | {"sessionId": sid}) + "\n")
+            points.sync(rid, force=True)
+            return rid
+
+        cls.thr = po_thread("Charts", "thr-sid")
+        cls.thr_link = po_thread("Maps", "thrl-sid")
+        cls.thr_link_mid = next(p for p in points.load(cls.thr_link)["points"] if p["id"] == "P1")["answers"][-1]["mid"]
 
         # A task's one-agent chat: a line, the call, the reply.
         cls.task = solo("Task view", "task-sid", "Engineer", other)
@@ -305,7 +334,7 @@ class CardWordsInChrome(unittest.TestCase):
                 "base": f"http://127.0.0.1:{server.server_address[1]}", "shots": shots,
                 "po": cls.po, "poFile": str(cls.po_file), "poReply": cls.po_reply, "reply": REPLY,
                 "task": cls.task, "taskReply": TASK_REPLY, "team": cls.team, "pre": cls.pre, "preReply": PO_PRE_REPLY,
-                "thr": cls.thr, "thrReply": THR_REPLY}
+                "thr": cls.thr, "thrReply": THR_REPLY, "thrLink": cls.thr_link, "thrLinkMid": cls.thr_link_mid}
         path = base / "cardwords_cdp.js"
         path.write_text(JS, encoding="utf-8")
         run = subprocess.run([NODE, str(path), json.dumps(args)], capture_output=True, encoding="utf-8", timeout=300)
@@ -379,6 +408,25 @@ class CardWordsInChrome(unittest.TestCase):
         # The reply answers P1 (the thread's first reply): its bar stays on the balloon.
         self.assertIn("answers P1", self.got["threadBar"], "the reply's point bar rides with it")
         self.assertIn("Ack", self.got["threadBar"])
+
+    def test_a_joined_answer_reads_working_while_its_agent_works(self):
+        w = self.got["working"]
+        self.assertEqual((w["how"], w["cardShown"]), ("implicit", False), w)
+        self.assertEqual(w["drawnAs"], w["mid"], "found through the card it joined")
+        self.assertEqual((w["busy"], w["busyAck"]), (True, False), "working on it: no Ack yet")
+        self.assertEqual((w["idle"], w["idleAck"]), (False, True), "its agent stopped: done, Ack")
+
+    def test_a_joined_answer_on_screen_is_seen(self):
+        self.assertTrue(self.got["seenScreen"])
+        p = next(p for p in points.load(self.thr)["points"] if p["id"] == "P1")
+        self.assertEqual(p.get("seenHow"), "screen", p)
+
+    def test_a_link_to_a_joined_answer_lands_on_its_card_and_sees_it(self):
+        s = self.got["seenLink"]
+        self.assertEqual(s["landed"], s["card"], s)
+        self.assertTrue(s["card"])
+        p = next(p for p in points.load(self.thr_link)["points"] if p["id"] == "P1")
+        self.assertEqual(p.get("seenHow"), "link", p)
 
     def test_a_task_chat_joins_the_line_before_the_call_and_the_reply(self):
         task = self.got["task"]

@@ -5249,10 +5249,18 @@ const PT_SETTLED = new Set();
 // or more spanning PT_STOP_MS (renderActivity).
 const PT_QUIET = new Map();
 const PT_STOP_MS = 15000;
+// The drawn item holding mid: its own balloon, or the card it joined (#430),
+// read as the joined line (its id and time) for the point's state.
+function ptDrawnAt(items, mid) { return mid ? (items || []).findIndex(x => x && (x.id === mid || (x.joined || []).includes(mid))) : -1; }
+function ptDrawn(P, mid) {
+  const items = (P && P.drawn) || [], x = items[ptDrawnAt(items, mid)];
+  if (!x || x.id === mid) return x || null;
+  return Object.assign({}, x, { id: mid, ts: (x.joinedTs && x.joinedTs[mid]) || x.ts });
+}
 // Whether a drawn message after mid passes test; null when mid is not drawn.
 function ptAfter(P, mid, test) {
   const items = (P && P.drawn) || [];
-  const i = mid ? items.findIndex(x => x && x.id === mid) : -1;
+  const i = ptDrawnAt(items, mid);
   if (i < 0) return null;
   for (let j = i + 1; j < items.length; j++) if (test(items[j])) return true;
   return false;
@@ -5262,7 +5270,7 @@ const isAgentMsg = x => !!x && x.from !== 'user' && x.from !== 'ensemble' && !is
 function ptWorker(P, mid) {
   const w = ptWorkers();
   if (!w.length) return null;
-  const by = mid ? ((P && P.drawn) || []).find(x => x && x.id === mid) : null;
+  const by = ptDrawn(P, mid);
   return (by && w.find(a => a.identity === by.from)) || w[0];
 }
 // An "on it" answer (implicit) still being worked on (Q2): the agent that wrote
@@ -5272,7 +5280,7 @@ function ptWorker(P, mid) {
 function ptStillWorking(p, P) {
   const a = curAnswer(p);
   if (!a || a.how !== 'implicit' || !a.mid || PT_SETTLED.has(a.mid)) return false;
-  const by = ((P && P.drawn) || []).find(x => x && x.id === a.mid);
+  const by = ptDrawn(P, a.mid);
   if (!by || !by.from || !ptWorkers().some(w => w.identity === by.from)) return false;
   if (Number(((P && P.turnEnds) || {})[by.from] || 0) > Number(by.ts || 0)) return false;
   return ptAfter(P, a.mid, x => !!x && x.from !== by.from) === false;
@@ -5310,7 +5318,7 @@ function ptStateHtml(p, P, href) {
   } else if (p.state === 'delivered') {
     const c = curAnswer(p), asks = P.askMids;
     // Waiting while the answer holds a question card still open, wherever the Inbox files it.
-    const card = mid => { const m = mid && ((P.drawn || []).find(x => x && x.id === mid)); return !!m && openAsks(m, P).length > 0; };
+    const card = mid => { const m = ptDrawn(P, mid); return !!m && openAsks(m, P).length > 0; };
     if ((asks && ((c && asks.has(c.mid)) || (a && asks.has(a.mid)))) || card(c && c.mid) || card(a && a.mid)) bits.push(st('waiting', 'waiting for you — ' + go('answer the question ↓', 'Go to the question')), up);
     else if (ptStillWorking(p, P)) bits.push(st('working', dot + 'working on it'), up, drop, ptNowHtml(ptWorker(P, c.mid)));
     else bits.push(st('done', 'done — ' + go('see the answer ↓', 'Go to the answer')), up);
@@ -5895,14 +5903,15 @@ function seenTick(now = Date.now()) {
   if (!want.size || !box || !box.clientHeight || !pageInFront()) { SEEN_SINCE.clear(); return; }
   const r = box.getBoundingClientRect(), done = [];
   for (const el of box.querySelectorAll('.msg[data-mid]')) {
-    const mid = el.dataset.mid;
-    if (!want.has(mid)) continue;
     const e = el.getBoundingClientRect();
     const shown = Math.min(e.bottom, r.bottom) - Math.max(e.top, r.top);
-    if (e.height > 0 && shown >= Math.min(120, e.height / 2)) {
-      if (!SEEN_SINCE.has(mid)) SEEN_SINCE.set(mid, now);
-      else if (now - SEEN_SINCE.get(mid) >= SEEN_MS) done.push(mid);
-    } else SEEN_SINCE.delete(mid);
+    // The answers this balloon shows: its own, or one joined to its card (#430).
+    for (const mid of seenOn(want, el.dataset.mid)) {
+      if (e.height > 0 && shown >= Math.min(120, e.height / 2)) {
+        if (!SEEN_SINCE.has(mid)) SEEN_SINCE.set(mid, now);
+        else if (now - SEEN_SINCE.get(mid) >= SEEN_MS) done.push(mid);
+      } else SEEN_SINCE.delete(mid);
+    }
   }
   for (const mid of [...SEEN_SINCE.keys()]) if (!want.has(mid)) SEEN_SINCE.delete(mid);
   if (done.length) { done.forEach(m => SEEN_SINCE.delete(m)); seenSend(done, [], 'screen'); }
@@ -5910,8 +5919,11 @@ function seenTick(now = Date.now()) {
 // Opened from a link: the landing balloon, if it answers a point. Told once
 // the landing mark has faded: the hub's answer redraws the chat.
 function seenLink(mid) {
-  if (seenWanted().has(mid)) setTimeout(() => { if (seenWanted().has(mid)) seenSend([mid], [], 'link'); }, 2700);
+  if (seenOn(seenWanted(), mid).length) setTimeout(() => { const m = seenOn(seenWanted(), mid); if (m.length) seenSend(m, [], 'link'); }, 2700);
 }
+// The answers still to be seen that the balloon of mid shows: its own, and
+// the lines joined to its card (JOINED_INTO), each by its own mid for the hub.
+function seenOn(want, mid) { return mid ? [...want.keys()].filter(k => k === mid || JOINED_INTO.get(k) === mid) : []; }
 setInterval(() => { try { seenTick(); } catch (e) {} }, 500);
 // ---- The catch-up line: when it shows, and what advances the read point ----
 const READ_KEY = () => 'cd-chat-read:' + (ROOM || location.pathname + location.search);
@@ -7414,7 +7426,8 @@ function joinAskWords(items, room = false) {
     const ids = [pre, post].filter(Boolean).map(m => m.id);
     for (const id of ids) JOINED_INTO.set(id, c.id);
     if (post && steps && typeof STEPS_OPEN !== 'undefined' && STEPS_OPEN.has(post.id)) STEPS_OPEN.add(c.id);
-    out.push(Object.assign({}, c, { text, joined: ids }, steps ? { steps: steps.length ? steps : undefined } : {}));
+    const joinedTs = Object.fromEntries([pre, post].filter(Boolean).map(m => [m.id, m.ts]));
+    out.push(Object.assign({}, c, { text, joined: ids, joinedTs }, steps ? { steps: steps.length ? steps : undefined } : {}));
   }
   if (GOTO && JOINED_INTO.has(GOTO)) GOTO = JOINED_INTO.get(GOTO);
   return out;
@@ -9463,7 +9476,7 @@ function renderActivity(ptyMap, liveMap, ok = true) {
   // failed read starts the count again; reads before the answer never count.
   const busy = new Set(TAIL_WORKING.map(a => a.identity)), drawn = POINTS.drawn || [], now = Date.now();
   for (const p of POINTS.items || []) {
-    const c = curAnswer(p), by = c && c.mid && c.how === 'implicit' && !PT_SETTLED.has(c.mid) ? drawn.find(x => x && x.id === c.mid) : null;
+    const c = curAnswer(p), by = c && c.mid && c.how === 'implicit' && !PT_SETTLED.has(c.mid) ? ptDrawn({ drawn }, c.mid) : null;
     if (!by) continue;
     if (!ok || busy.has(by.from)) { PT_QUIET.delete(c.mid); continue; }
     const q = PT_QUIET.get(c.mid);
