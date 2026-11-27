@@ -403,9 +403,17 @@ BOX_W, BOX_H, GAP, PITCH, TOP, PAD = 312, 112, 88, 136, 26, 4
 # file view's visual bounds (fileview.html's --visual-min and --visual-max: the
 # narrowest phone, and where lines and drawings stop stretching). The graph
 # scales with it, its text kept readable: never under 60% of its drawn size
-# nor over 125% (a smaller fit scrolls sideways in its panel).
+# nor over 125% (a smaller fit scrolls sideways in its panel). The most wins:
+# a graph wider than 1600 / 0.6 is held at 1600 whatever its text.
 VISUAL_MIN, VISUAL_MAX = 320, 1600
 GRAPH_SHRINK, GRAPH_GROW = 0.6, 1.25
+
+
+def graph_bounds(width: int) -> tuple[int, int]:
+    """The graph's least and most width on the page, for its drawn width."""
+    hi = min(VISUAL_MAX, round(width * GRAPH_GROW))
+    lo = min(width, max(VISUAL_MIN, round(width * GRAPH_SHRINK)), hi)
+    return lo, hi
 _NUMKEY = re.compile(r"(\d+)")
 
 
@@ -558,8 +566,7 @@ def graph(rows: list[dict]) -> tuple[str, int]:
     width = PAD * 2 + cols * BOX_W + (cols - 1) * GAP
     height = TOP + nrows * PITCH - (PITCH - BOX_H) + 8
     xy = {rid: (PAD + c * (BOX_W + GAP), TOP + r * PITCH) for rid, (c, r) in pos.items()}
-    lo = min(width, max(VISUAL_MIN, round(width * GRAPH_SHRINK)))
-    hi = min(VISUAL_MAX, round(width * GRAPH_GROW))
+    lo, hi = graph_bounds(width)
     parts = [f'<svg viewBox="0 0 {width} {height}" width="100%" '
              f'style="min-width:{lo}px;max-width:{hi}px" role="img" '
              f'aria-label="The plan\'s tasks and their gates" '

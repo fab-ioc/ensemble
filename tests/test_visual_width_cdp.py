@@ -117,7 +117,7 @@ const PLAN = `(() => { const f = document.querySelector('iframe.file'), d = f.co
 async function main() {
   const { ch, ws } = await launch();
   const c = new Cdp(ws); await c.open();
-  const out = { page: {}, big: {}, small: {}, plan4: {}, plan2: {} };
+  const out = { page: {}, big: {}, small: {}, plan4: {}, plan2: {}, plan8: {} };
   try {
     const p = await page(c);
     // ---- A rendered page ------------------------------------------------------
@@ -172,6 +172,12 @@ async function main() {
       await p.go(A.plan2Url, PAGE_READY);
       out.plan2[w] = await p.ev(PLAN);
     }
+    // Eight columns (3120 drawn): the most wins over the 60% floor.
+    for (const w of [900, 1920]) {
+      await p.width(w);
+      await p.go(A.plan8Url, PAGE_READY);
+      out.plan8[w] = await p.ev(PLAN);
+    }
   } finally {
     ch.kill();
   }
@@ -214,6 +220,7 @@ class InChrome(unittest.TestCase):
         (files / "small.png").write_bytes(_png(300, 120))
         (files / "plan4.html").write_text(_plan(4), encoding="utf-8")
         (files / "plan2.html").write_text(_plan(2), encoding="utf-8")
+        (files / "plan8.html").write_text(_plan(8), encoding="utf-8")
 
         cls.server = ThreadingHTTPServer(("127.0.0.1", 0), dashboard.Handler)
         cls.server.daemon_threads = True
@@ -222,7 +229,7 @@ class InChrome(unittest.TestCase):
         url = lambda n: f"{b}/fileview?path={quote(str(files / n))}"  # noqa: E731
         args = {**chrome_profile.node_args(), "tmp": cls.tmp.name, "base": b,
                 "htmlUrl": url("page.html"), "bigUrl": url("big.png"), "smallUrl": url("small.png"),
-                "plan4Url": url("plan4.html"), "plan2Url": url("plan2.html")}
+                "plan4Url": url("plan4.html"), "plan2Url": url("plan2.html"), "plan8Url": url("plan8.html")}
         out = subprocess.run([NODE, "-e", CDP_JS, json.dumps(args)], capture_output=True, encoding="utf-8", timeout=300)
         assert out.returncode == 0, out.stderr[-4000:]
         cls.got = json.loads(out.stdout.strip().splitlines()[-1])
@@ -307,6 +314,14 @@ class InChrome(unittest.TestCase):
         drawn = plan_picture.PAD * 2 + 2 * plan_picture.BOX_W + plan_picture.GAP
         self.assertGreater(p2["1920"]["svg"], drawn, "and grows past its drawn size in a wide one")
         self.assertFalse(p2["1920"]["graphScrolls"])
+
+    def test_a_very_wide_plan_graph_is_held_at_the_most(self):
+        p8 = self.got["plan8"]
+        self.assertEqual(p8["1920"]["svg"], self.HI, ("never past 1600, whatever its text", p8))
+        self.assertEqual(p8["1920"]["frame"], self.HI)
+        self.assertEqual(p8["900"]["svg"], self.HI, p8)
+        self.assertTrue(p8["900"]["graphScrolls"], "then it scrolls in its panel")
+        self.assertFalse(p8["900"]["docScrolls"])
 
 
 if __name__ == "__main__":

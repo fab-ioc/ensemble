@@ -265,6 +265,7 @@ class PlanPicture(unittest.TestCase):
         self.assertNotIn("height=", svg.replace("viewBox", ""), "the height follows the width")
         lo = int(re.search(r"min-width:(\d+)px", svg).group(1))
         hi = int(re.search(r"max-width:(\d+)px", svg).group(1))
+        self.assertEqual((lo, hi), pp.graph_bounds(drawn))
         self.assertEqual(lo, min(drawn, max(pp.VISUAL_MIN, round(drawn * pp.GRAPH_SHRINK))))
         self.assertEqual(hi, min(pp.VISUAL_MAX, round(drawn * pp.GRAPH_GROW)))
         self.assertLess(lo, drawn, "it shrinks in a narrow panel")
@@ -277,7 +278,19 @@ class PlanPicture(unittest.TestCase):
                 for i in range(8)]
         self.assertEqual(pp.layout(many)["7"], (7, 0))
         w = pp.PAD * 2 + 8 * pp.BOX_W + 7 * pp.GAP
-        self.assertEqual(min(pp.VISUAL_MAX, round(w * pp.GRAPH_GROW)), pp.VISUAL_MAX)
+        self.assertEqual(pp.graph_bounds(w), (pp.VISUAL_MAX, pp.VISUAL_MAX), "the most wins over 60%")
+        full = [dict(r, state="draft", word="not started", priority=3, owner="", points=[], days=None,
+                     gates=[dict(g, label="#" + g["id"], when="merged", met=False) for g in r["gates"]])
+                for r in many]
+        svg = re.search(r"<svg [^>]*>", pp.graph(full)[0]).group(0)
+        self.assertIn(f"min-width:{pp.VISUAL_MAX}px;max-width:{pp.VISUAL_MAX}px", svg)
+        # At every number of columns the least never passes the most, nor the most 1600.
+        for cols in range(1, 12):
+            w = pp.PAD * 2 + cols * pp.BOX_W + (cols - 1) * pp.GAP
+            lo, hi = pp.graph_bounds(w)
+            self.assertLessEqual(lo, hi, cols)
+            self.assertLessEqual(hi, pp.VISUAL_MAX, cols)
+            self.assertGreaterEqual(lo, min(w, pp.VISUAL_MIN), cols)
 
     def test_the_bounds_are_the_file_views(self):
         fv = (Path(pp.__file__).parent / "fileview.html").read_text(encoding="utf-8")
