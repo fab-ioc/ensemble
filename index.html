@@ -4308,7 +4308,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .ldp-item { position: relative; display: flex; align-items: center; }
   .ldp-dots { position: absolute; right: 2px; top: 50%; transform: translateY(-50%); width: 24px; height: 22px; border: 0; border-radius: var(--r-200);
     background: var(--surface); color: var(--fg-subtle); font: inherit; cursor: pointer; opacity: 0; }
-  .ldp-item:hover .ldp-dots, .ldp-dots:focus-visible, .ldp-dots[aria-expanded="true"] { opacity: 1; }
+  .ldp-item:hover:not(:has(> .ldp-thr:hover)) .ldp-dots, .ldp-dots:focus-visible, .ldp-dots[aria-expanded="true"] { opacity: 1; }
   .ldp-dots:hover { background: var(--hover); color: var(--fg); }
   .ldp-more { display: block; width: 100%; padding: 4px 6px; border: 0; border-radius: var(--r-200); background: transparent;
     color: var(--fg-muted); font: inherit; font-size: 11px; line-height: 1.4; cursor: pointer; text-align: left; }
@@ -4320,7 +4320,7 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .ldp-pins { display: flex; flex-direction: column; }
   .ldp-pinb { position: absolute; right: 28px; top: 50%; transform: translateY(-50%); width: 24px; height: 22px; padding: 0; border: 0; border-radius: var(--r-200);
     background: var(--surface); color: var(--fg-subtle); cursor: pointer; opacity: 0; display: grid; place-items: center; }
-  .ldp-item:hover .ldp-pinb, .ldp-pinb:focus-visible, .ldp-item:has(.ldp-dots[aria-expanded="true"]) .ldp-pinb { opacity: 1; }
+  .ldp-item:hover:not(:has(> .ldp-thr:hover)) .ldp-pinb, .ldp-pinb:focus-visible, .ldp-item:has(.ldp-dots[aria-expanded="true"]) .ldp-pinb { opacity: 1; }
   .ldp-pinb:hover { background: var(--hover); color: var(--fg); }
   .ldp-pinb:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--focus-ring); }
   .pin-ico { display: block; width: 12px; height: 12px; }
@@ -4329,21 +4329,52 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
      button shows, instead of relying on ⋯ to cover it (⋯'s hover background is see-through), and ⋯'s
      keyboard focus brings the pin button with it, so the row never shows no pin either. */
   .ldp-hand:has(.ldp-dots:focus-visible) .ldp-pinb { opacity: 1; }
-  .ldp-hand:hover .ldp-pinmark,
+  .ldp-hand:hover:not(:has(> .ldp-thr:hover)) .ldp-pinmark,
   .ldp-hand:has(.ldp-pinb:focus-visible, .ldp-dots:focus-visible, .ldp-dots[aria-expanded="true"]) .ldp-pinmark { visibility: hidden; }
   .ldp-hand .ldp-row { cursor: grab; }
   /* #378 (P363): the grip takes the tile's whole 22px box (its dots still 12px, centred), so the
      row keeps its 28px on hover: 12px tall, it shrank the row out from under a pointer near its
      bottom edge, which lost the hover, grew back and flickered every frame. */
   .ldp-grip { display: none; flex: none; box-sizing: border-box; width: 22px; height: 22px; padding: 5px 0; color: var(--fg-subtle); }
-  .ldp-hand:hover .ldp-row > .ldp-ico, .ldp-hand.ldp-lifted .ldp-row > .ldp-ico { display: none; }
-  .ldp-hand:hover .ldp-grip, .ldp-hand.ldp-lifted .ldp-grip { display: block; }
+  .ldp-hand:hover:not(:has(> .ldp-thr:hover)) > .ldp-row > .ldp-ico, .ldp-hand.ldp-lifted .ldp-row > .ldp-ico { display: none; }
+  .ldp-hand:hover:not(:has(> .ldp-thr:hover)) .ldp-grip, .ldp-hand.ldp-lifted .ldp-grip { display: block; }
   .ldp-slot, .pm-slot { flex: none; height: var(--slot-h, 28px); border-radius: var(--r-200); background: var(--selected-bg); box-shadow: inset 0 0 0 2px var(--accent); }
   .ldp-lifted, .pm-lifted { position: fixed; z-index: 1000; margin: 0; background: var(--surface-overlay); box-shadow: var(--e-200); border-radius: var(--r-200);
     pointer-events: none; font-family: var(--ldp-font, inherit); }
   .ldp-lifted .ldp-row, .pm-lifted .pm-item { cursor: grabbing; }
   .ldp-lifted .ldp-dots, .ldp-lifted .ldp-pinb { display: none; }
   .ldp-item.ldp-gone, .pm-row.pm-gone { display: none; }
+  /* #420 (GitHub issue 68, drawing option A): a project's threads under its row. The caret sits in the
+     list's left gutter, before the tile; the rows hang off a 1px --border tree line, their names in line
+     with the project's. The unread dot is --c-discovery-bold, what waits on you the row's amber pill
+     (.ldp-n), the thread on screen --selected-fg with a 2px --accent bar on its left. */
+  .ldp { padding-left: 12px; }
+  .ldp-car { position: absolute; left: -13px; top: 3px; width: 13px; height: 22px; padding: 0; border: 0; border-radius: var(--r-200);
+    background: transparent; color: var(--fg-subtle); display: grid; place-items: center; cursor: pointer; }
+  .ldp-car svg { display: block; width: 8px; height: 8px; }
+  .ldp-car:hover { color: var(--fg); }
+  .ldp-tree { flex-wrap: wrap; }
+  .ldp-tree > .ldp-dots, .ldp-tree > .ldp-pinb { top: 3px; transform: none; }
+  .ldp-thr { flex: 0 0 calc(100% - 11px); min-width: 0; display: flex; flex-direction: column; box-sizing: border-box; margin: 1px 0 3px 11px; border-left: 1px solid var(--border); }
+  .ldp-trow, .ldp-tnote { display: flex; align-items: center; gap: 8px; box-sizing: border-box; width: 100%; min-width: 0; min-height: 24px; padding: 2px 6px; border: 0; border-radius: var(--r-200);
+    background: transparent; color: var(--fg); font: inherit; font-size: 12px; line-height: 1.4; text-align: left; cursor: pointer; }
+  .ldp-trow:hover { background: var(--hover); }
+  .ldp-trow:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--focus-ring); }
+  .ldp-trow[aria-current="true"] { color: var(--selected-fg); font-weight: 600; box-shadow: inset 2px 0 0 var(--accent); }
+  .ldp-trow[aria-current="true"]:focus-visible { box-shadow: inset 2px 0 0 var(--accent), inset 0 0 0 2px var(--focus-ring); }
+  .ldp-tdot { flex: none; width: 8px; height: 8px; border-radius: 50%; }
+  .ldp-trow[data-unread] .ldp-tdot { background: var(--c-discovery-bold); }
+  .ldp-age { flex: none; font-size: var(--fs-100); font-weight: 400; color: var(--fg-muted); }
+  .ldp-tall, .ldp-tnote { padding-left: 22px; color: var(--fg-muted); font-size: 11px; }
+  .ldp-tall .ldp-name { text-decoration: underline; }
+  .ldp-tall:hover { color: var(--fg); }
+  .ldp-tnote { cursor: default; }
+  .ldp-thr:empty { display: none; }
+  .ldp-lifted .ldp-thr { pointer-events: none; }
+  /* The phone's switcher: the current project's rows under it, 44px each. */
+  #proj-menu .pm-thr { margin: 0 var(--s-100) var(--s-100) 22px; }
+  #proj-menu .pm-thr > .ldp-trow, #proj-menu .pm-thr > .ldp-tnote { min-height: var(--touch-min); font-size: var(--fs-200); }
+  #proj-menu .pm-thr > .ldp-tall, #proj-menu .pm-thr > .ldp-tnote { font-size: var(--fs-100); }
   body.pin-dragging, body.pin-dragging * { cursor: grabbing !important; user-select: none; }
   .ibx-title.ibx-title-listed { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     font-size: var(--fs-100); line-height: var(--lh-100); color: var(--fg-muted); text-transform: uppercase; letter-spacing: .04em; }
@@ -19255,13 +19286,20 @@ function ldpHtml(m) {
   let h = `<button type="button" class="ldp-row" data-ldp="all"${cur(selAll)} title="${esc(nounText("Every {project}'s Inbox"))}"><span class="ldp-name">All</span>${pill(cnt(''), '')}</button>`;
   // #362: a pinned row (`hand`) has a pin mark, and a grip that takes the
   // swatch's place on hover; every project row has the pin button beside ⋯.
+  // #420: a project with threads has a caret before its tile and, unfolded, an
+  // empty group under its row that ldtPaint fills in place (never in this string).
   const projRow = (p, hand) => {
-    const can = pinCan(p.pid);
-    return `<div class="ldp-item${hand ? ' ldp-hand' : ''}" data-pin-row="${esc(p.pid)}"><button type="button" class="ldp-row" data-ldp-proj="${esc(p.pid)}"${cur(!selAll && lp === p.pid)} title="${esc(p.name)}">`
+    const can = pinCan(p.pid), thr = ldtCan(p.pid), open = thr && ldtIsOpen(p.pid);
+    return `<div class="ldp-item${hand ? ' ldp-hand' : ''}${thr ? ' ldp-tree' : ''}" data-pin-row="${esc(p.pid)}">`
+      + (thr ? `<button type="button" class="ldp-car" data-ldp-car="${esc(p.pid)}" tabindex="-1" aria-expanded="${open}"`
+        + ` aria-label="${esc((open ? 'Fold the threads of ' : 'Unfold the threads of ') + p.name)}" title="${open ? 'Fold' : 'Unfold'}">`
+        + `<svg viewBox="0 0 8 8" aria-hidden="true"><path d="${open ? 'M1 2.5h6L4 6.5z' : 'M2.5 1v6L6.5 4z'}" fill="currentColor"/></svg></button>` : '')
+      + `<button type="button" class="ldp-row" data-ldp-proj="${esc(p.pid)}"${cur(!selAll && lp === p.pid)} title="${esc(p.name)}">`
       + `${ldpSwatch(p.pid)}${hand ? pinGripSvg('ldp-grip') : ''}<span class="ldp-name">${esc(p.name)}</span>${pill(cnt(p.pid), p.pid)}`
       + (hand ? `<span class="ldp-pinmark" title="Pinned">${pinSvg(true)}</span>` : '') + '</button>'
       + (can ? pinBtnHtml('ldp-pinb', 'data-ldp-pin', p.pid, p.name, hand) : '')
       + (can ? `<button type="button" class="ldp-dots" data-ldp-pmenu="${esc(p.pid)}" aria-haspopup="menu" aria-expanded="false" aria-label="${esc('More for ' + p.name)}" title="More">⋯</button>` : '')
+      + (open ? `<div class="ldp-thr" role="group" aria-label="${esc('Threads of ' + p.name)}" data-ldp-thr="${esc(p.pid)}"></div>` : '')
       + '</div>';
   };
   const pinned = m.pinned || [];
@@ -19308,17 +19346,322 @@ function ldpPaint() {
   if (!el) return;
   if (PIN.drag) { PIN.drag.repaint = true; return; }   // #362: after the drop
   const html = (window.LD && LD.dock && !window.ensListDocked) ? ldpHtml(ldpModel()) : '';
-  if (html === LDP.sig) return;
+  if (html === LDP.sig) { ldtTick(); return; }
   LDP.sig = html;
   rowExpandBeforeChange(el);
   // Keep focus on the same control across the repaint.
   const a = document.activeElement, keep = a && el.contains(a)
-    ? ['data-ldp', 'data-ldp-proj', 'data-ldp-pmenu', 'data-ldp-pin', 'data-ldp-room', 'data-ldp-sid', 'data-ldp-more'].map(k => a.hasAttribute(k) ? `[${k}="${CSS.escape(a.getAttribute(k))}"]` : '').join('')
+    ? ['data-ldp', 'data-ldp-proj', 'data-ldp-pmenu', 'data-ldp-pin', 'data-ldp-room', 'data-ldp-sid', 'data-ldp-more', 'data-ldp-car'].map(k => a.hasAttribute(k) ? `[${k}="${CSS.escape(a.getAttribute(k))}"]` : '').join('')
       + (a.hasAttribute('data-ldp-menu') ? '[data-ldp-menu]' : (a.classList.contains('ldp-row') ? '.ldp-row' : ''))
     : '';
+  // #420: a project's thread rows are the same nodes after the repaint (moved
+  // into its new group), so a poll never redraws them under the pointer.
+  const kept = new Map([...el.querySelectorAll('[data-ldp-thr]')].map(g => [g.getAttribute('data-ldp-thr'), [...g.childNodes]]));
+  const keepNode = a && a.closest && a.closest('[data-ldp-thr]') ? a : null;
   el.innerHTML = html;
-  if (keep) { const b = el.querySelector(keep); if (b) b.focus(); }
+  for (const g of el.querySelectorAll('[data-ldp-thr]')) g.append(...(kept.get(g.getAttribute('data-ldp-thr')) || []));
+  if (keepNode && keepNode.isConnected) keepNode.focus({ preventScroll: true });
+  else if (keep) { const b = el.querySelector(keep); if (b) b.focus(); }
+  ldtTick();
 }
+// ---- #420 (GitHub issue 68, drawing option A): threads under a project -------
+// An unfolded project row lists its PO chat's threads under it: Main chat, the
+// 5 latest (as thread ▾ lists them: what the chat's Threads filter shows), then
+// All N threads…, which opens that filter. Each row has the unread dot, the
+// amber pill of what waits on you in it, and its age; the thread on screen is
+// marked. The rows are read only for an unfolded project (the hub's
+// threads.summary on /api/projects says whether there are any, for the caret)
+// and patched in place: a poll never redraws them, and their order holds while
+// the pointer or the keyboard is in the list (ldpHeld's rule). Unfolded
+// projects are kept in localStorage 'cd-ldp-open'; picking a project unfolds it.
+var LDT = { open: null, data: new Map(), busy: new Set(), inAt: 0, timer: 0 };
+var LDT_KEY = 'cd-ldp-open', LDT_N = 5, LDT_POLL_MS = 15000;
+function ldtOpenSet() {
+  if (!LDT.open) {
+    let v = [];
+    try { v = JSON.parse(localStorage.getItem(LDT_KEY) || '[]'); } catch (e) {}
+    LDT.open = new Set(Array.isArray(v) ? v.filter(x => typeof x === 'string') : []);
+  }
+  return LDT.open;
+}
+function ldtIsOpen(pid) { return ldtOpenSet().has(pid); }
+function ldtSetOpen(pid, on) {
+  const s = ldtOpenSet();
+  if (on === s.has(pid)) return;
+  if (on) s.add(pid); else s.delete(pid);
+  try { localStorage.setItem(LDT_KEY, JSON.stringify([...s])); } catch (e) {}
+  LDP.sig = '';
+  ldpPaint();
+  if (typeof projMenuRefresh === 'function') projMenuRefresh();
+}
+// Its PO chat's room, when the project has a PO.
+function ldtRoom(pid) {
+  let pj = null;
+  try { pj = projectById(pid); } catch (e) {}
+  return pj && pj.registered && pj.poRoomId && pid !== UNASSIGNED_ID ? pj.poRoomId : '';
+}
+// A caret: the hub's count says it has threads; while the hub has not read the
+// chat (null) a project with a PO has one, until a read finds none.
+function ldtCan(pid) {
+  if (!ldtRoom(pid)) return false;
+  const pj = projectById(pid), sum = pj && pj.threads, d = LDT.data.get(pid);
+  if (sum && typeof sum.n === 'number') return sum.n > 0;
+  return !(d && d.list && !d.list.length);
+}
+// The list read again: never read, the hub's signature or the PO chat's news
+// moved, or 15 s passed while the page is in view.
+function ldtStale(pid) {
+  const d = LDT.data.get(pid);
+  if (!d) return true;
+  const pj = projectById(pid), po = pj && poRowOf(pj);
+  if (((pj && pj.threads && pj.threads.sig) || '') !== d.sig) return true;
+  if (((po && po.newsAt) || 0) !== d.news) return true;
+  return !document.hidden && Date.now() - d.at >= LDT_POLL_MS;
+}
+async function ldtFetch(pid) {
+  const room = ldtRoom(pid);
+  if (!room || LDT.busy.has(pid)) return;
+  LDT.busy.add(pid);
+  const pj = projectById(pid), po = pj && poRowOf(pj);
+  const was = LDT.data.get(pid);
+  const d = { list: was ? was.list : null, err: false, at: Date.now(),
+              sig: (pj && pj.threads && pj.threads.sig) || '', news: (po && po.newsAt) || 0 };
+  try {
+    const r = await fetch('/api/room/channel?id=' + encodeURIComponent(room) + '&threads=1&n=1&lite=1', { cache: 'no-store' });
+    const j = r.ok || r.status === 409 ? await r.json() : null;
+    if (j && j.error === 'not_threaded') d.list = [];
+    else if (j && Array.isArray(j.threadList)) d.list = j.threadList.filter(t => t && t.id && t.id !== 'team:activity' && !t.archived);
+    else if (j && j.pending) d.at = Date.now() - LDT_POLL_MS + 2000;     // the chat is first read: again in 2 s
+    else d.err = true;
+  } catch (e) { d.err = true; }
+  LDT.busy.delete(pid);
+  const had = ldtCan(pid);
+  LDT.data.set(pid, d);
+  // None after all: the caret goes (and the group with it).
+  if (had !== ldtCan(pid)) { LDP.sig = ''; ldpPaint(); }
+  ldtPaintAll();
+}
+// Held: the pointer or the keyboard is in the list, or left it less than 2 s ago.
+function ldtHeld(box) {
+  const inNow = !!box && (ldpPointerIn() || !!box.querySelector(':focus-visible'));
+  if (inNow) LDT.inAt = Date.now();
+  return inNow || Date.now() - LDT.inAt < LDP_HOLD_MS;
+}
+// The thread on screen in this project: its id, '' for Main, null for none.
+function ldtShown(pid) {
+  try {
+    const pj = poDockProject();
+    if (!pj || pj.id !== pid || pdMid()) return null;
+    return thrBarShownId();
+  } catch (e) { return null; }
+}
+// The rows a group wants, in order: [key, what to draw].
+function ldtWant(pid, max) {
+  const d = LDT.data.get(pid), pj = projectById(pid), po = pj && poRowOf(pj);
+  // Not read yet and the hub has no count: nothing until the read says it has threads,
+  // so a project without any does not open and shut.
+  if ((!d || (!d.list && !d.err)) && !(pj && pj.threads)) return [];
+  const out = [['main', { main: true, title: 'Main chat', unread: !!(po && isUnread(po)) }]];
+  if (!d || !d.list) out.push(['note', { note: d && d.err ? 'The threads could not be read.' : 'Reading the threads…' }]);
+  else {
+    const l = d.list.slice().sort((a, b) => ((b.updatedAt || b.lastAt || 0) - (a.updatedAt || a.lastAt || 0)));
+    for (const t of l.slice(0, max)) out.push(['t:' + t.id, t]);
+    if (l.length) out.push(['all', { all: l.length }]);
+  }
+  return out;
+}
+function ldtRowEl(pid, key, w) {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.setAttribute('data-ldp-tkey', key);
+  b.setAttribute('data-ldp-tpid', pid);
+  if (w.note) { b.className = 'ldp-tnote'; b.disabled = true; b.innerHTML = '<span class="ldp-name"></span>'; return b; }
+  if (w.all != null) { b.className = 'ldp-trow ldp-tall'; b.innerHTML = '<span class="ldp-name"></span>'; return b; }
+  b.className = 'ldp-trow';
+  b.setAttribute('data-ldp-trow', w.main ? '' : w.id);
+  b.innerHTML = '<span class="ldp-tdot" aria-hidden="true"></span><span class="ldp-name"></span><span class="ldp-n" hidden></span><span class="ldp-age"></span>';
+  return b;
+}
+const ldtSet = (el, k, v) => { if (el && el[k] !== v) el[k] = v; };
+const ldtAttr = (el, k, v) => { if (!el) return; if (v == null || v === false) { if (el.hasAttribute(k)) el.removeAttribute(k); } else if (el.getAttribute(k) !== String(v)) el.setAttribute(k, String(v)); };
+// One row brought up to date, touching only what changed.
+function ldtRowSet(b, w, shown, pname) {
+  const name = b.querySelector('.ldp-name');
+  if (w.note) { ldtSet(name, 'textContent', w.note); return; }
+  if (w.all != null) {
+    ldtSet(name, 'textContent', `All ${w.all} thread${w.all === 1 ? '' : 's'}…`);
+    ldtAttr(b, 'title', `The chat's Threads filter: every thread of ${pname}`);
+    return;
+  }
+  const id = w.main ? '' : w.id, title = w.main ? 'Main chat' : (w.title || 'A thread');
+  ldtSet(name, 'textContent', title);
+  ldtAttr(b, 'title', w.main ? `${pname}: the main conversation` : `${title} · Ctrl/⌘-click: open as a new tab`);
+  ldtAttr(b, 'data-unread', w.unread ? '' : null);
+  const dot = b.querySelector('.ldp-tdot');
+  ldtAttr(dot, 'title', w.unread ? 'New messages since you last read it' : null);
+  const waits = !w.main && w.state === 'needs', pill = b.querySelector('.ldp-n');
+  if (pill) {
+    ldtSet(pill, 'hidden', !waits);
+    const n = waits ? (w.openQuestions || 1) : 0;
+    ldtSet(pill, 'textContent', waits ? String(n) : '');
+    ldtAttr(pill, 'title', waits ? `${n} waiting on you` : null);
+  }
+  ldtSet(b.querySelector('.ldp-age'), 'textContent', w.main ? '' : thrAge(w.updatedAt || w.lastAt));
+  ldtAttr(b, 'aria-current', shown === id ? 'true' : null);
+}
+function ldtPaint(g, held) {
+  const pid = g.getAttribute('data-ldp-thr');
+  let pname = '';
+  try { pname = projectById(pid).name || ''; } catch (e) {}
+  const want = ldtWant(pid, g.classList.contains('pm-thr') ? 3 : LDT_N), shown = ldtShown(pid);
+  const have = new Map([...g.children].map(e => [e.getAttribute('data-ldp-tkey'), e]));
+  const order = want.map(x => x[0]).join('\n'), now = [...have.keys()].join('\n');
+  // Held: the rows there are brought up to date; a newcomer, a gone one or a new order waits.
+  if (held && have.size && !have.has('note') && order !== now) {
+    const by = new Map(want);
+    for (const [k, e] of have) if (by.has(k)) ldtRowSet(e, by.get(k), shown, pname);
+    return true;
+  }
+  const rows = want.map(([k, w]) => {
+    let e = have.get(k);
+    if (e) have.delete(k); else e = ldtRowEl(pid, k, w);
+    ldtRowSet(e, w, shown, pname);
+    return e;
+  });
+  for (const e of have.values()) e.remove();
+  // A row is moved only when it is out of place: the same nodes stay.
+  rows.forEach((e, i) => { const at = g.children[i]; if (at !== e) g.insertBefore(e, at || null); });
+  return false;
+}
+// Every group on the page (the left panel's, the phone switcher's) brought up to date.
+function ldtPaintAll() {
+  let wait = false;
+  const box = ldPart('ld-projs'), held = ldtHeld(box);
+  if (box) for (const g of box.querySelectorAll('[data-ldp-thr]')) wait = ldtPaint(g, held) || wait;
+  const m = document.getElementById('proj-menu');
+  if (m && !m.hidden) for (const g of m.querySelectorAll('[data-ldp-thr]')) ldtPaint(g, false);
+  clearTimeout(LDT.timer);
+  if (wait) LDT.timer = setTimeout(ldtPaintAll, 300);
+}
+// Each unfolded project's list read when stale, then every group patched.
+function ldtTick() {
+  const pids = new Set();
+  const box = ldPart('ld-projs'), m = document.getElementById('proj-menu');
+  for (const root of [box, m && !m.hidden ? m : null]) if (root) for (const g of root.querySelectorAll('[data-ldp-thr]')) pids.add(g.getAttribute('data-ldp-thr'));
+  for (const pid of pids) if (ldtStale(pid)) ldtFetch(pid);
+  ldtPaintAll();
+}
+setInterval(() => { if (!document.hidden) ldtTick(); }, 1000);
+// A thread row's pick. Plain: the thread shows in place in the PO chat, as thread ▾'s
+// pick does; `tab`: as a tab of its own; Main chat: back to the conversation; `all`: the
+// chat's Threads filter. A row of another project picks that project first (as its
+// row does), then waits till its PO chat is up (about 4 s).
+function ldtOpen(pid, tid, o) {
+  o = o || {};
+  const room = ldtRoom(pid);
+  if (!room) return;
+  const frame = () => PO_PANEL.querySelector(`iframe.po-session[data-room="${CSS.escape(room)}"]:not([hidden])`);
+  const here = () => { const pj = poDockProject(); return !!(pj && pj.id === pid && PD.dock && !pdMid()); };
+  const go = () => {
+    const f = frame(), w = f && f.contentWindow;
+    if (o.tab) return pdThreadTab({ room, tid, mid: '', title: o.title || '' });
+    if (!w || typeof w.sideOpen !== 'function') return false;
+    if (!tid || o.all) {
+      thrMain(room);
+      if (o.all) { try { w.chatFilterSet({ kind: 'threads' }); } catch (e) {} }
+      return true;
+    }
+    try { w.sideOpen({ tid, mid: '' }); } catch (e) { return false; }
+    pdReveal('po-chat');
+    return true;
+  };
+  if (!here()) { ldpScope('project'); ldSelSet(pid); projPick(pid); ibxRepaint(); }
+  let n = 0;
+  const retry = () => {
+    if (here() && go()) { setTimeout(ldtPaintAll, 50); return; }
+    if (++n < 40) setTimeout(retry, 100);
+  };
+  retry();
+}
+// A thread row of a group, its pick from a click (Ctrl/⌘ or the middle button: a tab).
+function ldtPick(b, tab) {
+  const pid = b.getAttribute('data-ldp-tpid');
+  if (b.classList.contains('ldp-tall')) { ldtOpen(pid, '', { all: true }); return; }
+  if (!b.hasAttribute('data-ldp-trow')) return;
+  const tid = b.getAttribute('data-ldp-trow');
+  ldtOpen(pid, tid, { tab: tab && !!tid, title: b.querySelector('.ldp-name')?.textContent || '' });
+}
+// The phone's project switcher (#307): the current project's rows under its row there, 44px each.
+function pmThr(m) {
+  if (!m || !phoneNow()) return;
+  const here = projHere();
+  if (!here || !ldtCan(here)) return;
+  const row = m.querySelector(`.pm-row[data-pin-row="${CSS.escape(here)}"]`);
+  if (!row) return;
+  const g = document.createElement('div');
+  g.className = 'ldp-thr pm-thr';
+  g.setAttribute('role', 'group');
+  g.setAttribute('aria-label', 'Threads of ' + (projectById(here).name || ''));
+  g.setAttribute('data-ldp-thr', here);
+  row.after(g);
+  ldtTick();
+}
+document.getElementById('proj-menu').addEventListener('click', (ev) => {
+  const b = ev.target.closest && ev.target.closest('.ldp-trow');
+  if (!b) return;
+  ev.stopPropagation();
+  closeProjMenu();
+  ldtPick(b, false);
+});
+(function () {
+  const box = document.getElementById('ld-projs');
+  if (!box) return;
+  // The order waits 2 s after the pointer leaves (ldpHeld's rule).
+  box.addEventListener('pointerleave', () => { LDT.inAt = Date.now(); });
+  box.addEventListener('focusout', () => { LDT.inAt = Date.now(); });
+  box.addEventListener('click', (e) => {
+    const c = e.target.closest('[data-ldp-car]');
+    if (c && box.contains(c)) { e.stopPropagation(); const pid = c.getAttribute('data-ldp-car'); ldtSetOpen(pid, !ldtIsOpen(pid)); return; }
+    const t = e.target.closest('.ldp-trow');
+    if (t && box.contains(t)) { e.stopPropagation(); ldtPick(t, e.ctrlKey || e.metaKey); }
+  }, true);
+  box.addEventListener('auxclick', (e) => {
+    const t = e.button === 1 && e.target.closest('.ldp-trow[data-ldp-trow]');
+    if (t && t.getAttribute('data-ldp-trow')) { e.preventDefault(); ldtPick(t, true); }
+  });
+  // A middle press would scroll the panel: not on a thread row.
+  box.addEventListener('mousedown', (e) => { if (e.button === 1 && e.target.closest('.ldp-trow')) e.preventDefault(); });
+  // The keyboard tree (the drawing's mark 7): ↑/↓ move over the rows, → unfolds a
+  // project (again: its first thread), ← folds it (on a thread: back to its
+  // project), Enter opens, Ctrl/⌘+Enter opens a thread as a tab.
+  box.addEventListener('keydown', (e) => {
+    const t = e.target;
+    if (e.altKey || e.shiftKey || !t.matches || !t.matches('.ldp-row, .ldp-trow, .ldp-more')) return;
+    const mod = e.ctrlKey || e.metaKey;
+    if (mod && e.key !== 'Enter') return;
+    const rows = () => [...box.querySelectorAll('.ldp-row, .ldp-trow, .ldp-more')].filter(x => x.offsetParent !== null);
+    const pid = t.getAttribute('data-ldp-proj'), tpid = t.getAttribute('data-ldp-tpid');
+    const projRow = p => box.querySelector(`.ldp-row[data-ldp-proj="${CSS.escape(p)}"]`);
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      const l = rows(), i = l.indexOf(t), n = l[i + (e.key === 'ArrowDown' ? 1 : -1)];
+      if (n) n.focus();
+    } else if (e.key === 'Home' || e.key === 'End') {
+      const l = rows(), n = e.key === 'Home' ? l[0] : l[l.length - 1];
+      if (n) n.focus();
+    } else if (e.key === 'ArrowRight' && pid) {
+      if (!ldtCan(pid)) return;
+      if (!ldtIsOpen(pid)) ldtSetOpen(pid, true);
+      else box.querySelector(`[data-ldp-thr="${CSS.escape(pid)}"] .ldp-trow`)?.focus();
+    } else if (e.key === 'ArrowLeft' && (pid || tpid)) {
+      if (pid) { if (ldtCan(pid) && ldtIsOpen(pid)) ldtSetOpen(pid, false); else return; }
+      else projRow(tpid)?.focus();
+    } else if (e.key === 'Enter' && t.classList.contains('ldp-trow')) {
+      ldtPick(t, mod);
+    } else return;
+    e.preventDefault();
+  });
+})();
+// ---- #420: end ------------------------------------------------------------------
 function ldpRow(b) {
   const room = b.getAttribute('data-ldp-room') || '', sid = b.getAttribute('data-ldp-sid') || '';
   return ALL_ROWS.find(x => room ? x.roomId === room : (!x.roomId && x.sessionId === sid)) || null;
@@ -19991,6 +20334,7 @@ ibxSideWire(document.getElementById('ld-ibx-body'));
       // The row is the computer's Inbox filter, picked by hand (#328): it picks
       // this project (All gives way) and opens it. Other switches keep All (#390).
       ldpScope('project'); ldSelSet(pid); projPick(pid); ibxRepaint();
+      ldtSetOpen(pid, true);     // #420: picking a project unfolds its threads
       // The PO screen switches to the new project's after this click: slide the
       // tool back out once it shows that project.
       if (fly) {
@@ -26174,6 +26518,7 @@ function projMenuRefresh() {
     : a.hasAttribute('data-proj') ? `.pm-item[data-proj="${CSS.escape(a.getAttribute('data-proj'))}"]` : '') : '';
   const head = m.querySelector(':scope > .ph-pane-head');
   m.innerHTML = (head ? head.outerHTML : '') + projMenuHtml();
+  pmThr(m);
   const nf = m.querySelector('.pm-find');
   if (nf && q) { nf.value = q; nf.dispatchEvent(new Event('input', { bubbles: true })); }
   m.scrollTop = top;
@@ -26254,6 +26599,7 @@ function openProjMenu(focusFirst) {
     if (PH_PANE) phPane('');
     m.innerHTML = `<div class="ph-pane-head"><h2>${esc(nounText('{Projects}'))}</h2>`
       + `<button type="button" class="ph-pane-x" data-ph-close aria-label="${esc(nounText('Close the {project} switcher'))}" title="Back to the conversation">✕</button></div>` + projMenuHtml();
+    pmThr(m);
     m.style.top = m.style.left = m.style.maxHeight = '';
     m.hidden = false;
     document.body.classList.add('ph-switch');
