@@ -903,6 +903,19 @@ A changed file in a Changes tab (the task's and the project's) reads as in an ID
   in chunks of 500 both ways: the largest merge of the week (5,784 lines) paints in under 100 ms in
   either mode.
 
+### Visuals fit their pane (#427)
+
+A rendered page and a picture in the file view take the width of their pane (a side panel, a tab, a
+window), between `--visual-min` (320px, the narrowest phone: a page laid out for a phone still reads,
+and a phone of 360 to 430 never scrolls it sideways) and `--visual-max` (1600px: lines and drawings stop
+stretching, the visual centred beyond it). Both are on `fileview.html`'s `:root`, and
+`plan_picture.VISUAL_MIN` / `VISUAL_MAX` repeat them for the computed plan page (a test holds them equal).
+Under the least the visual keeps it and scrolls sideways in `main`, never the page. A picture never
+grows past its own width (`--img-w`, set on load). It follows a resize at once, with no script for a
+page and CSS alone for a picture at 100%. Markdown keeps its reading column (820px) and code its editor.
+A drawing page is fluid itself: no fixed page width, `min-width` and `max-width` with the same bounds,
+SVG by `viewBox` at `width: 100%`; its PNG is still rendered at 1440px wide.
+
 ### Panel zoom (#423)
 
 A file or a diff zooms on its own, while the chat, the bars and the browser keep their size. One
@@ -922,7 +935,7 @@ and the diff (`drZoom*` in `index.html`).
   comment being written, the comment tray or layer and a menu, the browser's own zoom is untouched.
 - **What zooms:** code, text and formatted JSON the `.code` box (gutter included); a CSV its table;
   Markdown the `.md` text, which rewraps; a rendered page its frame's `body` (not its root, which holds
-  the comment layer); a picture its width, its 100% fit × the level, the pane (which keeps its width) scrolling it sideways; a diff
+  the comment layer); a picture its width, its 100% fit (the pane between the visual bounds, #427) × the level, the pane (which keeps its width) scrolling it sideways; a diff
   its `.drv` (the bar and the comment tray stay at 100%).
 - **What it keeps:** the element under the pointer (or the first lines showing, for a button or a key)
   stays where it is (`PanelZoom.keep`). The level is kept per kind on this device (`localStorage`

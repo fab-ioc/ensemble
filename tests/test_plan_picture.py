@@ -251,6 +251,40 @@ class PlanPicture(unittest.TestCase):
         self.assertIn('name="viewport"', page)
         self.assertIn("@media (max-width:1100px)", page)
 
+    def test_the_graph_is_fluid_within_the_visual_bounds(self):
+        """#427 (GitHub issue 70): the page and its graph fit the width they
+        are shown at, between the file view's bounds; no fixed width."""
+        t1, t2, t3, t4, t5 = self.recipe_box()
+        pp._redraw("p", {"p": {"groups": [[t1["id"], t2["id"], t3["id"], t4["id"], t5["id"]]]}}, 0)
+        page = self.page()
+        svg = re.search(r"<svg [^>]*>", page).group(0)
+        vb = re.search(r'viewBox="0 0 (\d+) (\d+)"', svg)
+        self.assertTrue(vb, svg)
+        drawn = int(vb.group(1))
+        self.assertIn('width="100%"', svg)
+        self.assertNotIn("height=", svg.replace("viewBox", ""), "the height follows the width")
+        lo = int(re.search(r"min-width:(\d+)px", svg).group(1))
+        hi = int(re.search(r"max-width:(\d+)px", svg).group(1))
+        self.assertEqual(lo, min(drawn, max(pp.VISUAL_MIN, round(drawn * pp.GRAPH_SHRINK))))
+        self.assertEqual(hi, min(pp.VISUAL_MAX, round(drawn * pp.GRAPH_GROW)))
+        self.assertLess(lo, drawn, "it shrinks in a narrow panel")
+        self.assertGreater(hi, drawn, "and grows in a wide one")
+        self.assertIn(".graph svg{display:block;width:100%;height:auto}", page)
+        self.assertIn(f"min-width:{pp.VISUAL_MIN}px;max-width:{pp.VISUAL_MAX}px", page)
+        self.assertNotIn("max-width:none", page)
+        # A wide graph never passes the most; a one-box graph never under its size.
+        many = [{"id": str(i), "no": f"#{i}", "title": "t", "gates": [{"id": str(i - 1)}] if i else []}
+                for i in range(8)]
+        self.assertEqual(pp.layout(many)["7"], (7, 0))
+        w = pp.PAD * 2 + 8 * pp.BOX_W + 7 * pp.GAP
+        self.assertEqual(min(pp.VISUAL_MAX, round(w * pp.GRAPH_GROW)), pp.VISUAL_MAX)
+
+    def test_the_bounds_are_the_file_views(self):
+        fv = (Path(pp.__file__).parent / "fileview.html").read_text(encoding="utf-8")
+        m = re.search(r"--visual-min:\s*(\d+)px;\s*--visual-max:\s*(\d+)px;", fv)
+        self.assertTrue(m)
+        self.assertEqual((int(m.group(1)), int(m.group(2))), (pp.VISUAL_MIN, pp.VISUAL_MAX))
+
     def test_titles_and_questions_are_escaped(self):
         a = self.room(1, "<b>bold</b> & \"quoted\"")
         self.create(2, "Two", after=[{"task": a["id"]}])
