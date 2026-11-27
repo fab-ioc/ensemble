@@ -143,8 +143,23 @@ async function main() {
     p = await at(`${GROUP} > [data-ldp-tkey="${third.key}"]`);
     await click(p.x, p.y, {modifiers: 2});
     await until(`PD.dock.panels().some(x => x.id === pdThreadTabId(${JSON.stringify(A.po)}, ${JSON.stringify(third.key.slice(2))}, ''))`, 'thread tab');
-    out.tab = {inPlace: !!(await ev(`!!PD.thrIn && pdThreadInShown()`))};
+    await until(`document.querySelector('${GROUP} > [data-ldp-tkey="${third.key}"]')?.getAttribute('aria-current') === 'true'`, 'tab marked', 40).catch(() => {});
+    out.tab = {inPlace: !!(await ev(`!!PD.thrIn && pdThreadInShown()`)), key: third.key, rows: await ev(ROWS)};
     await ev(`PD.dock.removePanel(pdThreadTabId(${JSON.stringify(A.po)}, ${JSON.stringify(third.key.slice(2))}, '')); PD.dock.activate('po-chat'); 0`);
+    // A press that spans a full repaint of the panel still opens its thread.
+    const fourth = out.unfolded.rows[4];
+    p = await at(`${GROUP} > [data-ldp-tkey="${fourth.key}"]`);
+    await mouse('mouseMoved', p.x, p.y); await mouse('mousePressed', p.x, p.y);
+    await ev(`LDP.sig = ''; ldpPaint(); 0`);
+    await sleep(100);
+    out.press = {heldSig: await ev(`LDP.sig === ''`)};
+    await mouse('mouseReleased', p.x, p.y);
+    await until(`!!PD.thrIn && pdThreadInShown() && PD.thrIn.tid === ${JSON.stringify(fourth.key.slice(2))}`, 'press across a repaint', 40).catch(() => {});
+    out.press.opened = await ev(`PD.thrIn && pdThreadInShown() ? PD.thrIn.tid : ''`);
+    out.press.want = fourth.key.slice(2);
+    out.press.repainted = await ev(`LDP.sig !== ''`);
+    await ev(`thrMain(${JSON.stringify(A.po)}); 0`);
+    await until(`!(PD.thrIn && pdThreadInShown())`, 'main again');
     // All 7 threads…: the chat's Threads filter.
     p = await at(`${GROUP} > [data-ldp-tkey="all"]`);
     await click(p.x, p.y);
@@ -220,13 +235,22 @@ async function main() {
     await size(390,844,true); await send('Emulation.setTouchEmulationEnabled',{enabled:true,maxTouchPoints:5},s);
     await until(`phoneNow() && PD.dock && PD.dock.narrow()`, 'phone');
     await sleep(600);
-    await ev(`openProjMenu(false); 0`);
+    out.phoneAtOnce = await ev(`(async () => { LDT.data.delete(${P}); await ldtFetch(${P}); openProjMenu(false); return document.querySelectorAll('#proj-menu .pm-thr > .ldp-trow').length; })()`);
     await until(`document.querySelectorAll('#proj-menu .pm-thr > .ldp-trow').length >= 4`, 'phone rows');
     await sleep(300);
     out.phone = await ev(`(() => { const g=document.querySelector('#proj-menu .pm-thr'); const row=g.previousElementSibling;
       return {after: row && row.dataset.pinRow, rows:[...g.children].map(b => ({key:b.dataset.ldpTkey, h:Math.round(b.getBoundingClientRect().height)})),
         scroll:[document.documentElement.scrollWidth, document.documentElement.clientWidth]}; })()`);
     await shot('ldt-phone');
+    // A search for the project: its rows under the row found, in view.
+    out.phoneFind = await ev(`(() => { const f=document.querySelector('#proj-menu .pm-find'); f.value=projectById(${P}).name.slice(0, 3);
+      f.dispatchEvent(new Event('input', {bubbles:true}));
+      const g=document.querySelector('#proj-menu .pm-thr'), row=g && g.previousElementSibling;
+      const r = {inAll: !!(row && row.closest('.pm-all')), after: row && row.dataset.pinRow, shown: !!(g && g.offsetParent), rows: g ? g.querySelectorAll('.ldp-trow').length : 0};
+      f.value=''; f.dispatchEvent(new Event('input', {bubbles:true}));
+      const g2=document.querySelector('#proj-menu .pm-thr');
+      r.back = !!(g2 && g2.offsetParent && !g2.previousElementSibling.closest('.pm-all'));
+      return r; })()`);
     const ph = out.phone.rows[1].key;
     p = await at(`#proj-menu .pm-thr > [data-ldp-tkey="${ph}"]`);
     for (const type of ['touchStart','touchEnd']) await send('Input.dispatchTouchEvent',{type,touchPoints:type==='touchEnd'?[]:[{x:p.x,y:p.y}]},s);
@@ -356,7 +380,22 @@ class LeftPanelThreads(unittest.TestCase):
 
     def test_ctrl_click_opens_a_tab_and_all_opens_the_threads_filter(self):
         self.assertFalse(self.got['tab']['inPlace'])
+        cur = [r['key'] for r in self.got['tab']['rows'] if r['cur']]
+        self.assertEqual(cur, [self.got['tab']['key']], 'the tab in front is the thread on screen')
         self.assertTrue(self.got['filter'])
+
+    def test_a_press_spanning_a_repaint_still_opens_its_thread(self):
+        pr = self.got['press']
+        self.assertTrue(pr['heldSig'], 'the repaint waited for the release')
+        self.assertEqual(pr['opened'], pr['want'])
+        self.assertTrue(pr['repainted'], 'and ran after it')
+
+    def test_the_phone_rows_come_at_once_and_follow_a_search(self):
+        self.assertGreaterEqual(self.got['phoneAtOnce'], 4)
+        f = self.got['phoneFind']
+        self.assertEqual((f['inAll'], f['after'], f['shown']), (True, self.proj, True))
+        self.assertGreaterEqual(f['rows'], 4)
+        self.assertTrue(f['back'])
 
     def test_a_thread_of_another_project_picks_that_project(self):
         self.assertEqual(self.got['cross']['pid'], self.proj)

@@ -16171,7 +16171,7 @@ function pdEnsure() {
   // A panel this page no longer has (Documents, #103) keeps no place in a
   // stored layout (Dock v0.10.0 parks unknown panels instead of dropping them).
   try { PD.dock.forget('documents'); PD.dock.forget('points'); if (!narrow) PD.dock.forget('inbox'); } catch (e) {}
-  PD.dock.onChange(() => { pdKeepMiddle(); pdToolsFit(); pdPlaceChat(); barCrumbs(); pdTabTips(); pdOutMarks(); wcSync(); });
+  PD.dock.onChange(() => { pdKeepMiddle(); pdToolsFit(); pdPlaceChat(); barCrumbs(); pdTabTips(); pdOutMarks(); wcSync(); if (typeof LDT === 'object' && LDT) ldtPaintAll(); });
   // A tab the person closes (its ×, a middle click, the tab menu, Ctrl+F4; the
   // page only ever removes): the tab shown next is theirs (wcFront).
   PD.dock.onClose(() => { WC.dockAt = Date.now(); return true; });
@@ -19084,6 +19084,19 @@ document.getElementById('inbox-btn').addEventListener('click', ibxOpen);
 // project is on a loose row's ⋯ and on its right click.
 var LDP = { more: false, moreLoose: false, sig: '', shown: {}, want: {}, hold: {}, holdT: 0, inN: new Map() };
 var LDP_N = 9, LDP_LOOSE_N = 5;
+// #420 review 1: a press in the panel (pointer down, not yet up) holds a full
+// repaint till it is released, so its click lands on the row it started on.
+var LDP_PRESS = { at: 0, later: false };
+document.addEventListener('pointerdown', (e) => {
+  const el = ldPart('ld-projs');
+  if (el && e.target && el.contains(e.target)) LDP_PRESS.at = Date.now();
+}, true);
+for (const t of ['pointerup', 'pointercancel']) document.addEventListener(t, () => {
+  if (!LDP_PRESS.at) return;
+  LDP_PRESS.at = 0;
+  // After the click this release makes (same task), the repaint it held.
+  if (LDP_PRESS.later) setTimeout(() => { LDP_PRESS.later = false; ldpPaint(); }, 0);
+}, true);
 // The task or session in no project open in the middle: its room (or session) id.
 function ldpLooseOpen() {
   const r = crumbTask();
@@ -19347,6 +19360,7 @@ function ldpPaint() {
   if (PIN.drag) { PIN.drag.repaint = true; return; }   // #362: after the drop
   const html = (window.LD && LD.dock && !window.ensListDocked) ? ldpHtml(ldpModel()) : '';
   if (html === LDP.sig) { ldtTick(); return; }
+  if (LDP_PRESS.at && Date.now() - LDP_PRESS.at < 10000) { LDP_PRESS.later = true; ldtTick(); return; }
   LDP.sig = html;
   rowExpandBeforeChange(el);
   // Keep focus on the same control across the repaint.
@@ -19447,13 +19461,24 @@ function ldtHeld(box) {
   if (inNow) LDT.inAt = Date.now();
   return inNow || Date.now() - LDT.inAt < LDP_HOLD_MS;
 }
-// The thread on screen in this project: its id, '' for Main, null for none.
+// What of this project's PO chat is on screen: thread ids, '' for Main. The PO
+// tab shows Main or its thread in place; a thread's own tab (Ctrl/⌘, a balloon's)
+// counts while it is in front of its stack or in its own window (review 1).
 function ldtShown(pid) {
+  const on = new Set();
   try {
-    const pj = poDockProject();
-    if (!pj || pj.id !== pid || pdMid()) return null;
-    return thrBarShownId();
-  } catch (e) { return null; }
+    const pj = poDockProject(), room = ldtRoom(pid), d = PD.dock;
+    if (!pj || pj.id !== pid || pdMid() || !d || !room) return on;
+    const seen = id => { try { return !!d.isShown(id); } catch (e) { return false; } };
+    if (seen('po-chat')) on.add(thrBarShownId());
+    for (const [id, e] of PD.rt) {
+      if (e.kind !== 'thread' || e.room !== room || !seen(id)) continue;
+      if (e.tid) on.add(e.tid);
+      if (e.mid) on.add('m:' + e.mid);
+      if (e.wcAlias) on.add(e.wcAlias);
+    }
+  } catch (e) {}
+  return on;
 }
 // The rows a group wants, in order: [key, what to draw].
 function ldtWant(pid, max) {
@@ -19507,7 +19532,7 @@ function ldtRowSet(b, w, shown, pname) {
     ldtAttr(pill, 'title', waits ? `${n} waiting on you` : null);
   }
   ldtSet(b.querySelector('.ldp-age'), 'textContent', w.main ? '' : thrAge(w.updatedAt || w.lastAt));
-  ldtAttr(b, 'aria-current', shown === id ? 'true' : null);
+  ldtAttr(b, 'aria-current', shown.has(id) ? 'true' : null);
 }
 function ldtPaint(g, held) {
   const pid = g.getAttribute('data-ldp-thr');
@@ -19592,19 +19617,26 @@ function ldtPick(b, tab) {
   ldtOpen(pid, tid, { tab: tab && !!tid, title: b.querySelector('.ldp-name')?.textContent || '' });
 }
 // The phone's project switcher (#307): the current project's rows under its row there, 44px each.
-function pmThr(m) {
+// Drawn at once from what was read (review 1: not at the next tick), and kept under
+// the row a search shows (`g`: the group the search took out of its list).
+function pmThr(m, g) {
   if (!m || !phoneNow()) return;
   const here = projHere();
-  if (!here || !ldtCan(here)) return;
-  const row = m.querySelector(`.pm-row[data-pin-row="${CSS.escape(here)}"]`);
-  if (!row) return;
-  const g = document.createElement('div');
-  g.className = 'ldp-thr pm-thr';
-  g.setAttribute('role', 'group');
-  g.setAttribute('aria-label', 'Threads of ' + (projectById(here).name || ''));
-  g.setAttribute('data-ldp-thr', here);
-  row.after(g);
-  ldtTick();
+  g = g || m.querySelector('.pm-thr');
+  if (!here || !ldtCan(here)) { if (g) g.remove(); return; }
+  const sel = `.pm-row[data-pin-row="${CSS.escape(here)}"]`;
+  const row = m.querySelector((m.classList.contains('pm-finding') ? '.pm-all ' : '') + sel);
+  if (!row) { if (g) g.remove(); return; }
+  if (!g || g.getAttribute('data-ldp-thr') !== here) {
+    g = document.createElement('div');
+    g.className = 'ldp-thr pm-thr';
+    g.setAttribute('role', 'group');
+    g.setAttribute('aria-label', 'Threads of ' + (projectById(here).name || ''));
+    g.setAttribute('data-ldp-thr', here);
+  }
+  if (row.nextElementSibling !== g) row.after(g);
+  ldtPaint(g, false);
+  if (ldtStale(here)) ldtFetch(here);
 }
 document.getElementById('proj-menu').addEventListener('click', (ev) => {
   const b = ev.target.closest && ev.target.closest('.ldp-trow');
@@ -26667,9 +26699,12 @@ $('#proj-menu').addEventListener('input', (ev) => {
   const list = (PROJECTS && PROJECTS.projects) || [];
   const box = m.querySelector('.pm-all');
   const cards = q.trim() ? '' : (box.querySelector('.pm-cards') || { outerHTML: '' }).outerHTML;
+  const thr = m.querySelector('.pm-thr');   // #420: its rows go under the row found
+  if (thr) thr.remove();
   box.innerHTML = cards + projAllHtml(list, projHere(), q);
   // While it finds, the list it finds in is the menu: Recent and the settings step aside.
   m.classList.toggle('pm-finding', !!q.trim());
+  pmThr(m, thr);
 });
 $('#proj-menu').addEventListener('keydown', (ev) => {
   const items = projMenuItems();
