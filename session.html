@@ -6205,7 +6205,7 @@ function openGroupOf(box, mid) {
   }
 }
 function renderMsgs(room) {
-  CHAT_DRAWN = true; renderBubbles(ROOM_WIN ? ROOM_WIN.messages : room.messages);
+  CHAT_DRAWN = true; renderBubbles(joinAskWords(ROOM_WIN ? ROOM_WIN.messages : room.messages, true));
   // A window that does not fill the chat (most of a PO's rows are hub
   // traffic it folds) gets the page before at once: there is no scroll to ask.
   const box = $('#msgs');
@@ -7305,7 +7305,8 @@ document.addEventListener('click', e => {
 // thread's first reply).
 // bottom: the view has entries after it (a link's window): a row newer than
 // its last entry is not drawn at its end, where it is not (P414, #396).
-function withHubRows(items, room, hub, top = false, bottom = false) {
+function withHubRows(items, room, hub, top = false, bottom = false) { return joinAskWords(hubRowsIn(items, room, hub, top, bottom)); }
+function hubRowsIn(items, room, hub, top, bottom) {
   if (!hub && room === ROOM_OBJ && roomHasOlder() && items.length) {
     const first = items.find(m => m.ts), oldest = (room.messages || [])[0];
     if (first && oldest && first.ts < (oldest.ts || 0)) setTimeout(() => loadOlder(), 0);
@@ -7327,6 +7328,55 @@ function withHubRows(items, room, hub, top = false, bottom = false) {
     for (let i = out.length - 1; i >= 0; i--) { if (out[i].ts && out[i].ts > r.ts) at = i; }
     out.splice(at, 0, r);
   }
+  return out;
+}
+// #430 (GitHub issue 73): a question card and the words its turn wrote
+// around it are one balloon. The card is posted while the tool runs; the
+// agent's words before and after the call are turns of their own. The line
+// just before the card and the one just after it (nothing between: the same
+// turn) join the card's balloon: that line, the card's own explanation (its
+// context), the reply, then the cards under all of them. In a room (a team
+// chat) the agent's next message after its card, to the person, joins it.
+// A line that answers a point, asks a question of its own, heads a thread,
+// is the live line of a turn still running, or was written more than
+// ASK_JOIN_S from the card stays a balloon of its own. A link to a joined
+// line lands on the card's balloon (JOINED_INTO).
+const ASK_JOIN_S = 300;
+let JOINED_INTO = new Map();
+const ASK_STOCK_RE = /^\s*Questions for you\.\s*$/;
+function askJoinable(m, card, room) {
+  if (!m || m.kind || !(m.text || '').trim() || !m.from || m.from === 'user' || m.from === 'ensemble') return false;
+  if (m.divider || Array.isArray(m.asks) || m.askAudience || m.inThr || m.alsoIn || m.workLog || m.open || m.hidden) return false;
+  // Its own thread (m:<id>) is listed on every balloon: only one with replies, work or the person's start heads one.
+  const meta = typeof THR_META !== 'undefined' ? THR_META : {};
+  if ((m.thr || []).some(t => { const x = meta[t]; return !!x && (+x.replies || +x.workCount || x.chosen); })) return false;
+  if (m.rang && m.rang.length) return false;
+  if (room && (m.from !== card.from || (m.to && !['user', 'all'].includes(String(m.to).toLowerCase())))) return false;
+  if (!m.ts || !card.ts || Math.abs(m.ts - card.ts) > ASK_JOIN_S) return false;
+  if (/(^|\n)[\s*_>]*re\s+P\d+/i.test(m.text) || POINTS.byAnswer.has(m.id) || POINTS.byMid.has(m.id)) return false;
+  return !asksOf(m).length;
+}
+function joinAskWords(items, room = false) {
+  if (!items.some(m => m && Array.isArray(m.asks))) return items;
+  if (JOINED_INTO.size > 2000) JOINED_INTO = new Map();
+  const out = [];
+  for (let i = 0; i < items.length; i++) {
+    const c = items[i];
+    if (!c || !Array.isArray(c.asks) || !c.asks.length || c.askAudience === 'po' || c.from === 'user') { out.push(c); continue; }
+    const last = out[out.length - 1];
+    const pre = !room && askJoinable(last, c, room) && last.ts <= c.ts ? out.pop() : null;
+    const nx = items[i + 1];
+    const post = askJoinable(nx, c, room) && nx.ts >= c.ts ? nx : null;
+    if (post) i++;
+    if (!pre && !post) { out.push(c); continue; }
+    const own = ASK_STOCK_RE.test(c.text || '') ? '' : (c.text || '');
+    const text = [pre && pre.text, own, post && post.text].filter(t => t && t.trim()).join('\n\n');
+    const ids = [pre, post].filter(Boolean).map(m => m.id);
+    for (const id of ids) JOINED_INTO.set(id, c.id);
+    if (post && post.steps && typeof STEPS_OPEN !== 'undefined' && STEPS_OPEN.has(post.id)) STEPS_OPEN.add(c.id);
+    out.push(Object.assign({}, c, { text, joined: ids }, post && post.steps ? { steps: post.steps } : {}));
+  }
+  if (GOTO && JOINED_INTO.has(GOTO)) GOTO = JOINED_INTO.get(GOTO);
   return out;
 }
 // A line the agent read while busy (queued) is its own turn, "<sid>:q<n>",
@@ -7919,6 +7969,7 @@ function thrMidDrawn(mid) {
   const box = $('#msgs');
   if (!box || !mid) return false;
   if ([...box.querySelectorAll('[data-mid]')].some(el => el.dataset.mid === mid)) return true;
+  if (JOINED_INTO.has(mid) && JOINED_INTO.get(mid) !== mid && thrMidDrawn(JOINED_INTO.get(mid))) return true;
   if (THREAD_MODE && (THR_VIEW?.items || []).some(t => t.mid === mid && t.workLog)
       && !![...box.querySelectorAll('.thr-work[data-last-mid]')].find(el => el.dataset.lastMid === mid)) return true;
   // A team run or task group is intentionally one row in the person's view.

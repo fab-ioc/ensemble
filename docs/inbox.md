@@ -4,6 +4,8 @@
 
 The Inbox gathers work that needs your attention: unanswered questions, task decisions and other items. An **Ask** card presents choices or Yes/No, sometimes with a recommended option. Open cards remain until answered or closed.
 
+In a chat, a card arrives in one balloon with its explanation: what the agent wrote just before asking, why it asks, and what it wrote just after, with the card under them. The agent's next words join the same balloon when they arrive, so the reason never comes later as a message of its own. In a threaded PO chat the card and those words are always in the same thread.
+
 ![Inbox panel showing fictional Recipe Box decisions](images/inbox.png)
 
 ## How to answer or close a card
