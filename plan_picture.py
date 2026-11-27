@@ -399,6 +399,27 @@ def _collect(project: dict, rec: dict, now: float) -> tuple[dict, str, list]:
 # ---------------------------------------------------------------------------
 
 BOX_W, BOX_H, GAP, PITCH, TOP, PAD = 312, 112, 88, 136, 26, 4
+# The page fits the width it is shown at (#427, GitHub issue 70), between the
+# file view's visual bounds (fileview.html's --visual-min and --visual-max: the
+# narrowest phone, and where lines and drawings stop stretching). The graph
+# scales with it, its text kept readable: never under 60% of its drawn size
+# nor over 125% (a smaller fit scrolls sideways in its panel). The page at
+# its widest wins over the 60%: the least is never more than the graph's room
+# on a 1600 page (GRAPH_ROOM), so a very wide graph fits a wide window and
+# scrolls only in a narrower one.
+VISUAL_MIN, VISUAL_MAX = 320, 1600
+GRAPH_SHRINK, GRAPH_GROW = 0.6, 1.25
+# Less the page's and the graph panel's sides (_CSS: body padding 24, .panel
+# padding 16 and border 1, on each side), the file view's frame border (1 a
+# side) and a scrollbar (16): 1500.
+GRAPH_ROOM = VISUAL_MAX - 2 * (24 + 16 + 1) - 2 - 16
+
+
+def graph_bounds(width: int) -> tuple[int, int]:
+    """The graph's least and most width on the page, for its drawn width."""
+    hi = min(VISUAL_MAX, round(width * GRAPH_GROW))
+    lo = min(width, max(VISUAL_MIN, round(width * GRAPH_SHRINK)), GRAPH_ROOM)
+    return lo, hi
 _NUMKEY = re.compile(r"(\d+)")
 
 
@@ -551,7 +572,9 @@ def graph(rows: list[dict]) -> tuple[str, int]:
     width = PAD * 2 + cols * BOX_W + (cols - 1) * GAP
     height = TOP + nrows * PITCH - (PITCH - BOX_H) + 8
     xy = {rid: (PAD + c * (BOX_W + GAP), TOP + r * PITCH) for rid, (c, r) in pos.items()}
-    parts = [f'<svg viewBox="0 0 {width} {height}" width="{width}" height="{height}" role="img" '
+    lo, hi = graph_bounds(width)
+    parts = [f'<svg viewBox="0 0 {width} {height}" width="100%" '
+             f'style="min-width:{lo}px;max-width:{hi}px" role="img" '
              f'aria-label="The plan\'s tasks and their gates" '
              f'font-family="system-ui,-apple-system,Segoe UI,sans-serif">',
              '<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" '
@@ -621,7 +644,8 @@ def _li(r: dict) -> str:
 
 _CSS = """
 *{box-sizing:border-box}
-body{margin:0;padding:22px 24px 28px;background:#F7F8F9;color:#172B4D;font:14px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
+html{background:#F7F8F9}
+body{margin:0 auto;min-width:VMINpx;max-width:VMAXpx;padding:22px 24px 28px;background:#F7F8F9;color:#172B4D;font:14px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
 h1{font-size:19px;margin:0 0 2px}
 h2{font-size:13px;text-transform:uppercase;letter-spacing:.05em;color:#626F86;margin:0 0 10px;font-weight:600}
 .sub{color:#626F86;margin:0 0 14px;font-size:13px}
@@ -638,7 +662,7 @@ h2{font-size:13px;text-transform:uppercase;letter-spacing:.05em;color:#626F86;ma
 @media (max-width:1100px){.wrap{grid-template-columns:1fr}}
 .panel{background:#fff;border:1px solid #DCDFE4;border-radius:10px;padding:14px 16px}
 .graph{overflow-x:auto}
-.graph svg{display:block;max-width:none;height:auto}
+.graph svg{display:block;width:100%;height:auto}
 .list{list-style:none;margin:0;padding:0}
 .list li{border-top:1px solid #DCDFE4;padding:10px 0;display:grid;grid-template-columns:44px 1fr;gap:2px 8px}
 .list li:first-child{border-top:0;padding-top:2px}
@@ -656,6 +680,10 @@ h2{font-size:13px;text-transform:uppercase;letter-spacing:.05em;color:#626F86;ma
 .earlier{margin-top:22px}
 .foot{margin-top:18px;font-size:12px;color:#626F86}
 """
+
+
+def _page_css() -> str:
+    return _CSS.replace("VMINpx", f"{VISUAL_MIN}px").replace("VMAXpx", f"{VISUAL_MAX}px")
 
 
 def render(data: dict) -> str:
@@ -703,5 +731,5 @@ def render(data: dict) -> str:
                 "“Earlier”.</p>")
     return ('<!doctype html>\n<html lang="en"><head><meta charset="utf-8">'
             '<meta name="viewport" content="width=device-width,initial-scale=1">'
-            f"<title>{name}: the plan</title><style>{_CSS}</style></head><body>"
+            f"<title>{name}: the plan</title><style>{_page_css()}</style></head><body>"
             + "\n".join(body) + "</body></html>\n")
