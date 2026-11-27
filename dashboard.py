@@ -108,6 +108,7 @@ import chatroom
 # The PO's timed progress digest (only when something changed).
 import digest
 import board
+import plan_picture
 import pacing
 import po_usage
 # What a handover says is due at a time: the idle PO is typed it then.
@@ -212,6 +213,7 @@ attention.bind(sys.modules[__name__])
 digest.bind(sys.modules[__name__])
 icon_gen.bind(sys.modules[__name__])
 board.bind(sys.modules[__name__])
+plan_picture.bind(sys.modules[__name__])
 task_brief.bind(sys.modules[__name__])
 pacing.bind(sys.modules[__name__])
 due.bind(sys.modules[__name__])
@@ -2370,6 +2372,10 @@ _SETTINGS_DEFAULTS = {
     # and a headless `claude -p --model haiku` line for Codex, with a brief that
     # says when to use it. Off by default: in the trial a sweep took longer.
     "readerForTasks": False,
+    # The plan picture (#426, P469/P470): the hub draws a PO's plan as
+    # "PO Plan.html" in the project's Documents folder, from the board, with no
+    # model call. On by default; off draws nothing and says nothing.
+    "planPicture": True,
     # #402 (issue 60): the PO chat with or without the team's traffic (hub
     # lines, task rows, reports, "answers Pn"). "shown" | "hidden".
     "poTeamActivity": "shown",
@@ -3294,7 +3300,7 @@ def _save_settings_locked(settings: dict, pins: list | None = None) -> dict:
             except (TypeError, ValueError):
                 continue
             v = 0 if v <= 0 else max(5, min(1440, v))
-        if k in ("backupEnabled", "rtkForTasks", "readerForTasks", "paceWeek",
+        if k in ("backupEnabled", "rtkForTasks", "readerForTasks", "planPicture", "paceWeek",
                  "setupWizardPending", "setupWizardDone", "remoteAccessEnabled", "startAtSignIn"):
             v = bool(v)
         if k == "notifyDeviceChoices":
