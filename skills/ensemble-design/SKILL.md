@@ -1549,6 +1549,25 @@ self-contained component, so a later layout can host it elsewhere.
   (`.ldp-n.ldp-old`: transparent, inset 1px `--border-strong`, `--fg-muted`; selected rows too),
   never a filled one, so a 0 above listed cards is always explained. The grouped Inbox (phone pane,
   PO dock tab) puts the same why line under its "Older questions N" head.
+  **Threads under a project** (#420, GitHub issue 68, its drawing's option A): a project with a PO
+  chat that has threads (the hub's `threads: {n, sig}` on the project, `threads.summary`) gets a
+  caret (`.ldp-car`, absolute in the 12px gutter, `aria-expanded`, not a Tab stop) and unfolds into
+  `.ldp-thr` (`role="group"`, a 1px `--border` line on its left) under its row: **Main chat**, the 5
+  latest threads by `updatedAt` (what the chat's Threads filter lists), then **All N threads…**
+  (`.ldp-tall`, muted, underlined), which opens that filter. Rows are 24px `.ldp-trow`: the unread
+  dot (`.ldp-tdot`, `--c-discovery-bold`), the name cut with an ellipsis, the amber pill for a
+  thread that needs you, the age as thread ▾ shows it (`.ldp-age`, `--fs-100` `--fg-muted`). The
+  thread on screen is `--selected-fg` 600 with an inset 2px `--accent` bar. Selecting a project
+  unfolds it; the caret folds it without changing the selection; the fold state is per browser
+  (`cd-ldp-open`). **Rows are stable**: `LDT`'s groups are kept out of `LDP.sig` and patched in place
+  (dot, pill, age, current), and a new, gone or reordered row waits while the pointer or the
+  keyboard is in the list (as `LDP_HOLD_MS`). A click shows the thread in place in the PO chat
+  (as thread ▾'s pick, selecting its project first); Ctrl/⌘-click or the middle button opens it
+  as a tab. Keyboard: ↑/↓ move through projects and threads, → unfolds and then enters, ← folds or
+  goes up to the project, Enter opens, Ctrl/⌘+Enter as a tab. Hovering the rows does not light
+  the project's ⋯, pin or grip. On a phone the project switcher (`#proj-menu`) puts the current
+  project's Main chat and 3 latest under its row (`.pm-thr`, `--touch-min` rows, no caret). The top
+  bar's thread ▾ stays.
   Which scope: a loose task open in the middle, else the PO screen's project, else the one the
   bar names (`ibxLdPid()`). While the
   Inbox is on screen or on its strip the bar's **Inbox N** gives way (`body.ld-ibx`); in its own

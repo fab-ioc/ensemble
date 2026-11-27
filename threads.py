@@ -1942,6 +1942,20 @@ def _replied(idx: dict, archived: bool = False) -> set[str]:
             and bool(t.get("archived")) == archived}
 
 
+def summary(room_id: str) -> dict | None:
+    """What the left panel's project row needs of its PO chat's threads
+    (#420): ``n``, how many the Threads filter lists (:func:`_replied`), and
+    ``sig``, the index's, so the page reads the list again only when it
+    changed. Read from the index held, never building one: None while the
+    chat has none."""
+    with _LOCK:
+        held = _INDEX.get(room_id or "")
+    if not held:
+        return None
+    idx = held[1]
+    return {"n": len(_replied(idx)), "sig": _sig_text(idx)}
+
+
 def _listed(idx: dict, tids) -> list[dict]:
     """Threads as the Threads list shows them (#319): latest message first."""
     return sorted((_meta(idx["threads"][t]) for t in tids),

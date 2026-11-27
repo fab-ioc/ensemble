@@ -10679,6 +10679,9 @@ def build_projects() -> dict:
             counted.add(_norm_folder(g["path"]))
             total_changed += g["changed"]
         g["count"] = len(g["sessions"])
+        if g.get("registered") and g.get("poRoomId"):
+            # #420: the left panel shows a caret on a project with threads.
+            g["threads"] = threads.summary(g["poRoomId"])
         # Priority first, most-recently-active first inside a priority — the
         # same rule the flat task list uses.
         g["sessions"] = [{k: s.get(k) for k in keep}
