@@ -109,6 +109,7 @@ import chatroom
 # The PO's timed progress digest (only when something changed).
 import digest
 import board
+import plan_picture
 import pacing
 import po_usage
 # What a handover says is due at a time: the idle PO is typed it then.
@@ -213,6 +214,7 @@ attention.bind(sys.modules[__name__])
 digest.bind(sys.modules[__name__])
 icon_gen.bind(sys.modules[__name__])
 board.bind(sys.modules[__name__])
+plan_picture.bind(sys.modules[__name__])
 task_brief.bind(sys.modules[__name__])
 pacing.bind(sys.modules[__name__])
 due.bind(sys.modules[__name__])
@@ -2375,6 +2377,10 @@ _SETTINGS_DEFAULTS = {
     # settings file, so the old key is dropped rather than carried over, and
     # it leaves the file at the next save).
     "cheapReader": True,
+    # The plan picture (#426, P469/P470): the hub draws a PO's plan as
+    # "PO Plan.html" in the project's Documents folder, from the board, with no
+    # model call. On by default; off draws nothing and says nothing.
+    "planPicture": True,
     # #402 (issue 60): the PO chat with or without the team's traffic (hub
     # lines, task rows, reports, "answers Pn"). "shown" | "hidden".
     "poTeamActivity": "shown",
@@ -3299,7 +3305,7 @@ def _save_settings_locked(settings: dict, pins: list | None = None) -> dict:
             except (TypeError, ValueError):
                 continue
             v = 0 if v <= 0 else max(5, min(1440, v))
-        if k in ("backupEnabled", "rtkForTasks", "cheapReader", "paceWeek",
+        if k in ("backupEnabled", "rtkForTasks", "cheapReader", "planPicture", "paceWeek",
                  "setupWizardPending", "setupWizardDone", "remoteAccessEnabled", "startAtSignIn"):
             v = bool(v)
         if k == "notifyDeviceChoices":
@@ -3521,10 +3527,11 @@ VISUAL_FIRST_NOTE = (
     "dependencies, an architecture or data flow, a comparison of options, a measurement) is an "
     "HTML page, one self-contained static `.html` file in the Documents folder (inline CSS, inline "
     "SVG for diagrams, no scripts, no external loads, light theme, readable at phone width); text "
-    "that is not better shown (a spec, notes, a log, a long explanation) is Markdown (`.md`). A "
-    "plan, whenever one is asked for, comes with such a page showing the work (the steps or tasks, "
+    "that is not better shown (a spec, notes, a log, a long explanation) is Markdown (`.md`). "
+    "Every plan, without being asked, comes with such a page showing the work (the steps or tasks, "
     "their order and dependencies, what is decided and what is open); Markdown may accompany it, "
-    "never replace it. Link a page by its name like any document. A UI choice for the CEO is "
+    "never replace it. A PO's plan of tasks gets it from the hub when the plan picture is on: "
+    "`PO Plan.html`, drawn from the board; link that by its name. Link a page by its name like any document. A UI choice for the CEO is "
     "still ONE side-by-side PNG on the ask card.")
 
 # Where a task's knowledge goes (project_docs): the project's Documents folder.

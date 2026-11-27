@@ -194,10 +194,23 @@ for tasks and POs alike). Prefer a visual.
   view shows rendered (scripts off), never a claude.ai Artifact (see below).
 - Plain text that is not better shown (a spec, notes, a log, a long
   explanation) is **Markdown** (`.md`), as before.
-- **A plan, whenever one is asked for** (by the CEO or a PO), comes with a
-  visual page: at least the work as a picture (the steps or tasks, their order
-  and dependencies, what is decided and what is still open). A Markdown file
-  may accompany it; it never replaces it.
+- **Every plan, without being asked** (P469), comes with a visual page: at
+  least the work as a picture (the steps or tasks, their order and
+  dependencies, what is decided and what is still open). A Markdown file may
+  accompany it; it never replaces it.
+- **A PO's plan draws itself** when the plan picture is on (Settings →
+  Preferences → Plans → **Plan picture**, on by default). When a PO or
+  planner creates a second task within ten minutes, or sets or clears a gate,
+  the hub writes
+  `PO Plan.html` in the project's Documents folder from the board: the tasks
+  as boxes, gates as arrows (met or not yet), each task's state, owner,
+  priority, points and days. No model writes it, and it redraws itself when a
+  task on it changes state. The tool result's `planPicture` line names it;
+  link it by its name as the plan's picture instead of drawing one. Draw a
+  page of your own only for what the board cannot show (a design, a
+  comparison of options). Give each spec its days as `Estimate: N days` so
+  the page can add them up. A task whose deliverable is a plan (a study's
+  build plan) still draws its own picture.
 - Link the page in reports and chat by its name, like any document (see *How
   to link Ensemble things*).
 
@@ -1302,7 +1315,8 @@ When asked to plan (or when your role is `planner`):
    product owner, with a visual page in the Documents folder that shows it:
    the tasks, their order and dependencies, what is decided and what is open
    (*Visual first*; the Markdown or the chat text accompanies it, never
-   replaces it). Wait for feedback. Amend with `ensemble_update_task`,
+   replaces it). With **Plan picture** on, that page is the hub's
+   `PO Plan.html`, drawn from the drafts and their gates; link it by name. Wait for feedback. Amend with `ensemble_update_task`,
    remove drafts with `ensemble_delete_task`, start with `ensemble_start_task`
    when told to.
 

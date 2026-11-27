@@ -954,6 +954,11 @@ def start_scheduler() -> None:
                 points.maybe_tick()
             except Exception as e:
                 _log(f"points check error: {str(e)[:200]}")
+            # The plan picture follows its tasks' states (plan_picture.py).
+            try:
+                _d.plan_picture.maybe_tick()
+            except Exception as e:
+                _log(f"plan picture check error: {str(e)[:200]}")
             time.sleep(TICK_S)
 
     threading.Thread(target=loop, daemon=True, name="po-digest").start()

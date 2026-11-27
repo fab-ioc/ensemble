@@ -1846,6 +1846,8 @@ def _create_task(ctx, args, handler):
     _d.chatroom.patch_room(room_full["id"], after=gates, onReady=room_full["onReady"],
                            gateConfiguredAt=room_full["gateConfiguredAt"])
     _d._patch_task_json(room_full.get("taskDir", ""), after=gates, onReady=room_full["onReady"])
+    picture = _plan_picture(lambda: _d.plan_picture.on_create(
+        pid, room_full, is_admin_caller(ctx["room"], ctx["identity"])))
     started = False
     held = _d.pacing.hold(room_full, "agent") if args.get("start") is True else None
     if args.get("start") is True and not held:
@@ -1865,10 +1867,22 @@ def _create_task(ctx, args, handler):
             **({"allocation": allocation} if allocation else {}),
             **({"held": True} if held else {}),
             **({"goalNote": _GOAL_CUT_NOTE} if goal_cut else {}),
+            **({"planPicture": picture} if picture else {}),
             "note": (_d.pacing.note_text(held) if held else
                      (allocation or {}).get("reason", "launched") if started else
                      "created as a draft — the product owner can start it from the "
                      "dashboard, or call ensemble_start_task")}
+
+
+def _plan_picture(draw) -> str:
+    """The plan picture's line for a tool's result (plan_picture.py), or ""
+    when nothing was drawn. A failed drawing never fails the tool."""
+    try:
+        path = draw()
+    except Exception as exc:   # noqa: BLE001
+        _d.digest._log(f"plan picture: {str(exc)[:200]}")
+        return ""
+    return _d.plan_picture.line(path) if path else ""
 
 
 def _note_po_from(ctx, room: dict) -> None:
@@ -1980,9 +1994,13 @@ def _update_task(ctx, args, handler):
         room2 = room4
         notes.append("its agents keep their kinds, ignoring pacing" if keep
                      else "its agents are paced over the week again")
+    picture = ""
     if gate_fields:
         room2 = _d.chatroom.patch_room(room["id"], **gate_fields) or room2
         _d._patch_task_json(room2.get("taskDir", ""), **gate_fields)
+        picture = _plan_picture(lambda: _d.plan_picture.on_gates(
+            _project_of_room(room), room2, room.get("after") or [], gate_fields["after"],
+            is_admin_caller(ctx["room"], ctx["identity"])))
     if review_limit is not None:
         notes.append(_set_review_limit(ctx, handler, room2, review_limit,
                                        " ".join(str(args["reviewLimitReason"]).split())[:300]))
@@ -1994,7 +2012,8 @@ def _update_task(ctx, args, handler):
             **_d.board.view(room2),
             "priority": _d.PRIORITY_NAMES[_d.priority_of(room2)],
             "status": _status(room2), "agents": _agents_view(room2),
-            "mode": room2.get("mode", ""), "note": "; ".join(notes)}
+            "mode": room2.get("mode", ""), "note": "; ".join(notes),
+            **({"planPicture": picture} if picture else {})}
 
 
 def _set_review_limit(ctx, handler, room: dict, limit: int, why: str) -> str:

@@ -5670,6 +5670,15 @@ window.DOC_LISTENERS_PAUSED = false;
       </div>
     </div>
     <p class="cfg-hint">POs and task owners hand the reading of files, docs and logs to a helper on Haiku, which costs about a fortieth of Opus per token, and keep only its answers. It uses fewer tokens, but a search takes longer. Applies from their next launch; reviewers never get it.</p>
+    <h5 class="sp-sub">Plans</h5>
+    <div class="pref-row" style="margin-top: 14px;">
+      <span class="pref-label">Plan picture</span>
+      <div class="seg pref-seg" id="pref-plan-picture">
+        <button type="button" data-val="on">On</button>
+        <button type="button" data-val="off">Off</button>
+      </div>
+    </div>
+    <p class="cfg-hint">The hub draws each plan as a page in the project's Documents folder, <code>PO Plan.html</code>: its tasks, their gates and where each stands, computed from the board without a model. It is redrawn when a PO plans tasks or changes a gate, and when a task on it changes state. Off: nothing is drawn.</p>
     <h5 class="sp-sub">Words</h5>
     <!-- The word for a board (static/noun.js), one per hub: projectNoun. -->
     <div class="pref-row" style="margin-top: 14px;">
@@ -9654,6 +9663,13 @@ function renderPrefs() {
   if (readerSeg) {
     const value = PREFS.cheapReader === false ? 'off' : 'on';
     readerSeg.querySelectorAll('button').forEach(b => {
+      b.classList.toggle('active', b.dataset.val === value);
+    });
+  }
+  const planSeg = document.getElementById('pref-plan-picture');
+  if (planSeg) {
+    const value = PREFS.planPicture === false ? 'off' : 'on';
+    planSeg.querySelectorAll('button').forEach(b => {
       b.classList.toggle('active', b.dataset.val === value);
     });
   }
@@ -29136,6 +29152,10 @@ if ('serviceWorker' in navigator) {
   document.getElementById('pref-reader-tasks')?.addEventListener('click', (ev) => {
     const b = ev.target.closest('button[data-val]');
     if (b) setPref('cheapReader', b.dataset.val === 'on');
+  });
+  document.getElementById('pref-plan-picture')?.addEventListener('click', (ev) => {
+    const b = ev.target.closest('button[data-val]');
+    if (b) setPref('planPicture', b.dataset.val === 'on');
   });
   document.getElementById('pref-retention-keep')?.addEventListener('click', (ev) => {
     keepRetentionYear(ev.currentTarget);
