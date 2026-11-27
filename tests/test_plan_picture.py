@@ -302,6 +302,35 @@ class PlanPicture(unittest.TestCase):
         self.assertIn("Alpha stays", self.page())
         self.assertEqual(pp._load()["p"]["groups"], [[a["id"]]])
 
+    def test_a_room_that_cannot_be_read_now_stays_in_the_plan(self):
+        a = self.room(1, "Alpha")
+        self.create(2, "Beta", after=[{"task": a["id"]}])
+        beta = next(r for r in chatroom.list_rooms() if r.get("title") == "Beta")
+        real = chatroom.get_room
+        with mock.patch.object(chatroom, "get_room",
+                               side_effect=lambda rid, **kw: None if rid == beta["id"] else real(rid, **kw)):
+            pp.maybe_tick(now=10 ** 10)
+        self.assertEqual([sorted(g) for g in pp._load()["p"]["groups"]], [sorted([a["id"], beta["id"]])])
+        self.assertNotIn("Beta", self.page(), "left out of this drawing only")
+        # Readable again: back on the page. Deleted: gone for good.
+        chatroom.patch_room(beta["id"], live=True)
+        pp.maybe_tick(now=2 * 10 ** 10)
+        self.assertIn("Beta", self.page())
+        os.remove(chatroom._room_path(beta["id"]))
+        pp.maybe_tick(now=3 * 10 ** 10)
+        self.assertEqual(pp._load()["p"]["groups"], [[a["id"]]])
+
+    def test_a_group_with_an_unreadable_task_does_not_retire(self):
+        a = self.room(1, "Alpha", workflow="done", launched=True)
+        self.create(2, "Beta", after=[{"task": a["id"]}])
+        beta = next(r for r in chatroom.list_rooms() if r.get("title") == "Beta")
+        chatroom.patch_room(beta["id"], workflow="done", launched=True)
+        real = chatroom.get_room
+        with mock.patch.object(chatroom, "get_room",
+                               side_effect=lambda rid, **kw: None if rid == beta["id"] else real(rid, **kw)):
+            pp.maybe_tick(now=10 ** 10)
+        self.assertEqual([sorted(g) for g in pp._load()["p"]["groups"]], [sorted([a["id"], beta["id"]])])
+
     def test_the_page_stays_in_the_folder_chosen_first(self):
         # A documents project whose home already has a "Documents" folder of
         # the CEO's: the hub picks another name once and keeps it.

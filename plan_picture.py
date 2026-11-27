@@ -311,25 +311,40 @@ def _row(room: dict, rooms: dict, attn: dict, po_led: dict | None, pkey: str = "
 
 def _collect(project: dict, rec: dict, now: float) -> tuple[dict, str, list]:
     """The page's data, its signature, and the groups now all Done."""
-    groups, rooms = [], {}
+    rooms: dict = {}
     pid = project.get("id") or ""
     links = _d.load_session_projects()
 
-    def mine(rid: str) -> dict | None:
-        """The room, while it is still this project's (a task moved to
-        another project leaves this page)."""
-        room = rooms.get(rid) or _d.chatroom.get_room(rid, public=False, messages=False)
-        if room and _d._room_project_id(rid, room, links) == pid:
-            rooms[rid] = room
-            return room
-        return None
+    gone: set[str] = set()
 
+    def mine(rid: str) -> dict | None:
+        """The room, while it is still this project's. A task moved to another
+        project, or whose file is gone, leaves the plan for good (``gone``);
+        one that cannot be read just now is left out of this drawing only."""
+        room = rooms.get(rid) or _d.chatroom.get_room(rid, public=False, messages=False)
+        if room is None:
+            try:
+                os.stat(_d.chatroom._room_path(rid))
+            except FileNotFoundError:
+                gone.add(rid)
+            except OSError:
+                pass
+            return None
+        if _d._room_project_id(rid, room, links) != pid:
+            gone.add(rid)
+            return None
+        rooms[rid] = room
+        return room
+
+    saved = []   # the plan's groups, less what is gone for good
     for g in rec.get("groups") or []:
-        live = [rid for rid in g if mine(rid)]
-        if live:
-            groups.append(live)
-    if groups != (rec.get("groups") or []):
-        rec["groups"] = groups   # saved with the redraw
+        for rid in g:
+            mine(rid)
+        keep = [rid for rid in g if rid not in gone]
+        if keep:
+            saved.append(keep)
+    if saved != (rec.get("groups") or []):
+        rec["groups"] = saved   # saved with the redraw
     try:
         key = _d.project_keys(_d.load_projects()).get(pid, "") or project.get("key", "")
     except Exception:
@@ -345,8 +360,10 @@ def _collect(project: dict, rec: dict, now: float) -> tuple[dict, str, list]:
             po_led = _d.points.load(po, shared=True)
     except Exception:
         po_led = None
-    retire = [g for g in groups if all(_d.workflow_of(rooms[r]) == "done" for r in g)]
-    current = [r for g in groups if g not in retire for r in g]
+    # A group retires once every task in it reads as Done; one that cannot
+    # be read now keeps it on the page.
+    retire = [g for g in saved if all(r in rooms and _d.workflow_of(rooms[r]) == "done" for r in g)]
+    current = [r for g in saved if g not in retire for r in g if r in rooms]
     current = list(dict.fromkeys(current))
     rows = [_row(rooms[r], rooms, attn, po_led, key) for r in current]
     earlier_ids = [r for r in ((rec.get("earlier") or {}).get("ids") or []) if r not in current]
