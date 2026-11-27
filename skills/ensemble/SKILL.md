@@ -189,13 +189,14 @@ for tasks and POs alike). Prefer a visual.
   view shows rendered (scripts off), never a claude.ai Artifact (see below).
 - Plain text that is not better shown (a spec, notes, a log, a long
   explanation) is **Markdown** (`.md`), as before.
-- **A plan, whenever one is asked for** (by the CEO or a PO), comes with a
-  visual page: at least the work as a picture (the steps or tasks, their order
-  and dependencies, what is decided and what is still open). A Markdown file
-  may accompany it; it never replaces it.
-- **A PO's plan draws itself** (P469) while **Plan picture** is on (Settings →
-  Preferences → Plans, on by default). When a PO or planner creates a second
-  task within ten minutes, or sets or clears a gate, the hub writes
+- **Every plan, without being asked** (P469), comes with a visual page: at
+  least the work as a picture (the steps or tasks, their order and
+  dependencies, what is decided and what is still open). A Markdown file may
+  accompany it; it never replaces it.
+- **A PO's plan draws itself** when the plan picture is on (Settings →
+  Preferences → Plans → **Plan picture**, on by default). When a PO or
+  planner creates a second task within ten minutes, or sets or clears a gate,
+  the hub writes
   `PO Plan.html` in the project's Documents folder from the board: the tasks
   as boxes, gates as arrows (met or not yet), each task's state, owner,
   priority, points and days. No model writes it, and it redraws itself when a

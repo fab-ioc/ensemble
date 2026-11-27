@@ -178,7 +178,9 @@ def _project(pid: str) -> dict | None:
 
 
 def page_path(project: dict) -> str:
-    return os.path.join(_d.project_documents_dir(project, persist=False), FILE_NAME)
+    # persist: the folder's name is chosen once and kept in project.json, so
+    # the page never moves to another folder on its next redraw.
+    return os.path.join(_d.project_documents_dir(project, persist=True), FILE_NAME)
 
 
 def _redraw(pid: str, state: dict, now: float) -> str:
@@ -250,11 +252,13 @@ def _gate_met(target: dict, when: str) -> bool:
     return bool(target.get("mergedAt")) or _d.workflow_of(target) == "done"
 
 
-def _points(room: dict, po_led: dict | None) -> list[str]:
+def _points(room: dict, po_led: dict | None, key: str = "") -> list[str]:
     out = _POINT.findall(room.get("title") or "")
     label = _d.task_label(room)
+    # The ledger names a task "#104" or, with its project's key, "ED-104".
+    names = {label, f"{key.upper()}-{label[1:]}" if key and label else label}
     for p in (po_led or {}).get("points") or []:
-        if label and p.get("task") == label and p.get("id"):
+        if label and _d.points.task_ref(p.get("task")) in names and p.get("id"):
             out.append(p["id"])
     return list(dict.fromkeys(out))
 
@@ -280,7 +284,7 @@ def _state(room: dict, attn: dict, unmet: list[str]) -> tuple[str, str]:
     return "stopped", "Stopped"
 
 
-def _row(room: dict, rooms: dict, attn: dict, po_led: dict | None) -> dict:
+def _row(room: dict, rooms: dict, attn: dict, po_led: dict | None, pkey: str = "") -> dict:
     gates, unmet = [], []
     for g in room.get("after") or []:
         target = rooms.get(g.get("task")) or _d.chatroom.get_room(g.get("task"), public=False,
@@ -299,7 +303,7 @@ def _row(room: dict, rooms: dict, attn: dict, po_led: dict | None) -> dict:
     title = room.get("title") or ""
     return {"id": room["id"], "no": _d.task_label(room), "title": _POINT_TAIL.sub("", title) or title,
             "priority": _d.priority_of(room), "owner": _owner_kind(room),
-            "state": key, "word": word, "gates": gates, "points": _points(room, po_led),
+            "state": key, "word": word, "gates": gates, "points": _points(room, po_led, pkey),
             "days": spec_days(room.get("spec") or ""),
             "ask": (item.get("reason") or "") if key == "needs" else "",
             "merged": key == "done" and bool(room.get("mergedAt")), "doneAt": done_at}
@@ -308,15 +312,28 @@ def _row(room: dict, rooms: dict, attn: dict, po_led: dict | None) -> dict:
 def _collect(project: dict, rec: dict, now: float) -> tuple[dict, str, list]:
     """The page's data, its signature, and the groups now all Done."""
     groups, rooms = [], {}
+    pid = project.get("id") or ""
+    links = _d.load_session_projects()
+
+    def mine(rid: str) -> dict | None:
+        """The room, while it is still this project's (a task moved to
+        another project leaves this page)."""
+        room = rooms.get(rid) or _d.chatroom.get_room(rid, public=False, messages=False)
+        if room and _d._room_project_id(rid, room, links) == pid:
+            rooms[rid] = room
+            return room
+        return None
+
     for g in rec.get("groups") or []:
-        live = []
-        for rid in g:
-            room = rooms.get(rid) or _d.chatroom.get_room(rid, public=False, messages=False)
-            if room:
-                rooms[rid] = room
-                live.append(rid)
+        live = [rid for rid in g if mine(rid)]
         if live:
             groups.append(live)
+    if groups != (rec.get("groups") or []):
+        rec["groups"] = groups   # saved with the redraw
+    try:
+        key = _d.project_keys(_d.load_projects()).get(pid, "") or project.get("key", "")
+    except Exception:
+        key = ""
     try:
         attn = _d.attention.by_room(max_age=60)
     except Exception:
@@ -331,14 +348,13 @@ def _collect(project: dict, rec: dict, now: float) -> tuple[dict, str, list]:
     retire = [g for g in groups if all(_d.workflow_of(rooms[r]) == "done" for r in g)]
     current = [r for g in groups if g not in retire for r in g]
     current = list(dict.fromkeys(current))
-    rows = [_row(rooms[r], rooms, attn, po_led) for r in current]
+    rows = [_row(rooms[r], rooms, attn, po_led, key) for r in current]
     earlier_ids = [r for r in ((rec.get("earlier") or {}).get("ids") or []) if r not in current]
     earlier = []
     for rid in earlier_ids:
-        room = rooms.get(rid) or _d.chatroom.get_room(rid, public=False, messages=False)
+        room = mine(rid)
         if room:
-            rooms[rid] = room
-            earlier.append(_row(room, rooms, attn, po_led))
+            earlier.append(_row(room, rooms, attn, po_led, key))
     data = {"project": project.get("name") or "Project", "rows": rows, "earlier": earlier,
             "earlierAt": float((rec.get("earlier") or {}).get("at") or 0), "drawnAt": now}
     sig_src = json.dumps([rows, earlier], sort_keys=True, default=str)

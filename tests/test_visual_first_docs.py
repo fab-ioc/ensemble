@@ -33,7 +33,7 @@ class ThePrompts(unittest.TestCase):
     def assert_rule(self, text, where):
         for words in ("Prefer a visual", "HTML page, one self-contained static `.html` file in the Documents folder",
                       "inline SVG", "no scripts, no external loads, light theme, readable at phone width",
-                      "is Markdown (`.md`)", "A plan, whenever one is asked for, comes with such a page",
+                      "is Markdown (`.md`)", "Every plan, without being asked, comes with such a page",
                       "never replace it", "ONE side-by-side PNG"):
             self.assertIn(words, text, f"{where}: {words}")
 
@@ -64,7 +64,7 @@ class ThePrompts(unittest.TestCase):
         rule = SKILL[i:SKILL.index("**Never publish to claude.ai**", i)]
         for words in ("Prefer a visual", "**HTML page**", "`#<no> <short title>.html`", "inline SVG for diagrams",
                       "no scripts, no external loads", "light theme, readable at phone width",
-                      "never a claude.ai Artifact", "**Markdown** (`.md`)", "**A plan, whenever one is asked for**",
+                      "never a claude.ai Artifact", "**Markdown** (`.md`)", "**Every plan, without being asked**", "when the plan picture is on", "`PO Plan.html`",
                       "it never replaces it", "by its name", "ONE side-by-side PNG on the ask card"):
             self.assertIn(words, rule, words)
         self.assertIn("`#<no> <short title>.html` for a page or `.md` for text (see *Visual\nfirst* below)", SKILL)

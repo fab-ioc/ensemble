@@ -12,6 +12,7 @@
 """
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import tempfile
@@ -25,6 +26,9 @@ import digest
 import ensemble_tools as et
 import plan_picture as pp
 import points
+
+
+_REAL_DOCS_DIR = d.project_documents_dir
 
 
 class PlanPicture(unittest.TestCase):
@@ -273,6 +277,53 @@ class PlanPicture(unittest.TestCase):
         page = self.page()
         self.assertIn(">P77</", page)
         self.assertIn(">P78</", page)
+
+    def test_ledger_points_named_with_the_project_key_count_too(self):
+        a = self.room(1, "Alpha")
+        led = {"points": [{"id": "P79", "task": "RB-1"}, {"id": "P80", "task": "rb-2"},
+                          {"id": "P81", "task": "XX-1"}]}
+        with mock.patch.object(points, "exists", return_value=True), \
+                mock.patch.object(points, "load", return_value=led), \
+                mock.patch.object(d, "project_keys", return_value={"p": "RB"}):
+            self.create(2, "Beta", after=[{"task": a["id"]}])
+        page = self.page()
+        self.assertIn(">P79</", page)
+        self.assertIn(">P80</", page)
+        self.assertNotIn("P81", page, "another project's #1")
+
+    def test_a_task_moved_to_another_project_leaves_the_page(self):
+        a = self.room(1, "Alpha stays")
+        self.create(2, "Beta moves", after=[{"task": a["id"]}])
+        self.assertIn("Beta moves", self.page())
+        beta = next(r for r in chatroom.list_rooms() if r.get("title") == "Beta moves")
+        chatroom.patch_room(beta["id"], projectId="q", no=7)
+        pp.maybe_tick(now=10 ** 10)
+        self.assertNotIn("Beta moves", self.page())
+        self.assertIn("Alpha stays", self.page())
+        self.assertEqual(pp._load()["p"]["groups"], [[a["id"]]])
+
+    def test_the_page_stays_in_the_folder_chosen_first(self):
+        # A documents project whose home already has a "Documents" folder of
+        # the CEO's: the hub picks another name once and keeps it.
+        home = self.tmp / "ceo-home"
+        (home / "Documents").mkdir(parents=True)
+        self.project.update(kind="documents")
+        saved = {}
+
+        def set_meta(pid, field, value):
+            saved[field] = value
+            return True, {}
+
+        with mock.patch.object(d, "project_documents_dir", _REAL_DOCS_DIR), \
+                mock.patch.object(d, "project_home", lambda p, create=True: str(home)), \
+                mock.patch.object(d, "_set_project_meta", side_effect=set_meta):
+            first = pp.page_path(self.project)
+            os.makedirs(os.path.dirname(first))
+            Path(first).write_text("x", encoding="utf-8")
+            second = pp.page_path(self.project)
+        self.assertEqual(first, second)
+        self.assertNotEqual(os.path.dirname(first), str(home / "Documents"))
+        self.assertEqual(saved, {"documentsDir": Path(first).parent.name})
 
     # -- no model ---------------------------------------------------------------------
 

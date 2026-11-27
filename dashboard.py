@@ -3521,10 +3521,11 @@ VISUAL_FIRST_NOTE = (
     "dependencies, an architecture or data flow, a comparison of options, a measurement) is an "
     "HTML page, one self-contained static `.html` file in the Documents folder (inline CSS, inline "
     "SVG for diagrams, no scripts, no external loads, light theme, readable at phone width); text "
-    "that is not better shown (a spec, notes, a log, a long explanation) is Markdown (`.md`). A "
-    "plan, whenever one is asked for, comes with such a page showing the work (the steps or tasks, "
+    "that is not better shown (a spec, notes, a log, a long explanation) is Markdown (`.md`). "
+    "Every plan, without being asked, comes with such a page showing the work (the steps or tasks, "
     "their order and dependencies, what is decided and what is open); Markdown may accompany it, "
-    "never replace it. Link a page by its name like any document. A UI choice for the CEO is "
+    "never replace it. A PO's plan of tasks gets it from the hub when the plan picture is on: "
+    "`PO Plan.html`, drawn from the board; link that by its name. Link a page by its name like any document. A UI choice for the CEO is "
     "still ONE side-by-side PNG on the ask card.")
 
 # Where a task's knowledge goes (project_docs): the project's Documents folder.
