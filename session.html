@@ -5038,7 +5038,7 @@ function catchUp(items, point, justUs, N = CHAT_NAMES, unacked = null, askMids =
     const m = items[i], t = taskReport(m), f = forPerson(m, N);
     if (t && reportBase(m) !== 'update') say(taskName(t, N), i, CU_WORD[reportBase(m)] || '');
     digestWords(m).forEach(([t, word]) => say(taskName(t, N), i, word));
-    if (unacked && m.id && unacked.has(m.id)) acks.push(i);
+    if (unacked && m.id && (unacked.has(m.id) || (m.joined || []).some(id => unacked.has(id)))) acks.push(i);
     else if (f === 'decision' && (askMids ? askMids.has(m.id) : i > lastPersons)) decisions.push(i);
     else if (f) answers.push(i);
   }
@@ -5199,7 +5199,7 @@ function pointMaps(pv) {
 // What never folds: the balloons holding a comment's passage (their keys) and
 // those the points keep (their ids). null when there are none.
 function heldBy(keys, keep) {
-  return keys.size || keep.size ? (m, i) => keys.has(foldKey(m, i)) || (!!m.id && keep.has(m.id)) : null;
+  return keys.size || keep.size ? (m, i) => keys.has(foldKey(m, i)) || (!!m.id && keep.has(m.id)) || (m.joined || []).some(id => keep.has(id)) : null;
 }
 // Needs you (#209): only what waits on the person. Decisions: the question
 // cards still open (the hub's needs.decisions); To try: answers that ask them
@@ -5667,7 +5667,8 @@ function renderBubbles(items, opt = {}) {
     } finally { TASK_REF_PID = ''; }
   };
   const href = mid => refHref(ROOM, mid);
-  const ptBar = m => pointBarHtml(m, POINTS, href);
+  // A card's joined reply that answers its point keeps its bar (its Ack).
+  const ptBar = m => pointBarHtml(m, POINTS, href) + (m.joined || []).map(id => pointBarHtml({ id }, POINTS, href)).join('');
   // A balloon's own controls: Copy link, and in a PO chat's channel Reply in thread.
   const thr = typeof threadedView === 'function' && threadedView();
   const actHtml = m => copyLinkHtml(m) + (thr ? replyInThreadHtml(m) : '');
@@ -7358,8 +7359,24 @@ function askJoinable(m, card, room) {
   if (m.rang && m.rang.length) return false;
   if (room && (m.from !== card.from || (m.to && !['user', 'all'].includes(String(m.to).toLowerCase())))) return false;
   if (!m.ts || !card.ts || Math.abs(m.ts - card.ts) > ASK_JOIN_S) return false;
-  if (/(^|\n)[\s*_>]*re\s+P\d+/i.test(m.text) || POINTS.byAnswer.has(m.id) || POINTS.byMid.has(m.id)) return false;
+  if (/(^|\n)[\s*_>]*re\s+P\d+/i.test(m.text) || POINTS.byMid.has(m.id)) return false;
+  // A reply the hub reads as an answer (a PO thread's first reply on its
+  // point) joins only a card about that same point; its bar comes along.
+  const ans = POINTS.byAnswer.get(m.id);
+  if (ans && !(ans.length && ans.every(p => (card.points || []).includes(p.id)))) return false;
+  if (!askAboutSame(m.text, card)) return false;
   return !asksOf(m).length;
+}
+// A line naming points is about them (threads.py _point_mentions): it is
+// the words of a card about points only when it names one of the card's.
+const ASK_PT_RE = /(?<![\w])P(\d{1,5})([a-z]?)(?![\w])/gi;
+function askPointsIn(text) { return [...String(text || '').matchAll(ASK_PT_RE)].map(x => 'P' + x[1] + x[2].toLowerCase()); }
+function askAboutSame(text, card) {
+  const named = askPointsIn(text);
+  if (!named.length) return true;
+  const mine = new Set([...(card.points || []), ...askPointsIn(card.text),
+    ...(card.asks || []).flatMap(a => askPointsIn(a && a.question))]);
+  return !mine.size || named.some(p => mine.has(p));
 }
 function joinAskWords(items, room = false) {
   // The map holds the joins drawn now: a line no longer joined (a thread
@@ -7383,9 +7400,11 @@ function joinAskWords(items, room = false) {
     let steps = post && Array.isArray(post.steps) ? post.steps : null, preStep = null;
     if (!pre && steps) {
       const at = s => Date.parse((s && s.timestamp) || '') / 1000;
-      const k = steps.reduce((b, s, n) => at(s) <= c.ts && c.ts - at(s) <= ASK_JOIN_S && (b < 0 || at(s) >= at(steps[b])) ? n : b, -1);
+      const ok = s => !!s && at(s) <= c.ts && c.ts - at(s) <= ASK_JOIN_S && !!(s.text || '').trim()
+        && !/(^|\n)[\s*_>]*re\s+P\d+/i.test(s.text) && askAboutSame(s.text, c);
+      const k = steps.reduce((b, s, n) => ok(s) && (b < 0 || at(s) >= at(steps[b])) ? n : b, -1);
       const s = k >= 0 ? steps[k] : null;
-      if (s && (s.text || '').trim() && !/(^|\n)[\s*_>]*re\s+P\d+/i.test(s.text)) {
+      if (s) {
         preStep = s;
         steps = steps.filter((_, n) => n !== k);
       }

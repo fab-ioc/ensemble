@@ -25,6 +25,7 @@ import dashboard
 import ensemble_tools
 import points
 import sends
+import threads
 from test_page_update import CHROME
 from test_po_chat_clean import NODE, _turn
 from tests import chrome_profile
@@ -40,6 +41,10 @@ TEAM_WORDS = "The review found two ways to fix the retry; both pass the tests."
 PO_PRE = "The release waits on one choice of yours."
 PO_PRE_CONTEXT = "Dark mode is ready; the print styles are not."
 PO_PRE_REPLY = "I keep building the print styles meanwhile."
+THR_TOPIC = "Make the speed chart wider"
+THR_PRE = "The wider chart has one catch."
+THR_CONTEXT = "At full width the legend no longer fits beside the chart on a phone."
+THR_REPLY = "I keep the chart as it is until you pick."
 
 JS = chrome_profile.JS + r"""
 const { spawn } = require('child_process');
@@ -109,6 +114,27 @@ async function main() {
     await p.until(`[...document.querySelectorAll('#msgs .msg')].some(b => b.querySelector('.qa') && b.innerText.includes(${JSON.stringify(A.preReply)}))`);
     await sleep(300);
     out.pre = await p.look();
+    // Review 2: a line naming another point is not a card's words, and the
+    // line before the call is the latest step that can be (not a Re line).
+    out.guards = await p.evalIn(`(() => { const c = LAST_ITEMS.find(m => Array.isArray(m.asks) && m.asks.length);
+      const card = Object.assign({}, c, { joined: undefined, steps: undefined, text: 'About P1.', points: ['P1'] });
+      const iso = t => new Date(t * 1000).toISOString();
+      const other = joinAskWords([card, { id: 'x-p2', from: c.from, ts: c.ts + 1, text: 'For P2, the export ships Monday.' }]);
+      const same = joinAskWords([card, { id: 'x-p1', from: c.from, ts: c.ts + 1, text: 'For P1, I hold it.' }]);
+      const steps = [{ mid: 'st-a', text: 'Why I ask: the legend.', timestamp: iso(c.ts - 10) },
+                     { mid: 'st-b', text: 'Re P1: noted.', timestamp: iso(c.ts - 5) }];
+      const multi = joinAskWords([card, { id: 'x-st', from: c.from, ts: c.ts + 2, text: 'I wait.', steps }]);
+      return { other: other.length, same: same.length, multiText: multi[0].text, multiSteps: (multi[0].steps || []).map(x => x.mid) }; })()`);
+    await send('Target.closeTarget', { targetId: p.targetId });
+    // A PO thread: the line before the call, the card and the reply are one
+    // balloon in the thread the person started.
+    p = await open(A.thr + '&thread=P1');
+    await p.until(`[...document.querySelectorAll('#msgs .msg')].some(b => b.querySelector('.qa') && b.innerText.includes(${JSON.stringify(A.thrReply)}))`);
+    await sleep(300);
+    out.thread = await p.look();
+    out.threadMode = await p.evalIn('THREAD_MODE');
+    out.threadBar = await p.evalIn(`[...document.querySelectorAll('#msgs .msg')].filter(b => b.querySelector('.qa')).map(b => [...b.querySelectorAll('.pt-bar')].map(x => x.innerText).join(' | ')).join(' || ')`);
+    await p.shot('po-thread-one-balloon');
     await send('Target.closeTarget', { targetId: p.targetId });
     // A task's one-agent chat: the line before the call, the context, the reply.
     p = await open(A.task);
@@ -218,6 +244,28 @@ class CardWordsInChrome(unittest.TestCase):
         with pre_file.open("a", encoding="utf-8") as f:
             f.write(json.dumps(_turn("assistant", PO_PRE_REPLY, time.time() + 1) | {"sessionId": "pre-sid"}) + "\n")
 
+        # A PO thread: the person's P1 sent as a new thread; the PO's line,
+        # its card about P1 and the reply.
+        ok, fourth, _ = dashboard.register_project("Charts")
+        assert ok, fourth
+        cls.thr = solo("Charts PO", "thr-sid", "Product owner", fourth)
+        ok, why = dashboard.set_project_po(fourth["id"], cls.thr)
+        assert ok, why
+        t0 = now - 120
+        q, ids = points.take(chatroom.get_room(cls.thr, public=False), THR_TOPIC, key="P1", now=t0, sid="thr-sid")
+        assert ids == ["P1"], ids
+        threads.note_send(cls.thr, "", "P1", ids, False, q, now=t0, new=True)
+        thr_file = tdir / "thr-sid.jsonl"
+        thr_file.write_text("".join(json.dumps(t | {"sessionId": "thr-sid"}) + "\n" for t in [
+            _turn("user", q, t0 + 1), _turn("assistant", THR_PRE, now - 2, stop="tool_use")]), encoding="utf-8")
+        room = chatroom.get_room(cls.thr, public=False)
+        ensemble_tools._ask({"room": room, "identity": "claude", "part": room["participants"][0], "projectId": fourth["id"]},
+                            {"context": THR_CONTEXT, "points": ["P1"], "questions": [
+                                {"question": "Wider chart, legend below it?", "options": [{"label": "Yes"}, {"label": "No"}]}]}, handler)
+        with thr_file.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(_turn("assistant", THR_REPLY, time.time() + 1) | {"sessionId": "thr-sid"}) + "\n")
+        points.sync(cls.thr, force=True)
+
         # A task's one-agent chat: a line, the call, the reply.
         cls.task = solo("Task view", "task-sid", "Engineer", other)
         task_file = tdir / "task-sid.jsonl"
@@ -256,7 +304,8 @@ class CardWordsInChrome(unittest.TestCase):
         args = {**chrome_profile.node_args(), "tmp": str(base),
                 "base": f"http://127.0.0.1:{server.server_address[1]}", "shots": shots,
                 "po": cls.po, "poFile": str(cls.po_file), "poReply": cls.po_reply, "reply": REPLY,
-                "task": cls.task, "taskReply": TASK_REPLY, "team": cls.team, "pre": cls.pre, "preReply": PO_PRE_REPLY}
+                "task": cls.task, "taskReply": TASK_REPLY, "team": cls.team, "pre": cls.pre, "preReply": PO_PRE_REPLY,
+                "thr": cls.thr, "thrReply": THR_REPLY}
         path = base / "cardwords_cdp.js"
         path.write_text(JS, encoding="utf-8")
         run = subprocess.run([NODE, str(path), json.dumps(args)], capture_output=True, encoding="utf-8", timeout=300)
@@ -305,6 +354,31 @@ class CardWordsInChrome(unittest.TestCase):
         self.assertEqual(order, sorted(order), text)
         for words in (PO_PRE, PO_PRE_REPLY):
             self.assertEqual(len(self.holding(pre, words)), 1, words)
+
+    def test_a_line_naming_another_point_is_not_the_cards_words(self):
+        g = self.got["guards"]
+        self.assertEqual(g["other"], 2, "a P1 card and a line about P2: two balloons")
+        self.assertEqual(g["same"], 1, "a line about the card's own point joins it")
+
+    def test_the_line_before_the_call_is_the_latest_step_that_can_be(self):
+        g = self.got["guards"]
+        self.assertTrue(g["multiText"].startswith("Why I ask: the legend."), g)
+        self.assertEqual(g["multiSteps"], ["st-b"], "the Re step stays a step")
+
+    def test_a_po_thread_draws_the_card_and_its_words_as_one_balloon(self):
+        self.assertTrue(self.got["threadMode"])
+        balloons = self.got["thread"]
+        cards = [b for b in balloons if b["cards"]]
+        self.assertEqual(len(cards), 1, balloons)
+        text = cards[0]["text"]
+        order = [text.index(THR_PRE), text.index(THR_CONTEXT), text.index(THR_REPLY),
+                 text.index("Wider chart, legend below it?")]
+        self.assertEqual(order, sorted(order), text)
+        for words in (THR_PRE, THR_REPLY):
+            self.assertEqual(len(self.holding(balloons, words)), 1, words)
+        # The reply answers P1 (the thread's first reply): its bar stays on the balloon.
+        self.assertIn("answers P1", self.got["threadBar"], "the reply's point bar rides with it")
+        self.assertIn("Ack", self.got["threadBar"])
 
     def test_a_task_chat_joins_the_line_before_the_call_and_the_reply(self):
         task = self.got["task"]
