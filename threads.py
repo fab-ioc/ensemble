@@ -751,6 +751,8 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
     card_list = sorted((c for c in cards or [] if c.get("id")), key=lambda c: _num(c.get("ts")))
     card_named: set[str] = set()            # a card placed by its points: a balloon linking it does not move it
     next_card = [0]
+    fresh_cards: list[dict] = []            # the cards placed just before this balloon: its words may join them (#430)
+    prev_po: list[dict | None] = [None]     # the PO balloon just before, alone in the main chat: a card's pre-call words (#430)
 
     def new(tid: str, root: dict, title: str, task: str = "", pids=()) -> dict:
         th = {"id": tid, "root": root["mid"], "title": title, "points": list(pids), "task": task,
@@ -907,6 +909,28 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
             out.append(home[i])
         return out
 
+    def bring_words(tid: str, c: dict) -> None:
+        """#430: the PO's line written just before a card its points put in
+        thread ``tid`` (nothing between them) is the card's words: it goes
+        to that thread with it, out of the main chat, where it was alone."""
+        r = prev_po[0]
+        prev_po[0] = None
+        if r is None or not r["ts"] or not 0 <= _num(c.get("ts")) - r["ts"] <= ASK_JOIN_S:
+            return
+        own = "m:" + r["mid"]
+        th = threads.get(own)
+        if th is None or th["members"] != [r["mid"]] or own in chosen or th["points"] \
+                or (of.get(r["mid"]) or []) != [own]:
+            return
+        del threads[own]
+        order.remove(own)
+        of[r["mid"]] = []
+        if own in (parent.get(r["mid"]) or []):
+            parent[r["mid"]].remove(own)
+            if not parent[r["mid"]]:
+                del parent[r["mid"]]
+        join(tid, r)
+
     def place_cards(upto: float | None) -> None:
         """The question cards posted up to ``upto`` (all, None): each where
         its point is, else where the input before it is (#379). A balloon
@@ -916,6 +940,7 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
             if upto is not None and _num(c.get("ts")) > upto:
                 return
             next_card[0] += 1
+            fresh_cards.append(c)
             cid, text = c["id"], c.get("text") or ""
             named = [i for i in c.get("points") or [] if i in pts] or points.re_ids(text) \
                 or _point_mentions(text)
@@ -923,6 +948,8 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
             if where:
                 card_named.add(cid)
                 card_home[cid] = [where[0]] if where[0] in chosen else []
+                if card_home[cid]:
+                    bring_words(card_home[cid][0], c)
             elif cid not in card_home:
                 # A question asked while answering a thread's input (or a
                 # report of a task it claimed) is in that thread; one woken
@@ -1048,8 +1075,10 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
         if r["ts"]:
             place_born(r["ts"])
         done[mid] = r
+        fresh_cards.clear()
         if r["ts"]:
             place_cards(r["ts"])
+        prev_po[0] = None
         if r["role"] == "user":
             kind = r.get("kind")
             okey = outside_of.get(mid) or (r.get("outside") if kind == "external" else "")
@@ -1210,6 +1239,24 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
             and not r.get("ask") and not r.get("live")
         if noting and housekeeping and not any(t in chosen for t in tids):
             tids = [activity]
+        # #430: the reply written just after a card (no input between) is
+        # its explanation, drawn in the card's balloon (session.html
+        # joinAskWords): the two are in one place. A card its points placed
+        # takes the reply there; else the card goes where the reply is.
+        joined = [c for c in fresh_cards if 0 <= r["ts"] - _num(c.get("ts")) <= ASK_JOIN_S] \
+            if r["ts"] and not housekeeping and _joins_card(r, mid in split or bool(answers.get(mid))) else []
+        if joined and named:
+            # A reply naming points of its own goes where they are: it joins
+            # a card its points placed only when that is the same place.
+            joined = [c for c in joined if c["id"] not in card_named
+                      or ([t for t in card_home.get(c["id"]) or [] if t in chosen][-1:] or [""])[0] in places]
+        if joined:
+            noting = False  # the card's words: to the person, never a note on a report
+        named_card = next((c["id"] for c in reversed(joined) if c["id"] in card_named), None)
+        if named_card is not None:
+            tids = [t for t in card_home.get(named_card) or [] if t in chosen][-1:]
+        elif joined and not any(t in chosen for t in tids):
+            tids = []       # to the person, as its card: never Team activity's
         if not tids:
             tid = "m:" + mid
             if tid not in threads:
@@ -1220,6 +1267,9 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
                 team(r)
             else:
                 join(t, r)
+        for c in joined:
+            if c["id"] not in card_named:
+                card_home[c["id"]] = [t for t in tids if t in chosen][-1:]
         for h in re.findall(r"[?&]msg=([0-9a-f]{8,40})\b", line):
             # The card this balloon links is in its thread (#379: a link
             # never takes a card out of the thread it was asked in).
@@ -1230,6 +1280,10 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
             work.add(mid)       # in the main chat it is a message as any other
         if last_via and tids == [last] and last in chosen:
             via.add(mid)        # woken by an input a #411 rule placed: with it
+        # A line alone in the main chat, about no point, may be the words
+        # of a card asked just after it (bring_words).
+        prev_po[0] = r if tids == ["m:" + mid] and not named and not joined and mid not in split \
+            and _joins_card(r, bool(answers.get(mid))) else None
         # Several PO balloons may be one answer with no new input between
         # them. Keep the same place until the next human or hub input.
         last = next((t for t in reversed(tids) if t in chosen or t == activity), "")
@@ -1247,6 +1301,19 @@ def assign(recs: list[dict], led: dict, side: dict, task_title=None, on_message=
             "work": work, "via": via, "order": order, "paired": paired, "answered": answered,
             "cards": in_thread, "split": split, "notices": notice_keys, "placed": placed,
             "outside": outside_found}
+
+
+ASK_JOIN_S = 300                # a reply this long after a card, at most, is its words (session.html ASK_JOIN_S)
+_RE_POINT = re.compile(r"(?im)^[\s*_>]*re\s+P\d+")
+
+
+def _joins_card(r: dict, split_or_answer: bool) -> bool:
+    """Whether a PO balloon just after a card joins the card's balloon on
+    the page (#430; session.html askJoinable): not an answer to a point,
+    nor a question of its own, nor a line the hub cut in parts."""
+    text = (r.get("turn") or {}).get("text") or ""
+    return bool(text.strip()) and not split_or_answer and not r.get("re") and not r.get("ask") \
+        and not _RE_POINT.search(text)
 
 
 PAIR_SLACK_S = 120              # a transcript's clock behind the hub's, at most (sends.SLACK_S)

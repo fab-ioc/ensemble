@@ -210,7 +210,10 @@ _ALL_TOOLS = [
             "comment box only. A card stays open until the person answers or closes it: "
             "a question one of your chat's open cards already asks is not posted again "
             "(alreadyOpen gives that card's reference), and the same call repeated "
-            "within a minute returns the first one's result."
+            "within a minute returns the first one's result. context is required: it is the "
+            "explanation of the question (what it is about, why it is asked, what each answer "
+            "means), shown with the cards in one balloon. Do not repeat it in your turn's "
+            "closing text."
         ),
         "inputSchema": {"type": "object", "properties": {
             "questions": {"type": "array", "minItems": 1, "maxItems": 10,
@@ -228,12 +231,15 @@ _ALL_TOOLS = [
                                               "recommended": {"type": "boolean"}},
                                               "required": ["label"]}}},
                               "required": ["question"]}},
-            "context": {"type": "string", "description": "Optional Markdown shown above the cards."},
+            "context": {"type": "string", "minLength": 1,
+                        "description": "Required. The explanation of the question, Markdown, shown above "
+                                       "the cards in the same balloon (#430): what it is about and why it "
+                                       "is asked. Your turn's other text is not where it goes."},
             "forCeo": {"type": "boolean", "description": "A task with a PO: send the card to the user instead."},
             "points": {"type": "array", "maxItems": 10, "items": {"type": "string", "pattern": "^P[0-9]+[a-z]?$"},
                        "description": "The user's points the cards are about (e.g. [\"P12\"]): a card about "
                                       "a point that has its own thread is shown in that thread, not in the main chat."}},
-                        "required": ["questions"]},
+                        "required": ["questions", "context"]},
     },
     {
         "name": "ensemble_list_projects",
@@ -1394,6 +1400,13 @@ def _ask_once(ctx, args, handler):
             isinstance(i, str) and re.fullmatch(r"P[0-9]+[a-z]?", i) for i in about):
         raise ToolError('points must be a list of point ids such as ["P12"]')
     about = list(dict.fromkeys(about))
+    if not context.strip():
+        # #430: the card and its explanation arrive as one balloon only when
+        # the explanation is in the card; written in the turn's text it comes
+        # seconds later, after a bare card.
+        raise ToolError("context is required: write the explanation of the question there (what it is "
+                        "about, why you ask, what each answer means). It is shown with the card in one "
+                        "balloon; do not repeat it in your turn's text. Nothing was posted.")
     lines = [context.strip()] if context.strip() else []
     for ask in questions:
         lines.append(f"{ask['n'] + 1}. {ask['question']}" + (" (pick any)" if ask.get("multi") else ""))

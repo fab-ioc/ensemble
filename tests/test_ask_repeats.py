@@ -45,7 +45,7 @@ class _Repeats(_World):
         room = chatroom.get_room(rid, public=False)
         return {"room": room, "identity": "claude", "part": room["participants"][0], "projectId": ""}
 
-    def ask(self, rid, questions, context=""):
+    def ask(self, rid, questions, context="Why it is asked."):
         with mock.patch.object(ensemble_tools, "_project_po", return_value=None):
             return ensemble_tools._ask(self.ctx(rid), {"questions": questions, "context": context}, self.handler())
 

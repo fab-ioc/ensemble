@@ -5038,7 +5038,7 @@ function catchUp(items, point, justUs, N = CHAT_NAMES, unacked = null, askMids =
     const m = items[i], t = taskReport(m), f = forPerson(m, N);
     if (t && reportBase(m) !== 'update') say(taskName(t, N), i, CU_WORD[reportBase(m)] || '');
     digestWords(m).forEach(([t, word]) => say(taskName(t, N), i, word));
-    if (unacked && m.id && unacked.has(m.id)) acks.push(i);
+    if (unacked && m.id && (unacked.has(m.id) || (m.joined || []).some(id => unacked.has(id)))) acks.push(i);
     else if (f === 'decision' && (askMids ? askMids.has(m.id) : i > lastPersons)) decisions.push(i);
     else if (f) answers.push(i);
   }
@@ -5199,7 +5199,7 @@ function pointMaps(pv) {
 // What never folds: the balloons holding a comment's passage (their keys) and
 // those the points keep (their ids). null when there are none.
 function heldBy(keys, keep) {
-  return keys.size || keep.size ? (m, i) => keys.has(foldKey(m, i)) || (!!m.id && keep.has(m.id)) : null;
+  return keys.size || keep.size ? (m, i) => keys.has(foldKey(m, i)) || (!!m.id && keep.has(m.id)) || (m.joined || []).some(id => keep.has(id)) : null;
 }
 // Needs you (#209): only what waits on the person. Decisions: the question
 // cards still open (the hub's needs.decisions); To try: answers that ask them
@@ -5249,10 +5249,18 @@ const PT_SETTLED = new Set();
 // or more spanning PT_STOP_MS (renderActivity).
 const PT_QUIET = new Map();
 const PT_STOP_MS = 15000;
+// The drawn item holding mid: its own balloon, or the card it joined (#430),
+// read as the joined line (its id and time) for the point's state.
+function ptDrawnAt(items, mid) { return mid ? (items || []).findIndex(x => x && (x.id === mid || (x.joined || []).includes(mid))) : -1; }
+function ptDrawn(P, mid) {
+  const items = (P && P.drawn) || [], x = items[ptDrawnAt(items, mid)];
+  if (!x || x.id === mid) return x || null;
+  return Object.assign({}, x, { id: mid, ts: (x.joinedTs && x.joinedTs[mid]) || x.ts });
+}
 // Whether a drawn message after mid passes test; null when mid is not drawn.
 function ptAfter(P, mid, test) {
   const items = (P && P.drawn) || [];
-  const i = mid ? items.findIndex(x => x && x.id === mid) : -1;
+  const i = ptDrawnAt(items, mid);
   if (i < 0) return null;
   for (let j = i + 1; j < items.length; j++) if (test(items[j])) return true;
   return false;
@@ -5262,7 +5270,7 @@ const isAgentMsg = x => !!x && x.from !== 'user' && x.from !== 'ensemble' && !is
 function ptWorker(P, mid) {
   const w = ptWorkers();
   if (!w.length) return null;
-  const by = mid ? ((P && P.drawn) || []).find(x => x && x.id === mid) : null;
+  const by = ptDrawn(P, mid);
   return (by && w.find(a => a.identity === by.from)) || w[0];
 }
 // An "on it" answer (implicit) still being worked on (Q2): the agent that wrote
@@ -5272,7 +5280,7 @@ function ptWorker(P, mid) {
 function ptStillWorking(p, P) {
   const a = curAnswer(p);
   if (!a || a.how !== 'implicit' || !a.mid || PT_SETTLED.has(a.mid)) return false;
-  const by = ((P && P.drawn) || []).find(x => x && x.id === a.mid);
+  const by = ptDrawn(P, a.mid);
   if (!by || !by.from || !ptWorkers().some(w => w.identity === by.from)) return false;
   if (Number(((P && P.turnEnds) || {})[by.from] || 0) > Number(by.ts || 0)) return false;
   return ptAfter(P, a.mid, x => !!x && x.from !== by.from) === false;
@@ -5310,7 +5318,7 @@ function ptStateHtml(p, P, href) {
   } else if (p.state === 'delivered') {
     const c = curAnswer(p), asks = P.askMids;
     // Waiting while the answer holds a question card still open, wherever the Inbox files it.
-    const card = mid => { const m = mid && ((P.drawn || []).find(x => x && x.id === mid)); return !!m && openAsks(m, P).length > 0; };
+    const card = mid => { const m = ptDrawn(P, mid); return !!m && openAsks(m, P).length > 0; };
     if ((asks && ((c && asks.has(c.mid)) || (a && asks.has(a.mid)))) || card(c && c.mid) || card(a && a.mid)) bits.push(st('waiting', 'waiting for you — ' + go('answer the question ↓', 'Go to the question')), up);
     else if (ptStillWorking(p, P)) bits.push(st('working', dot + 'working on it'), up, drop, ptNowHtml(ptWorker(P, c.mid)));
     else bits.push(st('done', 'done — ' + go('see the answer ↓', 'Go to the answer')), up);
@@ -5667,7 +5675,8 @@ function renderBubbles(items, opt = {}) {
     } finally { TASK_REF_PID = ''; }
   };
   const href = mid => refHref(ROOM, mid);
-  const ptBar = m => pointBarHtml(m, POINTS, href);
+  // A card's joined reply that answers its point keeps its bar (its Ack).
+  const ptBar = m => pointBarHtml(m, POINTS, href) + (m.joined || []).map(id => pointBarHtml({ id }, POINTS, href)).join('');
   // A balloon's own controls: Copy link, and in a PO chat's channel Reply in thread.
   const thr = typeof threadedView === 'function' && threadedView();
   const actHtml = m => copyLinkHtml(m) + (thr ? replyInThreadHtml(m) : '');
@@ -5894,14 +5903,15 @@ function seenTick(now = Date.now()) {
   if (!want.size || !box || !box.clientHeight || !pageInFront()) { SEEN_SINCE.clear(); return; }
   const r = box.getBoundingClientRect(), done = [];
   for (const el of box.querySelectorAll('.msg[data-mid]')) {
-    const mid = el.dataset.mid;
-    if (!want.has(mid)) continue;
     const e = el.getBoundingClientRect();
     const shown = Math.min(e.bottom, r.bottom) - Math.max(e.top, r.top);
-    if (e.height > 0 && shown >= Math.min(120, e.height / 2)) {
-      if (!SEEN_SINCE.has(mid)) SEEN_SINCE.set(mid, now);
-      else if (now - SEEN_SINCE.get(mid) >= SEEN_MS) done.push(mid);
-    } else SEEN_SINCE.delete(mid);
+    // The answers this balloon shows: its own, or one joined to its card (#430).
+    for (const mid of seenOn(want, el.dataset.mid)) {
+      if (e.height > 0 && shown >= Math.min(120, e.height / 2)) {
+        if (!SEEN_SINCE.has(mid)) SEEN_SINCE.set(mid, now);
+        else if (now - SEEN_SINCE.get(mid) >= SEEN_MS) done.push(mid);
+      } else SEEN_SINCE.delete(mid);
+    }
   }
   for (const mid of [...SEEN_SINCE.keys()]) if (!want.has(mid)) SEEN_SINCE.delete(mid);
   if (done.length) { done.forEach(m => SEEN_SINCE.delete(m)); seenSend(done, [], 'screen'); }
@@ -5909,8 +5919,11 @@ function seenTick(now = Date.now()) {
 // Opened from a link: the landing balloon, if it answers a point. Told once
 // the landing mark has faded: the hub's answer redraws the chat.
 function seenLink(mid) {
-  if (seenWanted().has(mid)) setTimeout(() => { if (seenWanted().has(mid)) seenSend([mid], [], 'link'); }, 2700);
+  if (seenOn(seenWanted(), mid).length) setTimeout(() => { const m = seenOn(seenWanted(), mid); if (m.length) seenSend(m, [], 'link'); }, 2700);
 }
+// The answers still to be seen that the balloon of mid shows: its own, and
+// the lines joined to its card (JOINED_INTO), each by its own mid for the hub.
+function seenOn(want, mid) { return mid ? [...want.keys()].filter(k => k === mid || JOINED_INTO.get(k) === mid) : []; }
 setInterval(() => { try { seenTick(); } catch (e) {} }, 500);
 // ---- The catch-up line: when it shows, and what advances the read point ----
 const READ_KEY = () => 'cd-chat-read:' + (ROOM || location.pathname + location.search);
@@ -6205,7 +6218,7 @@ function openGroupOf(box, mid) {
   }
 }
 function renderMsgs(room) {
-  CHAT_DRAWN = true; renderBubbles(ROOM_WIN ? ROOM_WIN.messages : room.messages);
+  CHAT_DRAWN = true; renderBubbles(joinAskWords(ROOM_WIN ? ROOM_WIN.messages : room.messages, true));
   // A window that does not fill the chat (most of a PO's rows are hub
   // traffic it folds) gets the page before at once: there is no scroll to ask.
   const box = $('#msgs');
@@ -7305,7 +7318,13 @@ document.addEventListener('click', e => {
 // thread's first reply).
 // bottom: the view has entries after it (a link's window): a row newer than
 // its last entry is not drawn at its end, where it is not (P414, #396).
-function withHubRows(items, room, hub, top = false, bottom = false) {
+// drop: the rows drawn elsewhere (a card in its thread), left out before
+// the words around a card join it, so no line goes with a card not shown.
+function withHubRows(items, room, hub, top = false, bottom = false, drop = null) {
+  const rows = hubRowsIn(items, room, hub, top, bottom);
+  return joinAskWords(drop ? rows.filter(m => !drop(m)) : rows);
+}
+function hubRowsIn(items, room, hub, top, bottom) {
   if (!hub && room === ROOM_OBJ && roomHasOlder() && items.length) {
     const first = items.find(m => m.ts), oldest = (room.messages || [])[0];
     if (first && oldest && first.ts < (oldest.ts || 0)) setTimeout(() => loadOlder(), 0);
@@ -7327,6 +7346,90 @@ function withHubRows(items, room, hub, top = false, bottom = false) {
     for (let i = out.length - 1; i >= 0; i--) { if (out[i].ts && out[i].ts > r.ts) at = i; }
     out.splice(at, 0, r);
   }
+  return out;
+}
+// #430 (GitHub issue 73): a question card and the words its turn wrote
+// around it are one balloon. The card is posted while the tool runs; the
+// agent's words before and after the call are turns of their own. The line
+// just before the card and the one just after it (nothing between: the same
+// turn) join the card's balloon: that line, the card's own explanation (its
+// context), the reply, then the cards under all of them. In a room (a team
+// chat) the agent's next message after its card, to the person, joins it.
+// A line that answers a point, asks a question of its own, heads a thread,
+// is the live line of a turn still running, or was written more than
+// ASK_JOIN_S from the card stays a balloon of its own. A link to a joined
+// line lands on the card's balloon (JOINED_INTO).
+const ASK_JOIN_S = 300;
+let JOINED_INTO = new Map();
+const ASK_STOCK_RE = /^\s*Questions for you\.\s*$/;
+function askJoinable(m, card, room) {
+  if (!m || m.kind || !(m.text || '').trim() || !m.from || m.from === 'user' || m.from === 'ensemble') return false;
+  if (m.divider || Array.isArray(m.asks) || m.askAudience || m.inThr || m.alsoIn || m.workLog || m.open || m.hidden) return false;
+  // Its own thread (m:<id>) is listed on every balloon: only one with replies, work or the person's start heads one.
+  const meta = typeof THR_META !== 'undefined' ? THR_META : {};
+  if ((m.thr || []).some(t => { const x = meta[t]; return !!x && (+x.replies || +x.workCount || x.chosen); })) return false;
+  if (m.rang && m.rang.length) return false;
+  if (room && (m.from !== card.from || (m.to && !['user', 'all'].includes(String(m.to).toLowerCase())))) return false;
+  if (!m.ts || !card.ts || Math.abs(m.ts - card.ts) > ASK_JOIN_S) return false;
+  if (/(^|\n)[\s*_>]*re\s+P\d+/i.test(m.text) || POINTS.byMid.has(m.id)) return false;
+  // A reply the hub reads as an answer (a PO thread's first reply on its
+  // point) joins only a card about that same point; its bar comes along.
+  const ans = POINTS.byAnswer.get(m.id);
+  if (ans && !(ans.length && ans.every(p => (card.points || []).includes(p.id)))) return false;
+  if (!askAboutSame(m.text, card)) return false;
+  return !asksOf(m).length;
+}
+// A line naming points is about them (threads.py _point_mentions): it is
+// the words of a card about points only when it names one of the card's.
+const ASK_PT_RE = /(?<![\w])P(\d{1,5})([a-z]?)(?![\w])/gi;
+function askPointsIn(text) { return [...String(text || '').matchAll(ASK_PT_RE)].map(x => 'P' + x[1] + x[2].toLowerCase()); }
+function askAboutSame(text, card) {
+  const named = askPointsIn(text);
+  if (!named.length) return true;
+  const mine = new Set([...(card.points || []), ...askPointsIn(card.text),
+    ...(card.asks || []).flatMap(a => askPointsIn(a && a.question))]);
+  return !mine.size || named.some(p => mine.has(p));
+}
+function joinAskWords(items, room = false) {
+  // The map holds the joins drawn now: a line no longer joined (a thread
+  // started on it) is a balloon again, and a link to it lands on it.
+  for (const m of items) if (m && m.id) JOINED_INTO.delete(m.id);
+  if (!items.some(m => m && Array.isArray(m.asks))) return items;
+  if (JOINED_INTO.size > 2000) JOINED_INTO = new Map();
+  const out = [];
+  for (let i = 0; i < items.length; i++) {
+    const c = items[i];
+    if (!c || !Array.isArray(c.asks) || !c.asks.length || c.askAudience === 'po' || c.from === 'user') { out.push(c); continue; }
+    const last = out[out.length - 1];
+    const pre = !room && askJoinable(last, c, room) && last.ts <= c.ts ? out.pop() : null;
+    const nx = items[i + 1];
+    const post = askJoinable(nx, c, room) && nx.ts >= c.ts ? nx : null;
+    if (post) i++;
+    if (!pre && !post) { out.push(c); continue; }
+    // A PO reply folds its turn's lines into steps (#402): the one written
+    // just before the call is the card's words, drawn above it, not a step.
+    // (A link to a step lands on its owner, here the card, step:<mid> part.)
+    let steps = post && Array.isArray(post.steps) ? post.steps : null, preStep = null;
+    if (!pre && steps) {
+      const at = s => Date.parse((s && s.timestamp) || '') / 1000;
+      const ok = s => !!s && at(s) <= c.ts && c.ts - at(s) <= ASK_JOIN_S && !!(s.text || '').trim()
+        && !/(^|\n)[\s*_>]*re\s+P\d+/i.test(s.text) && askAboutSame(s.text, c);
+      const k = steps.reduce((b, s, n) => ok(s) && (b < 0 || at(s) >= at(steps[b])) ? n : b, -1);
+      const s = k >= 0 ? steps[k] : null;
+      if (s) {
+        preStep = s;
+        steps = steps.filter((_, n) => n !== k);
+      }
+    }
+    const own = ASK_STOCK_RE.test(c.text || '') ? '' : (c.text || '');
+    const text = [pre ? pre.text : preStep && preStep.text, own, post && post.text].filter(t => t && t.trim()).join('\n\n');
+    const ids = [pre, post].filter(Boolean).map(m => m.id);
+    for (const id of ids) JOINED_INTO.set(id, c.id);
+    if (post && steps && typeof STEPS_OPEN !== 'undefined' && STEPS_OPEN.has(post.id)) STEPS_OPEN.add(c.id);
+    const joinedTs = Object.fromEntries([pre, post].filter(Boolean).map(m => [m.id, m.ts]));
+    out.push(Object.assign({}, c, { text, joined: ids, joinedTs }, steps ? { steps: steps.length ? steps : undefined } : {}));
+  }
+  if (GOTO && JOINED_INTO.has(GOTO)) GOTO = JOINED_INTO.get(GOTO);
   return out;
 }
 // A line the agent read while busy (queued) is its own turn, "<sid>:q<n>",
@@ -7919,6 +8022,7 @@ function thrMidDrawn(mid) {
   const box = $('#msgs');
   if (!box || !mid) return false;
   if ([...box.querySelectorAll('[data-mid]')].some(el => el.dataset.mid === mid)) return true;
+  if (JOINED_INTO.has(mid) && JOINED_INTO.get(mid) !== mid && thrMidDrawn(JOINED_INTO.get(mid))) return true;
   if (THREAD_MODE && (THR_VIEW?.items || []).some(t => t.mid === mid && t.workLog)
       && !![...box.querySelectorAll('.thr-work[data-last-mid]')].find(el => el.dataset.lastMid === mid)) return true;
   // A team run or task group is intentionally one row in the person's view.
@@ -8251,7 +8355,7 @@ function thrDraw(roomTs, d = THR_VIEW) {
       // A channel drawn from its start: a card asked before its first
       // message (a PO's first question) goes above it, not nowhere (P417).
       const inThread = (d && d.cardThreads) || {};
-      items = withHubRows(items, ROOM_OBJ, THR_HUB, !THR_BEFORE, !!THR_AFTER).filter(m => !inThread[m.id]);
+      items = withHubRows(items, ROOM_OBJ, THR_HUB, !THR_BEFORE, !!THR_AFTER, m => !!inThread[m.id]);
     } else if (THR_HUB.size) {
       // The thread's own cards (the hub's hubRows), among its balloons by
       // time; one older than its first, above it when the view starts there.
@@ -9372,7 +9476,7 @@ function renderActivity(ptyMap, liveMap, ok = true) {
   // failed read starts the count again; reads before the answer never count.
   const busy = new Set(TAIL_WORKING.map(a => a.identity)), drawn = POINTS.drawn || [], now = Date.now();
   for (const p of POINTS.items || []) {
-    const c = curAnswer(p), by = c && c.mid && c.how === 'implicit' && !PT_SETTLED.has(c.mid) ? drawn.find(x => x && x.id === c.mid) : null;
+    const c = curAnswer(p), by = c && c.mid && c.how === 'implicit' && !PT_SETTLED.has(c.mid) ? ptDrawn({ drawn }, c.mid) : null;
     if (!by) continue;
     if (!ok || busy.has(by.from)) { PT_QUIET.delete(c.mid); continue; }
     const q = PT_QUIET.get(c.mid);

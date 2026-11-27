@@ -146,7 +146,7 @@ class StructuredRoundTrip(_World):
         with mock.patch.object(ensemble_tools, "_projects", return_value={"project-test": {"id": "project-test"}}), \
              mock.patch.object(ensemble_tools, "_project_po", return_value=po), \
              mock.patch.object(dashboard, "room_po_id", side_effect=lambda r, *a, **k: po_room if r and r.get("id") == rid else ""):
-            result = ensemble_tools._ask(ctx, {"questions": [{"question": "Proceed?", "yesno": True}]}, self._handler())
+            result = ensemble_tools._ask(ctx, {"context": "Why it is asked.", "questions": [{"question": "Proceed?", "yesno": True}]}, self._handler())
             self.assertEqual(result["deliveredTo"]["roomId"], po_room)
             self.assertEqual(result["reportReference"],
                              f"http://127.0.0.1:8765/session?room={po_room}&msg={result['messageId']}")
@@ -154,7 +154,7 @@ class StructuredRoundTrip(_World):
             self.assertEqual(routed["askAudience"], "po")
             self.assertEqual(routed["asks"][0]["question"], "Proceed?")
             self.assertEqual(asks.open_in(chatroom.get_room(rid)), [])
-            ceo = ensemble_tools._ask(ctx, {"questions": [{"question": "Release publicly?", "yesno": True}],
+            ceo = ensemble_tools._ask(ctx, {"context": "Why it is asked.", "questions": [{"question": "Release publicly?", "yesno": True}],
                                             "forCeo": True}, self._handler())
             self.assertEqual(ceo["deliveredTo"], "user")
             self.assertEqual([a["question"] for a in asks.open_in(chatroom.get_room(rid))],
@@ -183,7 +183,7 @@ class StructuredRoundTrip(_World):
         ctx = {"room": room, "identity": "claude", "part": room["participants"][0], "projectId": ""}
         before = len(room["messages"])
         with self.assertRaisesRegex(ensemble_tools.ToolError, "at most one recommended"):
-            ensemble_tools._ask(ctx, {"questions": [{"question": "Which?", "options": [
+            ensemble_tools._ask(ctx, {"context": "Why it is asked.", "questions": [{"question": "Which?", "options": [
                 {"label": "A", "recommended": True}, {"label": "B", "recommended": True}]}]}, self._handler())
         self.assertEqual(len(chatroom.get_room(rid)["messages"]), before)
 
@@ -196,13 +196,13 @@ class StructuredRoundTrip(_World):
         before = len(room["messages"])
         for bad in ("P12", ["12"], ["P1", 3], "", 0, False, {}, ["P1"] * 11):
             with self.subTest(bad=bad), self.assertRaisesRegex(ensemble_tools.ToolError, "point ids"):
-                ensemble_tools._ask(ctx, {"questions": [{"question": "Wider?", "yesno": True}],
+                ensemble_tools._ask(ctx, {"context": "Why it is asked.", "questions": [{"question": "Wider?", "yesno": True}],
                                           "points": bad}, self._handler())
         self.assertEqual(len(chatroom.get_room(rid)["messages"]), before)
         with mock.patch.object(ensemble_tools, "_project_po", return_value=None):
-            result = ensemble_tools._ask(ctx, {"questions": [{"question": "Wider?", "yesno": True}],
+            result = ensemble_tools._ask(ctx, {"context": "Why it is asked.", "questions": [{"question": "Wider?", "yesno": True}],
                                                "points": ["P12", "P12", "P3a"]}, self._handler())
-            plain = ensemble_tools._ask(ctx, {"questions": [{"question": "Taller?", "yesno": True}]}, self._handler())
+            plain = ensemble_tools._ask(ctx, {"context": "Why it is asked.", "questions": [{"question": "Taller?", "yesno": True}]}, self._handler())
         msgs = {m["id"]: m for m in chatroom.get_room(rid, public=False)["messages"]}
         self.assertEqual(msgs[result["messageId"]]["points"], ["P12", "P3a"])
         self.assertNotIn("points", msgs[plain["messageId"]])
