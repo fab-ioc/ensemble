@@ -10369,7 +10369,8 @@ def file_version_answer(raw: str, room_id: str = "", cwd: str = "") -> tuple[int
         return 404, {"error": "not_found"}
     if not stat.S_ISREG(st.st_mode):
         return 404, {"error": "not_found"}
-    return 200, {"version": f"{st.st_mtime_ns}-{st.st_size}", "mtime": st.st_mtime, "size": st.st_size}
+    # path: where the file is, a relative link resolved (#428: a chat's file link opened as a panel)
+    return 200, {"version": f"{st.st_mtime_ns}-{st.st_size}", "mtime": st.st_mtime, "size": st.st_size, "path": str(fp)}
 
 
 def file_download_mime(path: Path) -> str:

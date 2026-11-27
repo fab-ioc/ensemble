@@ -67,7 +67,8 @@ class Version(unittest.TestCase):
     def test_the_version_follows_the_modification_time_and_size(self):
         code, a = dashboard.file_version_answer(str(self.f))
         self.assertEqual(code, 200)
-        self.assertEqual(set(a), {"version", "mtime", "size"})
+        self.assertEqual(set(a), {"version", "mtime", "size", "path"})
+        self.assertEqual(a["path"], str(self.f), "where the file is (#428)")
         self.assertEqual(a["size"], 4)
         self.assertEqual(dashboard.file_version_answer(str(self.f))[1]["version"], a["version"], "the same file, the same version")
         self.f.write_text("two\n", encoding="utf-8")        # same size, a later time
@@ -88,6 +89,12 @@ class Version(unittest.TestCase):
         with mock.patch.object(dashboard, "workspace_access_ok", lambda *a, **k: False):
             code, body = dashboard.file_version_answer(str(self.f))
             self.assertEqual((code, body), (403, {"error": "path_not_allowed"}))
+
+    def test_a_relative_link_says_where_it_resolved(self):
+        # #428: a chat's relative file link opens as a dock panel at the hub's answer.
+        code, a = dashboard.file_version_answer("plan.md", cwd=self.tmp.name)
+        self.assertEqual(code, 200)
+        self.assertEqual(Path(a["path"]).resolve(), self.f.resolve())
 
     def test_the_answer_is_never_kept_by_a_browser(self):
         self.assertIn("/api/file/version", dashboard.NO_STORE_GETS)

@@ -7234,6 +7234,16 @@ async function loadConversation(r) {
 // what a tab shows may change shape when a task starts, what it is called
 // does not.
 const DP_MENU_OPEN = '.wf-menu:not([hidden]), .ov-menu:not([hidden]), .pr-menu:not([hidden])';
+// A task's Files pane, mounted (once) in its tool's pane of the task panel:
+// by its tool shown, or by a file link of its chat opened as a panel (#428),
+// the pane staying hidden then. False: no folder to show.
+function dpWsMount(ws, sid) {
+  if (ws.querySelector('.wsp')) return true;
+  if (!wsRoots({ kind: 'task', sid }).length) return false;
+  ws.innerHTML = wsPanelHtml();
+  wsMount(ws.querySelector('.wsp'), { kind: 'task', sid });
+  return true;
+}
 function renderDetail() {
   const sid = SELECTED_SID;
   if (!sid) { closeDetail(); return; }
@@ -7368,10 +7378,7 @@ function renderDetail() {
   // folder to show, and never rebuilt after that.
   const ws = panes.workspace;
   if (on('workspace') && !ws.querySelector('.wsp')) {
-    if (wsRoots({ kind: 'task', sid }).length) {
-      ws.innerHTML = wsPanelHtml();
-      wsMount(ws.querySelector('.wsp'), { kind: 'task', sid });
-    } else {
+    if (!dpWsMount(ws, sid)) {
       // No folder to show: the pane says why, in one line.
       const why = issueEmpty(wsNoFolderWhy(r));
       if (ws._empty !== why) { ws._empty = why; ws.innerHTML = why; }
@@ -16003,6 +16010,68 @@ function pdTaskWanted() {
   return !PD.failed && !!SELECTED_SID && document.body.classList.contains('detail-open');
 }
 function pdTask() { return pdTaskWanted() && !!PD.dock; }
+// ---- A file link of a chat, as a panel (#428, GitHub issue 71) -------------
+// A plain click on a file link in a conversation (the PO's, a thread, a
+// task's, their cards) opens the file as the Files tool does: a file panel of
+// the dock at the right of the conversation (wsPanelWhere), the one already
+// open revealed, at the link's line. Only on a computer with the dock's
+// panels; a modifier, a middle click, a phone, a popped-out conversation and
+// a page without the dock keep the link a new tab. The link's path may be
+// relative to its task, or found by its name (file_refs.py): the hub says
+// where it is (/api/file/version's path, the viewer's boundary), and a file
+// it cannot show here (missing, a folder, not readable) opens as before, in
+// a tab of its own. The Workspace it opens in: the task's in the middle when
+// the link is in that task's chat (its Files pane mounted, hidden, if its
+// tool was never shown), else the page's project's.
+function pdFileLinkView(room) {
+  const live = v => v && v.el && v.el.isConnected ? v : null;
+  const mid = pdTaskWanted() ? rowBySid(SELECTED_SID) : null;
+  let task = null;
+  if (mid && (!room || mid.roomId === room)) {
+    const dp = pdById('detail-panel'), ws = dp && dp._panes && dp._panes.workspace;
+    if (ws && dpWsMount(ws, mid.sessionId)) task = live(WS_VIEWS.get(wsCtxKey({ kind: 'task', sid: mid.sessionId })));
+  }
+  if (task && mid.roomId === room) return task;
+  const pj = PD.pid && projectById(PD.pid);
+  return (pj && live(WS_VIEWS.get(wsCtxKey({ kind: 'project', projectId: pj.id, docs: isDocsProject(pj) })))) || task;
+}
+// The link's /fileview?path=&line=&room=&cwd= (FileLinks.href); null for
+// another link.
+function fileLinkParts(href) {
+  let u;
+  try { u = new URL(href, location.href); } catch (e) { return null; }
+  if (u.origin !== location.origin || u.pathname !== '/fileview') return null;
+  const q = u.searchParams, path = (q.get('path') || '').trim();
+  if (!path || /[\\/]$/.test(path) || looksDirPath(path)) return null;
+  return { path, line: Math.max(0, parseInt(q.get('line'), 10) || 0), room: q.get('room') || '', cwd: q.get('cwd') || '', href: u.href };
+}
+// True: the link is the dock's to open (the caller keeps it from opening a
+// tab); it opens once the hub has said where the file is, and in a tab of its
+// own after all when the hub cannot show it here.
+function pdOpenFileLink(href) {
+  if (!wsPanelsMode() || pdNarrow()) return false;
+  const f = fileLinkParts(href);
+  if (!f) return false;
+  const v = pdFileLinkView(f.room);
+  if (!v) return false;
+  const q = '?path=' + encodeURIComponent(f.path) + (f.room ? '&room=' + encodeURIComponent(f.room) : '') + (f.cwd ? '&cwd=' + encodeURIComponent(f.cwd) : '');
+  api('/api/file/version' + q).then(d => {
+    if (!d || !d.path || !v.el || !v.el.isConnected) throw new Error('not here');
+    wsOpenTabAt(v, d.path, f.line);
+  }).catch(() => { window.open(f.href, '_blank', 'noopener'); });
+  return true;
+}
+// This page's own file links (an Inbox card, a board task's details): the
+// same; a path's picture is its link. A popped-out panel's window keeps its
+// links new tabs, and so do the Files tool's own (a file's "open in a tab").
+document.addEventListener('click', ev => {
+  if (ev.defaultPrevented || ev.button !== 0 || ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return;
+  let a = ev.target.closest && ev.target.closest('a[href]');
+  if (a && a.matches('.path-img > a.att-thumb')) a = a.parentElement.querySelector('a.file-link');
+  if (!a || a.ownerDocument !== document || a.classList.contains('file-missing') || a.hasAttribute('download')) return;
+  if (a.closest('.wsp, .wsp-bar') || a.classList.contains('wsp-own')) return;
+  if (pdOpenFileLink(a.href)) ev.preventDefault();
+});
 // #386: on a computer, a task of a project with a PO is a tab of its own,
 // after the PO's (the PO's tab stays first), not the middle. The task open
 // (SELECTED_SID) is the one whose tab holds the task panel. A phone, a task
