@@ -591,7 +591,8 @@ they like: nothing here asks them to write differently.
   `file:<path>` panel at the right of the conversation (`wsPanelWhere`), the one already open revealed,
   at the link's line, in the task's Files when the link is in the task's chat in the middle, else in
   the project's. The page asks the hub where the file is (`/api/file/version`'s `path`), so a relative
-  link opens where the viewer would. Ctrl/⌘, Shift, Alt, a middle click, a phone, a popped-out window,
+  link opens where the viewer would; it asks before the click (pointer over, focus, button down) so the
+  click decides at once, and a click before the answer is a new tab. Ctrl/⌘, Shift, Alt, a middle click, a phone, a popped-out window,
   a page without the dock, a folder, a file not written yet or not readable: a new tab, as before.
   The Files tool's own "Open in its own tab" stays a tab.
 - **Missing panel** (the file view, when nothing is there): "<name> does not exist (yet)", the path
