@@ -16020,7 +16020,11 @@ function pdTask() { return pdTaskWanted() && !!PD.dock; }
 // relative to its task, or found by its name (file_refs.py): the hub says
 // where it is (/api/file/version's path, the viewer's boundary), and a file
 // it cannot show here (missing, a folder, not readable) opens as before, in
-// a tab of its own. The Workspace it opens in: the task's in the middle when
+// a tab of its own. The hub is asked before the click (the pointer over the
+// link, the link focused, the button pressed: pdFileLinkAsk), so the click
+// itself decides at once and a tab is the browser's own: never a window
+// opened after an await, which a popup blocker may refuse. A click before
+// the answer is in is a tab too. The Workspace it opens in: the task's in the middle when
 // the link is in that task's chat (its Files pane mounted, hidden, if its
 // tool was never shown), else the page's project's.
 function pdFileLinkView(room) {
@@ -16048,29 +16052,54 @@ function fileLinkParts(href) {
 // True: the link is the dock's to open (the caller keeps it from opening a
 // tab); it opens once the hub has said where the file is, and in a tab of its
 // own after all when the hub cannot show it here.
+// What the hub said of each link (its href): {path} where the file is, or
+// {path: ''} for one it cannot show here; {at} when asked, kept FL_ASK_MS.
+const PD_FL = new Map();
+const FL_ASK_MS = 15000;
+function pdFileLinkAsk(href) {
+  if (!wsPanelsMode() || pdNarrow()) return;
+  const f = fileLinkParts(href);
+  if (!f) return;
+  const had = PD_FL.get(f.href);
+  if (had && Date.now() - had.at < (had.path === undefined ? 5000 : FL_ASK_MS)) return;
+  const e = { at: Date.now(), path: undefined };
+  PD_FL.set(f.href, e);
+  if (PD_FL.size > 200) PD_FL.delete(PD_FL.keys().next().value);
+  const q = '?path=' + encodeURIComponent(f.path) + (f.room ? '&room=' + encodeURIComponent(f.room) : '') + (f.cwd ? '&cwd=' + encodeURIComponent(f.cwd) : '');
+  api('/api/file/version' + q).then(d => { e.path = d && typeof d.path === 'string' ? d.path : ''; }, () => { e.path = ''; });
+}
+// True: the link opened as a panel (the caller keeps it from opening a tab).
 function pdOpenFileLink(href) {
   if (!wsPanelsMode() || pdNarrow()) return false;
   const f = fileLinkParts(href);
   if (!f) return false;
+  const e = PD_FL.get(f.href);
+  if (!e || !e.path || Date.now() - e.at > FL_ASK_MS) { pdFileLinkAsk(href); return false; }
   const v = pdFileLinkView(f.room);
   if (!v) return false;
-  const q = '?path=' + encodeURIComponent(f.path) + (f.room ? '&room=' + encodeURIComponent(f.room) : '') + (f.cwd ? '&cwd=' + encodeURIComponent(f.cwd) : '');
-  api('/api/file/version' + q).then(d => {
-    if (!d || !d.path || !v.el || !v.el.isConnected) throw new Error('not here');
-    wsOpenTabAt(v, d.path, f.line);
-  }).catch(() => { window.open(f.href, '_blank', 'noopener'); });
+  wsOpenTabAt(v, e.path, f.line);
   return true;
 }
+// A file link of this page or of a conversation in it, as the pointer comes
+// over it, it gets the focus or the button goes down: asked about now.
+function pdFileLinkOf(t) {
+  let a = t && t.closest && t.closest('a[href]');
+  if (a && a.matches('.path-img > a.att-thumb')) a = a.parentElement.querySelector('a.file-link');
+  if (!a || a.classList.contains('file-missing') || a.hasAttribute('download')) return null;
+  if (a.closest('.wsp, .wsp-bar') || a.classList.contains('wsp-own')) return null;
+  return a;
+}
+['pointerover', 'focusin', 'pointerdown'].forEach(type => document.addEventListener(type, ev => {
+  const a = pdFileLinkOf(ev.target);
+  if (a && a.ownerDocument === document) pdFileLinkAsk(a.href);
+}, true));
 // This page's own file links (an Inbox card, a board task's details): the
 // same; a path's picture is its link. A popped-out panel's window keeps its
 // links new tabs, and so do the Files tool's own (a file's "open in a tab").
 document.addEventListener('click', ev => {
   if (ev.defaultPrevented || ev.button !== 0 || ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return;
-  let a = ev.target.closest && ev.target.closest('a[href]');
-  if (a && a.matches('.path-img > a.att-thumb')) a = a.parentElement.querySelector('a.file-link');
-  if (!a || a.ownerDocument !== document || a.classList.contains('file-missing') || a.hasAttribute('download')) return;
-  if (a.closest('.wsp, .wsp-bar') || a.classList.contains('wsp-own')) return;
-  if (pdOpenFileLink(a.href)) ev.preventDefault();
+  const a = pdFileLinkOf(ev.target);
+  if (a && a.ownerDocument === document && pdOpenFileLink(a.href)) ev.preventDefault();
 });
 // #386: on a computer, a task of a project with a PO is a tab of its own,
 // after the PO's (the PO's tab stays first), not the middle. The task open

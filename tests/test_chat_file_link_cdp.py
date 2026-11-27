@@ -10,6 +10,9 @@ on a computer with the PO's dock:
 * a relative link ("NOTES.md") opens at the path the hub resolved it to;
 * a link with a line opens the file's source at that line;
 * a link to a file that is not there, and a Ctrl-click, open no panel;
+* a link the hub cannot show here (a folder) opens the browser's own new tab:
+  the hub is asked before the click (pointer over, focus, button down), so
+  the click decides at once and no window is opened after an await;
 * this page's own file links (an Inbox card's) do the same, the Files tool's
   "open in its own tab" does not;
 * on a phone, the dock opens no panel for a link (it stays a new tab).
@@ -76,7 +79,7 @@ async function main() {
       const r = a.getBoundingClientRect(), o = f.getBoundingClientRect();
       return [o.left + r.left + Math.min(r.width / 2, 20), o.top + r.top + r.height / 2]; })()`);
     const click = async (end, modifiers = 0) => { const [x, y] = await linkAt(end);
-      await S('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
+      await S('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y }); await sleep(400);   // the pointer over it: the hub asked
       for (const type of ['mousePressed', 'mouseReleased']) await S('Input.dispatchMouseEvent', { type, x, y, button: 'left', buttons: 1, clickCount: 1, modifiers }); };
     await S('Page.addScriptToEvaluateOnNewDocument', { source: 'window.ensBootOpen = false;' });
     await S('Page.navigate', { url: A.base + '/' });
@@ -127,10 +130,18 @@ async function main() {
     await sleep(1200);
     out.files4 = await files();
 
+    // One the hub cannot show here (a folder of that name): the browser's own new tab, no panel.
+    const before = await pages();
+    await click('FOLDER.md');
+    await sleep(1500);
+    out.folder = { files: await files(), newTabs: (await pages()) - before };
+
     // This page's own file link (as an Inbox card draws it), and the Files tool's ⧉.
     out.own = await evalIn(`(() => { const a = document.createElement('a'); a.className = 'file-link'; a.target = '_blank';
       a.href = FileLinks.href(${JSON.stringify(A.own)}); a.textContent = 'OWN.md'; a.id = 't-own';
-      document.body.appendChild(a); a.click(); a.remove();
+      document.body.appendChild(a); pdFileLinkAsk(a.href); return 0; })()`);
+    await sleep(500);
+    out.own = await evalIn(`(() => { const a = document.getElementById('t-own') || document.querySelector('#t-own'); a.click(); a.remove();
       // The Files tool's own tab: left to the browser (false: something kept it from opening).
       const w = document.querySelector('.wfp .wsp-own');
       return w.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 })); })()`);
@@ -141,7 +152,10 @@ async function main() {
     await evalIn(`(() => { const r = ALL_ROWS.find(x => x.roomId === ${JSON.stringify(A.task)}); openDetail(r.sessionId); return 0; })()`);
     await until(`pdTaskWanted() && !!pdById('detail-panel') && !!pdById('detail-panel')._panes && !!pdById('detail-panel')._panes.workspace`, 20000);
     out.taskWsBefore = await evalIn(`!!pdById('detail-panel')._panes.workspace.querySelector('.wsp')`);
-    out.taskOpened = await evalIn(`pdOpenFileLink(FileLinks.href(${JSON.stringify(A.task_file)}, { room: ${JSON.stringify(A.task)} }))`);
+    const th = `FileLinks.href(${JSON.stringify(A.task_file)}, { room: ${JSON.stringify(A.task)} })`;
+    out.taskEarly = await evalIn(`pdOpenFileLink(${th})`);   // before the hub's answer: the browser's tab
+    await sleep(600);
+    out.taskOpened = await evalIn(`pdOpenFileLink(${th})`);
     await until(`[...PD.rt.keys()].some(k => k.endsWith('task.md'))`, 15000);
     out.taskCtx = await evalIn(`(() => { const e = [...PD.rt.entries()].find(([k]) => k.endsWith('task.md'))[1]; return e.v.ctx.kind; })()`);
     out.taskWsShown = await evalIn(`pdToolOn('workspace')`);
@@ -149,7 +163,7 @@ async function main() {
     // A phone: the dock opens no panel for a link.
     await S('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 2, mobile: true });
     await until('isPhone()', 10000);
-    out.phone = await evalIn(`pdOpenFileLink(FileLinks.href(${JSON.stringify(A.own)}))`);
+    out.phone = await evalIn(`(() => { const h = FileLinks.href(${JSON.stringify(A.own)}); pdFileLinkAsk(h); return pdOpenFileLink(h); })()`);
     if (A.shots) {   // before: the link opened a tab of its own, the file view
       await S('Emulation.setDeviceMetricsOverride', { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });
       const href = await evalIn(`[...${FR}.contentDocument.querySelectorAll('a.file-link')].find(x => x.textContent.trim().endsWith('README.md')).href`);
@@ -174,6 +188,7 @@ class ChatFileLink(unittest.TestCase):
         cls.home = home
         for n in ("NOTES.md", "OTHER.md", "OWN.md", "TASK.md"):
             (home / n).write_text(f"# {n}\n", encoding="utf-8")
+        (home / "FOLDER.md").mkdir()
         (home / "LINES.md").write_text("one\ntwo\nthree\nfour\n", encoding="utf-8")
         pj = next(p for p in dashboard.load_projects() if p["id"] == cls.proj)
         po = dashboard.project_po_room(pj)
@@ -183,6 +198,7 @@ class ChatFileLink(unittest.TestCase):
             f"- `{home / 'LINES.md'}:3`",
             f"- `{home / 'GONE.md'}`",
             f"- `{home / 'OTHER.md'}`",
+            f"- `{home / 'FOLDER.md'}`",
         ]), to="user")
         base = Path(cls.tmp.name)
         args = {**chrome_profile.node_args(), "tmp": cls.tmp.name, "base": f"http://127.0.0.1:{cls.server.server_address[1]}",
@@ -224,12 +240,18 @@ class ChatFileLink(unittest.TestCase):
     def test_a_missing_file_and_a_ctrl_click_open_no_panel(self):
         self.assertEqual(self.got["files4"], sorted([self.pid("README.md"), self.pid("NOTES.md"), self.pid("LINES.md")]))
 
+    def test_one_the_hub_cannot_show_opens_the_browser_s_own_tab(self):
+        # Review 1: decided at the click, so the tab is the link's own, never a late window.open.
+        self.assertEqual(self.got["folder"]["files"], sorted([self.pid("README.md"), self.pid("NOTES.md"), self.pid("LINES.md")]))
+        self.assertEqual(self.got["folder"]["newTabs"], 1, self.got["folder"])
+
     def test_this_page_s_own_links_too_but_not_the_files_tool_s_own_tab(self):
         self.assertEqual(self.got["files5"], sorted([self.pid(n) for n in ("README.md", "NOTES.md", "LINES.md", "OWN.md")]))
         self.assertIs(self.got["own"], True, "the Files tool's own-tab link stays a link")
 
     def test_a_task_s_link_opens_in_its_files_mounted_hidden(self):
         self.assertIs(self.got["taskWsBefore"], False, "its Files tool was never shown")
+        self.assertIs(self.got["taskEarly"], False, "a click before the hub's answer keeps the link")
         self.assertIs(self.got["taskOpened"], True)
         self.assertEqual(self.got["taskCtx"], "task")
         self.assertIs(self.got["taskWsShown"], False, "the tool stays as it was")

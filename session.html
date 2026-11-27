@@ -12746,12 +12746,22 @@ document.addEventListener('click', ev => {
 // dock, at the right of this conversation, as its Files tool does (#428). It
 // says no on a phone, without the dock, or for a link that is no file's, and
 // the link opens a tab as before; a modifier or a middle click is a link.
+// The dashboard asks the hub where the file is before the click (the pointer
+// over the link, the link focused, the button down), so the click decides at
+// once and a tab stays the browser's own.
+function fileLinkOf(t) {
+  let a = t && t.closest && t.closest('a[href]');
+  if (a && a.matches('.path-img > a.att-thumb')) a = a.parentElement.querySelector('a.file-link');
+  return a && !a.classList.contains('file-missing') && !a.hasAttribute('download') ? a : null;
+}
+['pointerover', 'focusin', 'pointerdown'].forEach(type => document.addEventListener(type, ev => {
+  const a = fileLinkOf(ev.target);
+  if (!a) return;
+  try { dashboardHost()?.pdFileLinkAsk?.(a.href); } catch (e) {}
+}, true));
 document.addEventListener('click', ev => {
   if (ev.defaultPrevented || ev.button !== 0 || ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return;
-  let a = ev.target.closest && ev.target.closest('a[href]');
-  if (a && a.matches('.path-img > a.att-thumb')) a = a.parentElement.querySelector('a.file-link');
-  if (!a || a.classList.contains('file-missing') || a.hasAttribute('download')) return;
-  const host = dashboardHost();
+  const a = fileLinkOf(ev.target), host = a && dashboardHost();
   let mine = false;
   try { mine = !!(host && typeof host.pdOpenFileLink === 'function' && host.pdOpenFileLink(a.href)); } catch (e) {}
   if (mine) ev.preventDefault();
