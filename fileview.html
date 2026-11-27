@@ -1403,16 +1403,38 @@ function destSave(c) {
     else localStorage.removeItem('cd-fvd:' + fvList());
   } catch (e) {}
 }
+// #429 (GitHub issue 72): a file panel of the dashboard's dock sends to the
+// conversation on screen beside it, and follows it as it changes, until a
+// place is picked by hand in this viewer (HAND, kept while the panel is).
+// SCREEN: {room, thread, title} from the dashboard, or undefined when this
+// viewer is no panel (its own tab: the opener's ROOM / THREAD and the place
+// kept per file, as before). A pick is not kept per file in a panel: the
+// conversation on screen decides there.
+function screenNow() {
+  const ask = w => { try { return w && typeof w.fvScreenFor === 'function' ? w.fvScreenFor(window) : undefined; } catch (e) { return undefined; } };
+  let got = ask(hostPage());
+  // A panel popped out in its own window: the dashboard is that window's opener.
+  if (got === undefined) { try { got = ask(window.parent !== window && window.parent.opener); } catch (e) {} }
+  return got && typeof got === 'object' ? { room: String(got.room || ''), thread: String(got.thread || ''), title: String(got.title || '') } : undefined;
+}
+let SCREEN, HAND = null, DEST_SEQ = 0;
+const screenKey = c => c ? c.room + '|' + c.thread : '';
 async function loadDest() {
   if (!PATH_Q) { DEST_STATE = 'failed'; return; }
-  const saved = destSaved();
+  SCREEN = screenNow();
+  const panel = SCREEN !== undefined;
+  const saved = panel ? HAND : destSaved();
+  const thread = panel ? SCREEN.thread : THREAD;
+  const seq = ++DEST_SEQ;
   let j = null;
   try {
     const r = await fetch('/api/file/owner?path=' + encodeURIComponent(PATH_Q) + CTX
-      + (THREAD ? '&thread=' + encodeURIComponent(THREAD) : '')
+      + (panel && SCREEN.room ? '&at=' + encodeURIComponent(SCREEN.room) : '')
+      + (thread ? '&thread=' + encodeURIComponent(thread) : '')
       + (saved && saved.thread ? '&pick=' + encodeURIComponent(saved.thread) : ''), { cache: 'no-store' });
     if (r.ok) j = await r.json();
   } catch (e) {}
+  if (seq !== DEST_SEQ) return;                   // a newer ask is on its way: its answer counts
   if (!j || !Array.isArray(j.choices)) {         // not found, not allowed, or no answer: Copy only
     DEST_STATE = 'failed';
     if (typeof renderTray === 'function') renderTray();
@@ -1426,14 +1448,14 @@ async function loadDest() {
   // The place these comments were set to go to, if it is still offered; a
   // thread gone since gives way to its main chat, and the tray says so.
   const gone = Array.isArray(j.gone) ? j.gone : [];
-  const g = (saved && saved.thread && gone.find(x => x.id === saved.thread)) || (THREAD && gone.find(x => x.id === THREAD));
+  const g = (saved && saved.thread && gone.find(x => x.id === saved.thread)) || (thread && gone.find(x => x.id === thread));
   if (saved) {
     const s = j.choices.find(x => destKey(x) === destKey(saved))
       || (g && g.id === saved.thread && j.choices.find(x => x.kind === 'po' && x.room === saved.room));
     if (s) c = s;
   }
-  DEST_GONE = g ? { room: g.id === saved?.thread ? saved.room : ROOM, why: g.why,
-                    title: g.title || (g.id === saved?.thread ? saved.name : THREAD_NAME) || '' } : null;
+  DEST_GONE = g ? { room: g.id === saved?.thread ? saved.room : panel ? SCREEN.room : ROOM, why: g.why,
+                    title: g.title || (g.id === saved?.thread ? saved.name : panel ? SCREEN.title : THREAD_NAME) || '' } : null;
   // A given task chat the hub knows keeps the name the opener gave it, if any.
   DEST = c ? { ...c, name: (c.why === 'opener' && c.kind === 'task' && ROOM_NAME) || c.name } : { room: '', name: '' };
   if (typeof renderTray === 'function') renderTray();
@@ -1442,9 +1464,20 @@ loadDest();
 function setDest(key) {
   const c = DEST_CHOICES.find(x => destKey(x) === key);
   DEST = c ? { ...c } : { room: '', name: '' };
-  destSave(c || null);
+  if (SCREEN !== undefined) HAND = c ? { room: c.room, thread: c.thread || '', kind: c.kind || '', name: c.name || '' } : null;
+  else destSave(c || null);
   renderTray();
 }
+// The dashboard says the conversation on screen changed: the tray's default
+// follows it, unless a place was picked by hand here.
+if (typeof window !== 'undefined') window.addEventListener('message', (e) => {
+  if (e.origin !== location.origin || !e.data || e.data.type !== 'fv-screen') return;
+  const now = screenNow();
+  if (now === undefined) return;
+  const moved = screenKey(now) !== screenKey(SCREEN);
+  SCREEN = now;
+  if (moved && !HAND) loadDest();
+});
 // The line a link pointed at ("name.py:120"): marked, and scrolled into view.
 const LINE = parseInt(new URLSearchParams(location.search).get('line') || '', 10) || 0;
 // A tab in the dashboard's Workspace reopens a file as it was left: its view,
@@ -1951,7 +1984,12 @@ function selReact(r, data) {
 }
 function dropCmts(cids) {
   FVC.remove(cids); cids.forEach(cid => LOST.delete(cid));
-  if (!CMTS.length) destSave(null);       // the place chosen was for these comments
+  if (!CMTS.length) {
+    destSave(null);       // the place chosen was for these comments
+    // A panel keeps a place picked by hand (#429), but a new thread is
+    // started once: the tray goes back to the conversation on screen.
+    if (HAND && HAND.kind === 'new') HAND = null;
+  }
   // An attempt whose comments this tab has just taken off is over; another
   // tab's attempt is never judged by this tab's list, which may lag behind.
   const off = new Set(cids);

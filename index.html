@@ -16458,6 +16458,7 @@ function wcTitle(t) {
   return r ? pdRowTitle(r) : 'Chat';
 }
 function wcSync() {
+  queueMicrotask(fvScreenTell);
   const box = document.getElementById('workspace-compose');
   const f = document.getElementById('workspace-compose-frame');
   if (PD.dock) for (const id of WC.popped.keys()) if (!PD.dock.popWindow(id)) WC.popped.delete(id);
@@ -16548,6 +16549,45 @@ function wcPanelTarget(id) {
   if (e?.kind === 'chat') return {kind:'task', room:e.room};
   if (e?.kind === 'thread') return {kind:'thread', room:e.room, thread:e.tid || '', mid:e.tid ? '' : e.mid};
   return null;
+}
+// #429 (GitHub issue 72): the conversation on screen, which a file panel's
+// comments go to by default: the Send box's chat while it shows, else the
+// chat the PO's tab shows (a thread in place, the PO, the task in the
+// middle). {room, thread, title}; thread '' for a main chat or a thread the
+// hub has no id for yet. null when there is none.
+function pdScreenConv() {
+  if (!PD.dock) return null;
+  const box = document.getElementById('workspace-compose');
+  const t = box && !box.hidden && wcValid(WC.target) ? WC.target : wcPanelTarget('po-chat');
+  if (!t || !t.room) return null;
+  return { room: t.room, thread: t.kind === 'thread' ? (t.thread || '') : '', title: wcTitle(t) };
+}
+// Asked by a file viewer (fileview.html screenNow): undefined unless it is the
+// viewer of a file panel of the dock (it then behaves as in its own tab);
+// else the conversation beside it, empty when there is none.
+function fvScreenFor(win) {
+  if (!win || !PD.rt || !pdPanelsOn()) return undefined;
+  for (const e of PD.rt.values()) {
+    if (e.kind !== 'file' || !e.el) continue;
+    for (const f of e.el.querySelectorAll('iframe.wsp-frame'))
+      if (f.contentWindow === win) return pdScreenConv() || { room: '', thread: '', title: '' };
+  }
+  return undefined;
+}
+// Each file panel's viewer is told when the conversation on screen changes,
+// so its tray's default follows it (until a place is picked by hand there).
+let FV_SCREEN_KEY = null;
+function fvScreenTell() {
+  if (!PD.rt) return;
+  const c = pdPanelsOn() ? pdScreenConv() : null;
+  const key = c ? c.room + '|' + c.thread : '';
+  if (key === FV_SCREEN_KEY) return;
+  FV_SCREEN_KEY = key;
+  for (const e of PD.rt.values()) {
+    if (e.kind !== 'file' || !e.el) continue;
+    for (const f of e.el.querySelectorAll('iframe.wsp-frame'))
+      try { f.contentWindow?.postMessage({ type: 'fv-screen' }, location.origin); } catch (err) {}
+  }
 }
 // A chat brought to the front by the person, or its tab clicked (tab): the box
 // is that chat's at once, its To: line too (P340, GitHub issue 57). In a stack
@@ -26121,6 +26161,7 @@ function barTabsHasConv(head) {
   return !!head && !!head.querySelector(':scope > .dk-tabs [data-dk-tab="po-chat"]');
 }
 function barTabsSync() {
+  queueMicrotask(fvScreenTell);
   const body = document.body, head = barTabsOn() ? barTabsHead() : null, on = !!head;
   body.classList.toggle('bar-tabs', on);
   for (const h of PD_ROOT ? PD_ROOT.querySelectorAll('.dk-head.bt-head') : []) if (h !== head) h.classList.remove('bt-head');
