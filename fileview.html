@@ -1453,6 +1453,7 @@ async function loadDest() {
     if (r.ok) j = await r.json();
   } catch (e) {}
   if (seq !== DEST_SEQ) return;                   // a newer ask is on its way: its answer counts
+  if (panel && HAND !== saved) return loadDest();  // picked by hand meanwhile: asked again with it (review 1)
   if (!j || !Array.isArray(j.choices)) {         // not found, not allowed, or no answer: Copy only
     DEST_STATE = 'failed';
     if (typeof renderTray === 'function') renderTray();
@@ -2003,7 +2004,9 @@ function selReact(r, data) {
 function dropCmts(cids) {
   FVC.remove(cids); cids.forEach(cid => LOST.delete(cid));
   if (!CMTS.length) {
-    destSave(null);       // the place chosen was for these comments
+    // The place chosen was for these comments (a panel keeps none per file:
+    // the one kept is its own tab's, #429 review 1).
+    if (SCREEN === undefined) destSave(null);
     // A panel keeps a place picked by hand (#429), but a new thread is
     // started once: the tray goes back to the conversation on screen.
     if (HAND && HAND.kind === 'new') HAND = null;

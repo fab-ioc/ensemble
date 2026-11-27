@@ -71,7 +71,7 @@ async function main() {
   // The file panel's viewer, and where its tray sends.
   const VIEWER = `(() => { const id = [...PD.rt.keys()].find(k => k.startsWith('file:') && k.endsWith('a.md')); const e = id && PD.rt.get(id); return e && e.el.querySelector('iframe.wsp-frame'); })()`;
   const inV = js => `(() => { const f = ${VIEWER}; return f.contentWindow.eval(${JSON.stringify(js)}); })()`;
-  const DEST = inV(`JSON.stringify({ state: DEST_STATE, room: DEST.room || '', thread: DEST.thread || '', kind: DEST.kind || '', screen: SCREEN === undefined ? null : SCREEN })`);
+  const DEST = inV(`JSON.stringify({ state: DEST_STATE, room: DEST.room || '', thread: DEST.thread || '', kind: DEST.kind || '', screen: typeof SCREEN === 'undefined' || SCREEN === undefined ? null : SCREEN })`);
   const dest = async () => JSON.parse(await ev(DEST));
   const destIs = (room, thread) => `(() => { try { const d = JSON.parse(${DEST}); return d.state === 'ok' && d.room === ${JSON.stringify(room)} && d.thread === ${JSON.stringify(thread)}; } catch (e) { return false; } })()`;
   const out={};
@@ -95,13 +95,19 @@ async function main() {
     await sleep(400);
     out.main = await dest();
     out.mainKept = await ev(inV(`localStorage.getItem('cd-fvd:' + fvList())`));
+    // A comment made and dropped in the panel leaves the own tab's kept pick alone (review 1).
+    await ev(inV(`(() => { const cid = FVC.id(); FVC.put({ cid, at: FVC.now(), note: 'gone soon', view: CUR_VIEW, start: -1, end: -1, quote: '' }); renderTray(); dropCmts([cid]); renderTray(); return 1; })()`));
+    out.clearKept = await ev(inV(`localStorage.getItem('cd-fvd:' + fvList())`));
+    // One kept, so the tray shows in the pictures.
+    await ev(inV(`(() => { FVC.put({ cid: FVC.id(), at: FVC.now(), note: 'Seven to one is too low for the hill route.', view: CUR_VIEW, start: -1, end: -1, quote: '' }); renderTray(); return 1; })()`));
     out.box = await ev(`({ shown: !document.getElementById('workspace-compose').hidden, target: WC.target })`);
     // 3. A thread in place, then another: the tray follows.
     await ev(`ldtOpen(${P}, ${JSON.stringify(A.tids[1])}); 0`);
     await until(`!!PD.thrIn && pdThreadInShown() && PD.thrIn.tid === ${JSON.stringify(A.tids[1])}`, 'thread in place');
     await until(destIs(A.po, A.tids[1]), 'the tray on the thread', 80).catch(() => {});
     out.t1 = await dest();
-    await shot('fps-thread');
+    await sleep(500);
+    await shot(A.shotName || 'fps-thread');
     await ev(`ldtOpen(${P}, ${JSON.stringify(A.tids[2])}); 0`);
     await until(`!!PD.thrIn && pdThreadInShown() && PD.thrIn.tid === ${JSON.stringify(A.tids[2])}`, 'next thread');
     await until(destIs(A.po, A.tids[2]), 'the tray on the next thread', 80).catch(() => {});
@@ -111,13 +117,43 @@ async function main() {
     await until(`!(PD.thrIn && pdThreadInShown())`, 'main');
     await until(destIs(A.po, ''), 'the tray on the main chat', 80).catch(() => {});
     out.back = await dest();
-    // 5. A pick by hand in the panel (the first thread) stays across a switch.
-    await ev(inV(`(() => { const c = DEST_CHOICES.find(x => x.thread === ${JSON.stringify(A.tids[0])}); setDest(destKey(c)); return 1; })()`));
+    // 5. A pick by hand (the first thread) made while the hub's answer for a
+    // switch is still on its way: the pick wins (review 1).
+    await ev(inV(`(() => { const of = window.fetch; window.__held = 0; window.__hold = true;
+      window.fetch = async (u, o) => { if (String(u).includes('/api/file/owner') && window.__hold) { window.__held++; await new Promise(r => { window.__rel = r; }); } return of(u, o); }; return 1; })()`));
     await ev(`ldtOpen(${P}, ${JSON.stringify(A.tids[1])}); 0`);
     await until(`!!PD.thrIn && pdThreadInShown() && PD.thrIn.tid === ${JSON.stringify(A.tids[1])}`, 'thread again');
+    await until(inV(`window.__held > 0`), 'an ask held');
+    await ev(inV(`(() => { const c = DEST_CHOICES.find(x => x.thread === ${JSON.stringify(A.tids[0])}); setDest(destKey(c)); window.__hold = false; window.__rel(); return 1; })()`));
+    await sleep(1500);
+    out.race = await dest();
+    // 6. That pick stays across another switch, and is not kept for the file.
+    await ev(`ldtOpen(${P}, ${JSON.stringify(A.tids[2])}); 0`);
+    await until(`!!PD.thrIn && pdThreadInShown() && PD.thrIn.tid === ${JSON.stringify(A.tids[2])}`, 'thread once more');
     await sleep(1500);
     out.hand = await dest();
     out.handKept = await ev(inV(`localStorage.getItem('cd-fvd:' + fvList())`));
+    // 7. A box under each chat (#407), a thread in a tab of its own: the tray
+    // goes to that tab while it is in front, to the project's tab once that is.
+    // The hub's saved choice wins over the page's cache: set both, as a save does.
+    await ev(`ldtOpen(${P}, ''); if (PREFS) PREFS.sendBox = 'pane'; localStorage.setItem('cd-send-box', 'pane'); apLook(); 0`);
+    // Forget step 6's pick by hand, as a fresh panel would.
+    await ev(inV(`HAND = null; loadDest(); 1`));
+    await until(`document.documentElement.dataset.sendBox === 'pane' && !(PD.thrIn && pdThreadInShown())`, 'pane boxes');
+    await until(destIs(A.po, ''), 'the tray on the main chat, pane boxes', 80).catch(() => {});
+    out.paneMain = await dest();
+    await ev(`ldtOpen(${P}, ${JSON.stringify(A.tids[1])}, { tab: true, title: 'Brake pads' }); 0`);
+    const TAB = `pdThreadTabId(${PO}, ${JSON.stringify(A.tids[1])}, '')`;
+    await until(`PD.dock.panels().some(x => x.id === ${TAB}) && PD.dock.frontOf(${TAB}) === ${TAB}`, 'thread tab');
+    await until(destIs(A.po, A.tids[1]), 'the tray on the thread tab', 80).catch(() => {});
+    out.paneTab = await dest();
+    out.paneTabShown = await ev(`pdConvShownId()`);
+    // The person presses the project's tab (it may sit in another stack, both shown).
+    out.sameStack = await ev(`(() => { try { return PD.dock.stackOf ? PD.dock.stackOf('po-chat') === PD.dock.stackOf(${TAB}) : null; } catch (e) { return null; } })()`);
+    await ev(`PD_ROOT.querySelector('.dk-tab[data-dk-tab="po-chat"]').click(); 0`);
+    await until(destIs(A.po, ''), 'the tray back on the main chat', 80).catch(() => {});
+    out.paneBack = await dest();
+    out.paneDbg = await ev(`JSON.stringify({ last: WC.convLast, shown: pdConvIds().filter(pdConvShown), ids: pdConvIds(), tab: !!PD_ROOT.querySelector('.dk-tab[data-dk-tab="po-chat"]'), t: wcPanelTarget('po-chat'), front: PD.dock.frontOf('po-chat') })`);
     out.errors = errors;
   } finally { ch.kill(); }
   console.log(JSON.stringify(out));
@@ -213,7 +249,8 @@ class FilePanelScreen(unittest.TestCase):
         if shots:
             Path(shots).mkdir(parents=True, exist_ok=True)
         args = {**chrome_profile.node_args(), 'tmp': cls.tmp.name, 'shots': shots, 'base': base_url,
-                'proj': cls.proj, 'po': cls.po, 'file': str(cls.file), 'tids': tids}
+                'proj': cls.proj, 'po': cls.po, 'file': str(cls.file), 'tids': tids,
+                'shotName': os.environ.get('ENSEMBLE_SHOT_NAME', '')}
         script = base / 'fps_cdp.js'; script.write_text(CDP_JS, encoding='utf-8')
         out = subprocess.run([NODE, str(script), json.dumps(args)], capture_output=True, encoding='utf-8', timeout=300)
         assert out.returncode == 0, out.stderr[-4000:]
@@ -241,10 +278,19 @@ class FilePanelScreen(unittest.TestCase):
         self.assertEqual((self.got['t2']['room'], self.got['t2']['thread']), (self.po, self.tids[2]), self.got['t2'])
         self.assertEqual((self.got['back']['room'], self.got['back']['thread'], self.got['back']['kind']), (self.po, '', 'po'), self.got['back'])
 
+    def test_a_dropped_comment_in_the_panel_keeps_the_own_tabs_pick(self):
+        self.assertIsNotNone(self.got['mainKept'])
+        self.assertEqual(self.got['clearKept'], self.got['mainKept'])
+
+    def test_a_pick_made_while_an_answer_is_on_its_way_wins(self):
+        r = self.got['race']
+        self.assertEqual((r['room'], r['thread']), (self.po, self.tids[0]), r)
+        self.assertEqual(r['screen']['thread'], self.tids[1])
+
     def test_a_pick_by_hand_stays_and_is_not_kept_for_the_file(self):
         h = self.got['hand']
         self.assertEqual((h['room'], h['thread']), (self.po, self.tids[0]), h)
-        self.assertEqual(h['screen']['thread'], self.tids[1])   # the viewer knows what is on screen
+        self.assertEqual(h['screen']['thread'], self.tids[2])   # the viewer knows what is on screen
         # The own tab's kept pick is the one it made itself, untouched by the panel.
         self.assertEqual(self.got['handKept'], self.got['mainKept'])
 
@@ -253,6 +299,11 @@ class FilePanelScreen(unittest.TestCase):
         asks = [unquote(a) for a in OWNER_ASKS if '&at=' in a]
         self.assertTrue(any(f'thread={self.tids[1]}' in a for a in asks), OWNER_ASKS)
         self.assertTrue(any(f'thread={self.tids[2]}' in a for a in asks), OWNER_ASKS)
+
+    def test_with_a_box_under_each_chat_a_thread_tab_in_front_is_the_place(self):
+        self.assertEqual((self.got['paneMain']['room'], self.got['paneMain']['thread']), (self.po, ''), self.got['paneMain'])
+        self.assertEqual((self.got['paneTab']['room'], self.got['paneTab']['thread'], self.got['paneTab']['kind']), (self.po, self.tids[1], 'thread'), (self.got['paneTab'], self.got['paneTabShown']))
+        self.assertEqual((self.got['paneBack']['room'], self.got['paneBack']['thread']), (self.po, ''), (self.got['paneBack'], self.got['paneDbg'], self.got['sameStack']))
 
     def test_the_page_threw_nothing(self):
         self.assertEqual(self.got['errors'], [])

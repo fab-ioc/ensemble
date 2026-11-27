@@ -16420,7 +16420,7 @@ function pdChatUnpanel(roomId) {
 function pdRowTitle(r) { return [taskNoText(r, false), detailTitle(r)].filter(Boolean).join(' ') || 'Chat'; }
 // The workspace owns one editor. Its session frame runs the ordinary send path,
 // while the conversation frames keep their messages and per-target drafts.
-const WC = { target:null, base:'', tailKey:'', restoring:false, pickSeq:0, popped:new Map(), aimAt:0, ownAt:0, dockAt:0, keep:false, newThread:false };
+const WC = { convLast:'', target:null, base:'', tailKey:'', restoring:false, pickSeq:0, popped:new Map(), aimAt:0, ownAt:0, dockAt:0, keep:false, newThread:false };
 function wcPoRoom() { return PO_PANEL.querySelector('iframe.po-session:not([hidden])')?.dataset.room || ''; }
 function wcMainTarget() {
   const r = SELECTED_SID && rowBySid(SELECTED_SID);
@@ -16656,10 +16656,32 @@ function wcPanelTarget(id) {
 function pdScreenConv() {
   if (!PD.dock) return null;
   const box = document.getElementById('workspace-compose');
-  const t = box && !box.hidden && wcValid(WC.target) ? WC.target : wcPanelTarget('po-chat');
+  const t = box && !box.hidden && wcValid(WC.target) ? WC.target : wcPanelTarget(pdConvShownId());
   if (!t || !t.room) return null;
   return { room: t.room, thread: t.kind === 'thread' ? (t.thread || '') : '', title: wcTitle(t) };
 }
+// With no Send box under the panels (a box under each chat, #407): the
+// conversation panel shown in front of its stack that the person last used
+// (its tab pressed, or its page clicked or typed in: WC.convLast), else the
+// project's tab, else the first one shown.
+function pdConvShown(id) {
+  try { const d = PD.dock; return d.frontOf(id) === id && d.isVisible(id) && !d.popWindow(id); } catch (e) { return false; }
+}
+function pdConvIds() {
+  return ['po-chat', ...[...PD.rt.entries()].filter(([, e]) => e.kind === 'chat' || e.kind === 'thread').map(([id]) => id)];
+}
+function pdConvShownId() {
+  const shown = pdConvIds().filter(pdConvShown);
+  if (WC.convLast && shown.includes(WC.convLast)) return WC.convLast;
+  return shown.includes('po-chat') ? 'po-chat' : (shown[0] || 'po-chat');
+}
+// A conversation's page taking the focus (a click or a key in it) makes it the one in use.
+window.addEventListener('blur', () => setTimeout(() => {
+  const f = document.activeElement;
+  if (!PD.dock || !f || f.tagName !== 'IFRAME') return;
+  const id = pdConvIds().find(id => { const el = id === 'po-chat' ? PD.els['po-chat'] : PD.rt.get(id)?.el; return !!el && el.contains(f); });
+  if (id && id !== WC.convLast) { WC.convLast = id; fvScreenTell(); }
+}, 0));
 // Asked by a file viewer (fileview.html screenNow): undefined unless it is the
 // viewer of a file panel of the dock (it then behaves as in its own tab);
 // else the conversation beside it, empty when there is none.
@@ -16708,6 +16730,7 @@ function wcFront(id, tab = false) {
   // not make what the page or the hub then shows or removes the person's
   // (review 2): only a press on the tabs, or a tab the person closed.
   const press = tab || (PD.restored && !PD.wsQuiet && !PD.tabAdding && !PD.opening && Date.now() - WC.dockAt < 1500);
+  if (press && t) { WC.convLast = id; queueMicrotask(fvScreenTell); }   // #429: the conversation in use
   if (press && t && wcValid(t)) { if (wcKey(t) !== wcKey(WC.target)) wcChoose(t); }
   else if (id === 'po-chat' && WC.target?.kind === 'thread' && pdThreadFind(WC.target)?.[0] !== 'po-chat') wcToMain();
 }
