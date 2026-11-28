@@ -8562,7 +8562,8 @@ def _room_project_id(room_id: str, room: dict | None, links: dict | None = None)
 # A page-only write refused is logged, one line per kind of refusal a minute
 # at most, so the next "pinning does not work" can be read from the hub's log
 # instead of guessed (the tailnet https address was refused ~500 times
-# unseen). The path without its query (a token can ride there), the client's
+# unseen). The route without its query, params or fragment (a token can ride
+# there), the client's
 # address and the reason; never a cookie or a header's value.
 PAGE_REFUSAL_LOG_EVERY_S = 60.0
 _page_refusal_logged: dict[str, list] = {}     # kind -> [last logged at, refusals since]
@@ -8574,7 +8575,9 @@ def _log_page_refusal(method: str, path: str, client: str, why: str, now: float 
     PAGE_REFUSAL_LOG_EVERY_S; the line counts those left out. True when
     it logged."""
     now = time.time() if now is None else now
-    route = (path or "").split("?", 1)[0][:200]
+    # The route as dispatch reads it (urlparse(...).path), without its query,
+    # its ;params or its fragment: a token can ride in any of them.
+    route = urlparse(path or "").path[:200]
     kind = route + " " + re.sub(r"\d+", "#", why or "")[:120]
     with _page_refusal_log_lock:
         ent = _page_refusal_logged.get(kind)

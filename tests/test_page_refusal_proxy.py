@@ -115,6 +115,17 @@ class RefusalLog(unittest.TestCase):
         self.assertNotIn("SECRET", out.getvalue())
         self.assertIn("(and 1 more like it since the last line)", lines[2])
 
+    def test_a_suffix_on_the_route_is_neither_logged_nor_a_new_kind(self):
+        out = io.StringIO()
+        why = "Only the dashboard page can do this."
+        with contextlib.redirect_stdout(out):
+            self.assertTrue(dashboard._log_page_refusal("POST", "/api/attention/seen;token=SECRET1", "c", why, now=1.0))
+            self.assertFalse(dashboard._log_page_refusal("POST", "/api/attention/seen;token=SECRET2#x", "c", why,
+                                                         now=2.0))
+            self.assertFalse(dashboard._log_page_refusal("POST", "/api/attention/seen#SECRET3", "c", why, now=3.0))
+        self.assertNotIn("SECRET", out.getvalue())
+        self.assertIn("refused POST /api/attention/seen from c:", out.getvalue())
+
     def test_the_page_refusal_logs_without_the_cookie(self):
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
