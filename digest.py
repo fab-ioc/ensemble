@@ -928,6 +928,12 @@ def start_scheduler() -> None:
                 issues.maybe_tick()
             except Exception as e:
                 _log(f"issues check error: {str(e)[:200]}")
+            # A project's Slack channel (#431, slack_channel.py): read on a
+            # thread of its own when due, the PO woken once a minute at most.
+            try:
+                _d.slack_channel.maybe_tick()
+            except Exception as e:
+                _log(f"slack check error: {str(e)[:200]}")
             # A task in a PO project idle with nothing open (stall.py).
             try:
                 stall.maybe_tick()
