@@ -16,6 +16,7 @@ The linkify checks run the shared block in Node and are skipped without it.
 """
 from __future__ import annotations
 
+import html
 import json
 import re
 import shutil
@@ -231,11 +232,13 @@ class GeneratedLinks(unittest.TestCase):
         r = self.render("http://hub-host:8765/")
         self.assertEqual(viewer_path(hrefs(r[CASES[33]])[0])[0], "Documents/Screen layout.md")
         self.assertEqual(viewer_path(hrefs(r[CASES[34]])[0])[0], "Documents/Screen layout/compare.html")
-        # Running text keeps today's rule: the whole spaced relative path is
-        # never linked as one (today's bare "layout.md" tail may still link,
-        # same as it would with no folder in front of it at all).
+        # #433: running text links the whole spaced relative path as one, as
+        # a soft link (plain text until the hub says the file is there).
         paths = [viewer_path(h)[0] for h in hrefs(r[CASES[35]])]
-        self.assertNotIn("Documents/Screen layout.md", paths)
+        self.assertEqual(paths, ["Documents/Screen layout.md"])
+        self.assertIn('class="file-link file-soft" tabindex="-1"', r[CASES[35]])
+        # The forms linked before stay ordinary links.
+        self.assertNotIn("file-soft", r[CASES[33]])
         # This project's own "#NNN Title.md" document names link too.
         self.assertEqual(viewer_path(hrefs(r[CASES[36]])[0])[0],
                          "Documents/#118 Relative Documents paths with spaces open as links.md")
@@ -306,7 +309,91 @@ console.log(JSON.stringify({ ms, out: Object.fromEntries(cases.map(c => [c, rend
 # the whole line quadratic: before this test "[" took 0.9 to 1.8 s and "(/"
 # 2.5 s, on every render of a chat bubble or a Markdown file.
 LINEAR_SHAPES = ["[", "[a", " [", "[a](b ", "(/", "(~/", "_a/", "_/", "*(/", "a_/", "&(/",
-                 "(C:\\a", "_\\\\a", " C:\\a b", "x(y/", "._a/", "room-", " http://"]
+                 "(C:\\a", "_\\\\a", " C:\\a b", "x(y/", "._a/", "room-", " http://",
+                 # #433: names with spaces, folders.
+                 "/A b", " /A b", "/A b/", " a/", " A/", " Documents/#1 A b", " /a/a", "/a", " ~/a",
+                 " C:\\a\\", "A b c/", " .a/#1 A B C"]
+
+
+# #433: what each form a place may be written in renders as: (path, soft)
+# for each file link, soft when it reads as text until the hub has the place.
+SOFT_CASES = {
+    "see Documents/#433 Clickable links.md now": [("Documents/#433 Clickable links.md", True)],
+    "/home/fab/Projects/Ensemble Dashboard/Documents/#433 Clickable links.md":
+        [("/home/fab/Projects/Ensemble Dashboard/Documents/#433 Clickable links.md", True)],
+    "the folder /home/fab/dev.": [("/home/fab/dev", True)],
+    "open docs/ next": [("docs/", True)],
+    "Documents/Plans is there": [("Documents/Plans is there", True, ["Documents/Plans is", "Documents/Plans"])],
+    "and/or 1/2 w/o e.g. 0.45/0.53": [],
+    "C:\\Users\\fab\\Projects here": [("C:\\Users\\fab\\Projects here", True, ["C:\\Users\\fab\\Projects"])],
+    "~/notes is mine": [("~/notes", True)],
+    "/code-review ultra, /api": [],
+    "report.docx and data.xlsx": [("report.docx", True), ("data.xlsx", True)],
+    "`/home/fab/Projects/Ensemble Dashboard`": [("/home/fab/Projects/Ensemble Dashboard", True)],
+    "`#433 Clickable links.md`": [("#433 Clickable links.md", True)],
+    "`git add Documents/x.md`": [],
+    "`--out.txt`": [],
+    # A spaced or bare relative Markdown target is not known to be a file: soft until the hub finds it.
+    "[the plan](#433 Clickable links.md)": [("#433 Clickable links.md", True)],
+    "[the plan](Documents/#433 Clickable links.md)": [("Documents/#433 Clickable links.md", True)],
+    "[the plan](<Documents/#433 Clickable links.md>)": [("Documents/#433 Clickable links.md", True)],
+    "[folder](/home/fab/Projects/Ensemble Dashboard/Documents)": [("/home/fab/Projects/Ensemble Dashboard/Documents", True)],
+    "[folder](Documents/Plans)": [("Documents/Plans", True)],
+    # A link with a capitalised word before it also asks for the longer reading (static/filelinks.js
+    # grows the link to the longest one the hub has; none found, it stays as drawn).
+    "docs/a.md and Then b.md": [("docs/a.md", False), ("b.md", False, ["Then b.md"])],
+    "See docs/a.md": [("docs/a.md", False, ["See docs/a.md"])],
+    "see My Folder/notes/ now": [("Folder/notes/", True, ["My Folder/notes/"])],
+    "#433 Clickable links.md": [("links.md", False, ["#433 Clickable links.md", "Clickable links.md"])],
+    "see Screen layout.png": [("layout.png", False, ["Screen layout.png"])],
+    "see /home/me/notes.md": [("/home/me/notes.md", False)],
+    "C:\\Work\\#9 Plan.md": [("C:\\Work\\#9 Plan.md", True)],
+    "D:\\work\\New folder\\notes.md": [("D:\\work\\New folder\\notes.md", False)],
+    "Notes/Q3 Plan Final Draft v2.md": [("Notes/Q3 Plan Final Draft", True, ["Notes/Q3 Plan Final", "Notes/Q3 Plan", "Notes/Q3"]),
+                                       ("v2.md", False)],
+    # A folder with spaces in its names, in all three path styles, with and without a separator after it.
+    "/home/fab/Ensemble Dashboard/Documents/": [("/home/fab/Ensemble Dashboard/Documents/", True)],
+    "in /home/fab/Ensemble Dashboard/Documents now": [("/home/fab/Ensemble Dashboard/Documents now", True,
+                                                       ["/home/fab/Ensemble Dashboard/Documents"])],
+    "Documents/#430 Plans/ is it": [("Documents/#430 Plans/", True)],
+    "Documents/#430 Plans are ready.": [("Documents/#430 Plans are ready", True,
+                                         ["Documents/#430 Plans are", "Documents/#430 Plans", "Documents/#430"])],
+    "C:\\Users\\fab\\My Folder\\ x": [("C:\\Users\\fab\\My Folder\\", True)],
+    "C:\\Users\\fab\\My Folder": [("C:\\Users\\fab\\My Folder", True, ["C:\\Users\\fab\\My"])],
+    "py tests/test_links.py": [("tests/test_links.py", False)],
+}
+FILE_A_RE = re.compile(r'<a href="([^"]*)"[^>]*class="file-link( file-soft)?"')
+# A soft folder whose last name has spaces carries its shorter readings, longest first
+# (static/filelinks.js tries the next one while the hub knows none of the longer).
+ALTS_A_RE = re.compile(r'<a href="[^"]*"(?: data-alts="([^"]*)")?[^>]*class="file-link')
+
+
+@unittest.skipUnless(NODE, "node is not installed")
+class SoftLinks(unittest.TestCase):
+    def test_each_form_of_a_place(self):
+        prog = JS % shared_block(PAGES["index.html"])
+        out = subprocess.run([NODE, "-e", prog, "http://hub-host:8765/"], input=json.dumps(list(SOFT_CASES)),
+                             capture_output=True, text=True, encoding="utf-8", timeout=60)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        r = json.loads(out.stdout)
+        for text, want in SOFT_CASES.items():
+            alts = [[p for p, *_ in json.loads(html.unescape(a))] if a else [] for a in ALTS_A_RE.findall(r[text])]
+            got = [(viewer_path(h.replace("&amp;", "&"))[0], bool(soft), al)
+                   for (h, soft), al in zip(FILE_A_RE.findall(r[text]), alts)]
+            self.assertEqual(got, [(w + ([],))[:3] for w in want], f"{text!r} -> {r[text]}")
+        # A folder's full stop stays the sentence's; an anchor stays an anchor.
+        self.assertTrue(r["the folder /home/fab/dev."].endswith("</a>."))
+        self.assertTrue(r["the folder /home/fab/dev."].count('tabindex="-1"') == 1)
+
+
+class SoftLinkStyle(unittest.TestCase):
+    def test_each_page_styles_a_soft_link_as_text(self):
+        # In the page's own <style>: a rule after </html> is never applied.
+        for name, src in PAGES.items():
+            with self.subTest(page=name):
+                css, _ = styles_and_scripts(src)
+                self.assertRegex(css, r"a\.file-link\.file-soft:not\(\.file-found\) \{[^}]*pointer-events:none")
+                self.assertEqual(src.rstrip()[-7:], "</html>")
 
 
 @unittest.skipUnless(NODE, "node is not installed")

@@ -377,8 +377,16 @@ class Prompts(unittest.TestCase):
         self.assertEqual(bad, {})
 
     def test_the_link_rule_reaches_every_ask_note(self):
-        self.assertIn(dashboard.LINK_NOTE, dashboard.ASK_NOTE)
+        # The link rule stands on its own beside the ask rule in every brief that has one.
+        self.assertNotIn(dashboard.LINK_NOTE, dashboard.ASK_NOTE)
         self.assertIn(dashboard.ASK_NOTE, dashboard.SOLO_REPORT_NOTE)
+        self.assertIn(dashboard.LINK_NOTE, dashboard.SOLO_REPORT_NOTE)
+        for name in ("dashboard.py", "rotation.py"):
+            src = (ROOT / name).read_text(encoding="utf-8")
+            asks_at = [m.end() for m in re.finditer(r"\bASK_NOTE\b[},]", src)]
+            self.assertTrue(asks_at, name)
+            for at in asks_at:
+                self.assertIn("LINK_NOTE", src[at:at + 40], f"{name}: an ASK_NOTE without LINK_NOTE: {src[at - 40:at + 40]!r}")
         self.assertIn("clickable name", dashboard.LINK_NOTE)
         self.assertIn("never show it bare", dashboard.LINK_NOTE)
         self.assertIn("never show the link bare", asks.ASK_AGAIN_RULE)

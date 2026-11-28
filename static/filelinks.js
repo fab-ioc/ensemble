@@ -14,7 +14,9 @@
 // hub said before is painted at once (no flicker on a redraw), what it has
 // not been asked yet goes into one batched GET /api/files/check, a single
 // request in flight at a time. A path that names nothing is a quiet chip,
-// "not written yet", still a link: the file view says what is (not) there.
+// "not written yet", still a link: the file view says what is (not) there. A
+// soft link (a page's file-soft: a form linked only since #433) instead reads
+// as plain text until the hub says its place is there (file-found).
 // FileLinks.recheck(), on the page's own refresh, asks again about the ones
 // that were missing (at most every RECHECK_MS), so a file a task writes later
 // turns into a normal link by itself. A recheck asks with "tail": false: the
@@ -49,6 +51,13 @@ const FileLinks = (() => {
     return p ? [p, q.get('room') || '', q.get('cwd') || ''].join(SEP) : '';
   }
   function paint(a, there) {
+    // A soft link (#433) is a link once the hub has the place and plain text
+    // until then (the pages' CSS): never the "not written yet" chip.
+    if (a.classList.contains('file-soft')) {
+      a.classList.toggle('file-found', there === true);
+      if (there === true) a.removeAttribute('tabindex'); else a.setAttribute('tabindex', '-1');
+      return;
+    }
     const was = a.classList.contains('file-missing');
     if (there === false && !was) {
       a.classList.add('file-missing');
@@ -60,6 +69,71 @@ const FileLinks = (() => {
       delete a.dataset.titleWas;
     }
   }
+  // A link with other readings (data-alts: [path, characters it takes from
+  // the text before the link, where it ends in the link's text] each): a
+  // folder whose last name has spaces, drawn with the words after it
+  // ("Documents/#430 Plans are ready"), and a relative path or a bare name
+  // that may start at a word before it ("My Folder/notes/", "#433 Clickable
+  // links.md"). All its readings are asked in one go; the longest one the hub
+  // has becomes the link, the words around it text. While none is there the
+  // link stays as drawn (and a recheck may still find one written later).
+  function keyAt(a, path) {
+    const k = keyOf(a);
+    return k ? [path].concat(k.split(SEP).slice(1)).join(SEP) : '';
+  }
+  function settle(a) {
+    let alts;
+    try { alts = JSON.parse(a.dataset.alts); } catch (e) { alts = null; }
+    if (!Array.isArray(alts) || !alts.length || a.children.length || !a.parentNode) return;
+    // a picture's link sits under its thumbnail, in the page's .path-img
+    const wrap = a.parentNode.classList && a.parentNode.classList.contains('path-img') ? a.parentNode : null;
+    const text = a.textContent || '', own = keyOf(a);
+    const all = alts.filter(x => Array.isArray(x) && typeof x[0] === 'string' && x[0] && x[1] >= 0 && x[2] > 0 && x[2] <= text.length)
+      .map(([p, left, end]) => ({ p, left, end, k: keyAt(a, p) })).concat([{ p: null, left: 0, end: text.length, k: own }])
+      .sort((x, y) => (y.left + y.end) - (x.left + x.end));
+    for (const x of all) if (x.k && !state.has(x.k) && !asking.has(x.k) && !queue.has(x.k)) queue.set(x.k, true);
+    for (const x of all) {
+      const there = state.get(x.k);
+      if (there === undefined) return;          // asked: settled when the answer comes
+      if (there === false) continue;
+      if (x.p == null) return;                  // the link as drawn
+      const prev = (wrap || a).previousSibling;
+      if (x.left && !(prev && prev.nodeType === 3 && prev.data.length >= x.left)) continue;
+      const h = a.getAttribute('href') || '', q = new URLSearchParams(h.slice('/fileview?'.length));
+      const b = a.cloneNode(false);
+      b.setAttribute('href', href(x.p, { line: q.get('line'), room: q.get('room'), roomName: q.get('roomName'),
+        cwd: q.get('cwd'), thread: q.get('thread'), threadName: q.get('threadName') }));
+      delete b.dataset.alts;
+      b.textContent = (x.left ? prev.data.slice(prev.data.length - x.left) : '') + text.slice(0, x.end);
+      if (x.left) prev.data = prev.data.slice(0, prev.data.length - x.left);
+      a.parentNode.insertBefore(b, a);
+      if (x.end < text.length) {
+        const rest = document.createTextNode(text.slice(x.end));
+        if (wrap) wrap.parentNode.insertBefore(rest, wrap.nextSibling); else a.parentNode.insertBefore(rest, a);
+      }
+      a.parentNode.removeChild(a);
+      if (wrap) thumbOf(wrap, b);
+      paint(b, true);
+      return;
+    }
+  }
+  // The thumbnail over a picture's link shows the picture the link now names.
+  function thumbOf(wrap, b) {
+    const u = (b.getAttribute('href') || '').replace(/^\/fileview\?/, '/api/file?'), name = b.textContent.split(/[\\\/]/).pop();
+    let t = wrap.querySelector('a.att-thumb');
+    if (!t) {
+      t = document.createElement('a');
+      t.className = 'att-thumb'; t.target = '_blank'; t.rel = 'noopener';
+      const img = document.createElement('img');
+      img.loading = 'lazy';
+      img.setAttribute('onerror', 'pathThumbGone(this)');
+      t.appendChild(img);
+      wrap.insertBefore(t, b);
+    }
+    t.setAttribute('href', u); t.title = name;
+    const img = t.querySelector('img');
+    if (img) { img.alt = name; img.setAttribute('src', u); }
+  }
   function links(root) {
     return root && root.querySelectorAll ? root.querySelectorAll('a.file-link') : [];
   }
@@ -67,8 +141,12 @@ const FileLinks = (() => {
   function mark(a) {
     const k = keyOf(a);
     if (!k) return false;
-    if (state.has(k)) { paint(a, state.get(k)); return false; }
-    if (asking.has(k)) return false;
+    if (a.dataset.alts) {
+      settle(a);
+      if (!a.parentNode) return queue.size > 0;  // settled into another reading
+    }
+    if (state.has(k)) { paint(a, state.get(k)); return queue.size > 0; }
+    if (asking.has(k)) return queue.size > 0;
     queue.set(k, true);
     return true;
   }
@@ -115,6 +193,7 @@ const FileLinks = (() => {
       });
       if (changed.size && typeof document !== 'undefined') {
         for (const a of links(document)) { const k = keyOf(a); if (changed.has(k)) paint(a, state.get(k)); }
+        for (const a of document.querySelectorAll('a.file-link[data-alts]')) settle(a);
       }
       again = queue.size > 0;
     } catch (e) {

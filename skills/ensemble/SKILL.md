@@ -23,6 +23,12 @@ write a standalone `Ask:` line with options underneath. Every question carries
 its answers: options, or Yes and No. Never ask the user a question in prose. A task with a project PO sends its question to that PO;
 set `forCeo: true` to send a card directly to the user.
 
+Every thing you name in text the user can read (a file, a folder, a picture, a
+document, a page, a card, a message, a task, a session) is a **clickable
+name**, never an address: a file or folder is `[its name](its absolute path)`,
+a task is `#18`, a card or a message is `[its words, short](its reference)`.
+See *How to link Ensemble things* for every form.
+
 It returns your identity, role, task id, project, working directory, task folder
 and teammates, the **write scope** your tool calls are limited to, and your
 project's PO (`projectPO`, with `reportsTo` saying in words where your reports
@@ -241,9 +247,20 @@ call is the answer: write the file instead.
 
 ### How to link Ensemble things: by name, never by address
 
+**Every file or folder you name is a link: `[its name](its absolute path)`.**
+This holds in every text the CEO can read: chat messages, reports, cards,
+task specs, documents. Find the absolute path before you write it (from your
+working directory, `ensemble_get_task`'s `documentsDir`, or the tool that made
+the file); a bare name, a relative path or a path in a code span is not a
+link. The path is Linux (`/home/...`), macOS (`/Users/...`) or Windows
+(`C:\Users\...`) as the machine has it; spaces stay as they are inside the
+brackets' parentheses. The hub checks what you post and answers with the link
+you should have written when a file or folder you named is not one.
+
 The CEO never wants to see a URL. In any text they can read (chat messages,
 reports, cards, task specs, documents shown in the file view) an Ensemble
-thing (a card, a message, a task, a file, a session) is linked only as a
+thing (a card, a message, a task, a file, a folder, a picture, a document, a
+page, a session) is linked only as a
 **clickable name**: never as a bare address, and never as an address in a
 code span. Never write `127.0.0.1`, `localhost`, the tailnet host,
 `fileview?path=`, `session?room=` or a room id in text the CEO reads (those
@@ -251,7 +268,9 @@ point at the wrong machine and show a long URL instead of a name).
 
 | Thing | Write | Not |
 |---|---|---|
-| A file | `[app.py](C:\Users\alex\proj\src\app.py)`: its name, linked to its full path (or the path in backticks when the path itself is the point) | `[app.py](http://127.0.0.1:8765/fileview?path=C%3A%5C...)`, `http://localhost:8765/fileview?...` |
+| A file | `[app.py](C:\Users\alex\proj\src\app.py)`, `[app.py](/home/alex/proj/src/app.py)`: its name, linked to its absolute path | `app.py`, `src/app.py`, `` `src/app.py` ``, `[app.py](http://127.0.0.1:8765/fileview?path=C%3A%5C...)` |
+| A folder | `[Documents](/Users/alex/Projects/Shop/Documents/)`, `[src](C:\Users\alex\proj\src\)` | `Documents/`, `` `src/` `` |
+| A picture or page | `[Screen layout](/home/alex/proj/Documents/#12 Screen layout.png)` | `Documents/#12 Screen layout.png` |
 | A document | `[#26 Where our tokens go](C:\Users\alex\proj\Documents\#26 Where our tokens go.html)` | `http://localhost:8765/fileview?path=<URL-encoded path>` |
 | A task | `#18` in your project, `ED-18` across projects | `room-1a2b3c4d`, `/?task=room-…` |
 | A point | `P123` | "the CEO's comment from this morning" |
@@ -620,7 +639,7 @@ through the tools.
   their current text. Merge your change into *their* text — their edit wins
   where you disagree — and try again with the new version.
 - Only your own project's roadmap can be written; any project's can be read.
-  Mention files by path (`docs/plan.md`) and they open in the file view.
+  Name a file as `[plan.md](/abs/path/docs/plan.md)` and it opens in the file view.
 
 ## Points from the product owner
 

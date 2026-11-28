@@ -180,7 +180,7 @@ _ALL_TOOLS = [
             "properties": {
                 "kind": {"type": "string", "enum": list(REPORT_KINDS),
                          "description": "completed | blocked | question | update."},
-                "text": {"type": "string", "description": "The report, Markdown."},
+                "text": {"type": "string", "description": "The report, Markdown. Name a file or folder as [its name](its absolute path)."},
                 "state": {"type": "string",
                           "description": "Where the task stands against its goal, 1-2 short "
                                          "sentences (<=250 chars), shown on its board card. "
@@ -234,7 +234,7 @@ _ALL_TOOLS = [
             "context": {"type": "string", "minLength": 1,
                         "description": "Required. The explanation of the question, Markdown, shown above "
                                        "the cards in the same balloon (#430): what it is about and why it "
-                                       "is asked. Your turn's other text is not where it goes."},
+                                       "is asked. Your turn's other text is not where it goes. Name a file or folder as [its name](its absolute path)."},
             "forCeo": {"type": "boolean", "description": "A task with a PO: send the card to the user instead."},
             "points": {"type": "array", "maxItems": 10, "items": {"type": "string", "pattern": "^P[0-9]+[a-z]?$"},
                        "description": "The user's points the cards are about (e.g. [\"P12\"]): a card about "
@@ -717,7 +717,7 @@ PO_MESSAGE_TOOLS = [
                 "projectId": {"type": "string",
                               "description": "The project whose PO you write to: its id or "
                                              "name. Leave it out with replyTo."},
-                "text": {"type": "string", "description": "The whole message, Markdown."},
+                "text": {"type": "string", "description": "The whole message, Markdown. Name a file or folder as [its name](its absolute path)."},
                 "kind": {"type": "string", "enum": list(PO_MESSAGE_KINDS),
                          "description": "bug | question | answer | info. Default: question, "
                                         "or answer with replyTo."},

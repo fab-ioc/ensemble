@@ -1368,6 +1368,9 @@
      a quiet chip, still a link; the file view says what is (not) there. */
   a.file-link.file-missing, .msg .text.md a.file-link.file-missing { color:var(--fg-muted); text-decoration:underline dotted; text-underline-offset:2px; }
   a.file-link.file-missing::after { content:'not written yet'; display:inline-block; margin-left:var(--s-100); padding:0 var(--s-100); border:1px dashed var(--border-strong); border-radius:var(--r-100); font:400 var(--fs-100)/16px var(--font-sans); color:var(--fg-muted); white-space:nowrap; text-decoration:none; vertical-align:baseline; }
+  /* A soft link (#433): a place written in a form never linked before reads as
+     plain text until the hub says it is there (static/filelinks.js: file-found). */
+  body a.file-link.file-soft:not(.file-found) { color:inherit; text-decoration:none; pointer-events:none; cursor:text; }
   .msg .text.md hr { border:0; border-top:1px solid var(--border); margin:8px 0; }
   .msg .text.md table { border-collapse:collapse; margin:8px 0; display:block; overflow-x:auto; max-width:100%; }
   .msg .text.md th, .msg .text.md td { border:1px solid var(--border); padding:4px 8px; text-align:left; vertical-align:top; }
@@ -2354,6 +2357,22 @@ const notOneName = t => /[*?<>|"]/.test(t) || /\.[A-Za-z]\w{0,7} \S/.test(t);
 const BARE_EXT = 'md|txt|py|js|ts|tsx|jsx|html|css|json|yaml|yml|toml|csv|pdf|sh|ps1|sql|xml|log|ini|cfg'
   + '|png|jpg|jpeg|gif|webp|svg|bmp|PNG|JPG|JPEG|GIF|WEBP|SVG|BMP';
 const BARE_RE = new RegExp('^\\w[\\w-]*\\.(?:' + BARE_EXT + ')$');
+// A soft link (#433): a place written in a form the rules above never linked
+// (a folder, a name with spaces in running text, "#9 Plan.md", an office
+// file) is drawn as a link that reads as plain text until the hub says the
+// place is there (static/filelinks.js adds file-found); one the hub does not
+// have stays plain text: never a dead link, never a "not written yet" chip.
+const BARE_EXT_SOFT = 'docx|xlsx|pptx|doc|xls|ppt|odt|ods|odp|rtf|tsv|jsonl|ipynb|epub|zip'
+  + '|DOCX|XLSX|PPTX|DOC|XLS|PPT|PDF|ZIP|MD|TXT|HTML|CSV';
+const SOFT_EXT_RE = new RegExp('\\.(?:' + BARE_EXT + '|' + BARE_EXT_SOFT + ')$');
+// A link target or code span that may name a place: absolute, or relative
+// with a separator (its first folder without a space, so a shell command
+// ending in a path stays code), or a name with a file's extension; never a
+// flag ("--out.txt") or a ratio ("0.45/0.53").
+const softPlace = t => !!t && t.length > 1 && t.length <= 400 && !/[<>|"*?\n\t]|\s{2}|^[\s-]|\s$/.test(t) && !notOneName(t)
+  && (!/\.\w{1,8}$/.test(t) || fileExtOk(t)) && (ABS_PATH_RE.test(t) || (/[\\\/]/.test(t) ? !/\s/.test(t.split(/[\\\/]/)[0]) : SOFT_EXT_RE.test(t)));
+// A name with spaces and a file's extension ("#9 Screen layout.md"), as a link's target.
+const SPACED_NAME_RE = new RegExp("^[\\w#][\\w#&(),'. -]*\\.(?:" + BARE_EXT + ')$');
 // A code span stands alone, so a relative path there may hold a folder or
 // file name with spaces ("Documents/Screen layout.md", "Documents/#118 Fix
 // the thing.md") and a wider set of punctuation (#, &, (), ', , — the same
@@ -2451,7 +2470,7 @@ function trimUrlTail(u) {
 }
 const A_NEW = ' target="_blank" rel="noopener"';
 const taskLinkHtml = (id, text) => `<a href="/?task=${id}" data-task="${id}"${A_NEW} class="task-link">${text}</a>`;
-const fileLinkHtml = (p, text, line, title) => `<a href="${fileHref(p, line)}"${A_NEW} class="file-link"${title ? ` title="${esc(title)}"` : ''}>${text}</a>`;
+const fileLinkHtml = (p, text, line, title, soft) => `<a href="${fileHref(p, line)}"${A_NEW} class="file-link${soft ? ' file-soft" tabindex="-1' : ''}"${title ? ` title="${esc(title)}"` : ''}>${text}</a>`;
 // A link to a chat message or card (/session?room=room-…&msg=…[&part=…]) is
 // Ensemble's own on any address of this hub (hubOrigin: its port on 127.0.0.1, localhost,
 // the tailnet name, this page's host): it opens in place, in the chat that
@@ -2546,8 +2565,9 @@ const fileName = p => (p || '').split(/[\\\/]/).pop();
 // what this occurrence of it stands for (null when nothing, so the caller
 // leaves the text alone), a picture as its thumbnail with the link under it,
 // any other file as its link. `kind` is 'code' for a code span, else 'text':
-// the render meets each kind in the order pathAbbrevs read it.
-function fileRefHtml(p, text, line, kind, title) {
+// the render meets each kind in the order pathAbbrevs read it. soft: a soft
+// link (above), plain text until the hub has the place.
+function fileRefHtml(p, text, line, kind, title, soft) {
   let full = p;
   if (ABBREV_RE.test(p)) {
     const q = PATH_ABBR && PATH_ABBR[kind === 'code' ? 'code' : 'text'].get(p);
@@ -2560,11 +2580,11 @@ function fileRefHtml(p, text, line, kind, title) {
     const f = PATH_ABBR.names.get(p.toLowerCase());
     if (f) { full = f; title = title || f.slice(0, f.length - p.length).replace(/[\\\/]$/, ''); }
   }
-  if (line || !IMAGE_PATH_RE.test(full)) return fileLinkHtml(full, text, line, title);
+  if (line || !IMAGE_PATH_RE.test(full)) return fileLinkHtml(full, text, line, title, soft);
   const u = fileSrc(full), name = fileName(full);
-  if (THUMB_GONE.has(u)) return fileLinkHtml(full, text, 0, 'not found on the hub');
+  if (THUMB_GONE.has(u)) return fileLinkHtml(full, text, 0, soft ? title : 'not found on the hub', soft);
   return `<span class="path-img"><a class="att-thumb" href="${u}"${A_NEW} title="${esc(name)}">`
-    + `<img src="${u}" alt="${esc(name)}" loading="lazy" onerror="pathThumbGone(this)"></a>${fileLinkHtml(full, text, 0, title)}</span>`;
+    + `<img src="${u}" alt="${esc(name)}" loading="lazy" onerror="pathThumbGone(this)"></a>${fileLinkHtml(full, text, 0, title, soft)}</span>`;
 }
 // The hub had no picture for that request (the path, in that task): the
 // link stays, titled so, and the next render of it draws the link alone.
@@ -2573,7 +2593,7 @@ function pathThumbGone(img) {
   if (!wrap) return;
   THUMB_GONE.add(img.getAttribute('src') || '');
   const a = wrap.querySelector('a.file-link'), thumb = wrap.querySelector('a.att-thumb');
-  if (a) a.title = 'not found on the hub';
+  if (a && !a.classList.contains('file-soft')) a.title = 'not found on the hub';
   if (thumb) thumb.remove();
 }
 // named: text is the thing's name, not the URL, so a file's path is its title.
@@ -2589,7 +2609,9 @@ function urlLinkHtml(raw, text, kind, named) {
 // page, a task, a file or a folder. Anything else stays as it was written.
 function mdLinkHtml(m, txt, target) {
   let t = unescPath(target.trim().replace(/^&lt;([\s\S]*)&gt;$/, '$1'));
-  if (/^#/.test(t) || /^mailto:/i.test(t)) return `<a href="${esc(t)}">${txt}</a>`;
+  // "#9 Plan.md" is a file named after its task's number, not an anchor: a #
+  // target with a space, a separator or a file's extension (#433).
+  if ((/^#/.test(t) && !/[\s\\\/]/.test(t) && !SOFT_EXT_RE.test(t)) || /^mailto:/i.test(t)) return `<a href="${esc(t)}">${txt}</a>`;
   // "localhost:8765/session?…" written without its http://.
   if (/^[\w.-]+:\d+\/(?:session|fileview)\?/.test(t)) t = 'http://' + t;
   if (/^(?:https?|file):/i.test(t)) {
@@ -2604,7 +2626,12 @@ function mdLinkHtml(m, txt, target) {
   // A Markdown link target is a URL: %23 is #, %20 a space.
   let p = t;
   if (/%[0-9A-Fa-f]{2}/.test(p)) { try { p = decodeURIComponent(p); } catch (e) {} }
-  if (looksFilePath(p) || looksDirPath(p)) { const s = splitLine(p); return fileRefHtml(s.path, txt, s.line, 'text') ?? m; }
+  const s = splitLine(p);
+  // A target with spaces ("Documents/#9 Screen layout.md") is a file as much as one without.
+  if (looksFilePath(p) || looksDirPath(p)) return fileRefHtml(s.path, txt, s.line, 'text') ?? m;
+  // Linked only since #433: a link once the hub has the place, else its text.
+  if (looksFilePath(p, true) || (SPACED_NAME_RE.test(s.path) && !notOneName(s.path)) || softPlace(s.path))
+    return fileRefHtml(s.path, txt, s.line, 'text', '', true) ?? m;
   return m;
 }
 // A `code span` that names a place is a link too, and still reads as code.
@@ -2622,7 +2649,9 @@ function codeSpanHtml(body) {
     const nm = hubUrlName(t);
     return urlLinkHtml(t, nm != null ? `<code class="ic">${esc(nm)}</code>` : code, 'code', nm != null);
   }
-  if (looksFilePath(t, true) || looksDirPath(t)) { const s = splitLine(t); return fileRefHtml(s.path, code, s.line, 'code') ?? code; }
+  const s = splitLine(t);
+  if (looksFilePath(t, true) || looksDirPath(t)) return fileRefHtml(s.path, code, s.line, 'code') ?? code;
+  if (softPlace(s.path)) return fileRefHtml(s.path, code, s.line, 'code', '', true) ?? code;
   return code;
 }
 // Running text, already escaped, in one pass so nothing is linked twice. The
@@ -2643,30 +2672,54 @@ function codeSpanHtml(body) {
 // text stops at a [, and a path starts at a ( or _ only where that character
 // could not be inside the path itself; otherwise a 50,000-character line of
 // [ or (/ took seconds, one scan to its end per opener.
-const winPathSure = p => p.split(/[\\\/]/).every(s => !s.includes(' ') || (/^[A-Z0-9]/.test(s) && s.split(' ').length <= 4));
+// #433: a name may start with # too ("Documents\#9 Plan.md"). What the rules
+// before #433 did not link is a soft link (above): a macOS/Linux or relative
+// path with a folder or file name of words ("Ensemble Dashboard/#9 Plan.md":
+// the same rule as for Windows, its relative first folder without a space),
+// a folder (C:\x\y, /home/x/y, ~/x, docs/ or Documents/Plans or #9 x/y: a
+// relative one only with a #, a trailing separator, a capital or a dot), and
+// a bare name of an office file, a notebook or an archive.
+const winPathSure = p => p.split(/[\\\/]/).every(s => !s.includes(' ') || (/^[A-Z0-9#]/.test(s) && s.split(' ').length <= 4));
 const LINK_RE = (() => {
   const c = String.raw`(?:[^\s"'<>|?*,;:)\]\\\/&]|&amp;)`, f = String.raw`(?:[^\s"'<>|?*,;:)\]\\\/&.]|&amp;)`;
   const dir = `${c}+(?: (?!(?:\\.\\.\\.|\\u2026)[\\\\\\/])${c}+)*`, file = `(?:${f}+ )*${c}*\\.\\w{1,8}`;
   const line = String.raw`(?::\d+(?::\d+)?)?`, pre = String.raw`(^|[\s(*_])`;
   const nixCh = String.raw`(?:[^\s"'<>|?*,;)\]&]|&amp;)`;
+  // #433: a name of up to four words (sp, a folder's; spLast, a file's, its
+  // last word holding the extension), the first starting with a capital, a
+  // digit or #, no word but the last holding a dot; an unspaced segment of a
+  // macOS/Linux path (nixU), of a relative path (rel), of a Windows path (c).
+  const w = String.raw`(?:[\w#+@-]|&amp;)`, sp = `[A-Z0-9#]${w}*(?: ${w}+){1,3}`;
+  const spLast = `[A-Z0-9#]${w}*(?: ${w}+){0,2} ${w}+\\.\\w{1,8}`;
+  const nixU = String.raw`(?:[^\s"'<>|?*,;)\]&\\\/]|&amp;)`, rel = String.raw`[\w.#-]`;
+  const relPre = String.raw`(?:\.\.?[\\\/]|…[\\\/])?`;
   return new RegExp([
     String.raw`\[([^\[\]\n]+)\]\(((?:[^()\n]|\([^()\n]*\))+)\)`,
     pre + String.raw`((?:https?|file):\/\/[^\s<*]+)`,
-    pre + String.raw`((?:[A-Za-z]:[\\\/]|\\\\)(?:` + dir + String.raw`[\\\/])*` + file + line + String.raw`)(?![\w\\\/-])`,
-    String.raw`(^|[\s*]|(?<!` + nixCh + String.raw`)[(_])((?:~\/|\/)` + nixCh + String.raw`*\.\w{1,8}` + line + String.raw`)(?![\w\\\/-])`,
-    String.raw`(^|[\s(*]|(?<![\w.\\\/-])_)((?:\.\.?[\\\/]|…[\\\/])?(?:[\w.-]+[\\\/])+[\w.-]+\.\w{1,8}` + line
-      + String.raw`|\w[\w-]*\.(?:` + BARE_EXT + String.raw`)` + line + String.raw`)(?=[\s.,;:)\]]|$)`,
+    pre + String.raw`((?:[A-Za-z]:[\\\/]|\\\\)(?:` + dir + String.raw`[\\\/])*` + file + line
+      + String.raw`|(?:[A-Za-z]:[\\\/]|\\\\(?=\w))(?:(?:` + sp + '|' + c + String.raw`+)[\\\/])*(?:` + sp + '|' + c + String.raw`+)?)(?![\w\\\/-])`,
+    String.raw`(^|[\s*]|(?<!` + nixCh + String.raw`)[(_])((?:~\/|\/)(?:(?:` + sp + '|' + nixU + String.raw`+)\/)*(?:` + spLast + '|' + nixU + String.raw`*\.\w{1,8})` + line
+      + String.raw`|(?:~\/|\/)` + nixCh + String.raw`*\.\w{1,8}` + line
+      + String.raw`|(?:~|\/(?:` + sp + '|' + nixU + String.raw`+))(?:\/(?:` + sp + '|' + nixU + String.raw`+))*\/?)(?![\w\\\/-])`,
+    String.raw`(^|[\s(*]|(?<![\w.#\\\/-])_)(` + relPre + rel + String.raw`+[\\\/](?:(?:` + sp + '|' + rel + String.raw`+)[\\\/])*(?:` + spLast + '|' + rel + String.raw`+\.\w{1,8})` + line
+      + '|' + relPre + rel + String.raw`+[\\\/](?:(?:` + sp + '|' + rel + String.raw`+)[\\\/])*(?:` + sp + '|' + rel + String.raw`+)?`
+      + String.raw`|\w[\w-]*\.(?:` + BARE_EXT + '|' + BARE_EXT_SOFT + String.raw`)` + line + String.raw`)(?=[\s.,;:)\]]|$)`,
     String.raw`\b(room-[0-9a-f]{8})\b`,
   ].join('|'), 'g');
 })();
+// The relative paths, and the bare names, linked before #433.
+const OLD_REL_RE = new RegExp(String.raw`^(?:(?:\.\.?[\\\/]|…[\\\/])?(?:[\w.-]+[\\\/])+[\w.-]+\.\w{1,8}|\w[\w-]*\.(?:` + BARE_EXT + String.raw`))(?::\d+(?::\d+)?)?$`);
 const LINK_A = String.fromCharCode(0xE002), LINK_Z = String.fromCharCode(0xE003);
 const LINK_MARK_RE = new RegExp('[' + LINK_A + LINK_Z + ']', 'g');
 function linkify(t, keep) {
   const put = h => LINK_A + (keep.push(h) - 1) + LINK_Z;
+  let done = 0;     // where the last match ended: the words before a path are read from there
   // The text's own marker characters, if it has any, are parked too, so what
   // unlinkify puts back is only ever what this call parked.
   t = t.replace(LINK_MARK_RE, put);
-  return t.replace(LINK_RE, (m, mdTxt, mdUrl, p1, url, p2, win, p3, nix, p4, rel, room) => {
+  return t.replace(LINK_RE, (m, mdTxt, mdUrl, p1, url, p2, win, p3, nix, p4, rel, room, at, str) => {
+    const before = str.slice(done, at);
+    done = at + m.length;
     if (mdTxt != null) { const h = mdLinkHtml(m, mdTxt, mdUrl); return h === m ? m : put(h); }
     if (url != null) {
       // A hub URL written bare shows the thing's name, not the address (#296).
@@ -2674,12 +2727,85 @@ function linkify(t, keep) {
       return p1 + put(urlLinkHtml(u, nm != null ? esc(nm) : u, 'text', nm != null)) + tail;
     }
     if (room != null) return put(taskLinkHtml(room, room));
-    if (win != null && !winPathSure(win)) return m;
-    const pth = win ?? nix ?? rel, s = splitLine(unescPath(pth));
-    if (!fileExtOk(s.path)) return m;
-    const h = fileRefHtml(s.path, pth, s.line, 'text');
-    return h ? (p2 ?? p3 ?? p4) + put(h) : m;
+    let pth = win ?? nix ?? rel, s = splitLine(unescPath(pth)), tail = '', soft = false, alts = [];
+    if (/\.\w{1,8}$/.test(s.path)) {
+      if (!fileExtOk(s.path) || (win != null && !winPathSure(win))) return m;
+      // Linked before #433 (a Windows path, a macOS/Linux one without spaces,
+      // the old relative forms): a link as ever; anything else is soft.
+      soft = win != null ? /(?:^|[\\\/])#[^\\\/]* /.test(win) : nix != null ? nix.includes(' ') : !OLD_REL_RE.test(rel);
+    } else {
+      // A folder, never its sentence's full stop.
+      tail = (pth.match(/[.:!]+$/) || [''])[0];
+      pth = pth.slice(0, pth.length - tail.length);
+      s = { path: unescPath(pth), line: 0 };
+      if (!placeDirOk(s.path, rel != null)) return m;
+      soft = true;
+      alts = folderAlts(pth);
+    }
+    let h = fileRefHtml(s.path, pth, s.line, 'text', '', soft);
+    if (rel != null && /^\s$/.test(p4)) alts = withLeads(before + p4, pth, alts);
+    if (h && alts.length) h = h.replace(/(<a href="[^"]*")(?=[^>]*class="file-link)/, `$1 data-alts="${esc(JSON.stringify(alts))}"`);
+    return h ? (p2 ?? p3 ?? p4) + put(h) + tail : m;
   });
+}
+// A folder whose last name has spaces, without a separator after it, may end
+// at any of its words ("Documents/#430 Plans are ready"): its shorter
+// readings, longest first, each [its path, its length on the page]. The page
+// shows the longest; static/filelinks.js tries the next one when the hub has
+// not got it, and leaves the words after the one it has as text.
+const pageLen = s => s.replace(/&(?:amp|lt|gt|quot|#39);/g, '_').length;
+function folderAlts(pth) {
+  const last = pth.split(/[\\\/]/).pop();
+  if (!last.includes(' ')) return [];
+  const out = [];
+  for (let q = pth; q.length > pth.length - last.length;) {
+    const i = q.lastIndexOf(' ');
+    if (i < pth.length - last.length) break;
+    q = q.slice(0, i);
+    out.push([unescPath(q), 0, pageLen(q)]);
+  }
+  return out;
+}
+// A relative path or a bare name drawn after words ("My Folder/notes/", "#433
+// Clickable links.md", "Screen layout.png") may begin at any of the three
+// words before it that starts with a capital, a digit or #: each such reading,
+// with each end the drawn link has (alts: [path, words taken from the text
+// before it, end in its text]), longest first. The link stays what it is;
+// static/filelinks.js makes it the longest reading the hub has.
+const LEADS_RE = /(?:^|[\s(*])((?:(?:[\w#+@-]|&amp;)+ ){1,3})$/;
+function withLeads(before, pth, alts) {
+  const m = before.match(LEADS_RE);
+  if (!m) return alts;
+  const ws = m[1].split(' ').filter(Boolean), ends = [[pth, pageLen(pth)], ...alts.map(([, , e]) => [null, e])];
+  const out = [...alts];
+  for (let k = 1; k <= ws.length; k++) {
+    const lead = ws.slice(-k).join(' ') + ' ';
+    if (!/^[A-Z0-9#]/.test(lead)) continue;
+    for (const [, e] of ends) {
+      out.push([unescPath(lead + cutAt(pth, e)), pageLen(lead), e]);
+    }
+  }
+  return out.sort((a, b) => (b[1] + b[2]) - (a[1] + a[2]));
+}
+// The page-text prefix of n characters of pth (an entity is one character).
+function cutAt(pth, n) {
+  let i = 0, c = 0;
+  while (i < pth.length && c < n) {
+    const m = pth.slice(i).match(/^&(?:amp|lt|gt|quot|#39);/);
+    i += m ? m[0].length : 1; c++;
+  }
+  return pth.slice(0, i);
+}
+// A folder in running text: a relative one with a #, a trailing separator, a
+// capital or a dot first ("and/or" and "1/2" are words); ~/x; a macOS/Linux
+// one of two folders or more, or with a trailing separator; a Windows one
+// below its drive. An abbreviation ("…/x") always: pathAbbrevs counted it.
+function placeDirOk(p, relative) {
+  if (ABBREV_RE.test(p)) return true;
+  if (relative) return /#|[\\\/]$|^[A-Z.]/.test(p);
+  if (/^~\/./.test(p)) return true;
+  if (/^(?:[A-Za-z]:[\\\/]|\\\\)/.test(p)) return /^(?:[A-Za-z]:[\\\/]|\\\\)[^\\\/]/.test(p);
+  return /^\/[^\/]+\/./.test(p) || /^\/[^\/]+\/$/.test(p);
 }
 const unlinkify = (t, keep) => t.replace(new RegExp(LINK_A + '(\\d+)' + LINK_Z, 'g'), (m, i) => keep[+i] ?? m);
 // A full path's folders, lowercased for the index: a file's folders, or all
@@ -2732,6 +2858,8 @@ function pathAbbrevs(text) {
         : url != null ? trimUrlTail(url)[0] : win != null ? (winPathSure(win) ? win : '') : (nix ?? rel ?? '');
       if (/^(?:https?|file):/i.test(p)) p = /^file:/i.test(p) ? (urlTarget(p).file || '') : '';
       p = splitLine(unescPath(p).trim()).path;
+      // A folder in running text, as linkify takes it: without its full stop.
+      if (code == null && mdTxt == null && url == null && !/\.\w{1,8}$/.test(p)) p = p.replace(/[.:!]+$/, '');
       if (!p) continue;
       if (ABBREV_RE.test(p)) {
         const q = out[code != null ? 'code' : 'text'];

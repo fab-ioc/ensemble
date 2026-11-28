@@ -43,6 +43,7 @@ import stat
 import subprocess
 import feedback
 import file_refs
+import link_check
 import file_owner
 import sys
 import tempfile
@@ -3477,10 +3478,14 @@ OWNER_OUTPUT_NOTE = (
 
 # Links are clickable names, never addresses (P358): the CEO never sees a URL.
 LINK_NOTE = (
-    "Link an Ensemble thing (a card, a message, a task, a file, a session) only as a "
+    "Link an Ensemble thing (a card, a message, a task, a file, a folder, a picture, a document, "
+    "a page, a session) only as a "
     "clickable name, never as an address, bare or in a code span: a task as #18, a file "
     "as [its name](its full path), a card or a message as [its words, short](its "
-    "reference). A reference a tool returns is for building such a link; never show it "
+    "reference). Every file or folder you name, in any text the user can read, is "
+    "[its name](its absolute path): find the absolute path before you write it; a bare "
+    "name, a relative path or a path in a code span is not a link. "
+    "A reference a tool returns is for building such a link; never show it "
     "bare, and never type or edit one by hand. Never send a message that only points "
     "at a card you just posted: the card is already in the Inbox.")
 
@@ -3498,8 +3503,7 @@ ASK_NOTE = (
     "card's Copy link), never after Ask: (that line asks nothing). "
     "A card stays open until it is answered or closed: never ask an open "
     "question again (not after a restart or a rotation, not when answering "
-    "a related point); to change one, have it closed first, then ask the new question. "
-    + LINK_NOTE)
+    "a related point); to change one, have it closed first, then ask the new question.")
 
 # How a task is named in text (P166): its number, never its room id.
 TASK_NAME_NOTE = (
@@ -3534,7 +3538,8 @@ VISUAL_FIRST_NOTE = (
     "Every plan, without being asked, comes with such a page showing the work (the steps or tasks, "
     "their order and dependencies, what is decided and what is open); Markdown may accompany it, "
     "never replace it. A PO's plan of tasks gets it from the hub when the plan picture is on: "
-    "`PO Plan.html`, drawn from the board; link that by its name. Link a page by its name like any document. A UI choice for the CEO is "
+    "`PO Plan.html`, drawn from the board; link that by its name. Link a page, like any document, as "
+    "[its name](its absolute path). A UI choice for the CEO is "
     "still ONE side-by-side PNG on the ask card.")
 
 # Where a task's knowledge goes (project_docs): the project's Documents folder.
@@ -3542,7 +3547,7 @@ DOCUMENTS_NOTE = (
     "Your deliverable reports and design-decision notes go in the project's Documents folder "
     "(`project.documentsDir` in ensemble_get_task) as `#<task no> <short title>.html` (a page, for "
     "anything that can be shown) or `.md` (text), or a folder `#<task no> <title>/` for several "
-    "files; link them in ensemble_report. TASK-HANDOVER.md and other working notes stay in your "
+    "files; link them in ensemble_report, each as [its name](its absolute path). TASK-HANDOVER.md and other working notes stay in your "
     "task folder. " + VISUAL_FIRST_NOTE + " " + NO_WEB_ARTIFACT_NOTE)
 
 # GitHub issue 17 (ED-216): a denial by Claude's own safety check reads "denied
@@ -3557,7 +3562,7 @@ SAFETY_CHECK_NOTE = (
 SOLO_REPORT_NOTE = (
     f"\n\n---\n{OWNER_OUTPUT_NOTE} When you finish this task, or get blocked and need help, report it "
     "with the ensemble_report tool (kind completed | blocked | question) — it "
-    f"reaches the project's PO, who otherwise cannot see your reply. {SAFETY_CHECK_NOTE} {ASK_NOTE} {TASK_NAME_NOTE} {POINTS_NOTE} {DOCUMENTS_NOTE}")
+    f"reaches the project's PO, who otherwise cannot see your reply. {SAFETY_CHECK_NOTE} {ASK_NOTE} {LINK_NOTE} {TASK_NAME_NOTE} {POINTS_NOTE} {DOCUMENTS_NOTE}")
 
 # RTK is deliberately launch-scoped.  Never run ``rtk init -g`` here: that
 # edits user-level Claude/Codex files and would also affect PO rooms and the
@@ -6380,6 +6385,7 @@ def collab_briefing(ident: str, role: str, teammates: list, task: str,
          "own task to In review; project POs and planners also get board "
          "administration. The 'ensemble' skill explains the opt-ins and limits."),
         ASK_NOTE,
+        LINK_NOTE,
         TASK_NAME_NOTE,
         ("A message to everyone wakes only the task's owner (the engineer); to "
          "wake another specialist, address it or @mention it. Mention a reviewer "
@@ -7014,7 +7020,7 @@ You are a fresh session started for this ONE review. You remember nothing of ear
 
 Do NOT design or implement — the engineer builds, you review. Check the work against the spec and the question, hunt for bugs, edge cases, risks and gaps, and verify claims by reading the actual code or running tests.
 
-{ASK_NOTE} {TASK_NAME_NOTE}
+{ASK_NOTE} {LINK_NOTE} {TASK_NAME_NOTE}
 
 ## What you were asked
 From {who}:
@@ -7816,7 +7822,7 @@ def made_po_first_input(project: dict, brought: dict | None = None) -> str:
         f"Ensemble ({'a documents project' if docs else 'a code project'}); "
         f"{operator_name()} made you its PO from the dashboard because this conversation "
         f"already holds the project's context. From now on the project's tasks report to you "
-        f"and you have the ensemble_* tools of a PO. {ASK_NOTE} {TASK_NAME_NOTE} {files}"
+        f"and you have the ensemble_* tools of a PO. {ASK_NOTE} {LINK_NOTE} {TASK_NAME_NOTE} {files}"
         f"1) Read the `ensemble` skill, section \"Running a project as its PO\""
         f"{' and its paragraph on a documents project’s PO' if docs else ''}. "
         f"2) From what you already know, write {hp} (your handover: what the project is, "
@@ -7839,7 +7845,7 @@ def made_po_fresh_input(project: dict) -> str:
         f"{MADE_PO_PREFIX}{po_usage.head()} | You are the new product owner (PO) of the project '{name}' in Ensemble "
         f"({'a documents project' if docs else 'a code project'}), started fresh by {operator_name()} "
         f"from the dashboard: this conversation has no history yet. From now on the project's tasks "
-        f"report to you and you have the ensemble_* tools of a PO. {ASK_NOTE} {TASK_NAME_NOTE} "
+        f"report to you and you have the ensemble_* tools of a PO. {ASK_NOTE} {LINK_NOTE} {TASK_NAME_NOTE} "
         f"1) Read the `ensemble` skill, section \"Running a project as its PO\""
         f"{' and its paragraph on a documents project’s PO' if docs else ''}. "
         f"2) Learn the project from its folder {where}: read what is there (a README, notes, "
@@ -10049,6 +10055,64 @@ def _file_ref_places(room_id: str = "", cwd: str = "") -> tuple[list[str], list[
     return bases, search
 
 
+# The text each tool posts for the person to read, by tool (GitHub issue 74):
+# checked for files and folders named without a link once it is posted.
+LINK_CHECKED = {
+    "chat_send": lambda a: [a.get("message")],
+    "ensemble_report": lambda a: [a.get("text")],
+    "ensemble_message_po": lambda a: [a.get("text")],
+    "ensemble_ask": lambda a: [a.get("context")] + [
+        x for q in (a.get("questions") if isinstance(a.get("questions"), list) else [])
+        if isinstance(q, dict)
+        for x in [q.get("question")] + [y for o in (q.get("options") if isinstance(q.get("options"), list) else [])
+                                        for y in ([o.get("label"), o.get("detail")] if isinstance(o, dict) else [])]],
+}
+
+
+def unlinked_mentions(text: str, room_id: str = "") -> list[dict]:
+    """link_check.unlinked over the writer's room folders: the files and
+    folders ``text`` names that exist and are not written as a link."""
+    bases, search = _file_ref_places(room_id, "")
+    ok = _readable_check()
+    budget = file_refs.Budget()
+    search = [x for x in search if ok(x)]
+
+    def resolve(raw: str):
+        return file_refs.resolve(raw, bases, dirs=True, search=search, budget=budget)[0]
+    return link_check.unlinked(text, resolve)
+
+
+def _ask_not_posted(answer: str) -> bool:
+    """An ensemble_ask answer that posted nothing: a retry of the same call
+    (it answers with the first call's result) or questions an open card
+    already asks."""
+    try:
+        a = json.loads(answer)
+    except (TypeError, ValueError):
+        return False
+    return isinstance(a, dict) and (a.get("repeated") is True or a.get("posted") is False)
+
+
+def link_check_content(name: str, args: dict, room_id: str, answer: str = "") -> list[dict]:
+    """The MCP content item that warns of the unlinked mentions in what a
+    tool just posted ([] when there are none, or the tool posts nothing to
+    check). The text was posted as written: it is never refused or changed.
+    ``answer`` is the tool's own answer: an ensemble_ask that posted nothing
+    gets no note (it would say "posted as you wrote it")."""
+    pick = LINK_CHECKED.get(name)
+    if pick is None or not isinstance(args, dict):
+        return []
+    if name == "ensemble_ask" and _ask_not_posted(answer):
+        return []
+    try:
+        text = "\n\n".join(x for x in pick(args) if isinstance(x, str) and x.strip())
+        note = link_check.warning(unlinked_mentions(text, room_id)) if text else ""
+    except Exception as e:      # noqa: BLE001 - a check never fails a send
+        print(f"[link-check] {room_id}: {e!r}", flush=True)
+        return []
+    return [{"type": "text", "text": note}] if note else []
+
+
 def resolve_file_ref_how(raw: str, room_id: str = "", cwd: str = "",
                          dirs: bool = False) -> tuple[Path | None, str]:
     """file_refs.resolve over the room's folders: (the file, how it was
@@ -10886,6 +10950,21 @@ def _text_cap(raw: bytes, line: int) -> int:
             else:
                 lo = mid + 1
     return min(workspace_search.FILE_BYTES_MAX, max(_TEXT_MAX, hi + _TEXT_AFTER_LINE))
+
+
+def dir_of_ref(path: str, room_id: str = "", cwd: str = "") -> str:
+    """#433: the folder a link names. An absolute or home path is the path as
+    written; a relative one ("Documents/#9 Plans/") is the folder the hub's one
+    resolver finds for it in the link's room, or the path as written (refused
+    by list_dir) when it finds no folder there."""
+    if not path or re.match(r"^(?:[A-Za-z]:[\\/]|\\\\|~|/)", path):
+        return path
+    try:
+        hit = resolve_file_ref_how(path.rstrip("\\/") or path, room_id, cwd, dirs=True)[0]
+    except Exception as e:      # noqa: BLE001 — a link that names nothing lists nothing
+        print(f"[dir] {path!r}: not resolved: {e!r}", flush=True)
+        return path
+    return str(hit) if hit is not None and hit.is_dir() else path
 
 
 def list_dir(path: str) -> tuple[int, dict]:
@@ -20097,7 +20176,8 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/dir":
             q = parse_qs(u.query)
             path = (q.get("path", [""])[0] or "").strip()
-            self._send_json(*list_dir(path))
+            self._send_json(*list_dir(dir_of_ref(path, (q.get("room", [""])[0] or "").strip(),
+                                                 (q.get("cwd", [""])[0] or "").strip())))
             return
         if p == "/api/ws/file":
             # JSON text read with size cap + binary detection (workspace tools).
@@ -23471,8 +23551,10 @@ class Handler(BaseHTTPRequestHandler):
             text, is_err = ensemble_tools.call(name, args, room_id, identity, self)
             if name == "ensemble_report" and not is_err:
                 _history_nudge(room_id, "report")
-            return ok({"content": [{"type": "text", "text": text}],
-                       "isError": is_err})
+            content = [{"type": "text", "text": text}]
+            if not is_err:
+                content += link_check_content(name, args, room_id, text)
+            return ok({"content": content, "isError": is_err})
         if name == "chat_send":
             text = (args.get("message") or "").strip()
             to = (args.get("to") or "").strip()
@@ -23527,7 +23609,7 @@ class Handler(BaseHTTPRequestHandler):
                          "the task's owner. To wake a reviewer or another "
                          "specialist, address it with `to` or @mention it.")
             note += repeated
-            return ok({"content": [{"type": "text", "text": note}],
+            return ok({"content": [{"type": "text", "text": note}] + link_check_content(name, args, room_id),
                        "isError": False})
         if name == "chat_read":
             msgs = chatroom.read_new_for(room_id, identity)
