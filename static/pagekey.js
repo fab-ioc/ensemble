@@ -5,8 +5,13 @@
 // the hub and its question stayed in Needs you for days (GitHub issue 13,
 // point P157). Refused for that, the page loads /ui-key in a hidden frame of
 // its own, which hands today's key over, and sends the write once more.
+// Only a refusal for an old key ("Reload the dashboard page…") is always worth
+// that; any other (the hub cannot tell this page from a program, the cookie
+// is missing) gets one refresh per page at most: a new key cannot change it,
+// and a refresh for every refused read mark loaded /ui-key every few seconds.
 (function () {
   let refreshing = null;
+  let otherTried = false;
   function pageKeyRefresh() {
     if (refreshing) return refreshing;
     refreshing = new Promise(done => {
@@ -23,7 +28,8 @@
     return refreshing;
   }
   // POST JSON to a page-only route; resolves to the Response. A refusal for
-  // an old key ("page_only") fetches today's key once and tries again.
+  // an old key ("page_only") fetches today's key once and tries again; any
+  // other page_only refusal does so once per page.
   async function pageWrite(url, body, opts) {
     const send = () => fetch(url, Object.assign({
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}),
@@ -33,6 +39,11 @@
     let why = null;
     try { why = await r.clone().json(); } catch (e) {}
     if (!why || why.error !== 'page_only') return r;
+    const oldKey = /^Reload the dashboard page/.test(String(why.message || ''));
+    if (!oldKey) {
+      if (otherTried) return r;
+      otherTried = true;
+    }
     await pageKeyRefresh();
     return send();
   }

@@ -8559,6 +8559,41 @@ def _room_project_id(room_id: str, room: dict | None, links: dict | None = None)
     return links.get(room_id) or (room or {}).get("projectId") or ""
 
 
+# A page-only write refused is logged, one line per kind of refusal a minute
+# at most, so the next "pinning does not work" can be read from the hub's log
+# instead of guessed (the tailnet https address was refused ~500 times
+# unseen). The route without its query, params or fragment (a token can ride
+# there), the client's
+# address and the reason; never a cookie or a header's value.
+PAGE_REFUSAL_LOG_EVERY_S = 60.0
+_page_refusal_logged: dict[str, list] = {}     # kind -> [last logged at, refusals since]
+_page_refusal_log_lock = threading.Lock()
+
+
+def _log_page_refusal(method: str, path: str, client: str, why: str, now: float | None = None) -> bool:
+    """Log this refusal unless one of its kind was logged in the last
+    PAGE_REFUSAL_LOG_EVERY_S; the line counts those left out. True when
+    it logged."""
+    now = time.time() if now is None else now
+    # The route as dispatch reads it (urlparse(...).path), without its query,
+    # its ;params or its fragment: a token can ride in any of them.
+    route = urlparse(path or "").path[:200]
+    kind = route + " " + re.sub(r"\d+", "#", why or "")[:120]
+    with _page_refusal_log_lock:
+        ent = _page_refusal_logged.get(kind)
+        if ent is not None and now - ent[0] < PAGE_REFUSAL_LOG_EVERY_S:
+            ent[1] += 1
+            return False
+        more = ent[1] if ent else 0
+        _page_refusal_logged[kind] = [now, 0]
+        if len(_page_refusal_logged) > 200:
+            for k in sorted(_page_refusal_logged, key=lambda k: _page_refusal_logged[k][0])[:100]:
+                _page_refusal_logged.pop(k, None)
+    also = f" (and {more} more like it since the last line)" if more else ""
+    print(f"[page-only] refused {method} {route} from {client}: {why}{also}", flush=True)
+    return True
+
+
 def _agent_pids() -> set[int]:
     """The processes of the agents the hub runs (their PTYs): a request whose
     sender descends from one is an agent's, whatever headers it sends."""
@@ -19230,6 +19265,18 @@ class Handler(BaseHTTPRequestHandler):
         return ""
 
     def _page_refusal(self) -> str:
+        """Empty when this request comes from the dashboard page, else why
+        not (_page_refusal_why); a refusal is logged (_log_page_refusal)."""
+        why = self._page_refusal_why()
+        if why:
+            try:
+                peer = self.client_address[:2] if self.client_address else ("", 0)
+                _log_page_refusal(self.command or "", self.path or "", f"{peer[0]}:{peer[1]}", why)
+            except Exception:                   # noqa: BLE001 - a log line, never a crash
+                pass
+        return why
+
+    def _page_refusal_why(self) -> str:
         """Empty when this request comes from the dashboard page (its key
         cookie, on a request from its own origin, sent by a program that is
         not an agent), else why not. For writes a task's agent must never make,
