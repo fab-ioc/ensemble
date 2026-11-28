@@ -18,15 +18,31 @@ writes those files itself and can read their history's database directly.
 
 Windows reads the TCP table (GetExtendedTcpTable) and Toolhelp32; macOS and
 Linux ask `lsof` and `ps`. Standalone: imports nothing of the hub.
+
+`tailscale serve` gives the hub an https address on the tailnet by proxying it
+to loopback. On Linux its daemon, tailscaled, runs as root, and lsof running as
+the hub's user cannot see root's sockets: the proxy's loopback connection had
+no owner and every page-only write through that address was refused. Linux
+therefore also reads the socket's owner uid from /proc/net/tcp(6), which shows
+every socket's uid to anyone: a client end held by another user than the hub's,
+the user a running tailscaled runs as, is the proxy, and the request is taken
+as one from another machine on the tailnet, as if it had come to the tailnet
+address. An agent running as the hub's user cannot open a socket as root, and
+lsof still sees it. On Windows the TCP table names every socket's pid whoever
+runs it, so the proxy was always found; macOS keeps asking lsof only.
 """
 from __future__ import annotations
 
 import ipaddress
 import os
+import socket
+import struct
 import subprocess
 import sys
 
 AGENT_EXES = {"claude", "codex"}
+# The programs that proxy a tailnet https address to the hub's loopback port.
+PROXY_EXES = {"tailscaled"}
 _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
@@ -138,6 +154,93 @@ def _posix_processes() -> dict[int, tuple[int, str]]:
     return procs
 
 
+# ---- Linux: who holds a socket, by uid -----------------------------------------
+
+def _proc_net_addr(field: str) -> tuple[str, int]:
+    """An address of /proc/net/tcp(6), "0100007F:223D" -> ("127.0.0.1", 8765):
+    the ip as 32-bit words in this machine's byte order, the port in hex."""
+    ip_hex, port_hex = field.split(":")
+    raw = b"".join(struct.pack("=I", int(ip_hex[i:i + 8], 16)) for i in range(0, len(ip_hex), 8))
+    fam = socket.AF_INET if len(raw) == 4 else socket.AF_INET6
+    return _plain_ip(socket.inet_ntop(fam, raw)), int(port_hex, 16)
+
+
+def _linux_tcp_rows(paths=("/proc/net/tcp", "/proc/net/tcp6")) -> list[tuple[str, int, str, int, int]]:
+    """(local ip, local port, remote ip, remote port, uid) for every TCP
+    socket on this machine that a process holds, from /proc/net/tcp and tcp6
+    (readable by all). A socket no process holds any more (closed, waiting
+    out TIME_WAIT or FIN_WAIT) has inode 0 and is left out: the kernel lists
+    a TIME_WAIT socket as uid 0 whoever opened it, so an agent's closed
+    connection would read as root's."""
+    rows = []
+    for path in paths:
+        try:
+            with open(path, encoding="ascii", errors="replace") as f:
+                lines = f.read().splitlines()[1:]
+        except OSError:
+            continue
+        for ln in lines:
+            parts = ln.split()
+            if len(parts) < 10 or not parts[7].isdigit() or parts[9] in ("", "0"):
+                continue
+            try:
+                la, lp = _proc_net_addr(parts[1])
+                ra, rp = _proc_net_addr(parts[2])
+            except (ValueError, OSError, struct.error):
+                continue
+            rows.append((la, lp, ra, rp, int(parts[7])))
+    return rows
+
+
+def _linux_proxy_uids() -> set[int]:
+    """The real uids of the running proxy programs (PROXY_EXES), from /proc."""
+    uids = set()
+    try:
+        pids = [d for d in os.listdir("/proc") if d.isdigit()]
+    except OSError:
+        return uids
+    for pid in pids:
+        try:
+            with open(f"/proc/{pid}/comm", encoding="utf-8", errors="replace") as f:
+                if f.read().strip() not in PROXY_EXES:
+                    continue
+            with open(f"/proc/{pid}/status", encoding="utf-8", errors="replace") as f:
+                for ln in f:
+                    if ln.startswith("Uid:"):
+                        uids.add(int(ln.split()[1]))
+                        break
+        except (OSError, ValueError, IndexError):
+            continue
+    return uids
+
+
+def socket_uid(client: tuple[str, int], server: tuple[str, int]) -> int | None:
+    """Linux: the uid that holds the client end of ``client`` -> ``server``;
+    None elsewhere, or when no such socket is listed."""
+    if not sys.platform.startswith("linux"):
+        return None
+    cip, cport = _plain_ip(client[0]), int(client[1])
+    sip, sport = _plain_ip(server[0]), int(server[1])
+    for la, lp, ra, rp, uid in _linux_tcp_rows():
+        if lp == cport and rp == sport and la == cip and ra == sip:
+            return uid
+    return None
+
+
+def via_proxy(client: tuple[str, int], server: tuple[str, int]) -> bool:
+    """Whether the client end of this connection is held by the tailnet https
+    proxy (tailscale serve): another user than the hub's, the one a running
+    tailscaled runs as. Facts from the kernel, which no header can change.
+    False on macOS and Windows (see the module's docstring)."""
+    try:
+        uid = socket_uid(client, server)
+        if uid is None or uid == os.getuid():
+            return False
+        return uid in _linux_proxy_uids()
+    except Exception:                            # noqa: BLE001 - not known to be the proxy
+        return False
+
+
 def processes() -> dict[int, tuple[int, str]]:
     """{pid: (parent pid, program name without .exe)} for every process;
     raises Unknown when the list cannot be read."""
@@ -204,7 +307,9 @@ def agent_sender(client: tuple[str, int], server: tuple[str, int],
 
 def from_agent(client: tuple[str, int], server: tuple[str, int], agent_pids: set[int]) -> str:
     """Why this request must be treated as an agent's, or "" when it is not.
-    A connection from this machine whose owner cannot be found is refused."""
+    A connection from this machine whose owner cannot be found is refused,
+    unless the tailnet https proxy holds it (via_proxy): that request came
+    from another machine, like one to the tailnet address."""
     loopback = False
     try:
         loopback = ipaddress.ip_address(_plain_ip(client[0])).is_loopback
@@ -213,7 +318,9 @@ def from_agent(client: tuple[str, int], server: tuple[str, int], agent_pids: set
     try:
         pid = owner(client, server)
         if pid is None:
-            return "cannot tell which program sent it" if loopback else ""
+            if not loopback or via_proxy(client, server):
+                return ""
+            return "cannot tell which program sent it"
         procs = _win_processes() if sys.platform == "win32" else _posix_processes()
     except Unknown as e:
         return f"cannot tell which program sent it ({e})"
