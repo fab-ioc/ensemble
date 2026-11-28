@@ -450,8 +450,8 @@ def _chan_label(ch: dict, st: dict) -> str:
 def _down(project: dict, ch: dict, st: dict, err: slack_reader.ReadError, now: float) -> None:
     s = st["status"]
     code = err.code if err.code in ("not_connected", "not_signed_in") else "failed"
-    if err.code == "not_connected" and err.raw:
-        st["prefix"] = err.raw
+    if err.prefix:
+        st["prefix"] = err.prefix
     was_down = s.get("state") in ("not_connected", "not_signed_in", "failed")
     st["status"] = {"state": code, "since": s.get("since") if was_down else now,
                     "detail": _clean(str(err))[:500], "downNoticed": bool(was_down and s.get("downNoticed"))}
@@ -788,6 +788,9 @@ def read_project(project: dict, now: float | None = None) -> list[dict]:
         base["prefix"] = st["prefix"]
         st = base
     with _LOCK:
+        now_ch = sanitize((_d.find_project(pid) or {}).get("slackChannel"))
+        if not now_ch or now_ch["id"] != ch["id"] or now_ch["setAt"] != ch["setAt"]:
+            return []      # the channel was removed or changed meanwhile: nothing of this read is posted
         cur = _state_for(pid, ch)
         if cur["since"] != st["since"]:
             return []      # the channel was changed meanwhile

@@ -418,6 +418,23 @@ class ReviewOneTests(_World):
         slack_channel.read_project(self.project, SET_AT + 900)
         self.assertNotIn(f"t:{ts(100)}", self.state()["tcur"])
 
+    def test_a_prefix_seen_by_a_failed_read_is_kept_for_the_next(self):
+        def fail(queries, prefix):
+            raise slack_reader.ReadError("no read tools", "not_connected", prefix="mcp__Slack_Work__")
+        with mock.patch.object(slack_reader, "run", side_effect=fail):
+            slack_channel.read_project(self.project, SET_AT + 300)
+        self.assertEqual(self.state()["prefix"], "mcp__Slack_Work__")
+
+    def test_a_channel_removed_during_a_read_posts_nothing_of_it(self):
+        self.slack.messages.append((ANN, ts(100), "hello"))
+        real = self.slack.run
+        def run_and_remove(queries, prefix):
+            self.project["slackChannel"] = None
+            return real(queries, prefix)
+        with mock.patch.object(slack_reader, "run", side_effect=run_and_remove):
+            self.assertEqual(slack_channel.read_project(self.project, SET_AT + 300), [])
+        self.assertEqual(self.slack_rows(), [])
+
     def test_a_full_answer_with_no_cursor_does_not_move_on_and_says_so(self):
         msgs = [(ANN, ts(100 + i), f"m{i}") for i in range(slack_channel.CHANNEL_LIMIT)]
         self.slack.messages += msgs
@@ -736,6 +753,118 @@ class StopAtWriteToolTests(unittest.TestCase):
             self.assertEqual(e.exception.code, "write_tool")
             time.sleep(0.3)
             self.assertFalse(os.path.exists(os.path.join(d, "went-on")))
+
+
+CONNECTOR_STAND_IN = textwrap.dedent("""\
+    #!/usr/bin/env python3
+    \"\"\"Stands in for `claude -p` with a Slack connector as connector.json
+    says: its prefix and tools. Like Claude, it lists the connector's tools
+    less the ones refused by name. Each run's refused list goes to runs.jsonl.
+    A run with a write tool, or without its read tools, would go on to the
+    model: it marks that with a file. Otherwise it answers from answers.json.\"\"\"
+    import json, os, re, sys, time
+    here = os.path.dirname(os.path.abspath(sys.argv[0]))
+    conn = json.load(open(os.path.join(here, "connector.json")))
+    denied = set(sys.argv[sys.argv.index("--disallowedTools") + 1].split(","))
+    allowed = sys.argv[sys.argv.index("--allowedTools") + 1].split(",")
+    with open(os.path.join(here, "runs.jsonl"), "a") as f:
+        f.write(json.dumps({"denied": sorted(denied), "allowed": allowed}) + "\\n")
+    tools = [conn["prefix"] + t for t in conn["tools"] if conn["prefix"] + t not in denied]
+    tools += conn.get("other", [])
+    print(json.dumps({"type": "system", "subtype": "init", "tools": tools,
+                      "mcp_servers": conn.get("servers", [])}), flush=True)
+    if any(a not in tools for a in allowed) or any("send" in t for t in tools):
+        if conn.get("child"):
+            import subprocess
+            subprocess.Popen(["sleep", "30"])          # holds our output open
+            sys.exit(0)
+        time.sleep(5)
+        open(os.path.join(here, "went-on"), "w").write("yes")
+        sys.exit(0)
+    answers = json.load(open(os.path.join(here, "answers.json")))
+    calls = []
+    for line in sys.argv[-1].splitlines():
+        m = re.match(r"\\d+\\. (\\S+) (\\{.*\\})$", line)
+        if m:
+            calls.append((m.group(1), json.loads(m.group(2))))
+    out = [{"type": "assistant", "message": {"content": [
+               {"type": "tool_use", "id": f"t{i}", "name": conn["prefix"] + n, "input": a}
+               for i, (n, a) in enumerate(calls)]}},
+           {"type": "user", "message": {"content": [
+               {"type": "tool_result", "tool_use_id": f"t{i}", "content": [{"type": "text", "text": answers[n]}]}
+               for i, (n, a) in enumerate(calls)]}},
+           {"type": "result", "subtype": "error_max_turns", "is_error": True, "total_cost_usd": 0.0001}]
+    for e in out:
+        print(json.dumps(e))
+""")
+
+
+class FirstLineTests(unittest.TestCase):
+    """PO's read before merge (#431): a run is stopped at its first line,
+    before the model is called, when it cannot read or names its tools
+    otherwise; a run and what it started are stopped together."""
+
+    def connector(self, d, **conn):
+        path = os.path.join(d, "fake-claude")
+        Path(path).write_text(CONNECTOR_STAND_IN)
+        os.chmod(path, os.stat(path).st_mode | stat.S_IXUSR)
+        Path(d, "connector.json").write_text(json.dumps(conn))
+        Path(d, "answers.json").write_text(json.dumps(
+            {"slack_read_channel": channel_answer([(ANN, ts(100), "hello")])}))
+        return mock.patch.dict(os.environ, {"ENSEMBLE_SLACK_READER": path})
+
+    def runs(self, d):
+        return [json.loads(x) for x in Path(d, "runs.jsonl").read_text().splitlines()]
+
+    def test_no_slack_connector_is_stopped_before_the_model(self):
+        with tempfile.TemporaryDirectory() as d:
+            with self.connector(d, prefix=PREFIX, tools=[], other=["mcp__claude_ai_Gmail__send_message"],
+                                servers=[{"name": "claude.ai Gmail", "status": "connected"}]):
+                t0 = time.monotonic()
+                with self.assertRaises(slack_reader.ReadError) as e:
+                    slack_reader.run([slack_reader.Query("channel", "channel", {"channel_id": CHAN})], "")
+            self.assertEqual(e.exception.code, "not_connected")
+            self.assertLess(time.monotonic() - t0, 3)
+            time.sleep(0.3)
+            self.assertFalse(os.path.exists(os.path.join(d, "went-on")))
+
+    def test_another_prefix_is_stopped_and_the_next_run_refuses_its_write_tools(self):
+        other = "mcp__Slack_Work__"
+        with tempfile.TemporaryDirectory() as d:
+            with self.connector(d, prefix=other, tools=["slack_read_channel", "slack_send_message"],
+                                servers=[{"name": "Slack Work", "status": "connected"}]):
+                res, prefix = slack_reader.run(
+                    [slack_reader.Query("channel", "channel", {"channel_id": CHAN, "oldest": ts(0)})], "")
+            self.assertEqual(prefix, other)
+            self.assertEqual([m.text for m in res.answers["channel"]["messages"]], ["hello"])
+            first, second = self.runs(d)
+            self.assertNotIn(other + "slack_send_message", first["denied"])
+            self.assertIn(other + "slack_send_message", second["denied"])
+            self.assertEqual(second["allowed"], [other + "slack_read_channel"])
+            time.sleep(0.3)
+            self.assertFalse(os.path.exists(os.path.join(d, "went-on")))
+
+    def test_a_failure_after_the_prefix_was_seen_still_carries_it(self):
+        other = "mcp__Slack_Work__"
+        with tempfile.TemporaryDirectory() as d:
+            with self.connector(d, prefix=other, tools=["slack_read_channel"]):
+                with self.assertRaises(slack_reader.ReadError) as e:
+                    slack_reader.run([slack_reader.Query("thread:1", "thread",
+                                                         {"channel_id": CHAN, "message_ts": ts(1)})], "")
+            self.assertEqual(e.exception.code, "not_connected")
+            self.assertEqual(e.exception.prefix, other)
+            self.assertEqual(len(self.runs(d)), 2)
+
+    def test_a_child_holding_the_output_does_not_hold_the_read(self):
+        with tempfile.TemporaryDirectory() as d:
+            with self.connector(d, prefix=PREFIX, tools=["slack_read_thread"], child=True), \
+                    mock.patch.object(slack_reader, "TIMEOUT_S", 2), \
+                    mock.patch.object(slack_reader, "check_init", side_effect=lambda *a, **k: PREFIX):
+                t0 = time.monotonic()
+                with self.assertRaises(slack_reader.ReadError) as e:
+                    slack_reader.run([slack_reader.Query("channel", "channel", {"channel_id": CHAN})], "")
+            self.assertEqual(e.exception.code, "timeout")
+            self.assertLess(time.monotonic() - t0, 10)
 
 
 class OpenInSlackLink(unittest.TestCase):

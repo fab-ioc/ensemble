@@ -15,8 +15,12 @@ in a small form from #409 (reverted by #413), whose design held:
   guest's words cannot steer anything).
 * A call that was not planned, or planned and changed, fails the read.
 
-The tool names carry the connector's name (``mcp__claude_ai_Slack__…``); the
-prefix is taken from the run's first line, never written in the code.
+The tool names carry the connector's name (``mcp__claude_ai_Slack__…``, the
+first guess, ``DEFAULT_PREFIX``); the prefix is taken from the run's first
+line. A run whose first line shows another one is stopped there, before the
+model is called, and made again with it, so its write tools are refused by
+their real names. A run without the read tools it needs is stopped there
+too (not connected): nothing is paid for.
 
 A stand-in for ``claude`` (tests, or a machine without the connector) is named
 by the environment variable ``ENSEMBLE_SLACK_READER``: it gets the same
@@ -28,11 +32,13 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import tempfile
 import threading
 from dataclasses import dataclass, field
 
+DEFAULT_PREFIX = "mcp__claude_ai_Slack__"
 READ_CHANNEL = "slack_read_channel"
 READ_THREAD = "slack_read_thread"
 READ_CANVAS = "slack_read_canvas"
@@ -79,13 +85,16 @@ TIMEOUT_S = 150
 
 
 class ReadError(Exception):
-    """A read failed. ``code``: not_connected | not_signed_in | write_tool |
-    unplanned_call | slack_error | unreadable | timeout | error."""
+    """A read failed. ``code``: not_connected | not_signed_in | new_prefix |
+    write_tool | unplanned_call | slack_error | unreadable | timeout | error.
+    ``prefix``: the Slack tools' prefix the run's first line showed, when it
+    did (the caller keeps it, so the next run names the right tools)."""
 
-    def __init__(self, reason: str, code: str = "error", raw: str = ""):
+    def __init__(self, reason: str, code: str = "error", raw: str = "", prefix: str = ""):
         super().__init__(reason)
         self.code = code
         self.raw = raw
+        self.prefix = prefix
 
 
 class ParseError(Exception):
@@ -151,9 +160,9 @@ def run_env() -> dict:
 
 def build_command(claude_path: str, prefix: str, queries) -> list:
     """The ``claude -p`` command for ``queries``. Without a prefix yet, the
-    tools are named by a wildcard-free guess, ``mcp__claude_ai_Slack__``: the
-    run's first line says the real one, and a run that had it under another
-    name fails as not connected and the next one uses it."""
+    tools are named by a wildcard-free guess, ``DEFAULT_PREFIX``: the run's
+    first line says the real one, and a run that had it under another name is
+    stopped there and made again with it (:func:`run`)."""
     allowed = list(dict.fromkeys(TOOL_FOR[q.kind] for q in queries))
     if any(is_write_tool(s) for s in allowed):
         raise ValueError("a write tool in the allowed list")
@@ -232,15 +241,29 @@ def _is_init(e) -> bool:
     return isinstance(e, dict) and e.get("type") == "system" and e.get("subtype") == "init"
 
 
-def check_init(init: dict) -> None:
-    """Raises ReadError when the run's tool list holds a Slack write tool.
+def check_init(init: dict, queries=(), used: str = DEFAULT_PREFIX) -> str:
+    """The run's Slack tool prefix, from its first line, or ReadError when
+    the run must not go on: its Slack tools have another prefix than the
+    command named (``used``: its write tools were not refused by name;
+    ``new_prefix``, with the prefix seen), it has a Slack write tool
+    (``write_tool``), or it lacks a read tool ``queries`` need (not connected).
     :func:`run` calls it on the run's first line, as it arrives, and stops the
-    run there: the model has not been called yet, so no tool can have run."""
+    run there: the model has not been called yet, so no tool can have run and
+    nothing is paid for."""
     tools = set(init.get("tools") or [])
+    seen = prefix_of(init)
+    if seen and seen != used:
+        raise ReadError(f"Claude's Slack tools are named {seen}…, not {used}…; the run was stopped "
+                        "before it began and the next one names them right", "new_prefix", prefix=seen)
     writes = sorted(t for t in tools if _is_slack_tool(t) and is_write_tool(short_name(t)))
     if writes:
         raise ReadError("the Claude run had Slack write tools, which must be refused: " + ", ".join(writes),
-                        "write_tool")
+                        "write_tool", prefix=used)
+    if any(used + TOOL_FOR[q.kind] not in tools for q in queries):
+        e = _not_connected(init)
+        e.prefix = used
+        raise e
+    return used
 
 
 def read_stream(lines, queries, prefix: str) -> tuple[Result, str]:
@@ -253,13 +276,7 @@ def read_stream(lines, queries, prefix: str) -> tuple[Result, str]:
         if re.search(r"log ?in|logged in|auth", why, re.I):
             raise ReadError(f"Claude is not signed in ({why})", "not_signed_in")
         raise ReadError(why or "Claude did not start (no first line in its output)")
-    check_init(init)
-    tools = set(init.get("tools") or [])
-    found = prefix_of(init) or prefix
-    if any(found + TOOL_FOR[q.kind] not in tools for q in queries):
-        e = _not_connected(init)
-        e.raw = found      # the prefix seen, for the next run
-        raise e
+    found = check_init(init, queries, prefix or DEFAULT_PREFIX)
     res = Result(cost=float((final or {}).get("total_cost_usd") or 0))
     calls, unplanned, left = {}, [], list(queries)
     for e in events:
@@ -307,23 +324,53 @@ def read_stream(lines, queries, prefix: str) -> tuple[Result, str]:
 
 
 def run(queries, prefix: str) -> tuple[Result, str]:
-    """Make ``queries`` in one run. Returns (result, tool prefix). Raises ReadError."""
+    """Make ``queries`` in one run. Returns (result, tool prefix). Raises
+    ReadError (with ``prefix`` when the run showed it). A run whose Slack
+    tools have another prefix is stopped at its first line and made again,
+    once, with that prefix, so its write tools are refused by their names."""
     if not queries:
         return Result(), prefix
+    try:
+        return _run_once(queries, prefix or DEFAULT_PREFIX)
+    except ReadError as e:
+        if e.code != "new_prefix":
+            raise
+        seen = e.prefix
+    try:
+        return _run_once(queries, seen)
+    except ReadError as e:
+        e.prefix = e.prefix or seen
+        raise
+
+
+def _kill(p) -> None:
+    """Stops the run and everything it started (its own process group): a
+    child still holding its output must not keep the read waiting."""
+    try:
+        os.killpg(p.pid, signal.SIGKILL)
+    except (OSError, ProcessLookupError):
+        try:
+            p.kill()
+        except OSError:
+            pass
+
+
+def _run_once(queries, used: str) -> tuple[Result, str]:
     cwd = os.path.join(tempfile.gettempdir(), "ensemble-slack-reader")
     os.makedirs(cwd, exist_ok=True)
-    cmd = build_command(find_claude(), prefix or "mcp__claude_ai_Slack__", queries)
+    cmd = build_command(find_claude(), used, queries)
     lines, timed_out = [], []
     with tempfile.TemporaryFile("w+", encoding="utf-8", errors="replace") as err_file:
         try:
             p = subprocess.Popen(cmd, cwd=cwd, env=run_env(), stdout=subprocess.PIPE, stderr=err_file,
-                                 text=True, errors="replace", stdin=subprocess.DEVNULL)
+                                 text=True, errors="replace", stdin=subprocess.DEVNULL,
+                                 start_new_session=True)
         except OSError as e:
             raise ReadError(f"could not start Claude: {e}")
 
         def stop():
             timed_out.append(True)
-            p.kill()
+            _kill(p)
         timer = threading.Timer(TIMEOUT_S, stop)
         timer.start()
         try:
@@ -338,23 +385,23 @@ def run(queries, prefix: str) -> tuple[Result, str]:
                     if _is_init(ev):
                         checked = True
                         try:
-                            check_init(ev)
+                            check_init(ev, queries, used)
                         except ReadError:
                             # Stopped before the model's first reply: nothing ran.
-                            p.kill()
+                            _kill(p)
+                            p.wait()
                             raise
             p.wait()
         finally:
             timer.cancel()
-            if p.poll() is None:
-                p.kill()
-                p.wait()
+            _kill(p)        # the run, if still there, and anything it left behind
+            p.wait()
         if timed_out:
             raise ReadError(f"the Claude run took longer than {TIMEOUT_S} s and was stopped", "timeout")
         err_file.seek(0)
         stderr = err_file.read()
     try:
-        return read_stream(lines, queries, prefix)
+        return read_stream(lines, queries, used)
     except ReadError as e:
         tail = " | ".join((stderr or "").strip().splitlines()[-2:])
         if tail and e.code == "error":
