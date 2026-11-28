@@ -1368,6 +1368,9 @@
      a quiet chip, still a link; the file view says what is (not) there. */
   a.file-link.file-missing, .msg .text.md a.file-link.file-missing { color:var(--fg-muted); text-decoration:underline dotted; text-underline-offset:2px; }
   a.file-link.file-missing::after { content:'not written yet'; display:inline-block; margin-left:var(--s-100); padding:0 var(--s-100); border:1px dashed var(--border-strong); border-radius:var(--r-100); font:400 var(--fs-100)/16px var(--font-sans); color:var(--fg-muted); white-space:nowrap; text-decoration:none; vertical-align:baseline; }
+  /* A soft link (#433): a place written in a form never linked before reads as
+     plain text until the hub says it is there (static/filelinks.js: file-found). */
+  body a.file-link.file-soft:not(.file-found) { color:inherit; text-decoration:none; pointer-events:none; cursor:text; }
   .msg .text.md hr { border:0; border-top:1px solid var(--border); margin:8px 0; }
   .msg .text.md table { border-collapse:collapse; margin:8px 0; display:block; overflow-x:auto; max-width:100%; }
   .msg .text.md th, .msg .text.md td { border:1px solid var(--border); padding:4px 8px; text-align:left; vertical-align:top; }
@@ -2625,9 +2628,10 @@ function mdLinkHtml(m, txt, target) {
   if (/%[0-9A-Fa-f]{2}/.test(p)) { try { p = decodeURIComponent(p); } catch (e) {} }
   const s = splitLine(p);
   // A target with spaces ("Documents/#9 Screen layout.md") is a file as much as one without.
-  if (looksFilePath(p, true) || looksDirPath(p) || (SPACED_NAME_RE.test(s.path) && !notOneName(s.path)))
-    return fileRefHtml(s.path, txt, s.line, 'text') ?? m;
-  if (softPlace(s.path)) return fileRefHtml(s.path, txt, s.line, 'text', '', true) ?? m;
+  if (looksFilePath(p) || looksDirPath(p)) return fileRefHtml(s.path, txt, s.line, 'text') ?? m;
+  // Linked only since #433: a link once the hub has the place, else its text.
+  if (looksFilePath(p, true) || (SPACED_NAME_RE.test(s.path) && !notOneName(s.path)) || softPlace(s.path))
+    return fileRefHtml(s.path, txt, s.line, 'text', '', true) ?? m;
   return m;
 }
 // A `code span` that names a place is a link too, and still reads as code.
@@ -2693,12 +2697,12 @@ const LINK_RE = (() => {
     String.raw`\[([^\[\]\n]+)\]\(((?:[^()\n]|\([^()\n]*\))+)\)`,
     pre + String.raw`((?:https?|file):\/\/[^\s<*]+)`,
     pre + String.raw`((?:[A-Za-z]:[\\\/]|\\\\)(?:` + dir + String.raw`[\\\/])*` + file + line
-      + String.raw`|(?:[A-Za-z]:[\\\/]|\\\\(?=\w))(?:` + c + String.raw`+[\\\/])*` + c + String.raw`*)(?![\w\\\/-])`,
+      + String.raw`|(?:[A-Za-z]:[\\\/]|\\\\(?=\w))(?:(?:` + sp + '|' + c + String.raw`+)[\\\/])*(?:` + sp + '|' + c + String.raw`+)?)(?![\w\\\/-])`,
     String.raw`(^|[\s*]|(?<!` + nixCh + String.raw`)[(_])((?:~\/|\/)(?:(?:` + sp + '|' + nixU + String.raw`+)\/)*(?:` + spLast + '|' + nixU + String.raw`*\.\w{1,8})` + line
       + String.raw`|(?:~\/|\/)` + nixCh + String.raw`*\.\w{1,8}` + line
-      + String.raw`|(?:~|\/` + nixU + String.raw`+)(?:\/` + nixU + String.raw`+)*\/?)(?![\w\\\/-])`,
+      + String.raw`|(?:~|\/(?:` + sp + '|' + nixU + String.raw`+))(?:\/(?:` + sp + '|' + nixU + String.raw`+))*\/?)(?![\w\\\/-])`,
     String.raw`(^|[\s(*]|(?<![\w.#\\\/-])_)(` + relPre + rel + String.raw`+[\\\/](?:(?:` + sp + '|' + rel + String.raw`+)[\\\/])*(?:` + spLast + '|' + rel + String.raw`+\.\w{1,8})` + line
-      + '|' + relPre + rel + String.raw`+[\\\/](?:(?:` + sp + '|' + rel + String.raw`+)[\\\/])*(?:` + rel + String.raw`+)?`
+      + '|' + relPre + rel + String.raw`+[\\\/](?:(?:` + sp + '|' + rel + String.raw`+)[\\\/])*(?:` + sp + '|' + rel + String.raw`+)?`
       + String.raw`|\w[\w-]*\.(?:` + BARE_EXT + '|' + BARE_EXT_SOFT + String.raw`)` + line + String.raw`)(?=[\s.,;:)\]]|$)`,
     String.raw`\b(room-[0-9a-f]{8})\b`,
   ].join('|'), 'g');
@@ -2720,7 +2724,7 @@ function linkify(t, keep) {
       return p1 + put(urlLinkHtml(u, nm != null ? esc(nm) : u, 'text', nm != null)) + tail;
     }
     if (room != null) return put(taskLinkHtml(room, room));
-    let pth = win ?? nix ?? rel, s = splitLine(unescPath(pth)), tail = '', soft = false;
+    let pth = win ?? nix ?? rel, s = splitLine(unescPath(pth)), tail = '', soft = false, alts = [];
     if (/\.\w{1,8}$/.test(s.path)) {
       if (!fileExtOk(s.path) || (win != null && !winPathSure(win))) return m;
       // Linked before #433 (a Windows path, a macOS/Linux one without spaces,
@@ -2733,10 +2737,29 @@ function linkify(t, keep) {
       s = { path: unescPath(pth), line: 0 };
       if (!placeDirOk(s.path, rel != null)) return m;
       soft = true;
+      alts = folderAlts(pth);
     }
-    const h = fileRefHtml(s.path, pth, s.line, 'text', '', soft);
+    let h = fileRefHtml(s.path, pth, s.line, 'text', '', soft);
+    if (h && alts.length) h = h.replace(/^(<a href="[^"]*")/, `$1 data-alts="${esc(JSON.stringify(alts))}"`);
     return h ? (p2 ?? p3 ?? p4) + put(h) + tail : m;
   });
+}
+// A folder whose last name has spaces, without a separator after it, may end
+// at any of its words ("Documents/#430 Plans are ready"): its shorter
+// readings, longest first, each [its path, its length on the page]. The page
+// shows the longest; static/filelinks.js tries the next one when the hub has
+// not got it, and leaves the words after the one it has as text.
+function folderAlts(pth) {
+  const last = pth.split(/[\\\/]/).pop();
+  if (!last.includes(' ')) return [];
+  const out = [];
+  for (let q = pth; q.length > pth.length - last.length;) {
+    const i = q.lastIndexOf(' ');
+    if (i < pth.length - last.length) break;
+    q = q.slice(0, i);
+    out.push([unescPath(q), q.replace(/&(?:amp|lt|gt|quot|#39);/g, '_').length]);
+  }
+  return out;
 }
 // A folder in running text: a relative one with a #, a trailing separator, a
 // capital or a dot first ("and/or" and "1/2" are words); ~/x; a macOS/Linux
@@ -13205,6 +13228,3 @@ else { FileLinks.watch(); refresh(); setInterval(tick, 2000); }
 </script>
 </body>
 </html>
-  /* A soft link (#433): a place written in a form never linked before reads as
-     plain text until the hub says it is there (static/filelinks.js: file-found). */
-  body a.file-link.file-soft:not(.file-found) { color:inherit; text-decoration:none; pointer-events:none; cursor:text; }

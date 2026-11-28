@@ -38,7 +38,8 @@ class Unlinked(unittest.TestCase):
         self.tmp.cleanup()
 
     def found(self, text):
-        bases = [str(self.root), str(self.root / "Ensemble Dashboard")]
+        # As the hub's: the room's folders and its project's Documents folder.
+        bases = [str(self.root), str(self.root / "Ensemble Dashboard"), str(self.docs)]
         res = lambda raw: file_refs.resolve(raw, bases, dirs=True, search=bases)[0]  # noqa: E731
         return link_check.unlinked(text, res)
 
@@ -52,6 +53,10 @@ class Unlinked(unittest.TestCase):
             "the folder Documents/#433 Plans/ holds them": "Documents/#433 Plans/",
             "see Documents/#433 Clickable links.md, then": "Documents/#433 Clickable links.md",
             f"`{self.docs}`": str(self.docs),
+            # Bare spaced names in running text: a file name ending in an extension, a task folder.
+            "see #433 Clickable links.md now": "#433 Clickable links.md",
+            "the folder #433 Plans holds them": "#433 Plans",
+            "#433 Plans are ready": "#433 Plans",
         }
         for text, mention in cases.items():
             with self.subTest(text=text):
@@ -76,7 +81,8 @@ class Unlinked(unittest.TestCase):
                 self.assertEqual(self.found(text), [])
 
     def test_what_names_nothing_is_quiet(self):
-        for text in ("and/or 1/2 now", "`git status`", "missing.md and docs/nothing.py", "e.g. `x = a/b`"):
+        for text in ("and/or 1/2 now", "`git status`", "missing.md and docs/nothing.py", "e.g. `x = a/b`",
+                     "#433 is done", "#12 Fix the thing", "see #433 Missing plan.md now"):
             with self.subTest(text=text):
                 self.assertEqual(self.found(text), [])
 
@@ -102,15 +108,17 @@ class Linear(unittest.TestCase):
     """A long line of text that almost names a path is read in linear time:
     the spaced form may start at any word, so it scans a bounded run."""
 
-    SHAPES = ["/A b", "Documents/#1 A b ", "a/A b/", "A b ", "x/A b c.md ", "b/", "A/ "]
+    SHAPES = ["/A b", "Documents/#1 A b ", "a/A b/", "A b ", "x/A b c.md ", "b/", "A/ ",
+              "/a ", "(/a", "/a(", "<a x>", "[a](", "[", "`a ", "#1 A b ", "A b c.md ", "C:\\a ", "~/a "]
 
     def test_long_lines_are_fast(self):
+        # The whole check, readings and all, with a resolver that finds nothing (the slowest case).
         import time
         for u in self.SHAPES:
             with self.subTest(shape=u):
                 line = u * (50000 // len(u))
                 t = time.perf_counter()
-                link_check._candidates(line)
+                link_check.unlinked(line, lambda raw: None)
                 self.assertLess(time.perf_counter() - t, 0.5)
 
 
@@ -129,7 +137,9 @@ class ToolAnswer(unittest.TestCase):
                            ("ensemble_report", {"kind": "update", "text": "see plan.md"}),
                            ("ensemble_message_po", {"text": "see plan.md"}),
                            ("ensemble_ask", {"context": "see plan.md", "questions": [{"question": "ok?"}]}),
-                           ("ensemble_ask", {"context": "x", "questions": [{"question": "ok?", "options": [{"label": "plan.md"}]}]})):
+                           ("ensemble_ask", {"context": "x", "questions": [{"question": "ok?", "options": [{"label": "plan.md"}]}]}),
+                           ("ensemble_ask", {"context": "x", "questions": [{"question": "ok?", "options": [
+                               {"label": "A", "detail": "writes plan.md"}, "bad"]}]})):
             with self.subTest(name=name, args=args):
                 c = dashboard.link_check_content(name, args, "room-00000000")
                 self.assertEqual(len(c), 1, c)

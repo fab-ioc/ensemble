@@ -20,6 +20,7 @@ Pure functions; standard library only.
 """
 from __future__ import annotations
 
+import bisect
 import re
 from pathlib import Path
 from typing import Callable
@@ -28,11 +29,20 @@ from typing import Callable
 # a name search at worst), and at most this many are listed in the warning.
 MAX_LOOKUPS = 40
 MAX_LISTED = 12
+# A bare name of words ("#433 Clickable links.md", "#433 Plans") is a guess:
+# each of its readings is a lookup, counted apart so that guesses never use up
+# the lookups of the plain paths.
+MAX_GUESSES = 24
+# At most this many absolute paths are read for their ends (each a scan of up
+# to ABS_RUN_MAX characters), found or not.
+MAX_RUNS = 200
 
 _FENCE = re.compile(r"^[ \t]*(```|~~~).*?^[ \t]*\1[^\n]*$", re.S | re.M)
-# [words](target), a target in <...> or with one level of brackets.
-_MD_LINK = re.compile(r"!?\[(?:[^\[\]\n]|\[[^\[\]\n]*\])*\]\((?:<[^>\n]*>|(?:[^()\n]|\([^()\n]*\))*)\)")
-_HTML_A = re.compile(r"<a\b[^>]*>.*?</a>", re.S | re.I)
+# [words](target), a target in <...> or with one level of brackets; an <a>
+# with its closer. Each part is bounded, so a long line of openers without
+# closers is read in linear time.
+_MD_LINK = re.compile(r"!?\[(?:[^\[\]\n]|\[[^\[\]\n]{0,300}\]){0,300}\]\((?:<[^<>\n]{0,1000}>|(?:[^()\n]|\([^()\n]{0,300}\)){0,1000})\)")
+_HTML_A = re.compile(r"<a\b[^<>]{0,1000}>(?:(?!</?a\b).){0,4000}</a>", re.S | re.I)
 _URL = re.compile(r"\b(?:https?|file)://[^\s<>`]+", re.I)
 _CODE = re.compile(r"`([^`\n]+)`")
 # A line on the end of a mention: x.py:12, x.py:12-30, x.py:12:3, x.py#L12.
@@ -62,6 +72,10 @@ _REL_SPACED = re.compile(r"(?<![\w/\\.:#@-])((?:\.\.?[\\/])?" + _SEG + r"[\\/](?
                          + r")[\\/]){0,16}(?:" + _SP_LAST + r")?)(?=[\s.,;:!?)'\"]|$)")
 _BARE = re.compile(r"(?<![\w/\\.:#@-])([A-Za-z0-9_][\w#&+-]*(?:\.[\w-]+)*\.[A-Za-z]\w{0,7}(?::\d+(?:[-:]\d+)?)?)(?![\w/\\])")
 _TRAIL = ".,;:!?)'\""
+# A bare name of words in running text: a file's ("#433 Clickable links.md",
+# "Screen layout.png") or a task folder's ("#433 Plans"); see _bare_spaced.
+_BARE_SPACED = re.compile(r"(?<![\w/\\.:#@&+-])([A-Z0-9#]" + _W + r"*(?: " + _W + r"+){0,3} " + _W
+                          + r"+\.[A-Za-z]\w{0,7}|#\d+ [A-Z0-9]" + _W + r"*(?: " + _W + r"+){0,2})(?![\w/\\#@&+-])")
 
 
 def _strip(text: str) -> str:
@@ -85,16 +99,16 @@ def _abs_runs(s: str, at: int) -> list[tuple[int, str]]:
     """The ends an absolute path starting at ``at`` may have, longest first:
     (end, path). It runs to the end of its line at most, stopping at what no
     path holds."""
-    stop = _ABS_STOP.search(s, at)
-    run = s[at:min(stop.start() if stop else len(s), at + ABS_RUN_MAX)]
+    stop = _ABS_STOP.search(s, at, at + ABS_RUN_MAX)
+    run = s[at:stop.start() if stop else at + ABS_RUN_MAX]
     ends = [m.end() for m in _ABS_END.finditer(run)]
     return [(at + e, run[:e]) for e in sorted(set(ends), reverse=True) if e > 1]
 
 
-def _candidates(text: str) -> list[tuple[int, list[tuple[int, str]]]]:
+def _candidates(text: str) -> list[tuple[int, list | Callable[[], list]]]:
     """Each mention that may name a file or folder, in the order they come:
     (where it starts, the ways it may be read as (where it ends, the text),
-    most likely first). There is one way, but for an absolute path in
+    most likely first, or a function that gives them). There is one way, but for an absolute path in
     running text, whose end is not known before it is looked up."""
     s = _strip(text)
     out: list[tuple[int, list[tuple[int, str]]]] = []
@@ -105,10 +119,18 @@ def _candidates(text: str) -> list[tuple[int, list[tuple[int, str]]]]:
             out.append((m.start(), [(m.end(), c)]))
         return " " * len(m.group(0))
     s = _CODE.sub(code, s)
+    # where a path must stop, found once; each path's ways are read only when
+    # unlinked reaches it (it looks up a bounded number)
+    stops = [m.start() for m in _ABS_STOP.finditer(s)]
     for m in _ABS_START.finditer(s):
-        runs = _abs_runs(s, m.start())
-        if runs:
-            out.append((m.start(), runs))
+        i = bisect.bisect_left(stops, m.start())
+        end = min(stops[i] if i < len(stops) else len(s), m.start() + ABS_RUN_MAX)
+        if end - m.start() > 1:
+            out.append((m.start(), (lambda a=m.start(): _abs_runs(s, a)), end))
+    for m in _BARE_SPACED.finditer(s):
+        ways = _bare_spaced(m.group(1), m.start(1))
+        if ways:
+            out.append((m.start(1), [(e, r, True) for e, r in ways]))
     for rx in (_REL_SPACED, _REL, _BARE):
         for m in rx.finditer(s):
             a, b = m.span(1)
@@ -127,8 +149,22 @@ def _candidates(text: str) -> list[tuple[int, list[tuple[int, str]]]]:
             out.append((a, [(b, raw)]))
     # by where they start; at one place the longer reading (an absolute path
     # before the relative one inside it) first
-    out.sort(key=lambda c: (c[0], -c[1][0][0]))
-    return out
+    out = [c if len(c) == 3 else (c[0], c[1], c[1][0][0]) for c in out]
+    out.sort(key=lambda c: (c[0], -c[2]))
+    return [(a, w) for a, w, _ in out]
+
+
+def _bare_spaced(raw: str, at: int) -> list[tuple[int, str]]:
+    """The readings of a bare name of words, longest first: a file's from its
+    first word to its extension, then without its first words ("Read The
+    plan.md": "The plan.md"; the last word alone is _BARE's); a task
+    folder's ("#433 Plans are ready") from its number, ending at each word
+    but the number's own."""
+    raw = raw.rstrip(_TRAIL)
+    words = raw.split(" ")
+    if _EXT.search(raw):
+        return [(at + len(raw), " ".join(words[i:])) for i in range(len(words) - 1)]
+    return [(at + len(" ".join(words[:k])), " ".join(words[:k])) for k in range(len(words), 1, -1)]
 
 
 def link_for(name: str, path: Path, line: int = 0) -> str:
@@ -147,15 +183,25 @@ def unlinked(text: str, resolve: Callable[[str], Path | None]) -> list[dict]:
     if not isinstance(text, str) or not text.strip():
         return []
     out: list[dict] = []
-    looked = 0
+    looked = guessed = runs = 0
     covered = -1       # where the last mention found ends: what starts before is part of it
     for start, ways in _candidates(text):
         if start < covered:
             continue
-        for end, raw in ways:
-            if looked >= MAX_LOOKUPS:
+        if callable(ways):
+            if runs >= MAX_RUNS:
+                continue
+            runs += 1
+            ways = ways()
+        for end, raw, *guess in ways:
+            if guess:
+                if guessed >= MAX_GUESSES:
+                    break
+                guessed += 1
+            elif looked >= MAX_LOOKUPS:
                 return out
-            looked += 1
+            else:
+                looked += 1
             body, line = _line_of(raw)
             try:
                 fp = resolve(body)

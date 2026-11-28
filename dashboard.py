@@ -3478,7 +3478,8 @@ OWNER_OUTPUT_NOTE = (
 
 # Links are clickable names, never addresses (P358): the CEO never sees a URL.
 LINK_NOTE = (
-    "Link an Ensemble thing (a card, a message, a task, a file, a session) only as a "
+    "Link an Ensemble thing (a card, a message, a task, a file, a folder, a picture, a document, "
+    "a page, a session) only as a "
     "clickable name, never as an address, bare or in a code span: a task as #18, a file "
     "as [its name](its full path), a card or a message as [its words, short](its "
     "reference). Every file or folder you name, in any text the user can read, is "
@@ -3502,8 +3503,7 @@ ASK_NOTE = (
     "card's Copy link), never after Ask: (that line asks nothing). "
     "A card stays open until it is answered or closed: never ask an open "
     "question again (not after a restart or a rotation, not when answering "
-    "a related point); to change one, have it closed first, then ask the new question. "
-    + LINK_NOTE)
+    "a related point); to change one, have it closed first, then ask the new question.")
 
 # How a task is named in text (P166): its number, never its room id.
 TASK_NAME_NOTE = (
@@ -3538,7 +3538,8 @@ VISUAL_FIRST_NOTE = (
     "Every plan, without being asked, comes with such a page showing the work (the steps or tasks, "
     "their order and dependencies, what is decided and what is open); Markdown may accompany it, "
     "never replace it. A PO's plan of tasks gets it from the hub when the plan picture is on: "
-    "`PO Plan.html`, drawn from the board; link that by its name. Link a page by its name like any document. A UI choice for the CEO is "
+    "`PO Plan.html`, drawn from the board; link that by its name. Link a page, like any document, as "
+    "[its name](its absolute path). A UI choice for the CEO is "
     "still ONE side-by-side PNG on the ask card.")
 
 # Where a task's knowledge goes (project_docs): the project's Documents folder.
@@ -3546,7 +3547,7 @@ DOCUMENTS_NOTE = (
     "Your deliverable reports and design-decision notes go in the project's Documents folder "
     "(`project.documentsDir` in ensemble_get_task) as `#<task no> <short title>.html` (a page, for "
     "anything that can be shown) or `.md` (text), or a folder `#<task no> <title>/` for several "
-    "files; link them in ensemble_report. TASK-HANDOVER.md and other working notes stay in your "
+    "files; link them in ensemble_report, each as [its name](its absolute path). TASK-HANDOVER.md and other working notes stay in your "
     "task folder. " + VISUAL_FIRST_NOTE + " " + NO_WEB_ARTIFACT_NOTE)
 
 # GitHub issue 17 (ED-216): a denial by Claude's own safety check reads "denied
@@ -3561,7 +3562,7 @@ SAFETY_CHECK_NOTE = (
 SOLO_REPORT_NOTE = (
     f"\n\n---\n{OWNER_OUTPUT_NOTE} When you finish this task, or get blocked and need help, report it "
     "with the ensemble_report tool (kind completed | blocked | question) — it "
-    f"reaches the project's PO, who otherwise cannot see your reply. {SAFETY_CHECK_NOTE} {ASK_NOTE} {TASK_NAME_NOTE} {POINTS_NOTE} {DOCUMENTS_NOTE}")
+    f"reaches the project's PO, who otherwise cannot see your reply. {SAFETY_CHECK_NOTE} {ASK_NOTE} {LINK_NOTE} {TASK_NAME_NOTE} {POINTS_NOTE} {DOCUMENTS_NOTE}")
 
 # RTK is deliberately launch-scoped.  Never run ``rtk init -g`` here: that
 # edits user-level Claude/Codex files and would also affect PO rooms and the
@@ -6384,6 +6385,7 @@ def collab_briefing(ident: str, role: str, teammates: list, task: str,
          "own task to In review; project POs and planners also get board "
          "administration. The 'ensemble' skill explains the opt-ins and limits."),
         ASK_NOTE,
+        LINK_NOTE,
         TASK_NAME_NOTE,
         ("A message to everyone wakes only the task's owner (the engineer); to "
          "wake another specialist, address it or @mention it. Mention a reviewer "
@@ -7018,7 +7020,7 @@ You are a fresh session started for this ONE review. You remember nothing of ear
 
 Do NOT design or implement — the engineer builds, you review. Check the work against the spec and the question, hunt for bugs, edge cases, risks and gaps, and verify claims by reading the actual code or running tests.
 
-{ASK_NOTE} {TASK_NAME_NOTE}
+{ASK_NOTE} {LINK_NOTE} {TASK_NAME_NOTE}
 
 ## What you were asked
 From {who}:
@@ -7820,7 +7822,7 @@ def made_po_first_input(project: dict, brought: dict | None = None) -> str:
         f"Ensemble ({'a documents project' if docs else 'a code project'}); "
         f"{operator_name()} made you its PO from the dashboard because this conversation "
         f"already holds the project's context. From now on the project's tasks report to you "
-        f"and you have the ensemble_* tools of a PO. {ASK_NOTE} {TASK_NAME_NOTE} {files}"
+        f"and you have the ensemble_* tools of a PO. {ASK_NOTE} {LINK_NOTE} {TASK_NAME_NOTE} {files}"
         f"1) Read the `ensemble` skill, section \"Running a project as its PO\""
         f"{' and its paragraph on a documents project’s PO' if docs else ''}. "
         f"2) From what you already know, write {hp} (your handover: what the project is, "
@@ -7843,7 +7845,7 @@ def made_po_fresh_input(project: dict) -> str:
         f"{MADE_PO_PREFIX}{po_usage.head()} | You are the new product owner (PO) of the project '{name}' in Ensemble "
         f"({'a documents project' if docs else 'a code project'}), started fresh by {operator_name()} "
         f"from the dashboard: this conversation has no history yet. From now on the project's tasks "
-        f"report to you and you have the ensemble_* tools of a PO. {ASK_NOTE} {TASK_NAME_NOTE} "
+        f"report to you and you have the ensemble_* tools of a PO. {ASK_NOTE} {LINK_NOTE} {TASK_NAME_NOTE} "
         f"1) Read the `ensemble` skill, section \"Running a project as its PO\""
         f"{' and its paragraph on a documents project’s PO' if docs else ''}. "
         f"2) Learn the project from its folder {where}: read what is there (a README, notes, "
@@ -10027,8 +10029,8 @@ LINK_CHECKED = {
     "ensemble_ask": lambda a: [a.get("context")] + [
         x for q in (a.get("questions") if isinstance(a.get("questions"), list) else [])
         if isinstance(q, dict)
-        for x in [q.get("question")] + [o.get("label") if isinstance(o, dict) else None
-                                        for o in (q.get("options") if isinstance(q.get("options"), list) else [])]],
+        for x in [q.get("question")] + [y for o in (q.get("options") if isinstance(q.get("options"), list) else [])
+                                        for y in ([o.get("label"), o.get("detail")] if isinstance(o, dict) else [])]],
 }
 
 

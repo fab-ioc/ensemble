@@ -23,6 +23,12 @@ write a standalone `Ask:` line with options underneath. Every question carries
 its answers: options, or Yes and No. Never ask the user a question in prose. A task with a project PO sends its question to that PO;
 set `forCeo: true` to send a card directly to the user.
 
+Every thing you name in text the user can read (a file, a folder, a picture, a
+document, a page, a card, a message, a task, a session) is a **clickable
+name**, never an address: a file or folder is `[its name](its absolute path)`,
+a task is `#18`, a card or a message is `[its words, short](its reference)`.
+See *How to link Ensemble things* for every form.
+
 It returns your identity, role, task id, project, working directory, task folder
 and teammates, the **write scope** your tool calls are limited to, and your
 project's PO (`projectPO`, with `reportsTo` saying in words where your reports
@@ -253,7 +259,8 @@ you should have written when a file or folder you named is not one.
 
 The CEO never wants to see a URL. In any text they can read (chat messages,
 reports, cards, task specs, documents shown in the file view) an Ensemble
-thing (a card, a message, a task, a file, a session) is linked only as a
+thing (a card, a message, a task, a file, a folder, a picture, a document, a
+page, a session) is linked only as a
 **clickable name**: never as a bare address, and never as an address in a
 code span. Never write `127.0.0.1`, `localhost`, the tailnet host,
 `fileview?path=`, `session?room=` or a room id in text the CEO reads (those

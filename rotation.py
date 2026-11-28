@@ -1790,6 +1790,7 @@ def first_prompt(project: dict, room: dict, old_sid: str, tokens,
         f"tools show the tasks.",
         _d.OWNER_OUTPUT_NOTE,
         _d.ASK_NOTE,
+        _d.LINK_NOTE,
         _d.TASK_NAME_NOTE,
         (f"Now, before anything else, read {hp} (your handover) and {rp} (the roadmap). "
          f"They give context for the hub's Board now: priorities, decisions and "

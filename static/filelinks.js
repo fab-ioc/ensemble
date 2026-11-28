@@ -54,6 +54,7 @@ const FileLinks = (() => {
     // A soft link (#433) is a link once the hub has the place and plain text
     // until then (the pages' CSS): never the "not written yet" chip.
     if (a.classList.contains('file-soft')) {
+      if (there === false && a.dataset.alts && shorter(a)) return;
       a.classList.toggle('file-found', there === true);
       if (there === true) a.removeAttribute('tabindex'); else a.setAttribute('tabindex', '-1');
       return;
@@ -68,6 +69,28 @@ const FileLinks = (() => {
       if (a.dataset.titleWas) a.title = a.dataset.titleWas; else a.removeAttribute('title');
       delete a.dataset.titleWas;
     }
+  }
+  // A soft folder whose last name has spaces names the hub nothing as long as
+  // the page drew it ("Documents/#430 Plans are ready"): the link becomes its
+  // next shorter reading (data-alts: [path, length of its text] each, longest
+  // first) and the words after it plain text; the watch asks about the new link.
+  function shorter(a) {
+    let alts;
+    try { alts = JSON.parse(a.dataset.alts); } catch (e) { alts = null; }
+    const text = a.textContent || '';
+    if (!Array.isArray(alts) || !alts.length || a.children.length || !a.parentNode) return false;
+    const [path, n] = alts[0];
+    if (typeof path !== 'string' || !path || !(n > 0 && n < text.length)) return false;
+    const h = a.getAttribute('href') || '', q = new URLSearchParams(h.slice('/fileview?'.length));
+    const b = a.cloneNode(false);
+    b.setAttribute('href', href(path, { line: q.get('line'), room: q.get('room'), roomName: q.get('roomName'),
+      cwd: q.get('cwd'), thread: q.get('thread'), threadName: q.get('threadName') }));
+    if (alts.length > 1) b.dataset.alts = JSON.stringify(alts.slice(1)); else delete b.dataset.alts;
+    b.textContent = text.slice(0, n);
+    a.parentNode.insertBefore(b, a);
+    a.parentNode.replaceChild(document.createTextNode(text.slice(n)), a);
+    if (mark(b)) flush();
+    return true;
   }
   function links(root) {
     return root && root.querySelectorAll ? root.querySelectorAll('a.file-link') : [];
