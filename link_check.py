@@ -70,6 +70,11 @@ _SP = r"[A-Z0-9#]" + _W + r"*(?: " + _W + r"+){1,3}"
 _SP_LAST = r"[A-Z0-9#]" + _W + r"*(?: " + _W + r"+){0,2} " + _W + r"+\.[A-Za-z]\w{0,7}(?::\d+(?:[-:]\d+)?)?"
 _REL_SPACED = re.compile(r"(?<![\w/\\.:#@-])((?:\.\.?[\\/])?" + _SEG + r"[\\/](?>(?:" + _SP + "|" + _SEG
                          + r")[\\/]){0,16}(?:" + _SP_LAST + r")?)(?=[\s.,;:!?)'\"]|$)")
+# One whose first folder holds spaces ("My Folder/notes/", "Ensemble
+# Dashboard/Documents/"): it may start at any of that folder's words, so each
+# is a reading (see _lead_readings), the first word's capital and all.
+_REL_SP_FIRST = re.compile(r"(?<![\w/\\.:#@&+-])(" + _SP + r"[\\/](?>(?:" + _SP + "|" + _SEG
+                           + r")[\\/]){0,16}(?:" + _SP_LAST + "|" + _SEG + r")?)(?=[\s.,;:!?)'\"]|$)")
 _BARE = re.compile(r"(?<![\w/\\.:#@-])([A-Za-z0-9_][\w#&+-]*(?:\.[\w-]+)*\.[A-Za-z]\w{0,7}(?::\d+(?:[-:]\d+)?)?)(?![\w/\\])")
 _TRAIL = ".,;:!?)'\""
 # A bare name of words in running text: a file's ("#433 Clickable links.md",
@@ -131,6 +136,10 @@ def _candidates(text: str) -> list[tuple[int, list | Callable[[], list]]]:
         ways = _bare_spaced(m.group(1), m.start(1))
         if ways:
             out.append((m.start(1), [(e, r, True) for e, r in ways]))
+    for m in _REL_SP_FIRST.finditer(s):
+        ways = _lead_readings(m.group(1), m.start(1))
+        if ways:
+            out.append((m.start(1), [(e, r, True) for e, r in ways]))
     for rx in (_REL_SPACED, _REL, _BARE):
         for m in rx.finditer(s):
             a, b = m.span(1)
@@ -165,6 +174,16 @@ def _bare_spaced(raw: str, at: int) -> list[tuple[int, str]]:
     if _EXT.search(raw):
         return [(at + len(raw), " ".join(words[i:])) for i in range(len(words) - 1)]
     return [(at + len(" ".join(words[:k])), " ".join(words[:k])) for k in range(len(words), 1, -1)]
+
+
+def _lead_readings(raw: str, at: int) -> list[tuple[int, str]]:
+    """A relative path whose first folder is words ("Open My Folder/notes/"),
+    from each of that folder's words but its last (_REL's), longest first."""
+    while raw and raw[-1] in _TRAIL:
+        raw = raw[:-1]
+    first = re.split(r"[\\/]", raw, maxsplit=1)[0]
+    cuts = [0] + [i + 1 for i, ch in enumerate(first) if ch == " "][:-1]
+    return [(at + len(raw), raw[c:]) for c in cuts]
 
 
 def link_for(name: str, path: Path, line: int = 0) -> str:

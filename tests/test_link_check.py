@@ -32,6 +32,7 @@ class Unlinked(unittest.TestCase):
         (self.root / "src").mkdir()
         (self.root / "src" / "app.py").write_text("x\n" * 50)
         (self.root / "notes (old).md").write_text("x")
+        (self.root / "My Folder" / "notes").mkdir(parents=True)
         self.docs = docs
 
     def tearDown(self):
@@ -57,6 +58,10 @@ class Unlinked(unittest.TestCase):
             "see #433 Clickable links.md now": "#433 Clickable links.md",
             "the folder #433 Plans holds them": "#433 Plans",
             "#433 Plans are ready": "#433 Plans",
+            # A relative path whose first folder has a space.
+            "My Folder/notes/": "My Folder/notes/",
+            "see My Folder/notes/ now": "My Folder/notes/",
+            "Open My Folder/notes.": "My Folder/notes",
         }
         for text, mention in cases.items():
             with self.subTest(text=text):
@@ -82,7 +87,8 @@ class Unlinked(unittest.TestCase):
 
     def test_what_names_nothing_is_quiet(self):
         for text in ("and/or 1/2 now", "`git status`", "missing.md and docs/nothing.py", "e.g. `x = a/b`",
-                     "#433 is done", "#12 Fix the thing", "see #433 Missing plan.md now"):
+                     "#433 is done", "#12 Fix the thing", "see #433 Missing plan.md now",
+                     "see Your Folder/notes/ now", "Open the My Folder/nothing/ now"):
             with self.subTest(text=text):
                 self.assertEqual(self.found(text), [])
 
@@ -109,7 +115,8 @@ class Linear(unittest.TestCase):
     the spaced form may start at any word, so it scans a bounded run."""
 
     SHAPES = ["/A b", "Documents/#1 A b ", "a/A b/", "A b ", "x/A b c.md ", "b/", "A/ ",
-              "/a ", "(/a", "/a(", "<a x>", "[a](", "[", "`a ", "#1 A b ", "A b c.md ", "C:\\a ", "~/a "]
+              "/a ", "(/a", "/a(", "<a x>", "[a](", "[", "`a ", "#1 A b ", "A b c.md ", "C:\\a ", "~/a ",
+              "A b/", "A b/c ", "A B C d/e "]
 
     def test_long_lines_are_fast(self):
         # The whole check, readings and all, with a resolver that finds nothing (the slowest case).

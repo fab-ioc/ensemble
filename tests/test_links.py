@@ -339,7 +339,13 @@ SOFT_CASES = {
     "[the plan](<Documents/#433 Clickable links.md>)": [("Documents/#433 Clickable links.md", True)],
     "[folder](/home/fab/Projects/Ensemble Dashboard/Documents)": [("/home/fab/Projects/Ensemble Dashboard/Documents", True)],
     "[folder](Documents/Plans)": [("Documents/Plans", True)],
-    "docs/a.md and Then b.md": [("docs/a.md", False), ("b.md", False)],
+    # A link with a capitalised word before it also asks for the longer reading (static/filelinks.js
+    # grows the link to the longest one the hub has; none found, it stays as drawn).
+    "docs/a.md and Then b.md": [("docs/a.md", False), ("b.md", False, ["Then b.md"])],
+    "See docs/a.md": [("docs/a.md", False, ["See docs/a.md"])],
+    "see My Folder/notes/ now": [("Folder/notes/", True, ["My Folder/notes/"])],
+    "#433 Clickable links.md": [("links.md", False, ["#433 Clickable links.md", "Clickable links.md"])],
+    "see Screen layout.png": [("layout.png", False, ["Screen layout.png"])],
     "see /home/me/notes.md": [("/home/me/notes.md", False)],
     "C:\\Work\\#9 Plan.md": [("C:\\Work\\#9 Plan.md", True)],
     "D:\\work\\New folder\\notes.md": [("D:\\work\\New folder\\notes.md", False)],
@@ -371,7 +377,7 @@ class SoftLinks(unittest.TestCase):
         self.assertEqual(out.returncode, 0, out.stderr)
         r = json.loads(out.stdout)
         for text, want in SOFT_CASES.items():
-            alts = [[p for p, n in json.loads(html.unescape(a))] if a else [] for a in ALTS_A_RE.findall(r[text])]
+            alts = [[p for p, *_ in json.loads(html.unescape(a))] if a else [] for a in ALTS_A_RE.findall(r[text])]
             got = [(viewer_path(h.replace("&amp;", "&"))[0], bool(soft), al)
                    for (h, soft), al in zip(FILE_A_RE.findall(r[text]), alts)]
             self.assertEqual(got, [(w + ([],))[:3] for w in want], f"{text!r} -> {r[text]}")
