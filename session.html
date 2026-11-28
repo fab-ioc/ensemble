@@ -1271,6 +1271,28 @@
   .rl.other { background:var(--c-neutral-fg); color:var(--surface); }
   .rl.person { background:transparent; color:var(--fg); box-shadow:inset 0 0 0 1.5px var(--fg-muted); }
   .rl.outside { background:var(--c-warning-bg); color:var(--c-warning-fg); box-shadow:inset 0 0 0 1.5px var(--c-warning-bold); }
+  /* #431: a Slack item in the PO chat, its own row: who wrote it (the amber
+     guest label), where, when, and Open in Slack at its right. A canvas
+     comment quotes its line; a message with replies has its thread line
+     inside the row. The line that the channel cannot be read is a sunken
+     Hub row with an amber lozenge (amber: it needs the person, nothing is lost). */
+  .msg.slack .from { display:flex; align-items:center; flex-wrap:wrap; gap:var(--s-100) var(--s-200); }
+  .msg.slack .from .rl-note { margin-left:0; font-size:var(--fs-200); }
+  .msg.slack .from .at { margin-left:0; }
+  .sl-open { margin-left:auto; color:var(--link); font-size:var(--fs-200); font-weight:500; text-transform:none; letter-spacing:0; text-decoration:none; white-space:nowrap; }
+  .sl-open:hover { text-decoration:underline; }
+  .sl-open:focus-visible { outline:none; border-radius:var(--r-100); box-shadow:0 0 0 2px var(--surface), 0 0 0 4px var(--focus-ring); }
+  .msg.slack .sl-text { color:var(--fg); white-space:pre-wrap; overflow-wrap:anywhere; }
+  .msg.slack .sl-line { margin:2px 0 6px; padding:2px 0 2px 8px; border-left:3px solid var(--border-strong); color:var(--fg-subtle); overflow-wrap:anywhere; }
+  .msg.slack .sl-line .lk { display:block; font-size:var(--fs-100); font-weight:600; color:var(--fg-muted); text-transform:uppercase; letter-spacing:.04em; }
+  .msg.slack .thr-line { margin:var(--s-200) 0 0; padding:0; }
+  .msg.slack.sl-reply { margin-left:var(--s-400); }
+  .msg.slack:not(.sl-down) { border-color:var(--border); background:var(--surface); }
+  .msg.slack.sl-down { background:var(--surface-sunken); }
+  .msg.slack.sl-down .sl-text { color:var(--fg-subtle); }
+  .msg.slack.sl-down .sl-text b { color:var(--fg); font-weight:600; }
+  .sl-loz { display:inline-flex; align-items:center; height:16px; padding:0 6px; border-radius:var(--r-100); font-size:var(--fs-100); font-weight:600;
+    line-height:16px; letter-spacing:.05em; text-transform:uppercase; background:var(--c-warning-bg); color:var(--c-warning-fg); }
   .rl.hub { height:auto; padding:0; background:transparent; color:var(--fg-muted); font-weight:500; }
   .rl-note { margin-left:var(--s-100); color:var(--fg-subtle); font-weight:400; text-transform:none; letter-spacing:0; }
   .msg .from .to, .msg-fold .from .to { color:var(--fg-muted); font-weight:400; }
@@ -3695,12 +3717,17 @@ const HUB_KIND_LABEL = { digest: 'Progress check', due: 'Due now', report: 'Repo
   resumed: 'Resumed', restart: 'Hub restarted', handover: 'Handover request', rotation: 'New session', madepo: 'Made PO', helper: 'Restart helper',
   points: 'Your open asks', pomsg: 'From another PO', stalled: 'Stall check', po: 'From the PO',
   issue: 'GitHub issue', issuecomment: 'GitHub issue comment', board: 'Board update', spec: 'Spec changed',
-  brief: 'Task brief', reviewbrief: 'Review brief', hub: 'Hub message', external: 'From outside' };
+  brief: 'Task brief', reviewbrief: 'Review brief', hub: 'Hub message', external: 'From outside', slack: 'Slack' };
 // A slash command the person ran (#253) is theirs, not the hub's.
 const isHubInput = m => !!m && m.from === 'user' && !!m.kind && m.kind !== 'human' && m.noticeKind !== 'command';
 // A message between two projects' POs (po_messages.py), kept in both POs'
 // rooms: a balloon of its own, never folded as hub traffic.
 const isPoMsg = m => !!m && m.kind === 'pomsg';
+// #431: a line from the project's Slack channel (slack_channel.py), a room
+// notice: a guest's message, reply or canvas comment (its own row, for the
+// person, never theirs), or the line that the channel cannot be read or is
+// read again. The one line that wakes the PO is a hub input (kind slack).
+const isSlackRow = m => !!m && m.kind === 'notice' && m.noticeKind === 'slack';
 const foldShort = t => { t = String(t || '').trim(); return t.length > 40 ? t.slice(0, 39) + '…' : t; };
 // ---- Who writes to whom ----------------------------------------------------
 // A header names the task, the PO and the person as the reader knows them:
@@ -4745,6 +4772,7 @@ function forCeo(m, N = CHAT_NAMES) {
   if (!m) return false;
   if (isPersons(m)) return true;
   if (m.cp || m.cpr) return true;     // a checkpoint: the person's way back (#197)
+  if (isSlackRow(m)) return true;     // #431: a guest wrote to the project's channel
   if (isHubInput(m) || isLandmark(m) || m.from === 'ensemble') return false;
   if (isPoMsg(m)) return namesCeo(m.text, N);
   if (isDecision(m)) return true;
@@ -4783,14 +4811,14 @@ function gapWords(g, items, N = CHAT_NAMES) {
     else if (isDigest(m)) add('progress check');
     else if (taskReport(m)) add('report');
     else if (isHubInput(m)) add(({ handover: 'handover note', rotation: 'session note', points: 'reminder', due: 'due item',
-      helper: 'restart note', restart: 'restart note', resumed: 'resume note', relay: 'team message', stalled: 'stall check' })[m.kind] || 'hub line');
+      helper: 'restart note', restart: 'restart note', resumed: 'resume note', relay: 'team message', stalled: 'stall check', slack: 'Slack wake-up' })[m.kind] || 'hub line');
     else if (whoName(m.from, N) === 'PO' || m.answers) add('PO note');
     else add('message');
   }
   const plural = { 'progress check': 'progress checks', report: 'reports', 'PO note': 'PO notes', 'PO to PO': 'PO to PO',
     'new session': 'new sessions', 'handover note': 'handover notes', 'session note': 'session notes', reminder: 'reminders',
     'due item': 'due items', 'restart note': 'restart notes', 'resume note': 'resume notes', 'team message': 'team messages',
-    'stall check': 'stall checks', 'hub line': 'hub lines', message: 'messages' };
+    'stall check': 'stall checks', 'Slack wake-up': 'Slack wake-ups', 'hub line': 'hub lines', message: 'messages' };
   return [...n].map(([k, c]) => `${c} ${c === 1 ? k : plural[k] || k}`).join(', ');
 }
 // The person's asks a gap's messages name, so none hides behind the row
@@ -5709,7 +5737,7 @@ function renderBubbles(items, opt = {}) {
   const heldPts = heldBy(heldKeys, POINTS.keep);
   // A thread's first message, and a reply also sent to the chat, stand for
   // their thread in a PO chat's channel (#210): never folded away.
-  const held = (m, i) => (!!heldPts && heldPts(m, i)) || openAsks(m, POINTS).length > 0 || !!(m.thr || m.inThr || (THREAD_MODE && m.workLog));
+  const held = (m, i) => (!!heldPts && heldPts(m, i)) || openAsks(m, POINTS).length > 0 || !!(m.thr || m.inThr || isSlackRow(m) || (THREAD_MODE && m.workLog));
   const quiet = (m, i) => quietItem(m, false);
   const prevBase = stick ? null : FOLD.base, prevHid = FOLD.hid || new Set();
   const plan = foldPlan(items, FOLD, stick, held, quiet);
@@ -5876,6 +5904,15 @@ function renderBubbles(items, opt = {}) {
     if (plan[i] === 'row') {
       if (quiet(m, i)) quietRows++;
       else if (firstFull < 0 || i < firstFull) folded++;
+    }
+    // #431: a Slack item is a row of its own; in the chat a reply in a
+    // thread is only its mark ("Chris Lee replied to a thread: …").
+    if (isSlackRow(m)) {
+      keys.push(k);
+      if (m.inThr && thr && !THREAD_MODE) { rows.push(threadMarkHtml(m)); return; }
+      shownNote(m);
+      rows.push(slackRowHtml(m, thr && !THREAD_MODE ? (m.thr || []).map(t => threadLineHtml(t, false)).filter(Boolean) : []));
+      return;
     }
     // In the channel "replied to a thread" goes above the balloon (as Slack
     // draws it); in a thread it says the reply was also sent to the chat.
@@ -7457,7 +7494,7 @@ function hubRowsIn(items, room, hub, top, bottom) {
     const first = items.find(m => m.ts), oldest = (room.messages || [])[0];
     if (first && oldest && first.ts < (oldest.ts || 0)) setTimeout(() => loadOlder(), 0);
   }
-  let rows = ((room && room.messages) || []).filter(m => isHubRow(m) || isPoMsg(m) || Array.isArray(m.asks) || (m.kind === 'notice' && (/^command(Output)?$/.test(m.noticeKind || '') || (m.noticeKind === 'external' && !m.typed))));
+  let rows = ((room && room.messages) || []).filter(m => isHubRow(m) || isPoMsg(m) || isSlackRow(m) || Array.isArray(m.asks) || (m.kind === 'notice' && (/^command(Output)?$/.test(m.noticeKind || '') || (m.noticeKind === 'external' && !m.typed))));
   if (hub && hub.size) {
     const ids = new Set(rows.map(m => m.id));
     rows = [...hub.values()].filter(m => !ids.has(m.id)).concat(rows).sort((a, b) => (a.ts || 0) - (b.ts || 0));
@@ -8484,6 +8521,10 @@ function thrDraw(roomTs, d = THR_VIEW) {
       // message (a PO's first question) goes above it, not nowhere (P417).
       const inThread = (d && d.cardThreads) || {};
       items = withHubRows(items, ROOM_OBJ, THR_HUB, !THR_BEFORE, !!THR_AFTER, m => !!inThread[m.id]);
+      // #431: a Slack item with replies carries its thread line (thr); a
+      // reply in it, only its mark in the chat (inThr).
+      const sr = (d && d.slackRows) || {};
+      items = items.map(m => isSlackRow(m) && sr[m.id] ? Object.assign({}, m, sr[m.id]) : m);
     } else if (THR_HUB.size) {
       // The thread's own cards (the hub's hubRows), among its balloons by
       // time; one older than its first, above it when the view starts there.
@@ -8926,7 +8967,36 @@ function threadMarkHtml(m) {
   // over it, the thread it replied to, which opens it.
   const t = THR_META[m.inThr];
   const title = t ? t.title || 'a thread' : 'a thread';
-  return `<div class="thr-in${m.from === 'user' ? ' mine' : ''}" data-key="thr-in:${esc(m.id)}:${esc(m.inThr)}:${esc(title)}">replied to a thread: <button type="button" class="thr-open" data-thr="${esc(m.inThr)}" title="Open the thread">${esc(title)}</button></div>`;
+  const who = isSlackRow(m) ? esc((m.slack && m.slack.author) || 'Someone') + ' ' : '';
+  return `<div class="thr-in${m.from === 'user' ? ' mine' : ''}" data-key="thr-in:${esc(m.id)}:${esc(m.inThr)}:${esc(title)}">${who}replied to a thread: <button type="button" class="thr-open" data-thr="${esc(m.inThr)}" title="Open the thread">${esc(title)}</button></div>`;
+}
+// #431: a Slack item's row (isSlackRow): who wrote it in the amber guest
+// label, where ("Slack · #launch-team", a reply in the thread, a comment on a
+// canvas), when, and Open in Slack; a canvas comment quotes its line; lines:
+// its thread line in the chat (a message with replies). The line that the
+// channel cannot be read (kind down) is a sunken Hub row with its lozenge,
+// what cannot be read in bold; the line that it is read again, a plain one.
+const SLACK_LINK_RE = /^https:\/\/(?:[a-z0-9-]+\.)+slack\.com\/|^https:\/\/slack\.com\/app_redirect\?/i;
+function slackRowHtml(m, lines = []) {
+  const s = m.slack || {}, id = esc(m.id || '');
+  // An item shows when it was written in Slack; a Hub line, when the hub wrote it.
+  const at = stampHtml(s.kind !== 'down' && s.kind !== 'up' && +s.ts > 0 ? +s.ts : m.ts);
+  if (s.kind === 'down' || s.kind === 'up') {
+    const t = String(m.text || ''), c = t.indexOf(': ');
+    const body = s.kind === 'down' && c > 0 ? `<b>${esc(t.slice(0, c + 1))}</b> ${esc(t.slice(c + 2))}` : esc(t);
+    return `<div class="msg slack sl-down" data-mid="${id}" data-key="sl:${id}" data-from="ensemble"><div class="from"><span class="rl hub">Hub</span>`
+      + (s.kind === 'down' && s.label ? `<span class="sl-loz">${esc(s.label)}</span>` : '') + `${at}</div><div class="sl-text">${body}</div></div>`;
+  }
+  const where = s.kind === 'reply' ? 'Slack · reply in the thread'
+    : s.kind === 'comment' ? `Slack · comment on the canvas "${s.canvasTitle || 'canvas'}"`
+    : 'Slack · ' + (s.channelName ? '#' + s.channelName : 'the channel');
+  const link = SLACK_LINK_RE.test(String(s.permalink || ''))
+    ? `<a class="sl-open" href="${esc(s.permalink)}" target="_blank" rel="noopener noreferrer">Open in Slack ↗</a>` : '';
+  const quote = s.kind === 'comment' && s.line ? `<div class="sl-line"><span class="lk">On the line</span>${esc(s.line)}</div>` : '';
+  const lk = lines.map(h => (/data-key="([^"]*)"/.exec(h) || [])[1] || '').join('|');
+  return `<div class="msg slack${s.kind === 'reply' && THREAD_MODE ? ' sl-reply' : ''}" data-mid="${id}" data-key="sl:${id}:${lk}" data-from="ensemble">`
+    + `<div class="from"><span class="rl outside">${esc(s.author || 'Someone')}</span><span class="rl-note">${esc(where)}</span>${at}${link}</div>`
+    + quote + `<div class="sl-text">${esc(s.text || m.text || '')}</div>` + lines.join('') + '</div>';
 }
 // A thread opens beside the channel (sideOpen). Inside a thread (the side
 // frame) it asks the channel page to switch; in a window of its own, a new tab.
@@ -9351,7 +9421,7 @@ function refreshShow(room, ticket, sendsGen) {
     SOLO_ROT = SOLO_ROTS.slice(-1)[0] || null;
     // What the hub holds for it changed (sent, delivered, failed): draw again.
     // …or the hub put a row of its own in the room (it was restarted).
-    const hubRows = (room.messages || []).filter(m => isHubRow(m) || isPoMsg(m) || isCmdRow(m) || (m.kind === 'notice' && m.noticeKind === 'external' && !m.typed)).length;
+    const hubRows = (room.messages || []).filter(m => isHubRow(m) || isPoMsg(m) || isSlackRow(m) || isCmdRow(m) || (m.kind === 'notice' && m.noticeKind === 'external' && !m.typed)).length;
     const rowsChanged = hubRows !== HUB_ROWS_N;
     HUB_ROWS_N = hubRows;
     const cpNow = cpSig(room.checkpoints), cpChanged = cpNow !== CP_SIG;

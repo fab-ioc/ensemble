@@ -528,7 +528,7 @@ class Notify(unittest.TestCase):
 class ThePage(unittest.TestCase):
     def test_the_chat_labels_an_outside_line_and_shows_an_untyped_one(self):
         page = (ROOT / "session.html").read_text(encoding="utf-8")
-        self.assertIn("external: 'From outside' };", page)
+        self.assertIn("external: 'From outside', slack: 'Slack' };", page)
         self.assertIn("external: ['on an outside line',", page)
         self.assertIn("(m.noticeKind === 'external' && !m.typed)", page)
         # The sender's label is what the row names (senderName reads it first).

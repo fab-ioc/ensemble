@@ -1610,6 +1610,31 @@ class Endpoints(tp._World):
                          "Reply in thread on Team activity starts a thread of its own")
         self.assertEqual(http_get(f"/api/room/thread?id={self.rid}&t=P99")[0], 404)
 
+    def test_a_slack_item_with_replies_is_a_thread(self):
+        # #431: a Slack message and its replies (room notices) are one PO
+        # thread: the root carries the thread line, a reply only its mark.
+        key = "slack-C000TEST01-1795000100000100"
+        def put(kind, who, text, thread=key):
+            return chatroom.post_notice(self.rid, "ensemble", text, {
+                "noticeKind": "slack", "slackKey": f"{kind}:{text}", "outsideThread": thread,
+                "slack": {"kind": kind, "author": who, "text": text}})["id"]
+        root = put("message", "Ann Example", "Who reviews the plan?")
+        reply = put("reply", "Bob Example", "I will.")
+        alone = put("message", "Ann Example", "Alone", thread="slack-C000TEST01-1795000200000100")
+        threads.build(self.rid, show_progress=False)
+        ch = http_get(f"/api/room/channel?id={self.rid}")[1]
+        tid = "slack:" + key
+        self.assertEqual(ch["slackRows"], {root: {"thr": [tid]}, reply: {"inThr": tid}})
+        self.assertNotIn(alone, ch["slackRows"])
+        self.assertEqual(ch["threads"][tid]["replies"], 1)
+        self.assertEqual(ch["threads"][tid]["title"], "Ann Example: Who reviews the plan?")
+        status, th = http_get(f"/api/room/thread?id={self.rid}&t={tid}")
+        self.assertEqual(status, 200)
+        self.assertEqual([m["id"] for m in th["hubRows"]], [root, reply])
+        self.assertEqual(th["items"], [])
+        only = http_get(f"/api/room/channel?id={self.rid}&threads=1")[1]
+        self.assertIn(tid, [t["id"] for t in only["threadList"]])
+
     def test_an_old_topic_param_shows_the_whole_channel(self):
         # P345: Topics were removed; an old &topic= is ignored, the chat comes
         # in pages as without it.

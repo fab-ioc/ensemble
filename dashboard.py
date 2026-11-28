@@ -116,6 +116,7 @@ import po_usage
 # What a handover says is due at a time: the idle PO is typed it then.
 import due
 import issues
+import slack_channel
 # A task in a PO project that stopped without saying so: nudge, then tell the PO.
 import stall
 import idle
@@ -220,6 +221,7 @@ task_brief.bind(sys.modules[__name__])
 pacing.bind(sys.modules[__name__])
 due.bind(sys.modules[__name__])
 issues.bind(sys.modules[__name__])
+slack_channel.bind(sys.modules[__name__])
 stall.bind(sys.modules[__name__])
 first_run.bind(sys.modules[__name__])
 idle.bind(sys.modules[__name__])
@@ -2350,6 +2352,9 @@ _SETTINGS_DEFAULTS = {
     # the cheap model that writes it up.
     "digestIntervalMin": digest.DEFAULT_INTERVAL_MIN,
     "digestModel": digest.DEFAULT_MODEL,
+    # A project's Slack channel (#431, slack_channel.py): read this often, in
+    # minutes (also when its PO wakes, at most once a minute).
+    "slackPollMin": slack_channel.DEFAULT_POLL_MIN,
     # The PO's rotation (rotation.py): past this many tokens of context per
     # model call, the PO writes its handover and a fresh session takes over
     # from it. 0 = off.
@@ -3280,6 +3285,10 @@ def _save_settings_locked(settings: dict, pins: list | None = None) -> dict:
             v = max(60, min(24 * 3600, v))
         if k == "digestIntervalMin":
             v = digest.clamp_interval(v)
+            if v is None:
+                continue
+        if k == "slackPollMin":
+            v = slack_channel.clamp_poll(v)
             if v is None:
                 continue
         if k == "digestModel":
@@ -6089,6 +6098,7 @@ HUB_INPUT_KINDS = (
     ("[due] ", "due"),                  # due.py: what its handover says is due now
     ("[issue] ", "issue"),              # issues.py: a new or reopened issue of the feedback repo
     ("[issue comment] ", "issuecomment"),   # issues.py: a new comment on an open issue
+    ("[slack] ", "slack"),              # slack_channel.py: what is new in the project's Slack channel (#431)
     ("[report] ", "report"),            # _ring_report: a task's ensemble_report
     ("[relay] ", "relay"),              # _relay_wake: a team room's doorbell
     ("[resumed] ", "resumed"),          # RESUME_NOTE
@@ -7502,6 +7512,9 @@ def _load_projects_uncached(dirs: list[str], codes: list[str]) -> list[dict]:
                       # Its own progress-digest interval, when it set one.
                       **({"digestIntervalMin": meta["digestIntervalMin"]}
                          if "digestIntervalMin" in meta else {}),
+                      # Its Slack channel, set by hand (#431, slack_channel.py).
+                      **({"slackChannel": slack_channel.sanitize(meta.get("slackChannel"))}
+                         if slack_channel.sanitize(meta.get("slackChannel")) else {}),
                       # Its own icon in place of the coloured square (#329).
                       **({"icon": _icon_meta(meta["icon"])} if _icon_meta(meta.get("icon")) else {}),
                       # Its own colour, from that icon (P366), and the icon it was worked out for.
@@ -10727,6 +10740,9 @@ def build_projects() -> dict:
                            "poRoomId": p.get("poRoomId", ""), "kind": p.get("kind") or "code",
                            **({"taskAgentTools": p["taskAgentTools"]}
                               if p.get("taskAgentTools") in TASK_AGENT_TOOLS_VALUES else {}),
+                           # Its Slack channel and whether it can be read (#431).
+                           **({"slackChannel": {**p["slackChannel"], "status": slack_channel.status_of(p)}}
+                              if p.get("slackChannel") else {}),
                            # Its own icon (#329): the page shows it in place of the square.
                            **({"icon": _icon_meta(p.get("icon"))} if _icon_meta(p.get("icon")) else {}),
                            # P366: the colour its uploaded icon gave it, as the PO label paints it
@@ -13909,11 +13925,14 @@ def _hub_row(m: dict) -> bool:
     """A room message a one-agent chat shows among its transcript's turns
     (session.html withHubRows): a restart notice, a PO's message, a card,
     a slash command the person ran and its output (#253), an outside
-    sender's line its agent was not running for (#357)."""
+    sender's line its agent was not running for (#357), a Slack item (#431)."""
     return ((m.get("kind") == "notice" and m.get("noticeKind") == "restart")
             or (m.get("kind") == "notice" and m.get("noticeKind") == NOTICE_EXTERNAL
                 and not m.get("typed"))
             or m.get("kind") == "pomsg" or isinstance(m.get("asks"), list)
+            # #431: a message, reply or canvas comment from the project's
+            # Slack channel, or the line that the channel cannot be read.
+            or (m.get("kind") == "notice" and m.get("noticeKind") == slack_channel.NOTICE)
             or chatroom.is_command_record(m))
 
 
@@ -24412,6 +24431,17 @@ class Handler(BaseHTTPRequestHandler):
                                                   data.get("intervalMin"))
             self._send_json(200 if ok else (404 if msg == "no_such_project" else 400),
                             {"ok": ok} if ok else {"error": msg})
+            return
+        if p == "/api/projects/slack-channel":
+            # #431: {projectId, channel: a link, "name id" or an id; "" or null
+            # removes it}. The person's own setting: only the page sets it.
+            why = self._page_refusal()
+            if why:
+                self._send_json(403, {"error": "page_only", "message": why})
+                return
+            ok, msg, ch = slack_channel.set_channel(data.get("projectId", ""), data.get("channel"))
+            self._send_json(200 if ok else (404 if msg == "no_such_project" else 400),
+                            {"ok": True, "channel": ch} if ok else {"error": msg})
             return
         if p == "/api/projects/task-agent-tools":
             # {projectId, value: "ensemble" | "own" | null}. Missing/null

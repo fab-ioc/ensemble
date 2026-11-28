@@ -5077,6 +5077,21 @@ window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault()
   .ps-k { color: var(--fg-subtle); }
   .ps-v { color: var(--fg); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .ps-v code { font-family: var(--font-mono); font-size: 12px; }
+  /* #431: the project's Slack channel: muted "None" and when it was read; an amber lozenge says why it cannot be read. */
+  .ps-v .ps-q { color: var(--fg-muted); }
+  .ps-v .loz { margin-left: 4px; vertical-align: middle; }
+  dialog .sc-field input { font-family: var(--font-mono); font-size: 12px; }
+  dialog .sc-state { margin: 12px 0 0; padding: 8px 10px; border-radius: var(--r-200); background: var(--surface-sunken); color: var(--fg-subtle); font-size: 12px; line-height: 16px; overflow-wrap: anywhere; }
+  dialog .sc-state.warn { background: var(--c-warning-bg); color: var(--c-warning-fg); }
+  dialog .sc-err { margin: 8px 0 0; color: var(--c-danger-fg); font-size: 12px; }
+  dialog .actions.sc-acts { justify-content: flex-end; margin: 16px 0 0; flex-wrap: wrap; }
+  dialog .actions.sc-acts .sc-rm { margin-right: auto; }
+  /* The dialog's own buttons (Save the primary one), not the small panel buttons .actions gives. */
+  dialog .actions.sc-acts button { padding: 7px 14px; border-radius: 6px; font-size: 13px; background: var(--accent); color: var(--accent-fg); border: 1px solid var(--accent); }
+  dialog .actions.sc-acts button:hover { background: var(--accent-hover); border-color: var(--accent-hover); color: var(--accent-fg); }
+  dialog .actions.sc-acts button.secondary { background: transparent; color: var(--fg); border-color: var(--border); }
+  dialog .actions.sc-acts button.secondary:hover { background: var(--hover); border-color: var(--border-strong); color: var(--fg); }
+  dialog.sc-dlg { width: 480px; max-width: calc(100vw - 16px); box-sizing: border-box; }
   .ps-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
   /* Generate (#335): four icons drawn by the hub's CLI, under the Image choice. */
   .ps-ibtns { display: contents; }
@@ -5534,6 +5549,20 @@ window.DOC_LISTENERS_PAUSED = false;
              placeholder="20" autocomplete="off"> <span class="pref-label">minutes</span></span>
     </div>
     <p class="cfg-hint" data-noun="A running agent that does nothing this long moves to Waiting and its PO gets one line, at most one an hour per {project}. Repeats back off to every 6 hours. A wait the PO or the owner marked does not count. The smallest value is 5. 0 = off.">A running agent that does nothing this long moves to Waiting and its PO gets one line, at most one an hour per project. Repeats back off to every 6 hours. A wait the PO or the owner marked does not count. The smallest value is 5. 0 = off.</p>
+    <h5 class="sp-sub">Slack</h5>
+    <!-- #431: how often the hub reads each project's Slack channel into its PO chat. -->
+    <div class="pref-row" style="margin-top: 14px;">
+      <label class="pref-label" for="pref-slack-poll">Read Slack channels every</label>
+      <select id="pref-slack-poll" class="pref-select">
+        <option value="1">1 minute</option>
+        <option value="2">2 minutes</option>
+        <option value="5">5 minutes</option>
+        <option value="10">10 minutes</option>
+        <option value="15">15 minutes</option>
+        <option value="30">30 minutes</option>
+      </select>
+    </div>
+    <p class="cfg-hint">1, 2, 5, 10, 15 or 30 minutes. Also when a PO wakes, at most once a minute.</p>
     <h5 class="sp-sub">Weekly pacing</h5>
     <!-- ED-164: spread each kind's 7-day allowance over the week. -->
     <div class="pref-row" style="margin-top: 14px;">
@@ -9804,6 +9833,8 @@ function renderPrefs() {
   if (paceMargin && document.activeElement !== paceMargin) {
     paceMargin.value = PREFS.paceMarginPoints ?? 10;
   }
+  const slackPoll = document.getElementById('pref-slack-poll');
+  if (slackPoll && document.activeElement !== slackPoll) slackPoll.value = String(PREFS.slackPollMin || 5);
   const paceBrake = document.getElementById('pref-pace-brake');
   if (paceBrake && document.activeElement !== paceBrake) {
     paceBrake.value = PREFS.paceBrake || 'hold';
@@ -21501,6 +21532,96 @@ async function taskToolsChoose(pid) {
   } catch (e) { toast('Not saved: ' + histErr(e), 6000, 'err'); }
 }
 
+// ---- A project's Slack channel (#431, GitHub issue 75) ------------------------
+// The hub reads the channel set here into the PO chat (slack_channel.py)
+// through the person's own Claude Slack connector, and never posts to it.
+// The row says when it was last read, or in an amber lozenge why it cannot be.
+const SLACK_DOWN = { not_connected: 'not connected', not_signed_in: 'not signed in', failed: 'cannot read', partial: 'read in part' };
+function slackAgoWords(ts) {
+  const s = Math.max(0, Date.now() / 1000 - (+ts || 0));
+  if (s < 60) return 'just now';
+  if (s < 5400) return `${Math.floor(s / 60)} min ago`;
+  if (s < 86400 * 2) return `${Math.floor(s / 3600)} h ago`;
+  return `${Math.floor(s / 86400)} days ago`;
+}
+function slackChanName(ch) {
+  const n = (ch && (ch.name || (ch.status && ch.status.name))) || '';
+  return n ? '#' + n : (ch && ch.id) || '';
+}
+function slackValueHtml(ch) {
+  if (!ch) return '<span class="ps-q">None</span>';
+  const st = ch.status || {}, down = SLACK_DOWN[st.state];
+  const name = esc(slackChanName(ch));
+  if (down) return `${name} <span class="loz warning" title="${esc(st.detail || '')}">${esc(down)}</span>`;
+  return `${name} <span class="ps-q">· ${st.state === 'ok' && st.lastOk ? 'read ' + esc(slackAgoWords(st.lastOk)) : 'not read yet'}</span>`;
+}
+const slackClock = ts => ts ? new Date(ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }) : '';
+// The state box under the hint: why it cannot be read and what to do, amber.
+function slackStateHtml(ch) {
+  const st = (ch && ch.status) || {};
+  if (!SLACK_DOWN[st.state]) return '';
+  const since = st.state === 'partial' ? (st.lastOk ? `Read at ${slackClock(st.lastOk)}, but not all of it` : 'Read, but not all of it')
+    : (st.lastOk ? `Not read since ${slackClock(st.lastOk)}` : 'Not read yet');
+  const what = st.state === 'not_connected' ? 'Claude has no Slack connector. Connect Slack in claude.ai › Settings › Connectors, with the account Claude Code signs in with.'
+    : st.state === 'not_signed_in' ? 'Claude’s Slack connector is signed out. Sign in again in claude.ai › Settings › Connectors.'
+    : (st.detail || 'The connector answered in a form the hub does not know.');
+  const again = st.state === 'partial' ? 'The hub tries again at each read.' : 'The hub tries again every 30 minutes.';
+  return `<div class="sc-state warn" role="status">${esc(since)}: ${esc(what)} ${esc(again)}</div>`;
+}
+function slackChannelDialogHtml(pj, typed, err) {
+  const ch = pj.slackChannel || null;
+  const val = typed != null ? typed : ch ? (ch.url || [ch.name, ch.id].filter(Boolean).join(' ')) : '';
+  const every = +(PREFS && PREFS.slackPollMin) || 5;
+  return `<h3>Slack channel</h3>`
+    + `<div class="im-field sc-field"><label for="slack-channel-in">Channel link, or name and id</label>`
+    + `<input type="text" id="slack-channel-in" autocomplete="off" spellcheck="false" placeholder="https://….slack.com/archives/C…" value="${esc(val)}"></div>`
+    + `<p class="cfg-hint">The hub reads this channel’s messages, thread replies and canvas comments every ${every} minute${every === 1 ? '' : 's'}, and when the PO wakes, through your own Claude Slack connector. It never posts.</p>`
+    + (err ? `<p class="sc-err" role="alert">${esc(err)}</p>` : '')
+    + slackStateHtml(ch)
+    + `<div class="actions sc-acts">${ch ? '<button type="button" id="slack-channel-rm" class="secondary sc-rm">Remove channel</button>' : ''}`
+    + `<button type="button" id="slack-channel-cancel" class="secondary">Cancel</button><button type="button" id="slack-channel-ok">Save</button></div>`;
+}
+const SLACK_ERR = { not_a_slack_channel: 'That is not a Slack channel. Paste its link (in Slack: the channel’s name › Copy link), or its name and id (launch-team C0123ABCD).' };
+async function slackChannelChoose(pid) {
+  let pj = projectById(pid);
+  if (!pj) return;
+  const dlg = pdModal();
+  let typed = null, err = '';
+  for (;;) {
+    dlg.innerHTML = slackChannelDialogHtml(pj, typed, err);
+    dlg.classList.add('sc-dlg');
+    if (!dlg.open) dlg.showModal();
+    const inp = dlg.querySelector('#slack-channel-in');
+    inp.focus(); inp.select();
+    const value = await new Promise(resolve => {
+      dlg.querySelector('#slack-channel-cancel').onclick = () => resolve(null);
+      dlg.addEventListener('cancel', () => resolve(null), { once: true });
+      const rm = dlg.querySelector('#slack-channel-rm');
+      if (rm) rm.onclick = () => resolve('');
+      dlg.querySelector('#slack-channel-ok').onclick = () => resolve(inp.value.trim());
+      inp.onkeydown = e => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); resolve(inp.value.trim()); } };
+    });
+    if (value === null) break;
+    if (value === '' && !pj.slackChannel) break;
+    try {
+      await api('/api/projects/slack-channel', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ projectId: pid, channel: value }),
+      });
+      toast(value ? 'Slack channel saved; the hub reads it from now on' : 'Slack channel removed', 3500, 'ok');
+      await refreshProjects(); renderRows();
+      break;
+    } catch (e) {
+      typed = value;
+      const code = (/"error":\s*"([^"]+)"/.exec((e && e.message) || '') || [])[1];
+      err = SLACK_ERR[code] || ('Not saved: ' + histErr(e));
+      pj = projectById(pid) || pj;
+    }
+  }
+  dlg.classList.remove('sc-dlg');
+  dlg.close();
+}
+
 // ---- A PO's past conversations ------------------------------------------------
 // Each rotation, switch or handover starts a PO afresh, and the conversation it
 // leaves is the PO's history, not a card of its own (/api/room/past, which also
@@ -21713,6 +21834,8 @@ function psSettingsRowsHtml(pj, phone) {
     const v = phone ? (n ? `Past conversations (${n})` : m.agent || 'claude') : [m.agent || 'claude', shortModel(m.model), past].filter(Boolean).join(' · ');
     rows.push({ k: 'PO', v: esc(v), act: n ? 'past' : '', btn: 'Past conversations…' });
   } else rows.push({ k: 'PO', v: 'none', act: poChooseOffered(pj) ? 'po' : '', btn: 'Set up the PO…' });
+  // #431: the Slack channel the hub reads into the PO chat.
+  rows.push({ k: 'Slack channel', v: slackValueHtml(pj.slackChannel), act: 'slack', btn: pj.slackChannel ? 'Change…' : 'Set…' });
   return rows.map(r => phone
     ? (r.act ? `<button type="button" class="ps-set ps-set-go" data-ps-act="${r.act}"><span class="ps-k">${esc(r.k)}</span><span class="ps-v">${r.v}</span><span class="ps-go" aria-hidden="true">›</span></button>`
              : `<div class="ps-set"><span class="ps-k">${esc(r.k)}</span><span class="ps-v">${r.v}</span></div>`)
@@ -22110,7 +22233,8 @@ function psOnce(pid, d, focus) {
           const act = b.getAttribute('data-ps-act');
           const sub = act === 'kind' ? () => kindChoose(pid) : act === 'key' ? () => keyChoose(pid)
             : act === 'tools' ? () => taskToolsChoose(pid) : act === 'past' ? () => pastList(pid)
-            : act === 'po' ? () => projectSetupFlow({ projectId: pid }) : null;
+            : act === 'po' ? () => projectSetupFlow({ projectId: pid })
+            : act === 'slack' ? () => slackChannelChoose(pid) : null;
           if (sub) finish({ sub, from: b.id || act });
         };
       });
@@ -29930,6 +30054,8 @@ if ('serviceWorker' in navigator) {
       setPref('taskAgentTools', sel.value);
     } else if (sel.id === 'pref-pace-brake') {
       setPref('paceBrake', sel.value).then(refreshUsage);
+    } else if (sel.id === 'pref-slack-poll') {
+      setPref('slackPollMin', +sel.value);
     } else if (sel.dataset.kind) {
       setAgentModel(sel);
     }
