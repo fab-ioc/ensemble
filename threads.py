@@ -566,6 +566,64 @@ def card_tag(mid: str, n: int) -> str:
     return hashlib.sha1(f"{mid}\0{n}".encode("utf-8")).hexdigest()[:16]
 
 
+SLACK_KEY = re.compile(r"slack-[CGD][A-Z0-9]{8,}-\d{10,20}")
+SLACK_ITEMS = ("message", "reply", "comment")
+
+
+def room_slack(room: dict | None) -> dict[str, list[dict]]:
+    """The room's Slack items (#431, slack_channel.py) by their thread key,
+    oldest first: a channel message and the replies to it, or a canvas
+    comment thread. Their own threads, like a card's: room notices, not
+    balloons."""
+    out: dict[str, list[dict]] = {}
+    for m in (room or {}).get("messages") or []:
+        if (not isinstance(m, dict) or m.get("kind") != "notice" or m.get("noticeKind") != "slack"
+                or not m.get("id") or not SLACK_KEY.fullmatch(str(m.get("outsideThread") or ""))
+                or (m.get("slack") or {}).get("kind") not in SLACK_ITEMS):
+            continue
+        out.setdefault(str(m["outsideThread"]), []).append(m)
+    for rows in out.values():
+        rows.sort(key=lambda m: _num(m.get("ts")))
+    return out
+
+
+def _slack_threads(out: dict, room: dict | None, side: dict) -> None:
+    """Adds a thread for each Slack item that has replies (or a canvas comment
+    thread with more than one comment), ``slack:<key>``: its root is the
+    first notice, ``slack`` lists every notice of it (the thread page draws
+    them as hub rows), and ``slackRows`` tells the chat which notice carries
+    the thread line (``thr``) and which is a reply shown only as a mark
+    (``inThr``)."""
+    since = float(side.get("since") or 0)
+    seen, archived = side.get("seen") or {}, side.get("archived") or {}
+    names = side.get("names") or {}
+    rows_of: dict = {}
+    for key, rows in room_slack(room).items():
+        if len(rows) < 2:
+            continue
+        tid = "slack:" + key
+        root, last = rows[0], rows[-1]
+        sl = root.get("slack") or {}
+        auto = " ".join(f"{sl.get('author') or 'Slack'}: {_words(sl.get('text') or '')}".split())[:120]
+        mark = max(since, _num(seen.get(tid)))
+        th = {"id": tid, "root": str(root["id"]), "title": names.get(tid) or auto, "autoTitle": auto,
+              "named": bool(names.get(tid)), "points": [], "task": "", "members": [],
+              "rootTs": _num(root.get("ts")), "slack": [str(m["id"]) for m in rows], "chosen": True,
+              "replies": len(rows) - 1, "workCount": 0, "workLastMid": "", "rootWho": "outside",
+              "who": ["outside"], "whoLabels": [], "lastAt": _num(last.get("ts")), "lastMid": str(last["id"]),
+              "lastWho": "outside", "unread": sum(1 for m in rows if _num(m.get("ts")) > mark),
+              "poUnread": 0, "lastPoAt": 0, "lastPoMid": "", "openQuestions": 0, "state": "",
+              "updatedAt": _num(last.get("ts")), "openPoints": []}
+        put = _num(archived.get(tid))
+        if put and th["updatedAt"] <= put:
+            th["archived"] = put
+        out["threads"][tid] = th
+        rows_of[str(root["id"])] = {"thr": [tid]}
+        for m in rows[1:]:
+            rows_of[str(m["id"])] = {"inThr": tid}
+    out["slackRows"] = rows_of
+
+
 def room_cards(room: dict | None) -> list[dict]:
     """The room's question cards for :func:`assign`, oldest first: id, time,
     text, the points the PO named (``ensemble_ask points``) and questions."""
@@ -1796,6 +1854,7 @@ def build(room_id: str, room: dict | None = None, *, show_progress: bool = True,
         put = _num(archived.get(tid))
         if put and tid != "team:activity" and th["updatedAt"] <= put:
             th["archived"] = put
+    _slack_threads(out, room, side)
     hidden |= _archived_mids(out)
     idx = {**out, "sig": sig, "builtAt": time.time(), "took": round(time.time() - t0, 3),
            "by_mid": by_mid, "recs": recs, "hidden": hidden,
@@ -2128,7 +2187,13 @@ def channel_view(room_id: str, room: dict, n: int = CHANNEL_MAX, upto: str = "",
            "channel": len(ch), "sendMids": idx.get("sendMids") or [],
            # The question cards in a thread (#379): the page leaves them out
            # of the chat, and a link to one opens its thread.
-           "cardThreads": dict(idx.get("cards") or {})}
+           "cardThreads": dict(idx.get("cards") or {}),
+           # #431: the Slack items of a thread: the root carries its thread
+           # line, a reply is only its mark in the chat (the thread holds it).
+           "slackRows": dict(idx.get("slackRows") or {})}
+    for t in {(v.get("thr") or [v.get("inThr")])[0] for v in out["slackRows"].values()}:
+        if t in idx["threads"]:
+            out["threads"][t] = _meta(idx["threads"][t])
     # Check every send the open page is awaiting, independently of the newest
     # room event. Another thread can advance after the answer and before a poll.
     watched = []
@@ -2289,7 +2354,7 @@ def thread_view(room_id: str, room: dict, tid: str = "", mid: str = "", n: int =
         out["uptoStep"] = {"mid": step, "owner": upto}     # #402: its steps open on it
     # Its question cards (#379): room messages the page draws among its
     # balloons by their time, as the channel does with its own.
-    mine = set(th.get("cards") or ())
+    mine = set(th.get("cards") or ()) | set(th.get("slack") or ())     # #431: its Slack items
     if mine:
         out["hubRows"] = [m for m in room.get("messages") or [] if m.get("id") in mine]
     return out
