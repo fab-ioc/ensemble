@@ -379,6 +379,45 @@ class ReviewOneTests(_World):
         self.assertEqual([i["text"] for i in out], [f"r{i}" for i in range(5)])
         self.assertTrue(all(r["slack"]["parentTs"] == ts(100) for r in self.slack_rows("reply")))
 
+    def test_a_thread_longer_than_one_read_goes_on_and_its_new_replies_are_read(self):
+        """Review 2 (#431): a thread past MAX_PAGES pages is read on from where
+        the last read stopped, and after its end from its last page."""
+        self.slack.page = 2
+        parent = (ANN, ts(100), "parent")
+        self.slack.messages.append(parent)
+        slack_channel.read_project(self.project, SET_AT + 300)
+        n = 2 * slack_channel.MAX_PAGES + 3
+        replies = [(BOB, ts(200 + i), f"r{i}") for i in range(n)]
+        self.slack.threads[(CHAN, ts(100))] = (parent, replies)
+        first = slack_channel.read_project(self.project, SET_AT + 600)
+        self.assertEqual(len(first), 2 * slack_channel.MAX_PAGES - 1)
+        self.assertEqual(slack_channel.status_of(self.project)["state"], "ok")
+        self.assertTrue(self.state()["tcur"][f"t:{ts(100)}"]["c"])
+        second = slack_channel.read_project(self.project, SET_AT + 900)
+        self.assertEqual([i["text"] for i in first + second], [f"r{i}" for i in range(n)])
+        self.assertTrue(all(i["parentText"] == "parent" for i in second))
+        self.assertEqual(slack_channel.read_project(self.project, SET_AT + 1200), [])
+        replies.append((ANN, ts(900), "late"))
+        third = slack_channel.read_project(self.project, SET_AT + 1500)
+        self.assertEqual([i["text"] for i in third], ["late"])
+        self.assertEqual(third[0]["parentText"], "parent")
+        reads = [q for q in self.slack.runs[-1] if q.kind == "thread"]
+        self.assertTrue(reads and all(q.args.get("cursor") for q in reads))
+        self.assertEqual(slack_channel.status_of(self.project)["state"], "ok")
+
+    def test_a_saved_thread_cursor_that_fails_starts_the_thread_over(self):
+        self.slack.page = 2
+        parent = (ANN, ts(100), "parent")
+        self.slack.messages.append(parent)
+        slack_channel.read_project(self.project, SET_AT + 300)
+        self.slack.threads[(CHAN, ts(100))] = (parent, [(BOB, ts(200 + i), f"r{i}") for i in range(5)])
+        slack_channel.read_project(self.project, SET_AT + 600)
+        self.assertIn(f"t:{ts(100)}", self.state()["tcur"])
+        self.slack.fail_labels = {f"thread:{ts(100)}"}
+        self.slack.fail_text = "invalid_cursor"
+        slack_channel.read_project(self.project, SET_AT + 900)
+        self.assertNotIn(f"t:{ts(100)}", self.state()["tcur"])
+
     def test_a_full_answer_with_no_cursor_does_not_move_on_and_says_so(self):
         msgs = [(ANN, ts(100 + i), f"m{i}") for i in range(slack_channel.CHANNEL_LIMIT)]
         self.slack.messages += msgs
@@ -697,6 +736,26 @@ class StopAtWriteToolTests(unittest.TestCase):
             self.assertEqual(e.exception.code, "write_tool")
             time.sleep(0.3)
             self.assertFalse(os.path.exists(os.path.join(d, "went-on")))
+
+
+class OpenInSlackLink(unittest.TestCase):
+    """Review 2 (#431): the page links a Slack item only to a Slack workspace
+    or app host, or to Slack's own redirect, never to any other page."""
+
+    @unittest.skipUnless(__import__("shutil").which("node"), "node is not installed")
+    def test_only_slack_links_are_drawn(self):
+        import re
+        import subprocess
+        page = (Path(__file__).resolve().parent.parent / "session.html").read_text(encoding="utf-8")
+        line = re.search(r"^const SLACK_LINK_RE = .*;$", page, re.M).group(0)
+        cases = {"https://ex.slack.com/archives/C1/p1": True, "https://app.slack.com/client/T1/C1": True,
+                 "https://slack.com/app_redirect?channel=C1": True, "https://slack.com/anything": False,
+                 "https://slack.com.evil.example/": False, "https://evil.example/x.slack.com/": False,
+                 "http://ex.slack.com/archives/C1": False, "javascript:alert(1)//slack.com/": False}
+        js = line + f"\nconst c = {json.dumps(cases)};\n" + (
+            "console.log(JSON.stringify(Object.fromEntries(Object.keys(c).map(u => [u, SLACK_LINK_RE.test(u)]))));")
+        got = json.loads(subprocess.run(["node", "-e", js], capture_output=True, text=True, check=True).stdout)
+        self.assertEqual(got, cases)
 
 
 if __name__ == "__main__":

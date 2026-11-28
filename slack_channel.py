@@ -43,14 +43,17 @@ work again, one line says so; nothing is missed (the next read starts at the
 last message seen).
 
 **Read in part.** A thread, comment thread or canvas that cannot be read
-(other than one that is gone), a thread longer than ``MAX_PAGES`` pages, or a
-channel answer cut short with no cursor: the state is ``partial`` with what
+(other than one that is gone), or a channel or thread answer cut short with
+no cursor: the state is ``partial`` with what
 was not read, the PO chat gets one line, and the read is tried again each time.
 
 **Nothing skipped.** The channel is read on with each answer's cursor, up to
 ``MAX_PAGES`` pages per read, and from where the last read stopped after that
-(``page``). Where the channel is read from (``lastTs``) moves only when every
-item read was posted. Each read takes the ``HOT_READS`` threads with the latest
+(``page``). A thread (comment thread) is read the same way: one longer than
+``MAX_PAGES`` pages goes on at the next read from the cursor this one
+stopped at, and once read to its end, the next read starts at its last page
+(``tcur``), so a long thread's new replies are read too. Where the channel and
+the threads are read from moves only when every item read was posted. Each read takes the ``HOT_READS`` threads with the latest
 activity and the ``TURN_READS`` read longest ago, so every watched thread is
 read in turn. Known limits: a thread is watched for ``WATCH_S`` (14 days) after
 its last activity and at most ``MAX_WATCH`` are watched.
@@ -203,7 +206,7 @@ def _fresh(ch: dict) -> dict:
     return {"channel": ch["id"], "since": ch["setAt"], "name": ch.get("name") or "",
             "lastTs": f"{ch['setAt']:.6f}", "seen": {}, "threads": {}, "canvases": {},
             "comments": {}, "ownPosts": [], "prefix": "", "queue": [], "lastWake": 0.0,
-            "page": {}, "readAt": {},
+            "page": {}, "readAt": {}, "tcur": {},
             "lastTry": 0.0, "lastOk": 0.0,
             "status": {"state": "new", "since": 0.0, "detail": "", "downNoticed": False}}
 
@@ -355,30 +358,37 @@ def _pick(watch: dict, read_at: dict, tag: str, activity) -> list:
 def _queries_a(ch: dict, st: dict) -> list:
     q = [_channel_query(ch, st)]
     for ts in _pick(st["threads"], st["readAt"], "t:", lambda t: float(st["threads"][t])):
-        q.append(_thread_query(ch["id"], ts))
+        q.append(_thread_query(ch["id"], ts, cursor=(st["tcur"].get(f"t:{ts}") or {}).get("c") or ""))
     for fid in list(st["canvases"])[:MAX_CANVASES]:
         q.append(slack_reader.Query(f"canvas:{fid}", "canvas", {"canvas_id": fid}))
     for key in _pick(st["comments"], st["readAt"], "c:", lambda k: float(st["comments"][k].get("at") or 0)):
-        q.append(_comment_query(key))
+        q.append(_comment_query(key, (st["tcur"].get(f"c:{key}") or {}).get("c") or ""))
     return q
 
 
-def _thread_query(conv: str, ts: str, label: str = ""):
-    return slack_reader.Query(label or f"thread:{ts}", "thread", {
-        "channel_id": conv, "message_ts": ts, "limit": THREAD_LIMIT, "response_format": "detailed"})
+def _thread_query(conv: str, ts: str, label: str = "", cursor: str = ""):
+    args = {"channel_id": conv, "message_ts": ts, "limit": THREAD_LIMIT, "response_format": "detailed"}
+    if cursor:
+        args["cursor"] = cursor
+    return slack_reader.Query(label or f"thread:{ts}", "thread", args)
 
 
-def _comment_query(key: str):
+def _comment_query(key: str, cursor: str = ""):
     conv, ts = key.split(":", 1)
-    return _thread_query(conv, ts, f"comments:{key}")
+    return _thread_query(conv, ts, f"comments:{key}", cursor)
 
 
 def _read_pages(res, queries, prefix: str) -> str:
     """Read on, with each answer's cursor, the channel and threads that have
     more pages, up to ``MAX_PAGES`` each, and join the pages into the first
     answer. Returns the tool prefix. A later page that fails is that read's
-    error (for the channel, the whole read's: ``read_project`` raises it)."""
+    error (for the channel, the whole read's: ``read_project`` raises it).
+    Each answer's ``from`` is the cursor its last page was read with ("" for
+    the first page): a thread read to its end is read from there next time."""
     by_label = {q.label: q for q in queries}
+    for lb, a in res.answers.items():
+        if lb in by_label:
+            a["from"] = by_label[lb].args.get("cursor") or ""
     for _ in range(MAX_PAGES - 1):
         todo = [slack_reader.Query(lb, by_label[lb].kind, {**by_label[lb].args, "cursor": a["next"]})
                 for lb, a in res.answers.items()
@@ -403,7 +413,7 @@ def _read_pages(res, queries, prefix: str) -> str:
                 page = ([b["parent"]] if b.get("parent") else []) + list(b.get("replies") or [])
                 a["replies"] = sorted(a["replies"] + [m for m in page if m.ts not in have],
                                       key=lambda m: float(m.ts))
-            a["next"], a["more"] = b.get("next") or "", b.get("more")
+            a["next"], a["more"], a["from"] = b.get("next") or "", b.get("more"), q.args["cursor"]
     return prefix
 
 
@@ -530,7 +540,13 @@ def _collect(ch: dict, st: dict, res, now: float) -> tuple[list[dict], list, lis
         parent_ts = label.split(":", 1)[1]
         parent = ans.get("parent")
         if parent is not None and parent.ts != parent_ts:
-            parent = None
+            # A read from a saved cursor: its first message is a reply.
+            ans["replies"], parent = [parent] + list(ans.get("replies") or []), None
+        known = st["tcur"].get(f"t:{parent_ts}") or {}
+        pa = _clean(parent.author)[:80] if parent else known.get("a") or ""
+        pt = _excerpt(parent.text, 200) if parent else known.get("t") or ""
+        if parent:
+            ans["parentWords"] = (pa, pt)
         for r in ans.get("replies") or []:
             key = f"r:{parent_ts}:{r.ts}"
             st["threads"][parent_ts] = max(float(st["threads"].get(parent_ts) or 0), float(r.ts))
@@ -538,14 +554,13 @@ def _collect(ch: dict, st: dict, res, now: float) -> tuple[list[dict], list, lis
                     or any(i["key"] == f"m:{r.ts}" for i in items)):
                 continue
             items.append(_item("reply", r, ch, st, key, thread_key(ch["id"], parent_ts), parentTs=parent_ts,
-                               parentAuthor=_clean(parent.author)[:80] if parent else "",
-                               parentText=_excerpt(parent.text, 200) if parent else ""))
+                               parentAuthor=pa, parentText=pt))
     problems = _read_errors(st, res, now)
     for label, ans in res.answers.items():
-        if (label.startswith("thread:") and label not in res.errors
+        if (label.startswith("thread:") and label not in res.errors and not ans.get("next")
                 and _truncated(ans, len(ans.get("replies") or []) + 1, THREAD_LIMIT)):
-            problems.append(f"the thread of {label.split(':', 1)[1]} has more replies than the hub "
-                            f"reads ({MAX_PAGES * THREAD_LIMIT}); the later ones are not read")
+            problems.append(f"the thread of {label.split(':', 1)[1]} gave only part of its replies, with no "
+                            f"way to ask for the rest; the later ones are not read")
     new_threads = []
     for label, ans in res.answers.items():
         if not label.startswith("canvas:"):
@@ -599,10 +614,32 @@ def _read_errors(st: dict, res, now: float) -> list:
         elif kind == "comments":
             problems.append(f"a canvas comment thread cannot be read: {_why(err)}.")
     for label, ans in res.answers.items():
-        if (label.startswith("comments:") and label not in res.errors
+        if (label.startswith("comments:") and label not in res.errors and not ans.get("next")
                 and _truncated(ans, len(ans.get("replies") or []) + 1, THREAD_LIMIT)):
-            problems.append("a canvas comment thread has more comments than the hub reads; the later ones are not read.")
+            problems.append("a canvas comment thread gave only part of its comments, with no way to ask for "
+                            "the rest; the later ones are not read.")
+    _resume(st, res)
     return problems
+
+
+def _resume(st: dict, res) -> None:
+    """Where each thread (comment thread) read is read from next time: on from
+    where a long one stopped (its next cursor), else its last page when it took
+    more than one (``from``), else from its start. A read from a saved cursor
+    that failed starts from the start again (the cursor may have run out)."""
+    for label in list(res.answers) + list(res.errors):
+        kind, _, key = label.partition(":")
+        if kind not in ("thread", "comments"):
+            continue
+        tk = ("t:" if kind == "thread" else "c:") + key
+        old = st["tcur"].get(tk) or {}
+        ans = res.answers.get(label) or {}
+        cur = "" if label in res.errors else ans.get("next") or ans.get("from") or ""
+        if not cur:
+            st["tcur"].pop(tk, None)
+            continue
+        pa, pt = ans.get("parentWords") or (old.get("a") or "", old.get("t") or "")
+        st["tcur"][tk] = {"c": cur, "a": pa, "t": pt}
 
 
 def _prune(st: dict, now: float) -> None:
@@ -616,6 +653,7 @@ def _prune(st: dict, now: float) -> None:
     st["threads"], st["comments"] = dict(th[:MAX_WATCH]), dict(cm[:MAX_WATCH])
     keep = {f"t:{t}" for t in st["threads"]} | {f"c:{k}" for k in st["comments"]}
     st["readAt"] = {k: v for k, v in st["readAt"].items() if k in keep}
+    st["tcur"] = {k: v for k, v in st["tcur"].items() if k in keep}
 
 
 def _comments(ch: dict, st: dict, res, now: float) -> list[dict]:
@@ -793,6 +831,8 @@ def read_project(project: dict, now: float | None = None) -> list[dict]:
         # Where the channel is read from next moves only when every item read
         # is posted: otherwise the next read reads the same messages again, and
         # the ones posted now are known by their keys.
+        if failed:
+            st["tcur"] = base["tcur"]
         if failed or stuck:
             st["lastTs"], st["page"] = base["lastTs"], base["page"]
         elif chan_ans.get("next"):

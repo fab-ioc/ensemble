@@ -8848,7 +8848,7 @@ function threadMarkHtml(m) {
 // its thread line in the chat (a message with replies). The line that the
 // channel cannot be read (kind down) is a sunken Hub row with its lozenge,
 // what cannot be read in bold; the line that it is read again, a plain one.
-const SLACK_LINK_RE = /^https:\/\/([a-z0-9-]+\.)*slack\.com\//i;
+const SLACK_LINK_RE = /^https:\/\/(?:[a-z0-9-]+\.)+slack\.com\/|^https:\/\/slack\.com\/app_redirect\?/i;
 function slackRowHtml(m, lines = []) {
   const s = m.slack || {}, id = esc(m.id || '');
   // An item shows when it was written in Slack; a Hub line, when the hub wrote it.
