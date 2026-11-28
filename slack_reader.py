@@ -30,6 +30,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import threading
 from dataclasses import dataclass, field
 
 READ_CHANNEL = "slack_read_channel"
@@ -227,21 +228,33 @@ def _same_args(planned: dict, made: dict) -> bool:
     return set(planned) == set(made) and all(_norm(planned[k]) == _norm(made[k]) for k in planned)
 
 
+def _is_init(e) -> bool:
+    return isinstance(e, dict) and e.get("type") == "system" and e.get("subtype") == "init"
+
+
+def check_init(init: dict) -> None:
+    """Raises ReadError when the run's tool list holds a Slack write tool.
+    :func:`run` calls it on the run's first line, as it arrives, and stops the
+    run there: the model has not been called yet, so no tool can have run."""
+    tools = set(init.get("tools") or [])
+    writes = sorted(t for t in tools if _is_slack_tool(t) and is_write_tool(short_name(t)))
+    if writes:
+        raise ReadError("the Claude run had Slack write tools, which must be refused: " + ", ".join(writes),
+                        "write_tool")
+
+
 def read_stream(lines, queries, prefix: str) -> tuple[Result, str]:
     """(what the planned calls found, the tool prefix the run had). Raises ReadError."""
     events = _events(lines)
-    init = next((e for e in events if e.get("type") == "system" and e.get("subtype") == "init"), None)
+    init = next((e for e in events if _is_init(e)), None)
     final = next((e for e in reversed(events) if e.get("type") == "result"), None)
     if init is None:
         why = _final_error(final)
         if re.search(r"log ?in|logged in|auth", why, re.I):
             raise ReadError(f"Claude is not signed in ({why})", "not_signed_in")
         raise ReadError(why or "Claude did not start (no first line in its output)")
+    check_init(init)
     tools = set(init.get("tools") or [])
-    writes = sorted(t for t in tools if _is_slack_tool(t) and is_write_tool(short_name(t)))
-    if writes:
-        raise ReadError("the Claude run had Slack write tools, which must be refused: " + ", ".join(writes),
-                        "write_tool")
     found = prefix_of(init) or prefix
     if any(found + TOOL_FOR[q.kind] not in tools for q in queries):
         e = _not_connected(init)
@@ -300,17 +313,50 @@ def run(queries, prefix: str) -> tuple[Result, str]:
     cwd = os.path.join(tempfile.gettempdir(), "ensemble-slack-reader")
     os.makedirs(cwd, exist_ok=True)
     cmd = build_command(find_claude(), prefix or "mcp__claude_ai_Slack__", queries)
+    lines, timed_out = [], []
+    with tempfile.TemporaryFile("w+", encoding="utf-8", errors="replace") as err_file:
+        try:
+            p = subprocess.Popen(cmd, cwd=cwd, env=run_env(), stdout=subprocess.PIPE, stderr=err_file,
+                                 text=True, errors="replace", stdin=subprocess.DEVNULL)
+        except OSError as e:
+            raise ReadError(f"could not start Claude: {e}")
+
+        def stop():
+            timed_out.append(True)
+            p.kill()
+        timer = threading.Timer(TIMEOUT_S, stop)
+        timer.start()
+        try:
+            checked = False
+            for line in p.stdout:
+                lines.append(line)
+                if not checked and line.lstrip().startswith("{"):
+                    try:
+                        ev = json.loads(line)
+                    except ValueError:
+                        continue
+                    if _is_init(ev):
+                        checked = True
+                        try:
+                            check_init(ev)
+                        except ReadError:
+                            # Stopped before the model's first reply: nothing ran.
+                            p.kill()
+                            raise
+            p.wait()
+        finally:
+            timer.cancel()
+            if p.poll() is None:
+                p.kill()
+                p.wait()
+        if timed_out:
+            raise ReadError(f"the Claude run took longer than {TIMEOUT_S} s and was stopped", "timeout")
+        err_file.seek(0)
+        stderr = err_file.read()
     try:
-        p = subprocess.run(cmd, cwd=cwd, env=run_env(), capture_output=True, text=True,
-                           timeout=TIMEOUT_S, stdin=subprocess.DEVNULL)
-    except subprocess.TimeoutExpired:
-        raise ReadError(f"the Claude run took longer than {TIMEOUT_S} s and was stopped", "timeout")
-    except OSError as e:
-        raise ReadError(f"could not start Claude: {e}")
-    try:
-        return read_stream(p.stdout.splitlines(), queries, prefix)
+        return read_stream(lines, queries, prefix)
     except ReadError as e:
-        tail = " | ".join((p.stderr or "").strip().splitlines()[-2:])
+        tail = " | ".join((stderr or "").strip().splitlines()[-2:])
         if tail and e.code == "error":
             e.args = (f"{e} (Claude said: {tail[:200]})",)
         raise
@@ -318,14 +364,41 @@ def run(queries, prefix: str) -> tuple[Result, str]:
 
 # ---------- the answers' layouts ----------
 
-def _unwrap(raw: str, key: str) -> str:
+def _unwrap(raw: str, key: str) -> tuple[str, dict]:
     try:
         data = json.loads(raw)
     except ValueError:
         raise ParseError(f"answer is not JSON: {raw[:200]!r}")
     if not isinstance(data, dict) or not isinstance(data.get(key), str):
         raise ParseError(f"answer has no {key!r}: {raw[:200]!r}")
-    return data[key]
+    return data[key], data
+
+
+_NO_MORE = re.compile(r"\bno more\b|\bend of\b|\ball (?:messages|replies)\b", re.I)
+_CURSOR = re.compile(r"\bcursor\b[^A-Za-z0-9]{0,6}([A-Za-z0-9+/=_-]{6,})", re.I)
+
+
+def page_of(data: dict) -> dict:
+    """{"next": the cursor of the next page or "", "more": True | False | None}
+    from an answer's ``pagination_info``: None when the answer says nothing
+    (the caller then counts: a full page may not be all)."""
+    info = data.get("pagination_info")
+    if info is None:
+        info = {k: data[k] for k in ("next_cursor", "cursor", "has_more") if k in data} or None
+    if info is None:
+        return {"next": "", "more": None}
+    if isinstance(info, dict):
+        nxt = info.get("next_cursor") or info.get("cursor") or ""
+        nxt = nxt if isinstance(nxt, str) else ""
+        more = bool(nxt) or bool(info.get("has_more"))
+        return {"next": nxt.strip(), "more": more}
+    text = str(info)
+    m = _CURSOR.search(text)
+    if m:
+        return {"next": m.group(1), "more": True}
+    if not text.strip() or _NO_MORE.search(text):
+        return {"next": "", "more": False}
+    return {"next": "", "more": True}      # says there is more but names no cursor
 
 
 _CHANNEL_MSG = re.compile(
@@ -337,8 +410,9 @@ _TRAILER = re.compile(r"(?:\n(?:Thread|Reactions|Files?|Replies|Reply count):[^\
 
 
 def parse_channel(raw: str) -> dict:
-    """slack_read_channel (detailed): {"name": channel name, "messages": [Message], oldest first}."""
-    text = _unwrap(raw, "messages")
+    """slack_read_channel (detailed): {"name": channel name, "messages": [Message], oldest first,
+    "next", "more"} (:func:`page_of`)."""
+    text, data = _unwrap(raw, "messages")
     head = _CHANNEL_HEAD.search(text)
     ms = list(_CHANNEL_MSG.finditer(text))
     if not ms and "=== Message" in text:
@@ -351,7 +425,7 @@ def parse_channel(raw: str) -> dict:
         out.append(Message(uid, m.group("name").strip(), m.group("ts"), body,
                            bot=uid == "USLACK" or uid.startswith("B")))
     out.sort(key=lambda x: float(x.ts))
-    return {"name": head.group("name").strip().lstrip("#") if head else "", "messages": out}
+    return {"name": head.group("name").strip().lstrip("#") if head else "", "messages": out, **page_of(data)}
 
 
 _THREAD_SPLIT = re.compile(r"^(?:=== THREAD PARENT MESSAGE ===|--- Reply \d+ of \d+ ---)[ \t]*\n", re.M)
@@ -363,13 +437,15 @@ _THREAD_TIME = re.compile(r"^Time: (?P<time>.*?)[ \t]*$", re.M)
 
 
 def parse_thread(raw: str) -> dict:
-    """slack_read_thread (detailed): {"parent": Message | None, "replies": [Message], oldest first}."""
-    text = _unwrap(raw, "messages")
+    """slack_read_thread (detailed): {"parent": Message | None, "replies": [Message], oldest first,
+    "next", "more"} (:func:`page_of`). On a later page (read with a cursor) the
+    first message is not the parent: the caller tells them apart by time."""
+    text, data = _unwrap(raw, "messages")
     blocks = _THREAD_SPLIT.split(text)
     if len(blocks) < 2:
         if text.strip():
             raise ParseError(f"cannot read the thread in {text[:200]!r}")
-        return {"parent": None, "replies": []}
+        return {"parent": None, "replies": [], **page_of(data)}
     msgs = []
     for block in blocks[1:]:
         block = _THREAD_REPLIES.split(block)[0]
@@ -383,7 +459,7 @@ def parse_thread(raw: str) -> dict:
         msgs.append(Message(uid, fm.group("name").strip(), tm.group("ts"), body,
                             bot=bool(fm.group("bot")) or uid == "USLACK" or uid.startswith("B")))
     msgs.sort(key=lambda x: float(x.ts))
-    return {"parent": msgs[0], "replies": msgs[1:]}
+    return {"parent": msgs[0], "replies": msgs[1:], **page_of(data)}
 
 
 _TS = re.compile(r"\b(\d{9,11}\.\d{6})\b")
@@ -419,6 +495,11 @@ def parse_canvas(raw: str) -> dict:
                 threads.append((conv.group(1), ts.group(1)))
         if not threads and not re.search(r"\b(?:no|0)\s+comments?\b", text, re.I):
             raise ParseError("the canvas names comments but no comment thread could be read from it")
+    elif text.strip():
+        # Not one line names comments: a layout not seen yet. Not taken as "no
+        # comments", which would hide every comment on the canvas for good.
+        raise ParseError("the canvas answer has no comments part the hub recognises "
+                         f"(its comments are not read): {text[:200]!r}")
     return {"title": tm.group("t") if tm else "", "threads": threads}
 
 

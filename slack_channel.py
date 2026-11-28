@@ -42,6 +42,19 @@ outage, and the hub tries again every ``RETRY_DOWN_S`` (30 min). When reads
 work again, one line says so; nothing is missed (the next read starts at the
 last message seen).
 
+**Read in part.** A thread, comment thread or canvas that cannot be read
+(other than one that is gone), a thread longer than ``MAX_PAGES`` pages, or a
+channel answer cut short with no cursor: the state is ``partial`` with what
+was not read, the PO chat gets one line, and the read is tried again each time.
+
+**Nothing skipped.** The channel is read on with each answer's cursor, up to
+``MAX_PAGES`` pages per read, and from where the last read stopped after that
+(``page``). Where the channel is read from (``lastTs``) moves only when every
+item read was posted. Each read takes the ``HOT_READS`` threads with the latest
+activity and the ``TURN_READS`` read longest ago, so every watched thread is
+read in turn. Known limits: a thread is watched for ``WATCH_S`` (14 days) after
+its last activity and at most ``MAX_WATCH`` are watched.
+
 Seams for the later steps: ``add_canvas`` (step 3: a document the PO made a
 canvas), ``note_own_post`` (step 2: the PO's own posts are not delivered back
 to it), and ``slack_reader.run`` taking any planned calls (a write run, behind
@@ -79,8 +92,11 @@ WAKE_MIN_S = 15 * 60        # the PO is woken by Slack at most this often
 MAX_AGE_S = 24 * 3600       # a queued item for a stopped PO is kept this long
 KEEP_SEEN_S = 30 * 86400
 WATCH_S = 14 * 86400        # a thread is read for replies this long after its last activity
-MAX_THREADS = 10
-MAX_COMMENT_THREADS = 20
+HOT_READS = 10              # each read: the threads (and comment threads) with the latest activity ...
+TURN_READS = 10             # ... and this many more, the longest unread first, so every one is read in turn
+MAX_WATCH = 300             # threads (and comment threads) watched at most; beyond, the quietest are dropped
+MAX_PAGES = 5               # pages of one channel or thread read in one go
+THREAD_LIMIT = 100
 MAX_CANVASES = 10
 CHANNEL_LIMIT = 100
 EXCERPT = 300
@@ -110,7 +126,7 @@ def _log(msg: str) -> None:
 
 _ID = r"[CG][A-Z0-9]{8,}"
 _LINK = re.compile(rf"^https?://(?P<ws>[a-z0-9-]+\.(?:enterprise\.)?slack\.com)/archives/(?P<id>{_ID})(?:[/?#].*)?$", re.I)
-_APP_LINK = re.compile(rf"^https?://app\.slack\.com/client/T[A-Z0-9]+/(?P<id>{_ID})(?:[/?#].*)?$", re.I)
+_APP_LINK = re.compile(rf"^https?://app\.slack\.com/client/(?P<team>T[A-Z0-9]+)/(?P<id>{_ID})(?:[/?#].*)?$", re.I)
 _NAMED = re.compile(rf"^#?(?P<name>[a-z0-9][a-z0-9._-]{{0,79}})\s*[\s(,:]\s*(?:ID:\s*)?(?P<id>{_ID})\)?$")
 _BARE = re.compile(rf"^(?P<id>{_ID})$")
 
@@ -128,7 +144,8 @@ def parse_ref(text: str) -> dict | None:
                 "url": f"https://{m.group('ws').lower()}/archives/{cid}"}
     m = _APP_LINK.match(s)
     if m:
-        return {"id": m.group("id").upper(), "name": "", "workspace": "", "url": s.split("#")[0]}
+        return {"id": m.group("id").upper(), "name": "", "workspace": "", "team": m.group("team").upper(),
+                "url": s.split("#")[0]}
     m = _NAMED.match(s)
     if m:
         return {"id": m.group("id"), "name": m.group("name").lower(), "workspace": "", "url": ""}
@@ -143,8 +160,10 @@ def sanitize(v) -> dict | None:
     if not isinstance(v, dict) or not isinstance(v.get("id"), str) or not re.fullmatch(_ID, v["id"]):
         return None
     out = {"id": v["id"]}
-    for k, n in (("name", 80), ("url", 300), ("workspace", 120)):
+    for k, n in (("name", 80), ("url", 300), ("workspace", 120), ("team", 20)):
         out[k] = v[k][:n] if isinstance(v.get(k), str) else ""
+    if out["team"] and not re.fullmatch(r"T[A-Z0-9]+", out["team"]):
+        out["team"] = ""
     out["setAt"] = float(v["setAt"]) if isinstance(v.get("setAt"), (int, float)) else 0.0
     return out
 
@@ -163,7 +182,8 @@ def set_channel(project_id: str, text, now: float | None = None) -> tuple[bool, 
     if old and old["id"] == ref["id"]:
         # The same channel pasted again: keep when it was set (and what was read).
         ref = {**ref, "setAt": old["setAt"], "name": ref["name"] or old["name"],
-               "workspace": ref["workspace"] or old["workspace"], "url": ref["url"] or old["url"]}
+               "workspace": ref["workspace"] or old["workspace"], "url": ref["url"] or old["url"],
+               "team": ref.get("team") or old["team"]}
     else:
         ref["setAt"] = time.time() if now is None else now
     ok, err = _d._set_project_metas(project_id, {"slackChannel": ref})
@@ -183,6 +203,7 @@ def _fresh(ch: dict) -> dict:
     return {"channel": ch["id"], "since": ch["setAt"], "name": ch.get("name") or "",
             "lastTs": f"{ch['setAt']:.6f}", "seen": {}, "threads": {}, "canvases": {},
             "comments": {}, "ownPosts": [], "prefix": "", "queue": [], "lastWake": 0.0,
+            "page": {}, "readAt": {},
             "lastTry": 0.0, "lastOk": 0.0,
             "status": {"state": "new", "since": 0.0, "detail": "", "downNoticed": False}}
 
@@ -222,7 +243,8 @@ def _save(project_id: str, st: dict) -> None:
 def status_of(project: dict) -> dict | None:
     """What the project's settings show of its channel: ``{state, detail,
     since, lastOk, lastTry}``; None without a channel. ``state``: new (not read
-    yet), ok, not_connected, not_signed_in, failed."""
+    yet), ok, partial (read, but some thread or canvas could not be: ``detail``
+    says which), not_connected, not_signed_in, failed."""
     ch = sanitize(project.get("slackChannel"))
     if not ch:
         return None
@@ -310,24 +332,94 @@ def thread_key(conv: str, ts: str) -> str:
 # Reading
 # ---------------------------------------------------------------------------
 
+def _channel_query(ch: dict, st: dict):
+    """The channel read: on from the last message seen, or, while a long
+    backlog is read page by page across reads, the page the last read stopped at."""
+    pg = st["page"]
+    args = {"channel_id": ch["id"], "oldest": pg.get("oldest") or st["lastTs"], "limit": CHANNEL_LIMIT,
+            "response_format": "detailed"}
+    if pg.get("cursor"):
+        args["cursor"] = pg["cursor"]
+    return slack_reader.Query("channel", "channel", args)
+
+
+def _pick(watch: dict, read_at: dict, tag: str, activity) -> list:
+    """The watched keys read this time: the ``HOT_READS`` with the latest
+    activity, then the ``TURN_READS`` read longest ago, so each is read in turn."""
+    keys = sorted(watch, key=lambda k: -activity(k))
+    hot, rest = keys[:HOT_READS], keys[HOT_READS:]
+    rest.sort(key=lambda k: float(read_at.get(f"{tag}{k}") or 0))
+    return hot + rest[:TURN_READS]
+
+
 def _queries_a(ch: dict, st: dict) -> list:
-    q = [slack_reader.Query("channel", "channel", {
-        "channel_id": ch["id"], "oldest": st["lastTs"], "limit": CHANNEL_LIMIT,
-        "response_format": "detailed"})]
-    for ts in sorted(st["threads"], key=lambda t: -float(st["threads"][t]))[:MAX_THREADS]:
-        q.append(slack_reader.Query(f"thread:{ts}", "thread", {
-            "channel_id": ch["id"], "message_ts": ts, "limit": 100, "response_format": "detailed"}))
+    q = [_channel_query(ch, st)]
+    for ts in _pick(st["threads"], st["readAt"], "t:", lambda t: float(st["threads"][t])):
+        q.append(_thread_query(ch["id"], ts))
     for fid in list(st["canvases"])[:MAX_CANVASES]:
         q.append(slack_reader.Query(f"canvas:{fid}", "canvas", {"canvas_id": fid}))
-    for key in sorted(st["comments"], key=lambda k: -float(st["comments"][k].get("at") or 0))[:MAX_COMMENT_THREADS]:
+    for key in _pick(st["comments"], st["readAt"], "c:", lambda k: float(st["comments"][k].get("at") or 0)):
         q.append(_comment_query(key))
     return q
 
 
+def _thread_query(conv: str, ts: str, label: str = ""):
+    return slack_reader.Query(label or f"thread:{ts}", "thread", {
+        "channel_id": conv, "message_ts": ts, "limit": THREAD_LIMIT, "response_format": "detailed"})
+
+
 def _comment_query(key: str):
     conv, ts = key.split(":", 1)
-    return slack_reader.Query(f"comments:{key}", "thread", {
-        "channel_id": conv, "message_ts": ts, "limit": 100, "response_format": "detailed"})
+    return _thread_query(conv, ts, f"comments:{key}")
+
+
+def _read_pages(res, queries, prefix: str) -> str:
+    """Read on, with each answer's cursor, the channel and threads that have
+    more pages, up to ``MAX_PAGES`` each, and join the pages into the first
+    answer. Returns the tool prefix. A later page that fails is that read's
+    error (for the channel, the whole read's: ``read_project`` raises it)."""
+    by_label = {q.label: q for q in queries}
+    for _ in range(MAX_PAGES - 1):
+        todo = [slack_reader.Query(lb, by_label[lb].kind, {**by_label[lb].args, "cursor": a["next"]})
+                for lb, a in res.answers.items()
+                if lb in by_label and by_label[lb].kind in ("channel", "thread") and a.get("next")
+                and lb not in res.errors]
+        if not todo:
+            break
+        more, prefix = slack_reader.run(todo, prefix)
+        for q in todo:
+            a = res.answers[q.label]
+            if q.label in more.errors:
+                res.errors[q.label] = more.errors[q.label]
+                continue
+            b = more.answers.get(q.label) or {}
+            if q.kind == "channel":
+                have = {m.ts for m in a["messages"]}
+                a["messages"] = sorted(a["messages"] + [m for m in b.get("messages") or [] if m.ts not in have],
+                                       key=lambda m: float(m.ts))
+            else:
+                top = a.get("parent")
+                have = {m.ts for m in a["replies"]} | ({top.ts} if top else set())
+                page = ([b["parent"]] if b.get("parent") else []) + list(b.get("replies") or [])
+                a["replies"] = sorted(a["replies"] + [m for m in page if m.ts not in have],
+                                      key=lambda m: float(m.ts))
+            a["next"], a["more"] = b.get("next") or "", b.get("more")
+    return prefix
+
+
+def _truncated(ans: dict, n: int, limit: int) -> bool:
+    """An answer that holds only part of what is there."""
+    more = ans.get("more")
+    return bool(ans.get("next")) or bool(more) or (more is None and n >= limit)
+
+
+_GONE = re.compile(r"thread_not_found|message_not_found|not_found|no longer exists|was deleted|"
+                   r"\bdeleted\b|not found", re.I)
+
+
+def _gone(err) -> bool:
+    """A read that failed because what it reads is not there any more."""
+    return getattr(err, "code", "") == "slack_error" and bool(_GONE.search(f"{err} {getattr(err, 'raw', '')}"))
 
 
 def _po_room(project: dict) -> str:
@@ -369,10 +461,11 @@ def _down(project: dict, ch: dict, st: dict, err: slack_reader.ReadError, now: f
 def _up(project: dict, ch: dict, st: dict, now: float) -> None:
     s = st["status"]
     was_down = s.get("state") in ("not_connected", "not_signed_in", "failed")
-    if was_down and s.get("downNoticed"):
-        _d.chatroom.post_notice(_po_room(project), SENDER,
-                                f"{_chan_label(ch, st)} is read again. Nothing was missed: the hub "
-                                f"read on from the last message it had seen.",
+    if s.get("downNoticed") and s.get("state") in ("not_connected", "not_signed_in", "failed", "partial"):
+        text = (f"{_chan_label(ch, st)} is read again. Nothing was missed: the hub read on from the "
+                f"last message it had seen." if was_down else
+                f"{_chan_label(ch, st)} is read in full again.")
+        _d.chatroom.post_notice(_po_room(project), SENDER, text,
                                 {"noticeKind": NOTICE, "slack": {"kind": "up", "channel": ch["id"],
                                                                  "channelName": ch.get("name") or st.get("name") or ""}})
     st["status"] = {"state": "ok", "since": now if s.get("state") != "ok" else s.get("since") or now,
@@ -380,14 +473,38 @@ def _up(project: dict, ch: dict, st: dict, now: float) -> None:
     st["lastOk"] = now
 
 
+def _partial(project: dict, ch: dict, st: dict, problems: list, now: float) -> None:
+    """The channel was read, but not all of it: the settings say what was not,
+    and the PO chat gets one line until everything is read again."""
+    s = st["status"]
+    if s.get("state") != "partial":
+        _up(project, ch, st, now)
+        s = st["status"]
+    detail = _clean("; ".join(problems))[:500]
+    st["status"] = {"state": "partial", "since": s.get("since") if s.get("state") == "partial" else now,
+                    "detail": detail, "downNoticed": bool(s.get("state") == "partial" and s.get("downNoticed"))}
+    st["lastOk"] = now
+    _log(f"{_chan_label(ch, st)} read in part: {detail[:200]}")
+    if st["status"]["downNoticed"]:
+        return
+    text = (f"{_chan_label(ch, st)} was read, but not all of it: {detail} "
+            f"The hub tries again at each read.")
+    if _d.chatroom.post_notice(_po_room(project), SENDER, text, {
+            "noticeKind": NOTICE, "slack": {"kind": "down", "state": "partial", "label": "Slack read in part",
+                                            "channel": ch["id"], "channelName": ch.get("name") or st.get("name") or ""}}):
+        st["status"]["downNoticed"] = True
+
+
 def _item(kind: str, msg, ch: dict, st: dict, key: str, thread: str, **extra) -> dict:
     return {"key": key, "kind": kind, "author": _clean(msg.author)[:80] or "someone",
             "authorId": msg.author_id, "ts": msg.ts, "text": _text(msg.text), "thread": thread, **extra}
 
 
-def _collect(ch: dict, st: dict, res, now: float) -> tuple[list[dict], list]:
+def _collect(ch: dict, st: dict, res, now: float) -> tuple[list[dict], list, list]:
     """(new items, oldest first; comment threads still to be read for the
-    first time). Updates the watch lists in ``st``."""
+    first time; what could not be read, in words). Updates the watch lists in
+    ``st``, but not where the channel is read from: ``read_project`` moves that
+    only once every item is posted."""
     since = float(st["since"])
     own = set(st["ownPosts"])
     seen = st["seen"]
@@ -398,8 +515,6 @@ def _collect(ch: dict, st: dict, res, now: float) -> tuple[list[dict], list]:
     for m in ans.get("messages") or []:
         if float(m.ts) <= since:
             continue
-        if float(m.ts) > float(st["lastTs"]):
-            st["lastTs"] = m.ts
         key = f"m:{m.ts}"
         for cm in _CANVAS_LINK.finditer(m.text or ""):
             fid = cm.group(1)
@@ -414,6 +529,8 @@ def _collect(ch: dict, st: dict, res, now: float) -> tuple[list[dict], list]:
             continue
         parent_ts = label.split(":", 1)[1]
         parent = ans.get("parent")
+        if parent is not None and parent.ts != parent_ts:
+            parent = None
         for r in ans.get("replies") or []:
             key = f"r:{parent_ts}:{r.ts}"
             st["threads"][parent_ts] = max(float(st["threads"].get(parent_ts) or 0), float(r.ts))
@@ -423,9 +540,12 @@ def _collect(ch: dict, st: dict, res, now: float) -> tuple[list[dict], list]:
             items.append(_item("reply", r, ch, st, key, thread_key(ch["id"], parent_ts), parentTs=parent_ts,
                                parentAuthor=_clean(parent.author)[:80] if parent else "",
                                parentText=_excerpt(parent.text, 200) if parent else ""))
-    for label in [l for l in res.errors if l.startswith("thread:")]:
-        # A thread that cannot be read (its message deleted) is not read again.
-        st["threads"].pop(label.split(":", 1)[1], None)
+    problems = _read_errors(st, res, now)
+    for label, ans in res.answers.items():
+        if (label.startswith("thread:") and label not in res.errors
+                and _truncated(ans, len(ans.get("replies") or []) + 1, THREAD_LIMIT)):
+            problems.append(f"the thread of {label.split(':', 1)[1]} has more replies than the hub "
+                            f"reads ({MAX_PAGES * THREAD_LIMIT}); the later ones are not read")
     new_threads = []
     for label, ans in res.answers.items():
         if not label.startswith("canvas:"):
@@ -442,17 +562,52 @@ def _collect(ch: dict, st: dict, res, now: float) -> tuple[list[dict], list]:
                 # read once, finds nothing new, and is dropped after WATCH_S).
                 st["comments"][ck] = {"canvas": fid, "at": now}
                 new_threads.append(ck)
-    for label, err in res.errors.items():
-        if label.startswith("canvas:"):
-            fid = label.split(":", 1)[1]
-            cv = st["canvases"].setdefault(fid, {"title": "", "at": now})
-            cv["error"] = _clean(str(err))[:300]
     items += _comments(ch, st, res, now)
-    st["threads"] = dict(sorted(((t, a) for t, a in st["threads"].items() if now - float(a) <= WATCH_S),
-                                key=lambda x: -float(x[1]))[:MAX_THREADS])
-    st["comments"] = {k: v for k, v in st["comments"].items() if now - float(v.get("at") or 0) <= WATCH_S}
+    _prune(st, now)
     items.sort(key=lambda i: float(i["ts"]))
-    return items, new_threads
+    return items, new_threads, problems
+
+
+def _read_errors(st: dict, res, now: float) -> list:
+    """Notes every read made (so each watched thread is read in turn) and
+    sorts out the reads that failed: a thread or comment thread that is gone
+    is no longer read; any other failure is kept, read again, and said."""
+    for label in list(res.answers) + list(res.errors):
+        if label.startswith("thread:"):
+            st["readAt"]["t:" + label.split(":", 1)[1]] = now
+        elif label.startswith("comments:"):
+            st["readAt"]["c:" + label.split(":", 1)[1]] = now
+    problems = []
+    for label, err in res.errors.items():
+        kind, _, key = label.partition(":")
+        if kind == "canvas":
+            cv = st["canvases"].setdefault(key, {"title": "", "at": now})
+            cv["error"] = _clean(str(err))[:300]
+            problems.append(f"the canvas {cv.get('title') or key} cannot be read ({_clean(str(err))[:160]})")
+        elif kind in ("thread", "comments") and _gone(err):
+            (st["threads"] if kind == "thread" else st["comments"]).pop(key, None)
+        elif kind == "thread":
+            problems.append(f"the thread of {key} cannot be read ({_clean(str(err))[:160]})")
+        elif kind == "comments":
+            problems.append(f"a canvas comment thread cannot be read ({_clean(str(err))[:160]})")
+    for label, ans in res.answers.items():
+        if (label.startswith("comments:") and label not in res.errors
+                and _truncated(ans, len(ans.get("replies") or []) + 1, THREAD_LIMIT)):
+            problems.append("a canvas comment thread has more comments than the hub reads; the later ones are not read")
+    return problems
+
+
+def _prune(st: dict, now: float) -> None:
+    """Watch a thread (comment thread) for ``WATCH_S`` after its last
+    activity, at most ``MAX_WATCH`` of each, the quietest dropped first."""
+    th = sorted(((t, a) for t, a in st["threads"].items() if now - float(a) <= WATCH_S), key=lambda x: -float(x[1]))
+    cm = sorted(((k, v) for k, v in st["comments"].items() if now - float(v.get("at") or 0) <= WATCH_S),
+                key=lambda x: -float(x[1].get("at") or 0))
+    if len(th) > MAX_WATCH or len(cm) > MAX_WATCH:
+        _log(f"watching only the {MAX_WATCH} latest threads and comment threads")
+    st["threads"], st["comments"] = dict(th[:MAX_WATCH]), dict(cm[:MAX_WATCH])
+    keep = {f"t:{t}" for t in st["threads"]} | {f"c:{k}" for k in st["comments"]}
+    st["readAt"] = {k: v for k, v in st["readAt"].items() if k in keep}
 
 
 def _comments(ch: dict, st: dict, res, now: float) -> list[dict]:
@@ -469,8 +624,12 @@ def _comments(ch: dict, st: dict, res, now: float) -> list[dict]:
         conv, tts = ck.split(":", 1)
         rec = st["comments"].setdefault(ck, {"canvas": "", "at": float(tts)})
         cv = st["canvases"].get(rec.get("canvas") or "") or {}
-        parent, replies = ans.get("parent"), ans.get("replies") or []
-        line = _excerpt(parent.text, 400) if parent and replies else ""
+        parent, replies = ans.get("parent"), list(ans.get("replies") or [])
+        if parent is not None and parent.ts != tts:
+            replies, parent = [parent] + replies, None
+        line = _excerpt(parent.text, 400) if parent and replies else rec.get("line") or ""
+        if line:
+            rec["line"] = line
         for c in replies or ([parent] if parent else []):
             rec["at"] = max(float(rec.get("at") or 0), float(c.ts))
             key = f"c:{conv}:{tts}:{c.ts}"
@@ -483,12 +642,20 @@ def _comments(ch: dict, st: dict, res, now: float) -> list[dict]:
 
 
 def _permalink(it: dict, ch: dict) -> str:
-    ws = ch.get("workspace") or ""
-    if it["kind"] == "message":
-        return slack_reader.link_for(ws, ch["id"], it["ts"])
-    if it["kind"] == "reply":
-        return slack_reader.link_for(ws, ch["id"], it["ts"], it["parentTs"])
-    return it.get("canvasUrl") or slack_reader.link_for(ws, it["conv"], it["ts"], it["threadTs"])
+    """The item's link in Slack. With the workspace (the channel set from its
+    archives link): the message itself. With only the team (an
+    ``app.slack.com`` link): the message's thread in the Slack web app.
+    With neither (an id typed): the channel, through Slack's redirect."""
+    ws, team = ch.get("workspace") or "", ch.get("team") or ""
+    if it["kind"] == "comment" and it.get("canvasUrl"):
+        return it["canvasUrl"]
+    conv = it.get("conv") or ch["id"]
+    top = it.get("parentTs") or it.get("threadTs") or it["ts"]
+    if ws:
+        return slack_reader.link_for(ws, conv, it["ts"], top)
+    if team:
+        return f"https://app.slack.com/client/{team}/{conv}/thread/{conv}-{top}"
+    return f"https://slack.com/app_redirect?channel={conv}"
 
 
 def _notice_text(it: dict, chan: str) -> str:
@@ -549,15 +716,23 @@ def read_project(project: dict, now: float | None = None) -> list[dict]:
         st["lastTry"] = now
         _save(pid, st)
     err, base = None, copy.deepcopy(st)
+    problems, chan_ans = [], {}
     try:
-        res, prefix = slack_reader.run(_queries_a(ch, st), st["prefix"])
+        queries = _queries_a(ch, st)
+        res, prefix = slack_reader.run(queries, st["prefix"])
         st["prefix"] = prefix or st["prefix"]
+        if "channel" not in res.errors:
+            st["prefix"] = _read_pages(res, queries, st["prefix"]) or st["prefix"]
         if "channel" in res.errors:
             raise res.errors["channel"]
-        items, new_threads = _collect(ch, st, res, now)
+        chan_ans = res.answers.get("channel") or {}
+        items, new_threads, problems = _collect(ch, st, res, now)
         if new_threads:
-            res_b, prefix = slack_reader.run([_comment_query(k) for k in new_threads], st["prefix"])
+            qb = [_comment_query(k) for k in new_threads]
+            res_b, prefix = slack_reader.run(qb, st["prefix"])
             st["prefix"] = prefix or st["prefix"]
+            st["prefix"] = _read_pages(res_b, qb, st["prefix"]) or st["prefix"]
+            problems += _read_errors(st, res_b, now)
             items += _comments(ch, st, res_b, now)
             items.sort(key=lambda i: float(i["ts"]))
     except slack_reader.ReadError as e:
@@ -575,8 +750,16 @@ def read_project(project: dict, now: float | None = None) -> list[dict]:
             _down(project, ch, st, err, now)
             _save(pid, st)
             return []
-        _up(project, ch, st, now)
-        posted = []
+        msgs = chan_ans.get("messages") or []
+        stuck = not chan_ans.get("next") and _truncated(chan_ans, len(msgs), CHANNEL_LIMIT)
+        if stuck:
+            problems.insert(0, "the channel has more new messages than Slack gave in one answer, with no "
+                               "way to ask for the rest; the older ones may be missing")
+        if problems:
+            _partial(project, ch, st, problems, now)
+        else:
+            _up(project, ch, st, now)
+        posted, failed = [], False
         in_room = _room_keys(room_id) if items else set()
         chan = _chan_label(ch, st)
         for it in items:
@@ -591,6 +774,7 @@ def read_project(project: dict, now: float | None = None) -> list[dict]:
                               "canvasId": it.get("canvasId") or "", "canvasTitle": it.get("canvasTitle") or "",
                               "line": it.get("line") or "", "permalink": it["link"], "text": it["text"]}}
             if not _d.chatroom.post_notice(room_id, SENDER, _notice_text(it, chan), meta):
+                failed = True
                 break
             st["seen"][it["key"]] = now
             st["queue"].append({"key": it["key"], "at": now, "kind": it["kind"], "author": it["author"],
@@ -598,6 +782,18 @@ def read_project(project: dict, now: float | None = None) -> list[dict]:
                                 "canvasTitle": it.get("canvasTitle") or "",
                                 "parentText": it.get("parentText") or ""})
             posted.append(it)
+        # Where the channel is read from next moves only when every item read
+        # is posted: otherwise the next read reads the same messages again, and
+        # the ones posted now are known by their keys.
+        if failed or stuck:
+            st["lastTs"], st["page"] = base["lastTs"], base["page"]
+        elif chan_ans.get("next"):
+            top = max([m.ts for m in msgs] + [base["page"].get("top") or base["lastTs"]], key=float)
+            st["page"] = {"oldest": base["page"].get("oldest") or base["lastTs"], "cursor": chan_ans["next"],
+                          "top": top}
+        else:
+            st["lastTs"] = max([m.ts for m in msgs] + [base["page"].get("top") or "0", base["lastTs"]], key=float)
+            st["page"] = {}
         st["seen"] = {k: v for k, v in st["seen"].items() if now - float(v) <= KEEP_SEEN_S}
         _save(pid, st)
     if posted:

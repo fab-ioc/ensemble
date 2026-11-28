@@ -12,6 +12,7 @@ import os
 import stat
 import tempfile
 import textwrap
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -33,15 +34,31 @@ def ts(n: int) -> str:
     return f"{SET_AT + n:.6f}"
 
 
-def channel_answer(msgs, name="made-up"):
+NO_MORE = "There are no more messages available.\n"
+
+
+def more_at(offset: int) -> str:
+    return f"More messages are available. Use cursor: Y{offset:05d}pg to read on.\n"
+
+
+def channel_answer(msgs, name="made-up", info=NO_MORE):
     """msgs: [(who, ts, text)], any order (Slack gives newest first)."""
     parts = [f"Channel: #{name} ({CHAN})\n\n"]
     for (uid, nm), t, text in sorted(msgs, key=lambda m: -float(m[1])):
         parts.append(f"=== Message from {nm} ({uid}) at 2026-11-10 07:00:02 CET === \nMessage TS: {t}\n{text}\n\n")
-    return json.dumps({"messages": "".join(parts), "pagination_info": "There are no more messages available.\n"})
+    return json.dumps({"messages": "".join(parts), "pagination_info": info})
 
 
-def thread_answer(first, replies):
+def thread_page(msgs, info):
+    """A later page of a thread: no parent block, just replies."""
+    parts = []
+    for i, ((uid, nm), t, text) in enumerate(msgs, 1):
+        parts.append(f"--- Reply {i} of {len(msgs)} ---\nFrom: {nm} ({uid})\nTime: 2026-11-11 11:03:16 CET\n"
+                     f"Message TS: {t}\n{text}\n\n")
+    return json.dumps({"messages": "".join(parts), "pagination_info": info})
+
+
+def thread_answer(first, replies, info="There are no more messages in this thread.\n"):
     def block(m):
         (uid, nm), t, text = m
         return (f"From: {nm} <{nm.lower().replace(' ', '.')}@example.com> ({uid})\n"
@@ -50,7 +67,7 @@ def thread_answer(first, replies):
              f"=== THREAD REPLIES ({len(replies)} total) ===\n\n"]
     for i, r in enumerate(replies, 1):
         parts.append(f"--- Reply {i} of {len(replies)} ---\n" + block(r) + "\n")
-    return json.dumps({"messages": "".join(parts), "pagination_info": "There are no more messages in this thread.\n"})
+    return json.dumps({"messages": "".join(parts), "pagination_info": info})
 
 
 def canvas_answer(title, threads):
@@ -71,11 +88,24 @@ class FakeSlack:
         self.extra_calls = []
         self.runs = []
         self.fail_labels = set()
+        self.fail_text = "channel_not_found"
+        self.page = None              # page size, like Slack's limit (newest first for a channel)
+        self.raw_canvas = {}          # F… -> the answer as given
+
+    @staticmethod
+    def _offset(q):
+        c = q.args.get("cursor") or ""
+        return int(c[1:6]) if c else 0
 
     def answer(self, q):
         if q.kind == "channel":
             oldest = float(q.args.get("oldest") or 0)
-            return channel_answer([m for m in self.messages if float(m[1]) >= oldest])
+            msgs = sorted((m for m in self.messages if float(m[1]) >= oldest), key=lambda m: -float(m[1]))
+            if not self.page:
+                return channel_answer(msgs)
+            off = self._offset(q)
+            nxt = off + self.page
+            return channel_answer(msgs[off:nxt], info=more_at(nxt) if nxt < len(msgs) else NO_MORE)
         if q.kind == "thread":
             key = (q.args["channel_id"], q.args["message_ts"])
             parent, replies = self.threads.get(key, (None, []))
@@ -83,7 +113,17 @@ class FakeSlack:
                 parent = next((m for m in self.messages if m[1] == q.args["message_ts"]), None)
             if parent is None:
                 return json.dumps({"messages": ""})
-            return thread_answer(parent, replies)
+            if not self.page:
+                return thread_answer(parent, replies)
+            allm = [parent] + list(replies)
+            off = self._offset(q)
+            nxt = off + self.page
+            info = more_at(nxt) if nxt < len(allm) else NO_MORE
+            if off == 0:
+                return thread_answer(parent, allm[1:nxt], info)
+            return thread_page(allm[off:nxt], info)
+        if q.args["canvas_id"] in self.raw_canvas:
+            return self.raw_canvas[q.args["canvas_id"]]
         title, threads = self.canvases[q.args["canvas_id"]]
         return canvas_answer(title, threads)
 
@@ -99,7 +139,7 @@ class FakeSlack:
         for i, q in enumerate(queries):
             if q.label in self.fail_labels:
                 results.append({"type": "tool_result", "tool_use_id": f"t{i}", "is_error": True,
-                                "content": [{"type": "text", "text": "channel_not_found"}]})
+                                "content": [{"type": "text", "text": self.fail_text}]})
             else:
                 results.append({"type": "tool_result", "tool_use_id": f"t{i}",
                                 "content": [{"type": "text", "text": self.answer(q)}]})
@@ -260,6 +300,142 @@ class ItemTests(_World):
         self.assertEqual([i["text"] for i in out], ["second"])
         self.assertNotIn(ts(100), self.state()["threads"])
         self.assertEqual(self.state()["status"]["state"], "ok")
+
+
+class ReviewOneTests(_World):
+    """Review 1 of #431: nothing read is lost or hidden."""
+
+    def test_a_message_not_posted_is_read_again(self):
+        self.slack.messages += [(ANN, ts(100), "first"), (BOB, ts(200), "second")]
+        ok = [False]
+
+        def post(rid, sender, text, meta):
+            return self.post_notice(rid, sender, text, meta) if ok[0] else None
+        with mock.patch.object(dashboard.chatroom, "post_notice", side_effect=post):
+            self.assertEqual(slack_channel.read_project(self.project, SET_AT + 300), [])
+        self.assertEqual(self.state()["lastTs"], f"{SET_AT:.6f}")
+        ok[0] = True
+        out = slack_channel.read_project(self.project, SET_AT + 600)
+        self.assertEqual([i["text"] for i in out], ["first", "second"])
+        self.assertEqual(self.state()["lastTs"], ts(200))
+
+    def test_a_failure_after_the_first_post_keeps_the_cursor_and_posts_the_rest_once(self):
+        self.slack.messages += [(ANN, ts(100), "first"), (BOB, ts(200), "second")]
+        n = [0]
+
+        def post(rid, sender, text, meta):
+            n[0] += 1
+            return self.post_notice(rid, sender, text, meta) if n[0] == 1 else None
+        with mock.patch.object(dashboard.chatroom, "post_notice", side_effect=post):
+            self.assertEqual([i["text"] for i in slack_channel.read_project(self.project, SET_AT + 300)], ["first"])
+        out = slack_channel.read_project(self.project, SET_AT + 600)
+        self.assertEqual([i["text"] for i in out], ["second"])
+        self.assertEqual([r["slack"]["text"] for r in self.slack_rows("message")], ["first", "second"])
+
+    def test_more_new_threads_than_one_read_takes_are_all_read_in_turn(self):
+        n = slack_channel.HOT_READS + slack_channel.TURN_READS + 5
+        parents = [(ANN, ts(10 + i), f"q{i}") for i in range(n)]
+        self.slack.messages += parents
+        slack_channel.read_project(self.project, SET_AT + 300)
+        for p in parents:
+            self.slack.threads[(CHAN, p[1])] = (p, [(BOB, f"{float(p[1]) + 400:.6f}", "re " + p[2])])
+        got = []
+        for k in range(4):
+            got += [i["text"] for i in slack_channel.read_project(self.project, SET_AT + 600 + 300 * k)]
+        self.assertEqual(sorted(got), sorted("re " + p[2] for p in parents))
+        self.assertTrue(all(len([q for q in r if q.kind == "thread"])
+                            <= slack_channel.HOT_READS + slack_channel.TURN_READS for r in self.slack.runs))
+
+    def test_a_backlog_longer_than_a_page_is_read_page_by_page(self):
+        self.slack.page = 3
+        self.slack.messages += [(ANN, ts(100 + i), f"m{i}") for i in range(8)]
+        out = slack_channel.read_project(self.project, SET_AT + 300)
+        self.assertEqual([i["text"] for i in out], [f"m{i}" for i in range(8)])
+        self.assertEqual(self.state()["lastTs"], ts(107))
+        self.assertEqual(self.state()["page"], {})
+        self.assertEqual(slack_channel.status_of(self.project)["state"], "ok")
+
+    def test_a_backlog_longer_than_one_read_goes_on_at_the_next_read(self):
+        self.slack.page = 2
+        k = 2 * slack_channel.MAX_PAGES + 3
+        self.slack.messages += [(ANN, ts(100 + i), f"m{i}") for i in range(k)]
+        first = slack_channel.read_project(self.project, SET_AT + 300)
+        self.assertEqual(len(first), 2 * slack_channel.MAX_PAGES)
+        self.assertEqual(self.state()["lastTs"], f"{SET_AT:.6f}")
+        self.assertTrue(self.state()["page"]["cursor"])
+        second = slack_channel.read_project(self.project, SET_AT + 600)
+        self.assertEqual(sorted(i["text"] for i in first + second), sorted(f"m{i}" for i in range(k)))
+        self.assertEqual(self.state()["page"], {})
+        self.assertEqual(self.state()["lastTs"], ts(100 + k - 1))
+        self.assertEqual(slack_channel.read_project(self.project, SET_AT + 900), [])
+
+    def test_a_long_thread_is_read_page_by_page(self):
+        self.slack.page = 2
+        parent = (ANN, ts(100), "parent")
+        self.slack.messages.append(parent)
+        slack_channel.read_project(self.project, SET_AT + 300)
+        self.slack.threads[(CHAN, ts(100))] = (parent, [(BOB, ts(200 + i), f"r{i}") for i in range(5)])
+        out = slack_channel.read_project(self.project, SET_AT + 600)
+        self.assertEqual([i["text"] for i in out], [f"r{i}" for i in range(5)])
+        self.assertTrue(all(r["slack"]["parentTs"] == ts(100) for r in self.slack_rows("reply")))
+
+    def test_a_full_answer_with_no_cursor_does_not_move_on_and_says_so(self):
+        msgs = [(ANN, ts(100 + i), f"m{i}") for i in range(slack_channel.CHANNEL_LIMIT)]
+        self.slack.messages += msgs
+        with mock.patch.object(FakeSlack, "answer", lambda me, q: json.dumps(
+                {"messages": json.loads(channel_answer(msgs))["messages"]})):
+            slack_channel.read_project(self.project, SET_AT + 300)
+        self.assertEqual(self.state()["lastTs"], f"{SET_AT:.6f}")
+        st = slack_channel.status_of(self.project)
+        self.assertEqual(st["state"], "partial")
+        self.assertIn("more new messages", st["detail"])
+        self.assertEqual(len(self.slack_rows("down")), 1)
+
+    def test_a_thread_that_fails_for_another_reason_is_kept_and_said(self):
+        self.slack.messages.append((ANN, ts(100), "hello"))
+        slack_channel.read_project(self.project, SET_AT + 300)
+        self.slack.fail_labels, self.slack.fail_text = {f"thread:{ts(100)}"}, "ratelimited"
+        slack_channel.read_project(self.project, SET_AT + 600)
+        self.assertIn(ts(100), self.state()["threads"])
+        st = slack_channel.status_of(self.project)
+        self.assertEqual(st["state"], "partial")
+        self.assertIn("cannot be read", st["detail"])
+        [row] = self.slack_rows("down")
+        self.assertEqual(row["slack"]["state"], "partial")
+        slack_channel.read_project(self.project, SET_AT + 900)
+        self.assertEqual(len(self.slack_rows("down")), 1)          # said once
+        self.slack.fail_labels = set()
+        slack_channel.read_project(self.project, SET_AT + 1200)
+        self.assertEqual(slack_channel.status_of(self.project)["state"], "ok")
+        [up] = self.slack_rows("up")
+        self.assertIn("read in full again", up["text"])
+
+    def test_a_canvas_in_an_unknown_layout_says_so(self):
+        link = f"https://{WS}/docs/T000TEST01/{CANVAS}"
+        self.slack.messages.append((ANN, ts(100), f"canvas: {link}"))
+        slack_channel.read_project(self.project, SET_AT + 300)
+        self.slack.raw_canvas[CANVAS] = json.dumps({"canvas": "# Plan\n\nGoals.\n\n[thread C000TEST01 "
+                                                              + ts(500) + "]"})
+        slack_channel.read_project(self.project, SET_AT + 600)
+        st = slack_channel.status_of(self.project)
+        self.assertEqual(st["state"], "partial")
+        self.assertIn("canvas", st["detail"])
+        with self.assertRaises(slack_reader.ParseError):
+            slack_reader.parse_canvas(json.dumps({"canvas": "# Plan\n\nGoals."}))
+        self.assertEqual(slack_reader.parse_canvas(json.dumps({"canvas": "# Plan\n\nNo comments."}))["threads"], [])
+
+    def test_every_item_has_a_link_whatever_the_channel_was_set_from(self):
+        self.project["slackChannel"] = {"id": CHAN, "name": "", "workspace": "", "team": "T000TEST01",
+                                        "url": f"https://app.slack.com/client/T000TEST01/{CHAN}", "setAt": SET_AT}
+        self.slack.messages.append((ANN, ts(100), "hello"))
+        slack_channel.read_project(self.project, SET_AT + 300)
+        d = ts(100)
+        self.assertEqual(self.slack_rows("message")[0]["slack"]["permalink"],
+                         f"https://app.slack.com/client/T000TEST01/{CHAN}/thread/{CHAN}-{d}")
+        self.assertEqual(slack_channel._permalink({"kind": "message", "ts": d}, {"id": CHAN}),
+                         f"https://slack.com/app_redirect?channel={CHAN}")
+        self.assertEqual(slack_channel.parse_ref(f"https://app.slack.com/client/T000TEST01/{CHAN}")["team"],
+                         "T000TEST01")
 
 
 class NoChannelTests(_World):
@@ -493,6 +669,34 @@ class StandInTests(unittest.TestCase):
         self.assertEqual(prefix, PREFIX)
         self.assertEqual([m.text for m in res.answers["channel"]["messages"]], ["hello"])
         self.assertEqual(res.answers["channel"]["name"], "made-up")
+
+
+WRITE_STAND_IN = textwrap.dedent('''\
+    #!/usr/bin/env python3
+    """A run whose tool list holds a write tool: says so first, then would
+    go on to the model (marked by a file) if it were not stopped."""
+    import json, os, sys, time
+    here = os.path.dirname(os.path.abspath(sys.argv[0]))
+    print(json.dumps({"type": "system", "subtype": "init", "tools": [
+        "mcp__claude_ai_Slack__slack_read_channel", "mcp__claude_ai_Slack__slack_send_message"],
+        "mcp_servers": [{"name": "claude.ai Slack", "status": "connected"}]}), flush=True)
+    time.sleep(5)
+    open(os.path.join(here, "went-on"), "w").write("yes")
+''')
+
+
+class StopAtWriteToolTests(unittest.TestCase):
+    def test_a_run_with_a_write_tool_is_stopped_at_its_first_line(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "fake-claude")
+            Path(path).write_text(WRITE_STAND_IN)
+            os.chmod(path, os.stat(path).st_mode | stat.S_IXUSR)
+            with mock.patch.dict(os.environ, {"ENSEMBLE_SLACK_READER": path}):
+                with self.assertRaises(slack_reader.ReadError) as e:
+                    slack_reader.run([slack_reader.Query("channel", "channel", {"channel_id": CHAN})], "")
+            self.assertEqual(e.exception.code, "write_tool")
+            time.sleep(0.3)
+            self.assertFalse(os.path.exists(os.path.join(d, "went-on")))
 
 
 if __name__ == "__main__":
