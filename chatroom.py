@@ -1914,7 +1914,7 @@ MCP_TOOLS = [
             "type": "object",
             "properties": {
                 "message": {"type": "string",
-                            "description": "The message text to send."},
+                            "description": "The message text to send. Name a file or folder as [its name](its absolute path)."},
                 "to": {"type": "string",
                        "description": "Recipient identity: your partner's name, "
                                       "\"user\" for the user, or omit / \"all\" "

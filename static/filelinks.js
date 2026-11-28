@@ -14,7 +14,9 @@
 // hub said before is painted at once (no flicker on a redraw), what it has
 // not been asked yet goes into one batched GET /api/files/check, a single
 // request in flight at a time. A path that names nothing is a quiet chip,
-// "not written yet", still a link: the file view says what is (not) there.
+// "not written yet", still a link: the file view says what is (not) there. A
+// soft link (a page's file-soft: a form linked only since #433) instead reads
+// as plain text until the hub says its place is there (file-found).
 // FileLinks.recheck(), on the page's own refresh, asks again about the ones
 // that were missing (at most every RECHECK_MS), so a file a task writes later
 // turns into a normal link by itself. A recheck asks with "tail": false: the
@@ -49,6 +51,13 @@ const FileLinks = (() => {
     return p ? [p, q.get('room') || '', q.get('cwd') || ''].join(SEP) : '';
   }
   function paint(a, there) {
+    // A soft link (#433) is a link once the hub has the place and plain text
+    // until then (the pages' CSS): never the "not written yet" chip.
+    if (a.classList.contains('file-soft')) {
+      a.classList.toggle('file-found', there === true);
+      if (there === true) a.removeAttribute('tabindex'); else a.setAttribute('tabindex', '-1');
+      return;
+    }
     const was = a.classList.contains('file-missing');
     if (there === false && !was) {
       a.classList.add('file-missing');

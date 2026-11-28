@@ -43,6 +43,7 @@ import stat
 import subprocess
 import feedback
 import file_refs
+import link_check
 import file_owner
 import sys
 import tempfile
@@ -3480,7 +3481,10 @@ LINK_NOTE = (
     "Link an Ensemble thing (a card, a message, a task, a file, a session) only as a "
     "clickable name, never as an address, bare or in a code span: a task as #18, a file "
     "as [its name](its full path), a card or a message as [its words, short](its "
-    "reference). A reference a tool returns is for building such a link; never show it "
+    "reference). Every file or folder you name, in any text the user can read, is "
+    "[its name](its absolute path): find the absolute path before you write it; a bare "
+    "name, a relative path or a path in a code span is not a link. "
+    "A reference a tool returns is for building such a link; never show it "
     "bare, and never type or edit one by hand. Never send a message that only points "
     "at a card you just posted: the card is already in the Inbox.")
 
@@ -10014,6 +10018,49 @@ def _file_ref_places(room_id: str = "", cwd: str = "") -> tuple[list[str], list[
     return bases, search
 
 
+# The text each tool posts for the person to read, by tool (GitHub issue 74):
+# checked for files and folders named without a link once it is posted.
+LINK_CHECKED = {
+    "chat_send": lambda a: [a.get("message")],
+    "ensemble_report": lambda a: [a.get("text")],
+    "ensemble_message_po": lambda a: [a.get("text")],
+    "ensemble_ask": lambda a: [a.get("context")] + [
+        x for q in (a.get("questions") if isinstance(a.get("questions"), list) else [])
+        if isinstance(q, dict)
+        for x in [q.get("question")] + [o.get("label") if isinstance(o, dict) else None
+                                        for o in (q.get("options") if isinstance(q.get("options"), list) else [])]],
+}
+
+
+def unlinked_mentions(text: str, room_id: str = "") -> list[dict]:
+    """link_check.unlinked over the writer's room folders: the files and
+    folders ``text`` names that exist and are not written as a link."""
+    bases, search = _file_ref_places(room_id, "")
+    ok = _readable_check()
+    budget = file_refs.Budget()
+    search = [x for x in search if ok(x)]
+
+    def resolve(raw: str):
+        return file_refs.resolve(raw, bases, dirs=True, search=search, budget=budget)[0]
+    return link_check.unlinked(text, resolve)
+
+
+def link_check_content(name: str, args: dict, room_id: str) -> list[dict]:
+    """The MCP content item that warns of the unlinked mentions in what a
+    tool just posted ([] when there are none, or the tool posts nothing to
+    check). The text was posted as written: it is never refused or changed."""
+    pick = LINK_CHECKED.get(name)
+    if pick is None or not isinstance(args, dict):
+        return []
+    try:
+        text = "\n\n".join(x for x in pick(args) if isinstance(x, str) and x.strip())
+        note = link_check.warning(unlinked_mentions(text, room_id)) if text else ""
+    except Exception as e:      # noqa: BLE001 - a check never fails a send
+        print(f"[link-check] {room_id}: {e!r}", flush=True)
+        return []
+    return [{"type": "text", "text": note}] if note else []
+
+
 def resolve_file_ref_how(raw: str, room_id: str = "", cwd: str = "",
                          dirs: bool = False) -> tuple[Path | None, str]:
     """file_refs.resolve over the room's folders: (the file, how it was
@@ -10851,6 +10898,21 @@ def _text_cap(raw: bytes, line: int) -> int:
             else:
                 lo = mid + 1
     return min(workspace_search.FILE_BYTES_MAX, max(_TEXT_MAX, hi + _TEXT_AFTER_LINE))
+
+
+def dir_of_ref(path: str, room_id: str = "", cwd: str = "") -> str:
+    """#433: the folder a link names. An absolute or home path is the path as
+    written; a relative one ("Documents/#9 Plans/") is the folder the hub's one
+    resolver finds for it in the link's room, or the path as written (refused
+    by list_dir) when it finds no folder there."""
+    if not path or re.match(r"^(?:[A-Za-z]:[\\/]|\\\\|~|/)", path):
+        return path
+    try:
+        hit = resolve_file_ref_how(path.rstrip("\\/") or path, room_id, cwd, dirs=True)[0]
+    except Exception as e:      # noqa: BLE001 — a link that names nothing lists nothing
+        print(f"[dir] {path!r}: not resolved: {e!r}", flush=True)
+        return path
+    return str(hit) if hit is not None and hit.is_dir() else path
 
 
 def list_dir(path: str) -> tuple[int, dict]:
@@ -20050,7 +20112,8 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/dir":
             q = parse_qs(u.query)
             path = (q.get("path", [""])[0] or "").strip()
-            self._send_json(*list_dir(path))
+            self._send_json(*list_dir(dir_of_ref(path, (q.get("room", [""])[0] or "").strip(),
+                                                 (q.get("cwd", [""])[0] or "").strip())))
             return
         if p == "/api/ws/file":
             # JSON text read with size cap + binary detection (workspace tools).
@@ -23424,8 +23487,10 @@ class Handler(BaseHTTPRequestHandler):
             text, is_err = ensemble_tools.call(name, args, room_id, identity, self)
             if name == "ensemble_report" and not is_err:
                 _history_nudge(room_id, "report")
-            return ok({"content": [{"type": "text", "text": text}],
-                       "isError": is_err})
+            content = [{"type": "text", "text": text}]
+            if not is_err:
+                content += link_check_content(name, args, room_id)
+            return ok({"content": content, "isError": is_err})
         if name == "chat_send":
             text = (args.get("message") or "").strip()
             to = (args.get("to") or "").strip()
@@ -23480,7 +23545,7 @@ class Handler(BaseHTTPRequestHandler):
                          "the task's owner. To wake a reviewer or another "
                          "specialist, address it with `to` or @mention it.")
             note += repeated
-            return ok({"content": [{"type": "text", "text": note}],
+            return ok({"content": [{"type": "text", "text": note}] + link_check_content(name, args, room_id),
                        "isError": False})
         if name == "chat_read":
             msgs = chatroom.read_new_for(room_id, identity)
