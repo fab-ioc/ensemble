@@ -462,8 +462,8 @@ def _up(project: dict, ch: dict, st: dict, now: float) -> None:
     s = st["status"]
     was_down = s.get("state") in ("not_connected", "not_signed_in", "failed")
     if s.get("downNoticed") and s.get("state") in ("not_connected", "not_signed_in", "failed", "partial"):
-        text = (f"{_chan_label(ch, st)} is read again. Nothing was missed: the hub read on from the "
-                f"last message it had seen." if was_down else
+        text = (f"{_chan_label(ch, st)} is read again. Nothing was missed: the read starts where "
+                f"the last one stopped." if was_down else
                 f"{_chan_label(ch, st)} is read in full again.")
         _d.chatroom.post_notice(_po_room(project), SENDER, text,
                                 {"noticeKind": NOTICE, "slack": {"kind": "up", "channel": ch["id"],
@@ -480,7 +480,7 @@ def _partial(project: dict, ch: dict, st: dict, problems: list, now: float) -> N
     if s.get("state") != "partial":
         _up(project, ch, st, now)
         s = st["status"]
-    detail = _clean("; ".join(problems))[:500]
+    detail = _clean("; ".join(p.rstrip(".") for p in problems))[:499] + "."
     st["status"] = {"state": "partial", "since": s.get("since") if s.get("state") == "partial" else now,
                     "detail": detail, "downNoticed": bool(s.get("state") == "partial" and s.get("downNoticed"))}
     st["lastOk"] = now
@@ -568,6 +568,14 @@ def _collect(ch: dict, st: dict, res, now: float) -> tuple[list[dict], list, lis
     return items, new_threads, problems
 
 
+def _why(err) -> str:
+    """Why one read failed, for the person: an answer in a form not known says
+    so (its raw text is in the hub log and the state, not in the settings)."""
+    if getattr(err, "code", "") == "unreadable":
+        return "its answer is in a form the hub does not know yet"
+    return _clean(str(err))[:160]
+
+
 def _read_errors(st: dict, res, now: float) -> list:
     """Notes every read made (so each watched thread is read in turn) and
     sorts out the reads that failed: a thread or comment thread that is gone
@@ -583,17 +591,17 @@ def _read_errors(st: dict, res, now: float) -> list:
         if kind == "canvas":
             cv = st["canvases"].setdefault(key, {"title": "", "at": now})
             cv["error"] = _clean(str(err))[:300]
-            problems.append(f"the canvas {cv.get('title') or key} cannot be read ({_clean(str(err))[:160]})")
+            problems.append(f"the canvas {cv.get('title') or key} cannot be read: {_why(err)}.")
         elif kind in ("thread", "comments") and _gone(err):
             (st["threads"] if kind == "thread" else st["comments"]).pop(key, None)
         elif kind == "thread":
-            problems.append(f"the thread of {key} cannot be read ({_clean(str(err))[:160]})")
+            problems.append(f"the thread of {key} cannot be read: {_why(err)}.")
         elif kind == "comments":
-            problems.append(f"a canvas comment thread cannot be read ({_clean(str(err))[:160]})")
+            problems.append(f"a canvas comment thread cannot be read: {_why(err)}.")
     for label, ans in res.answers.items():
         if (label.startswith("comments:") and label not in res.errors
                 and _truncated(ans, len(ans.get("replies") or []) + 1, THREAD_LIMIT)):
-            problems.append("a canvas comment thread has more comments than the hub reads; the later ones are not read")
+            problems.append("a canvas comment thread has more comments than the hub reads; the later ones are not read.")
     return problems
 
 
