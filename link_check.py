@@ -36,6 +36,9 @@ MAX_GUESSES = 24
 # At most this many absolute paths are read for their ends (each a scan of up
 # to ABS_RUN_MAX characters), found or not.
 MAX_RUNS = 200
+# Only this much of a text is read: the check runs on the hub's request
+# thread, and a mention past it is still posted as written.
+MAX_TEXT = 20000
 
 _FENCE = re.compile(r"^[ \t]*(```|~~~).*?^[ \t]*\1[^\n]*$", re.S | re.M)
 # [words](target), a target in <...> or with one level of brackets; an <a>
@@ -53,7 +56,11 @@ _ABS = re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\|~/|/)")
 # at an extension, a separator or a word's end, is tried from the longest,
 # see _abs_runs), a relative path with at least one separator, or a bare
 # file name.
-_SEG = r"[\w.#&()'+~@=,-]+"
+# Every run is bounded (a name is at most NAME_MAX characters): a match may
+# start at almost any character, and an unbounded run would scan on to the
+# end of a long token ("====...", a CSV row) from each of them.
+NAME_MAX = 255
+_SEG = r"[\w.#&()'+~@=,-]{1,255}"
 _ABS_START = re.compile(r"(?<![\w/\\.:])(?:[A-Za-z]:[\\/]|\\\\|~/|/)(?=[\w.#~@-])")
 _ABS_STOP = re.compile(r"[`<>|\"*?\n\t]|  |\s[-*>]\s|$")
 _ABS_END = re.compile(r"(?:\.[A-Za-z]\w{0,7}(?::\d+(?:[-:]\d+)?)?|[\\/])(?=[\s.,;:!?)'\"]|$)|[\w#)-](?=[\s.,;:!?)'\"]|$)")
@@ -66,8 +73,9 @@ _REL = re.compile(r"(?<![\w/\\.:#@-])((?:\.\.?[\\/])?" + _SEG + r"(?:[\\/]" + _S
 # At most 16 folders after the first: a match may start at any word, and an
 # unbounded run would scan to the end of a long line from each of them.
 _W = r"[\w#+@&-]"
-_SP = r"[A-Z0-9#]" + _W + r"*(?: " + _W + r"+){1,3}"
-_SP_LAST = r"[A-Z0-9#]" + _W + r"*(?: " + _W + r"+){0,2} " + _W + r"+\.[A-Za-z]\w{0,7}(?::\d+(?:[-:]\d+)?)?"
+_W0, _W1 = _W + r"{0,255}", _W + r"{1,255}"
+_SP = r"[A-Z0-9#]" + _W0 + r"(?: " + _W1 + r"){1,3}"
+_SP_LAST = r"[A-Z0-9#]" + _W0 + r"(?: " + _W1 + r"){0,2} " + _W1 + r"\.[A-Za-z]\w{0,7}(?::\d+(?:[-:]\d+)?)?"
 _REL_SPACED = re.compile(r"(?<![\w/\\.:#@-])((?:\.\.?[\\/])?" + _SEG + r"[\\/](?>(?:" + _SP + "|" + _SEG
                          + r")[\\/]){0,16}(?:" + _SP_LAST + r")?)(?=[\s.,;:!?)'\"]|$)")
 # One whose first folder holds spaces ("My Folder/notes/", "Ensemble
@@ -75,12 +83,12 @@ _REL_SPACED = re.compile(r"(?<![\w/\\.:#@-])((?:\.\.?[\\/])?" + _SEG + r"[\\/](?
 # is a reading (see _lead_readings), the first word's capital and all.
 _REL_SP_FIRST = re.compile(r"(?<![\w/\\.:#@&+-])(" + _SP + r"[\\/](?>(?:" + _SP + "|" + _SEG
                            + r")[\\/]){0,16}(?:" + _SP_LAST + "|" + _SEG + r")?)(?=[\s.,;:!?)'\"]|$)")
-_BARE = re.compile(r"(?<![\w/\\.:#@-])([A-Za-z0-9_][\w#&+-]*(?:\.[\w-]+)*\.[A-Za-z]\w{0,7}(?::\d+(?:[-:]\d+)?)?)(?![\w/\\])")
+_BARE = re.compile(r"(?<![\w/\\.:#@-])([A-Za-z0-9_][\w#&+-]{0,254}(?:\.[\w-]{1,255}){0,16}\.[A-Za-z]\w{0,7}(?::\d+(?:[-:]\d+)?)?)(?![\w/\\])")
 _TRAIL = ".,;:!?)'\""
 # A bare name of words in running text: a file's ("#433 Clickable links.md",
 # "Screen layout.png") or a task folder's ("#433 Plans"); see _bare_spaced.
-_BARE_SPACED = re.compile(r"(?<![\w/\\.:#@&+-])([A-Z0-9#]" + _W + r"*(?: " + _W + r"+){0,3} " + _W
-                          + r"+\.[A-Za-z]\w{0,7}|#\d+ [A-Z0-9]" + _W + r"*(?: " + _W + r"+){0,2})(?![\w/\\#@&+-])")
+_BARE_SPACED = re.compile(r"(?<![\w/\\.:#@&+-])([A-Z0-9#]" + _W0 + r"(?: " + _W1 + r"){0,3} " + _W1
+                          + r"\.[A-Za-z]\w{0,7}|#\d{1,12} [A-Z0-9]" + _W0 + r"(?: " + _W1 + r"){0,2})(?![\w/\\#@&+-])")
 
 
 def _strip(text: str) -> str:
@@ -201,6 +209,7 @@ def unlinked(text: str, resolve: Callable[[str], Path | None]) -> list[dict]:
     link to write}], one per thing, in the order they come."""
     if not isinstance(text, str) or not text.strip():
         return []
+    text = text[:MAX_TEXT]
     out: list[dict] = []
     looked = guessed = runs = 0
     covered = -1       # where the last mention found ends: what starts before is part of it

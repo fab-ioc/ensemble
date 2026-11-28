@@ -10047,12 +10047,27 @@ def unlinked_mentions(text: str, room_id: str = "") -> list[dict]:
     return link_check.unlinked(text, resolve)
 
 
-def link_check_content(name: str, args: dict, room_id: str) -> list[dict]:
+def _ask_not_posted(answer: str) -> bool:
+    """An ensemble_ask answer that posted nothing: a retry of the same call
+    (it answers with the first call's result) or questions an open card
+    already asks."""
+    try:
+        a = json.loads(answer)
+    except (TypeError, ValueError):
+        return False
+    return isinstance(a, dict) and (a.get("repeated") is True or a.get("posted") is False)
+
+
+def link_check_content(name: str, args: dict, room_id: str, answer: str = "") -> list[dict]:
     """The MCP content item that warns of the unlinked mentions in what a
     tool just posted ([] when there are none, or the tool posts nothing to
-    check). The text was posted as written: it is never refused or changed."""
+    check). The text was posted as written: it is never refused or changed.
+    ``answer`` is the tool's own answer: an ensemble_ask that posted nothing
+    gets no note (it would say "posted as you wrote it")."""
     pick = LINK_CHECKED.get(name)
     if pick is None or not isinstance(args, dict):
+        return []
+    if name == "ensemble_ask" and _ask_not_posted(answer):
         return []
     try:
         text = "\n\n".join(x for x in pick(args) if isinstance(x, str) and x.strip())
@@ -23491,7 +23506,7 @@ class Handler(BaseHTTPRequestHandler):
                 _history_nudge(room_id, "report")
             content = [{"type": "text", "text": text}]
             if not is_err:
-                content += link_check_content(name, args, room_id)
+                content += link_check_content(name, args, room_id, text)
             return ok({"content": content, "isError": is_err})
         if name == "chat_send":
             text = (args.get("message") or "").strip()

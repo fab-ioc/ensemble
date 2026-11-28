@@ -128,6 +128,24 @@ class Linear(unittest.TestCase):
                 link_check.unlinked(line, lambda raw: None)
                 self.assertLess(time.perf_counter() - t, 0.5)
 
+    def test_long_tokens_without_a_separator_are_fast(self):
+        # A run of name characters with no slash is tried from almost every
+        # character: unbounded, each try scanned to the token's end (6 to 27 s
+        # on the hub's request thread before the runs were bounded).
+        import time
+        csv = ",".join(f"a{i}=b+c&d" for i in range(5000))[:40000]
+        for line in ("+a" * 20000, "=" * 20000, csv, "(=" * 20000, "a" * 50000 + ".md", "x-" * 20000):
+            with self.subTest(line=line[:12]):
+                t = time.perf_counter()
+                link_check.unlinked(line, lambda raw: None)
+                self.assertLess(time.perf_counter() - t, 0.5)
+
+    def test_only_the_start_of_a_long_text_is_read(self):
+        seen = []
+        link_check.unlinked("see src/app.py " + "x " * 20000 + "then docs/late.md", lambda raw: seen.append(raw))
+        self.assertIn("src/app.py", seen)
+        self.assertNotIn("docs/late.md", seen)
+
 
 class ToolAnswer(unittest.TestCase):
     def setUp(self):
@@ -158,6 +176,20 @@ class ToolAnswer(unittest.TestCase):
         self.assertEqual(dashboard.link_check_content("chat_read", {}, ""), [])
         self.assertEqual(dashboard.link_check_content("chat_send", {"message": None}, ""), [])
         self.assertEqual(dashboard.link_check_content("ensemble_ask", {"questions": "bad"}, ""), [])
+
+    def test_an_ask_that_posted_nothing_gets_no_note(self):
+        # A retry answers with the first call's result, and a question an open
+        # card asks is not posted again: no "posted as you wrote it" note.
+        import json
+        args = {"context": "see plan.md", "questions": [{"question": "ok?"}]}
+        for answer in ({"ok": True, "posted": True, "repeated": True}, {"ok": True, "posted": False}):
+            with self.subTest(answer=answer):
+                self.assertEqual(dashboard.link_check_content("ensemble_ask", args, "", json.dumps(answer)), [])
+        posted = dashboard.link_check_content("ensemble_ask", args, "", json.dumps({"ok": True, "posted": True}))
+        self.assertEqual(len(posted), 1, posted)
+        self.assertIn("posted as you wrote it", posted[0]["text"])
+        # another tool's answer is not read for it
+        self.assertEqual(len(dashboard.link_check_content("chat_send", {"message": "see plan.md"}, "", '{"posted": false}')), 1)
 
     def test_a_failing_check_never_fails_the_send(self):
         with mock.patch.object(dashboard, "unlinked_mentions", side_effect=RuntimeError("x")):
